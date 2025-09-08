@@ -17,13 +17,44 @@ class SessionManager private constructor(private val context: Context) {
         private const val KEY_USER_ROLE = "user_role" // New key for user role
         private const val KEY_USER_AVATAR = "user_avatar" // Key for storing avatar URI
         private const val KEY_SUBSCRIPTIONS_PREFIX = "subscription_"
+        private const val KEY_LAST_ACTIVE_USER = "last_active_user" // Para detectar cambios de usuario
+        private const val KEY_USER_SESSION_TIMESTAMP = "user_session_timestamp" // Timestamp de sesión
 
         @Volatile
         private var instance: SessionManager? = null
+        
+        // Listeners para cambios de usuario
+        private val userChangeListeners = mutableListOf<UserChangeListener>()
 
         fun getInstance(context: Context): SessionManager {
             return instance ?: synchronized(this) {
                 instance ?: SessionManager(context.applicationContext).also { instance = it }
+            }
+        }
+        
+        /**
+         * Interface para escuchar cambios de usuario
+         */
+        interface UserChangeListener {
+            fun onUserChanged(previousUser: String?, newUser: String?)
+            fun onUserLoggedOut(previousUser: String?)
+        }
+        
+        /**
+         * Añadir listener para cambios de usuario
+         */
+        fun addUserChangeListener(listener: UserChangeListener) {
+            synchronized(userChangeListeners) {
+                userChangeListeners.add(listener)
+            }
+        }
+        
+        /**
+         * Remover listener para cambios de usuario
+         */
+        fun removeUserChangeListener(listener: UserChangeListener) {
+            synchronized(userChangeListeners) {
+                userChangeListeners.remove(listener)
             }
         }
     }
@@ -32,13 +63,22 @@ class SessionManager private constructor(private val context: Context) {
      * Save user login session
      */
     fun createLoginSession(username: String, userId: Long, personaId: Long = userId, roleName: String, avatarUri: String?) { 
+        val previousUser = getLastActiveUser()
+        
         editor.putString(KEY_USERNAME, username)
         editor.putLong(KEY_USER_ID, userId)
         editor.putLong(KEY_PERSONA_ID, personaId)
         editor.putString(KEY_USER_ROLE, roleName) // Store role name for compatibility
         editor.putString(KEY_USER_AVATAR, avatarUri) // Store avatar URI
+        editor.putString(KEY_LAST_ACTIVE_USER, username) // Track last active user
+        editor.putLong(KEY_USER_SESSION_TIMESTAMP, System.currentTimeMillis()) // Session timestamp
         editor.putBoolean(KEY_IS_LOGGED_IN, true)
         editor.apply()
+        
+        // Notificar cambio de usuario si es diferente
+        if (previousUser != username) {
+            notifyUserChanged(previousUser, username)
+        }
     }
 
     fun isAdmin(): Boolean {
@@ -93,8 +133,91 @@ class SessionManager private constructor(private val context: Context) {
      * Clear session details
      */
     fun logout() {
+        val previousUser = getUsername()
         editor.clear()
         editor.apply()
+        
+        // Notificar logout
+        if (previousUser != null) {
+            notifyUserLoggedOut(previousUser)
+        }
+    }
+    
+    /**
+     * Get last active user
+     */
+    fun getLastActiveUser(): String? {
+        return sharedPreferences.getString(KEY_LAST_ACTIVE_USER, null)
+    }
+    
+    /**
+     * Get user session timestamp
+     */
+    fun getUserSessionTimestamp(): Long {
+        return sharedPreferences.getLong(KEY_USER_SESSION_TIMESTAMP, 0)
+    }
+    
+    /**
+     * Check if current user is different from last active user
+     */
+    fun hasUserChanged(): Boolean {
+        val currentUser = getUsername()
+        val lastActiveUser = getLastActiveUser()
+        return currentUser != lastActiveUser
+    }
+    
+    /**
+     * Generate unique chat preference key for current user
+     */
+    fun getChatPreferenceKey(baseKey: String): String {
+        val username = getUsername() ?: "anonymous"
+        return "${baseKey}_user_${username}"
+    }
+    
+    /**
+     * Get SharedPreferences for chat persistence per user
+     */
+    fun getChatPreferences(context: Context): android.content.SharedPreferences {
+        val username = getUsername() ?: "anonymous"
+        return context.getSharedPreferences("chat_persistence_$username", Context.MODE_PRIVATE)
+    }
+    
+    /**
+     * Clear chat data for current user only
+     */
+    fun clearUserChatData(context: Context) {
+        val chatPrefs = getChatPreferences(context)
+        chatPrefs.edit().clear().apply()
+    }
+    
+    /**
+     * Notify listeners of user change
+     */
+    private fun notifyUserChanged(previousUser: String?, newUser: String?) {
+        synchronized(userChangeListeners) {
+            userChangeListeners.forEach { listener ->
+                try {
+                    listener.onUserChanged(previousUser, newUser)
+                } catch (e: Exception) {
+                    android.util.Log.e("SessionManager", "Error notifying user change", e)
+                }
+            }
+        }
+    }
+    
+    /**
+     * Notify listeners of user logout
+     */
+    private fun notifyUserLoggedOut(previousUser: String) {
+        synchronized(userChangeListeners) {
+            userChangeListeners.forEach { listener ->
+                try {
+                    listener.onUserLoggedOut(previousUser)
+                } catch (e: Exception) {
+                    android.util.Log.e("SessionManager", "Error notifying user logout", e)
+                }
+            }
+        }
     }
 
     /**

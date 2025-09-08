@@ -412,6 +412,9 @@ class ChatBotFragment : Fragment() {
             onRejectCalificationClick = { message ->
                 handleRejectCalification(message)
             },
+            onEditUserMessageClick = { message ->
+                handleEditUserMessage(message)
+            },
             taskInfo = null // Se actualizará dinámicamente cuando se cargue la información
         )
         messagesRecyclerView.apply {
@@ -914,21 +917,34 @@ class ChatBotFragment : Fragment() {
     private fun extractGradeFromMessage(message: String): String? {
         // Buscar patrones para extraer solo el número de la calificación
         val patterns = listOf(
-            "calificación:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
-            "nota:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
-            "puntaje:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
-            "score:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
-            "grade:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
-            "(\\d+(?:\\.\\d+)?)/10".toRegex(RegexOption.IGNORE_CASE),
-            "\\*\\*calificación\\s+actual:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE)
+            "calificación:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
+            "nota:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
+            "puntaje:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
+            "score:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
+            "grade:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
+            "(\\d+(?:[.,]\\d+)?)/10".toRegex(RegexOption.IGNORE_CASE),
+            "\\*\\*calificación\\s+actual:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE)
         )
         
         for (pattern in patterns) {
             val match = pattern.find(message)
             if (match != null) {
                 val grade = match.groupValues[1]
+                
+                // Log para debugging
+                Log.d("ChatBotFragment", "🔍 Grade extraído: '$grade'")
+                
+                // Normalizar el formato decimal: reemplazar coma por punto
+                val normalizedGrade = grade.replace(",", ".")
+                
                 // Convertir a escala de 10 si es necesario
-                val gradeValue = grade.toFloatOrNull()
+                val gradeValue = try {
+                    normalizedGrade.toFloat()
+                } catch (e: NumberFormatException) {
+                    Log.e("ChatBotFragment", "❌ No se pudo convertir grade a Float: $grade (normalizado: $normalizedGrade)", e)
+                    null
+                }
+                
                 return if (gradeValue != null) {
                     if (gradeValue > 10) {
                         // Convertir de escala 100 a 10
@@ -1050,7 +1066,15 @@ class ChatBotFragment : Fragment() {
                     
                     // Actualizar directamente la tabla TaskSubmission
                     if (targetSubmissionId != null) {
-                        val gradeFloat = grade.toFloatOrNull()
+                        // Normalizar el formato decimal: reemplazar coma por punto antes de convertir
+                        val normalizedGrade = grade.replace(",", ".")
+                        val gradeFloat = try {
+                            normalizedGrade.toFloat()
+                        } catch (e: NumberFormatException) {
+                            Log.e("ChatBotFragment", "❌ Error convirtiendo grade '$grade' (normalizado: '$normalizedGrade') a Float", e)
+                            null
+                        }
+                        
                         if (gradeFloat != null) {
                             withContext(Dispatchers.IO) {
                                 // Obtener la entrega por ID
@@ -1151,6 +1175,97 @@ class ChatBotFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error rechazando calificación: ${e.message}")
                 Toast.makeText(context, "Error al procesar la acción", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * Maneja la edición de un mensaje del usuario
+     */
+    private fun handleEditUserMessage(message: ChatMessage) {
+        // Crear un diálogo para editar el mensaje
+        val editText = EditText(requireContext()).apply {
+            setText(message.message)
+            setSelection(message.message.length) // Poner cursor al final
+            hint = "Editar mensaje..."
+            setTextColor(ContextCompat.getColor(requireContext(), android.R.color.white))
+            setHintTextColor(ContextCompat.getColor(requireContext(), android.R.color.darker_gray))
+            backgroundTintList = ContextCompat.getColorStateList(requireContext(), android.R.color.white)
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("✏️ Editar Mensaje")
+            .setMessage("Modifica tu mensaje y se volverá a enviar al modelo:")
+            .setView(editText)
+            .setPositiveButton("🔄 Actualizar y Reenviar") { _, _ ->
+                val newMessageText = editText.text.toString().trim()
+                if (newMessageText.isNotEmpty() && newMessageText != message.message) {
+                    handleMessageEdit(message, newMessageText)
+                }
+            }
+            .setNegativeButton("❌ Cancelar", null)
+            .create()
+            .apply {
+                // Estilo del diálogo
+                window?.setBackgroundDrawableResource(android.R.color.black)
+                show()
+                getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setTextColor(
+                    ContextCompat.getColor(requireContext(), android.R.color.holo_green_light)
+                )
+                getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.setTextColor(
+                    ContextCompat.getColor(requireContext(), android.R.color.holo_red_light)
+                )
+            }
+    }
+
+    /**
+     * Procesa la edición del mensaje: actualiza el mensaje original y elimina respuestas subsecuentes
+     */
+    private fun handleMessageEdit(originalMessage: ChatMessage, newMessageText: String) {
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    // 1. Obtener todos los mensajes después del mensaje editado
+                    val allMessages = database.chatMessageDao().getAllMessages().first()
+                    val messageIndex = allMessages.indexOfFirst { it.id == originalMessage.id }
+                    
+                    if (messageIndex != -1) {
+                        // 2. Eliminar todos los mensajes posteriores (respuestas del bot y otros mensajes)
+                        val messagesToDelete = allMessages.drop(messageIndex + 1)
+                        messagesToDelete.forEach { msg ->
+                            database.chatMessageDao().deleteMessage(msg)
+                        }
+                        
+                        // 3. Actualizar el mensaje original con el nuevo texto
+                        val updatedMessage = originalMessage.copy(
+                            message = newMessageText,
+                            timestamp = System.currentTimeMillis() // Actualizar timestamp
+                        )
+                        database.chatMessageDao().updateMessage(updatedMessage)
+                    }
+                }
+
+                // 4. Recargar mensajes en la UI
+                loadMessages()
+                
+                // 5. Enviar el nuevo mensaje al modelo
+                withContext(Dispatchers.Main) {
+                    // Poner el nuevo texto en el campo de entrada temporalmente
+                    val originalText = messageEditText.text.toString()
+                    messageEditText.setText(newMessageText)
+                    
+                    // Enviar el mensaje
+                    sendMessage()
+                    
+                    // Limpiar el campo de entrada
+                    messageEditText.setText("")
+                    
+                    Toast.makeText(context, "✅ Mensaje actualizado y reenviado", Toast.LENGTH_SHORT).show()
+                }
+
+            } catch (e: Exception) {
+                Log.e("ChatBotFragment", "Error editando mensaje: ${e.message}")
+                Toast.makeText(context, "❌ Error al editar el mensaje", Toast.LENGTH_SHORT).show()
             }
         }
     }

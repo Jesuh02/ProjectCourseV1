@@ -475,14 +475,17 @@ class MSPClient(private val context: Context) {
 
     /**
      * Build query-specific context using RAG analysis
+     * Only includes full database schema when explicitly requested
      */
     suspend fun buildQuerySpecificContext(query: String): String = withContext(Dispatchers.IO) {
         Log.d(tag, "=== RAG CONTEXT BUILDING LOG ===")
         Log.d(tag, "Input Query: $query")
         
         try {
-            // Always build comprehensive database schema context first
-            val fullSchemaContext = buildComprehensiveDatabaseContext()
+            // Check if user is specifically asking for database schema/structure
+            val isRequestingDatabaseInfo = isExplicitDatabaseSchemaRequest(query)
+            
+            Log.d(tag, "Is explicit database request: $isRequestingDatabaseInfo")
             
             // Use RAG service to get dynamic context based on the query
             val ragService = RAGDatabaseService(context)
@@ -491,7 +494,10 @@ class MSPClient(private val context: Context) {
             Log.d(tag, "RAG Service Response Length: ${ragResponse.length} characters")
             Log.d(tag, "RAG Service Response Content: $ragResponse")
             
-            val finalContext = """
+            val finalContext = if (isRequestingDatabaseInfo) {
+                // Only when explicitly requested, include full schema
+                val fullSchemaContext = buildComprehensiveDatabaseContext()
+                """
 # CONTEXTO COMPLETO DE BASE DE DATOS TAREAMOV
 
 ## ESQUEMA COMPLETO DE TODAS LAS TABLAS (14 TABLAS):
@@ -509,7 +515,23 @@ $ragResponse
 - Proporciona información detallada y completa
 
 *Información obtenida dinámicamente desde la base de datos usando RAG*
-            """.trimIndent()
+                """.trimIndent()
+            } else {
+                // For regular queries, only include relevant RAG data
+                """
+# CONTEXTO ESPECÍFICO PARA TU CONSULTA
+
+## DATOS RELEVANTES:
+$ragResponse
+
+## INSTRUCCIONES:
+- Usa solo la información proporcionada para responder
+- Si necesitas información adicional sobre la estructura de la base de datos, pídela específicamente
+- Responde de manera concisa y precisa
+
+*Información específica obtenida usando RAG*
+                """.trimIndent()
+            }
             
             Log.d(tag, "Final Context Length: ${finalContext.length} characters")
             Log.d(tag, "Final Context Content: $finalContext")
@@ -519,9 +541,12 @@ $ragResponse
             
         } catch (e: Exception) {
             Log.e(tag, "Error in RAG context building", e)
-            // Even in error case, provide comprehensive schema
-            val fallbackContext = buildComprehensiveDatabaseContext()
-            return@withContext """
+            // In error case, only provide schema if explicitly requested
+            val isRequestingDatabaseInfo = isExplicitDatabaseSchemaRequest(query)
+            
+            if (isRequestingDatabaseInfo) {
+                val fallbackContext = buildComprehensiveDatabaseContext()
+                return@withContext """
 # CONTEXTO DE BASE DE DATOS (MODO EMERGENCIA)
 
 $fallbackContext
@@ -533,8 +558,66 @@ Error: ${e.message}
 Pero tienes acceso al esquema completo de las 14 tablas mostrado arriba.
 
 *Usa el esquema para responder preguntas sobre la estructura de la base de datos*
-            """.trimIndent()
+                """.trimIndent()
+            } else {
+                return@withContext """
+Error al procesar la consulta: ${e.message}
+
+Si necesitas información específica sobre la estructura de la base de datos, 
+puedes preguntar explícitamente: "¿Cuál es la estructura de la base de datos?" o "Muéstrame todas las tablas"
+                """.trimIndent()
+            }
         }
+    }
+
+    /**
+     * Determines if the user is explicitly requesting database schema information
+     */
+    private fun isExplicitDatabaseSchemaRequest(query: String): Boolean {
+        val queryLower = query.lowercase().trim()
+        
+        // Explicit requests for database structure/schema
+        val explicitDatabaseKeywords = listOf(
+            "estructura de la base de datos",
+            "esquema de la base de datos", 
+            "todas las tablas",
+            "tablas de la base de datos",
+            "muestra la base de datos",
+            "muéstrame la base de datos",
+            "información de la base de datos",
+            "describe la base de datos",
+            "qué tablas hay",
+            "qué contiene la base de datos",
+            "estructura completa",
+            "esquema completo",
+            "database schema",
+            "show tables",
+            "describe database",
+            "table structure"
+        )
+        
+        // Check for explicit database schema requests
+        val hasExplicitRequest = explicitDatabaseKeywords.any { keyword ->
+            queryLower.contains(keyword)
+        }
+        
+        // Exclude casual mentions of "base de datos" in context
+        val casualMentions = listOf(
+            "consulta la base de datos",
+            "busca en la base de datos", 
+            "encuentra en la base de datos",
+            "información de",
+            "datos de",
+            "registros de"
+        )
+        
+        val isCasualMention = casualMentions.any { casual ->
+            queryLower.contains(casual)
+        } && !hasExplicitRequest
+        
+        Log.d(tag, "Query analysis - Explicit request: $hasExplicitRequest, Casual mention: $isCasualMention")
+        
+        return hasExplicitRequest && !isCasualMention
     }
     /**
      * Send prompt with dynamic database context based on query analysis

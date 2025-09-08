@@ -1,5 +1,9 @@
 package com.example.tareamov.ui.adapter
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.StyleSpan
@@ -7,9 +11,12 @@ import android.graphics.Typeface
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
@@ -22,6 +29,7 @@ import java.util.*
 class ChatMessageAdapter(
     private val onAddCalificationClick: (ChatMessage) -> Unit = {},
     private val onRejectCalificationClick: (ChatMessage) -> Unit = {},
+    private val onEditUserMessageClick: (ChatMessage) -> Unit = {},
     private var taskInfo: TaskInfo? = null
 ) : ListAdapter<ChatMessage, ChatMessageAdapter.MessageViewHolder>(MessageDiffCallback()) {
 
@@ -42,7 +50,7 @@ class ChatMessageAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
         val view = LayoutInflater.from(parent.context)
-            .inflate(R.layout.item_chat_message, parent, false)
+            .inflate(R.layout.item_chat_message_improved, parent, false)
         return MessageViewHolder(view)
     }
 
@@ -55,74 +63,148 @@ class ChatMessageAdapter(
         private val botMessageContainer: LinearLayout = itemView.findViewById(R.id.botMessageContainer)
         private val userMessageTextView: TextView = itemView.findViewById(R.id.userMessageTextView)
         private val botMessageTextView: TextView = itemView.findViewById(R.id.botMessageTextView)
+        private val userMessageTime: TextView = itemView.findViewById(R.id.userMessageTime)
+        private val botMessageTime: TextView = itemView.findViewById(R.id.botMessageTime)
         private val timestampTextView: TextView = itemView.findViewById(R.id.messageTimestampTextView)
         private val calificationButtonsContainer: LinearLayout = itemView.findViewById(R.id.calificationButtonsContainer)
-        private val addCalificationButton: CardView = itemView.findViewById(R.id.addCalificationButton)
-        private val rejectCalificationButton: CardView = itemView.findViewById(R.id.rejectCalificationButton)
+        private val addCalificationButton: Button = itemView.findViewById(R.id.addCalificationButton)
+        private val rejectCalificationButton: Button = itemView.findViewById(R.id.rejectCalificationButton)
+        private val copyButton: ImageButton = itemView.findViewById(R.id.copyButton)
+        private val shareButton: ImageButton = itemView.findViewById(R.id.shareButton)
+        private val editUserMessageButton: ImageButton = itemView.findViewById(R.id.editUserMessageButton)
+        private val copyUserMessageButton: ImageButton = itemView.findViewById(R.id.copyUserMessageButton)
 
         fun bind(message: ChatMessage) {
             if (message.isFromUser) {
                 // Show user message
                 userMessageContainer.visibility = View.VISIBLE
                 botMessageContainer.visibility = View.GONE
+                
                 userMessageTextView.text = formatBoldText(message.message)
+                userMessageTime.text = timeFormat.format(Date(message.timestamp))
+                
+                // Setup user message action buttons
+                setupUserMessageActions(message)
+                
                 calificationButtonsContainer.visibility = View.GONE
             } else {
                 // Show bot message
                 userMessageContainer.visibility = View.GONE
                 botMessageContainer.visibility = View.VISIBLE
                 
-                // Mostrar información de la tarea cuando hay calificación
-                if (message.hasCalification && taskInfo != null) {
-                    // Usar solo texto formateado - sin elementos visuales
-                    val messageWithTaskInfo = buildString {
-                        appendLine("📚 **TAREA PARA CALIFICAR** ⚡ *Análisis IA Completado*")
-                        appendLine()
-                        appendLine("**${taskInfo!!.taskName}**")
-                        appendLine("📚 ${taskInfo!!.topicName}")
-                        appendLine("Entregado: ${taskInfo!!.deliveryDate}")
-                        appendLine()
-                        appendLine("📝 **Descripción de la tarea:**")
-                        appendLine(taskInfo!!.taskDescription)
-                        appendLine()
-                        appendLine("🔄 **CALIFICACIÓN IA**")
-                        
-                        val gradeValue = extractGradeFromMessage(message.message)
-                        val gradePercentage = if (gradeValue != null) (gradeValue * 10).toInt() else 87
-                        appendLine("📊 Calificación: $gradePercentage/100")
-                        appendLine("⭐ ${getQualityLabel(gradePercentage)}")
-                        appendLine()
-                        appendLine("---")
-                        appendLine()
-                        append(message.message)
-                    }
-                    botMessageTextView.text = formatBoldText(messageWithTaskInfo)
+                // Enhanced bot message formatting
+                val formattedMessage = if (message.hasCalification && taskInfo != null) {
+                    buildEnhancedTaskMessage(message)
                 } else {
-                    botMessageTextView.text = formatBoldText(message.message)
+                    formatBotMessage(message.message)
                 }
                 
-                // Mostrar botones de calificación solo si el mensaje tiene calificación y no ha sido agregada
+                botMessageTextView.text = formatBoldText(formattedMessage)
+                botMessageTime.text = timeFormat.format(Date(message.timestamp))
+                
+                // Setup action buttons for bot messages
+                setupBotMessageActions(message)
+                
+                // Show calification buttons if needed
                 if (message.hasCalification && !message.calificationAdded) {
                     calificationButtonsContainer.visibility = View.VISIBLE
-                    
-                    addCalificationButton.setOnClickListener {
-                        onAddCalificationClick(message)
-                    }
-                    
-                    rejectCalificationButton.setOnClickListener {
-                        onRejectCalificationClick(message)
-                    }
+                    setupCalificationButtons(message)
                 } else {
                     calificationButtonsContainer.visibility = View.GONE
                 }
             }
             
-            // Set timestamp
-            timestampTextView.text = timeFormat.format(Date(message.timestamp))
+            // Hide standalone timestamp (we're using inline timestamps now)
+            timestampTextView.visibility = View.GONE
+        }
+        
+        private fun buildEnhancedTaskMessage(message: ChatMessage): String {
+            return buildString {
+                appendLine("📚 **ANÁLISIS DE TAREA COMPLETADO**")
+                appendLine()
+                appendLine("**${taskInfo!!.taskName}**")
+                appendLine("📚 Tema: ${taskInfo!!.topicName}")
+                appendLine("📅 Entregado: ${taskInfo!!.deliveryDate}")
+                appendLine()
+                appendLine("📝 **Descripción:**")
+                appendLine(taskInfo!!.taskDescription)
+                appendLine()
+                
+                val gradeValue = extractGradeFromMessage(message.message)
+                val gradePercentage = if (gradeValue != null) (gradeValue * 10).toInt() else 87
+                
+                appendLine("🎯 **CALIFICACIÓN SUGERIDA**")
+                appendLine("📊 Puntuación: $gradePercentage/100")
+                appendLine("⭐ Nivel: ${getQualityLabel(gradePercentage)}")
+                appendLine()
+                appendLine("---")
+                appendLine()
+                append(message.message)
+            }
+        }
+        
+        private fun formatBotMessage(message: String): String {
+            // Add helpful formatting for common response types
+            return when {
+                message.contains("Error") -> "⚠️ $message"
+                message.contains("registros encontrados") -> "📊 $message"
+                message.contains("Total") -> "📈 $message"
+                message.contains("Lista") -> "📋 $message"
+                message.contains("Usuario:") -> "👤 $message"
+                message.contains("Video:") -> "🎥 $message"
+                message.contains("Curso:") -> "📚 $message"
+                else -> message
+            }
+        }
+        
+        private fun setupBotMessageActions(message: ChatMessage) {
+            copyButton.setOnClickListener {
+                copyToClipboard(message.message)
+            }
+            
+            shareButton.setOnClickListener {
+                shareMessage(message.message)
+            }
+        }
+        
+        private fun setupUserMessageActions(message: ChatMessage) {
+            editUserMessageButton.setOnClickListener {
+                onEditUserMessageClick(message)
+            }
+            
+            copyUserMessageButton.setOnClickListener {
+                copyToClipboard(message.message)
+            }
+        }
+        
+        private fun setupCalificationButtons(message: ChatMessage) {
+            addCalificationButton.setOnClickListener {
+                onAddCalificationClick(message)
+            }
+            
+            rejectCalificationButton.setOnClickListener {
+                onRejectCalificationClick(message)
+            }
+        }
+        
+        private fun copyToClipboard(text: String) {
+            val clipboard = itemView.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = ClipData.newPlainText("Mensaje de Llama", text)
+            clipboard.setPrimaryClip(clip)
+            Toast.makeText(itemView.context, "Mensaje copiado al portapapeles", Toast.LENGTH_SHORT).show()
+        }
+        
+        private fun shareMessage(text: String) {
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, "Respuesta de Llama 3.3:\n\n$text")
+                putExtra(Intent.EXTRA_SUBJECT, "Conversación con IA")
+            }
+            itemView.context.startActivity(Intent.createChooser(intent, "Compartir respuesta"))
         }
         
         private fun formatBoldText(text: String): SpannableString {
-            // Primero remover los asteriscos y crear el texto limpio
+            // Enhanced text formatting with better markdown support
             val cleanText = text.replace(Regex("\\*\\*(.*?)\\*\\*")) { matchResult ->
                 matchResult.groupValues[1]
             }
@@ -131,18 +213,15 @@ class ChatMessageAdapter(
             val regex = Regex("\\*\\*(.*?)\\*\\*")
             var offset = 0
             
-            // Buscar todas las coincidencias en el texto original
+            // Apply bold formatting to text between **
             regex.findAll(text).forEach { match ->
                 val originalStart = match.range.first
-                val originalEnd = match.range.last + 1
                 val boldText = match.groupValues[1]
                 
-                // Calcular la posición en el texto limpio
                 val cleanStart = originalStart - offset
                 val cleanEnd = cleanStart + boldText.length
                 
-                // Aplicar estilo negrita
-                if (cleanStart >= 0 && cleanEnd <= cleanText.length) {
+                if (cleanStart >= 0 && cleanEnd <= cleanText.length && cleanStart < cleanEnd) {
                     spannableString.setSpan(
                         StyleSpan(Typeface.BOLD),
                         cleanStart,
@@ -151,8 +230,7 @@ class ChatMessageAdapter(
                     )
                 }
                 
-                // Actualizar el offset por los 4 asteriscos removidos
-                offset += 4
+                offset += 4 // Account for removed ** **
             }
             
             return spannableString
@@ -160,28 +238,34 @@ class ChatMessageAdapter(
         
         private fun getQualityLabel(grade: Int): String {
             return when {
-                grade >= 90 -> "Excelente"
-                grade >= 80 -> "Muy Bueno"
-                grade >= 70 -> "Bueno"
+                grade >= 95 -> "Excepcional"
+                grade >= 90 -> "Excelente" 
+                grade >= 85 -> "Muy Bueno"
+                grade >= 80 -> "Bueno"
+                grade >= 75 -> "Satisfactorio"
+                grade >= 70 -> "Aceptable"
                 grade >= 60 -> "Regular"
                 else -> "Necesita Mejora"
             }
         }
         
         private fun extractGradeFromMessage(message: String): Float? {
-            // Buscar patrones de calificación en el mensaje
+            // Enhanced grade extraction with more patterns
             val patterns = listOf(
-                Regex("calificación\\s*:?\\s*(\\d+(?:\\.\\d+)?)(?:/10)?", RegexOption.IGNORE_CASE),
-                Regex("nota\\s*:?\\s*(\\d+(?:\\.\\d+)?)(?:/10)?", RegexOption.IGNORE_CASE),
-                Regex("puntuación\\s*:?\\s*(\\d+(?:\\.\\d+)?)(?:/10)?", RegexOption.IGNORE_CASE),
-                Regex("(\\d+(?:\\.\\d+)?)/10", RegexOption.IGNORE_CASE),
-                Regex("grade\\s*:?\\s*(\\d+(?:\\.\\d+)?)(?:/10)?", RegexOption.IGNORE_CASE)
+                Regex("calificación\\s*:?\\s*(\\d+(?:[.,]\\d+)?)(?:/10)?", RegexOption.IGNORE_CASE),
+                Regex("nota\\s*:?\\s*(\\d+(?:[.,]\\d+)?)(?:/10)?", RegexOption.IGNORE_CASE),
+                Regex("puntuación\\s*:?\\s*(\\d+(?:[.,]\\d+)?)(?:/10)?", RegexOption.IGNORE_CASE),
+                Regex("(\\d+(?:[.,]\\d+)?)/10", RegexOption.IGNORE_CASE),
+                Regex("grade\\s*:?\\s*(\\d+(?:[.,]\\d+)?)(?:/10)?", RegexOption.IGNORE_CASE),
+                Regex("score\\s*:?\\s*(\\d+(?:[.,]\\d+)?)(?:/10)?", RegexOption.IGNORE_CASE),
+                Regex("rating\\s*:?\\s*(\\d+(?:[.,]\\d+)?)(?:/10)?", RegexOption.IGNORE_CASE)
             )
             
             for (pattern in patterns) {
                 val match = pattern.find(message)
                 if (match != null) {
-                    return match.groupValues[1].toFloatOrNull()
+                    val gradeStr = match.groupValues[1].replace(",", ".")
+                    return gradeStr.toFloatOrNull()
                 }
             }
             return null

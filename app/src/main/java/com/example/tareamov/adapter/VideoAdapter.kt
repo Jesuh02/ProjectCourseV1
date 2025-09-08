@@ -4,6 +4,7 @@ import android.media.MediaPlayer // Added for MediaPlayer
 import android.net.Uri
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -24,7 +25,8 @@ import kotlinx.coroutines.*
  */
 class VideoAdapter(
     private var videos: List<VideoData>,
-    private val onProfileClick: ((String) -> Unit)? = null
+    private val onProfileClick: ((String) -> Unit)? = null,
+    private val onUsernameClick: ((VideoData) -> Unit)? = null
 ) : RecyclerView.Adapter<VideoAdapter.VideoViewHolder>() {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoViewHolder {
@@ -96,6 +98,11 @@ class VideoAdapter(
             // Setup profile button click
             profileButton.setOnClickListener {
                 onProfileClick?.invoke(videoData.username)
+            }
+
+            // Setup username text click to navigate to course
+            usernameText.setOnClickListener {
+                onUsernameClick?.invoke(videoData)
             }
 
             // --- AVATAR LOADING LOGIC ---
@@ -259,6 +266,52 @@ class VideoAdapter(
             fullscreenButton?.setOnClickListener {
                 // Navigate to fullscreen activity
                 navigateToFullscreen()
+            }
+
+            // Setup gesture detector for swipe left to navigate to course
+            setupVideoGestureDetector()
+        }
+
+        private fun setupVideoGestureDetector() {
+            var startX = 0f
+            var startY = 0f
+            var startTime = 0L
+
+            videoView.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        startX = event.x
+                        startY = event.y
+                        startTime = System.currentTimeMillis()
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val endX = event.x
+                        val endY = event.y
+                        val endTime = System.currentTimeMillis()
+                        
+                        val diffX = endX - startX
+                        val diffY = endY - startY
+                        val timeDiff = endTime - startTime
+                        
+                        // Check if it's a swipe gesture (not just a tap)
+                        if (timeDiff < 300 && Math.abs(diffX) > 100) {
+                            // Check if it's a horizontal swipe (left)
+                            if (Math.abs(diffX) > Math.abs(diffY) && diffX < -100) {
+                                // Swipe left detected - navigate to course
+                                val position = adapterPosition
+                                if (position != RecyclerView.NO_POSITION && position < videos.size) {
+                                    val videoData = videos[position]
+                                    onUsernameClick?.invoke(videoData)
+                                    return@setOnTouchListener true
+                                }
+                            }
+                        } else if (timeDiff < 200 && Math.abs(diffX) < 50 && Math.abs(diffY) < 50) {
+                            // Single tap detected - toggle play/pause
+                            togglePlayPause()
+                        }
+                    }
+                }
+                true
             }
         }
 

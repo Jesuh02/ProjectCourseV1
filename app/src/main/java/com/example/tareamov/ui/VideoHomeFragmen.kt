@@ -23,6 +23,7 @@ import com.example.tareamov.adapter.VideoAdapter
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.VideoData
+import com.example.tareamov.data.entity.Course
 import com.example.tareamov.util.VideoManager
 import de.hdodenhof.circleimageview.CircleImageView
 import kotlinx.coroutines.Dispatchers
@@ -217,14 +218,21 @@ class VideoHomeFragment : Fragment() {
     }
 
     private fun setupVideoViewPager(view: View) {
-        // Inicializar el adaptador con la lista de videos y callback para profile clicks
-        videoAdapter = VideoAdapter(videoList) { username ->
-            // Handle profile click
-            val bundle = Bundle().apply {
-                putString("username", username)
+        // Inicializar el adaptador con la lista de videos y callbacks para profile clicks y username clicks
+        videoAdapter = VideoAdapter(
+            videoList,
+            onProfileClick = { username ->
+                // Handle profile click
+                val bundle = Bundle().apply {
+                    putString("username", username)
+                }
+                findNavController().navigate(R.id.userProfileViewFragment, bundle)
+            },
+            onUsernameClick = { videoData ->
+                // Handle username click to navigate to course
+                navigateToCourseFromVideo(videoData)
             }
-            findNavController().navigate(R.id.userProfileViewFragment, bundle)
-        }
+        )
 
         // Configurar el ViewPager2
         val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
@@ -616,6 +624,68 @@ class VideoHomeFragment : Fragment() {
             displayVideo(videoList[index])
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "Error navigating to video index $index", e)
+        }
+    }
+
+    // Método para navegar al curso desde un video
+    private fun navigateToCourseFromVideo(videoData: VideoData) {
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val database = AppDatabase.getDatabase(requireContext())
+                    
+                    // Primero buscar directamente por videoUri en la tabla Course
+                    var course = database.courseDao().getAllCourses()
+                        .find { it.videoUri == videoData.videoUriString || it.creatorUsername == videoData.username }
+                    
+                    // Si no se encuentra por videoUri, buscar por título y creador
+                    if (course == null) {
+                        course = database.courseDao().getAllCourses()
+                            .find { it.title == videoData.title && it.creatorUsername == videoData.username }
+                    }
+                    
+                    // Si aún no se encuentra, crear un curso automáticamente para este video
+                    if (course == null) {
+                        Log.d("VideoHomeFragment", "No course found for video, creating new course")
+                        val newCourse = Course(
+                            title = if (videoData.title.isNotBlank() && videoData.title != "Mi video") videoData.title else "Curso de ${videoData.username}",
+                            description = if (videoData.description.isNotBlank()) videoData.description else "Curso creado automáticamente para el video: ${videoData.title}",
+                            creatorUsername = videoData.username,
+                            videoUri = videoData.videoUriString,
+                            localFilePath = videoData.localFilePath,
+                            price = videoData.price ?: 0.0,
+                            isPremium = videoData.isPaid,
+                            timestamp = videoData.timestamp
+                        )
+                        val courseId = database.courseDao().insertCourse(newCourse)
+                        course = database.courseDao().getCourseById(courseId)
+                        Log.d("VideoHomeFragment", "Created new course with ID: $courseId")
+                    }
+                    
+                    if (course != null) {
+                        withContext(Dispatchers.Main) {
+                            // Navegar al CourseDetailFragment
+                            val bundle = Bundle().apply {
+                                putLong("courseId", course.id)
+                                putString("courseName", course.title)
+                            }
+                            findNavController().navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                            Toast.makeText(requireContext(), "Navegando al curso: ${course.title}", Toast.LENGTH_SHORT).show()
+                        }
+                        return@withContext
+                    }
+                    
+                    // Si no se encuentra el curso, mostrar mensaje
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "Error al crear o encontrar el curso asociado a este video", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("VideoHomeFragment", "Error navigating to course from video", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "Error al buscar el curso: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 }

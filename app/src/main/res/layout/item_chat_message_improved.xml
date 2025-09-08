@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <!-- User Message Container -->
+    <LinearLayout
+        android:id="@+id/userMessageContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="20dp"
+        android:background="#000000"
+        android:gravity="start|top"
+        android:visibility="gone">
+
+        <!-- User Avatar -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginTop="2dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="#4A90E2">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_user"
+                android:tint="#FFFFFF" />
+        </androidx.cardview.widget.CardView>
+
+        <!-- User Message Content -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/userMessageTextView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:lineSpacingExtra="4dp"
+                android:textIsSelectable="true"
+                android:fontFamily="sans-serif"
+                android:text="Mensaje del usuario" />
+
+            <TextView
+                android:id="@+id/userMessageTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:layout_marginTop="6dp"
+                android:text="00:00" />
+
+            <!-- User Message Action Buttons -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp">
+
+                <ImageButton
+                    android:id="@+id/editUserMessageButton"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_menu_edit"
+                    android:tint="#888888"
+                    android:contentDescription="Editar mensaje"
+                    android:layout_marginEnd="8dp" />
+
+                <ImageButton
+                    android:id="@+id/copyUserMessageButton"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_menu_save"
+                    android:tint="#888888"
+                    android:contentDescription="Copiar mensaje"
+                    android:layout_marginEnd="8dp" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Bot Message Container -->
+    <LinearLayout
+        android:id="@+id/botMessageContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="20dp"
+        android:background="#000000"
+        android:gravity="start|top"
+        android:visibility="gone">
+
+        <!-- Bot Avatar -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginTop="2dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="#10A37F">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_cpu"
+                android:tint="#FFFFFF" />
+        </androidx.cardview.widget.CardView>
+
+        <!-- Bot Message Content -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <!-- Bot header with model info -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Llama 3.3 70B"
+                    android:textColor="#10A37F"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <View
+                    android:layout_width="4dp"
+                    android:layout_height="4dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/circle_shape"
+                    android:backgroundTint="#4CAF50" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="RAG"
+                    android:textColor="#4CAF50"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/botMessageTextView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:lineSpacingExtra="4dp"
+                android:textIsSelectable="true"
+                android:fontFamily="sans-serif"
+                android:text="Respuesta del modelo" />
+
+            <!-- Action buttons container -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="12dp"
+                android:gravity="start">
+
+                <ImageButton
+                    android:id="@+id/copyButton"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_copy"
+                    android:tint="#888888"
+                    android:contentDescription="Copiar mensaje"
+                    android:padding="6dp" />
+
+                <ImageButton
+                    android:id="@+id/shareButton"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_share"
+                    android:tint="#888888"
+                    android:contentDescription="Compartir mensaje"
+                    android:padding="6dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/botMessageTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:layout_marginTop="6dp"
+                android:text="00:00" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Enhanced Calification buttons container with small aesthetic design -->
+    <LinearLayout
+        android:id="@+id/calificationButtonsContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp"
+        android:background="#000000"
+        android:visibility="gone">
+
+        <!-- Header text for buttons -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="¿Agregar calificación al sistema?"
+            android:textColor="#CCCCCC"
+            android:textSize="12sp"
+            android:gravity="center"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Small aesthetic buttons row -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_gravity="center">
+
+            <!-- Small Accept button -->
+            <Button
+                android:id="@+id/addCalificationButton"
+                android:layout_width="60dp"
+                android:layout_height="36dp"
+                android:backgroundTint="#4CAF50"
+                android:text="✓"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="16sp"
+                android:contentDescription="Agregar calificación"
+                android:layout_marginEnd="8dp"
+                android:elevation="4dp"
+                style="@style/Widget.Material3.Button.UnelevatedButton" />
+
+            <!-- Small Reject button -->
+            <Button
+                android:id="@+id/rejectCalificationButton"
+                android:layout_width="60dp"
+                android:layout_height="36dp"
+                android:backgroundTint="#f44336"
+                android:text="✗"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="16sp"
+                android:contentDescription="No agregar calificación"
+                android:layout_marginStart="8dp"
+                android:elevation="4dp"
+                style="@style/Widget.Material3.Button.UnelevatedButton" />
+        </LinearLayout>
+        <!-- Subtle divider line -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="12dp"
+            android:background="#333333"
+            android:alpha="0.3" />
+    </LinearLayout>
+
+    <!-- Hidden timestamp (for compatibility) -->
+    <TextView
+        android:id="@+id/messageTimestampTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+</LinearLayout>

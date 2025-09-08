@@ -1085,7 +1085,9 @@ class TaskSubmissionsFragment : Fragment() {
                         }
 
                         try {
-                            val grade = gradeText.toFloat()
+                            // Normalizar el formato decimal (cambiar coma por punto si es necesario)
+                            val normalizedGradeText = gradeText.replace(",", ".")
+                            val grade = normalizedGradeText.toFloat()
                             if (grade < 0 || grade > 10) {
                                 Toast.makeText(context, "La calificación debe estar entre 0 y 10", Toast.LENGTH_SHORT).show()
                                 return@setOnClickListener
@@ -1094,7 +1096,8 @@ class TaskSubmissionsFragment : Fragment() {
                             val feedback = feedbackEditText.text.toString()
                             onGradeSubmitted(submission, grade, feedback)
                         } catch (e: NumberFormatException) {
-                            Toast.makeText(context, "Formato de calificación inválido", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "❌ No se pudo convertir la calificación '$gradeText' a número decimal", Toast.LENGTH_SHORT).show()
+                            Log.e("TaskSubmissionsFragment", "❌ No se pudo convertir grade a Float: $gradeText", e)
                         }
                     }
                 } else {

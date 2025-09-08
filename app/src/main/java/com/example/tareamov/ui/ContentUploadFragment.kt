@@ -20,6 +20,7 @@ import androidx.navigation.fragment.findNavController
 import com.example.tareamov.R
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
+import com.example.tareamov.data.entity.Course
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.ThumbnailManager
 import kotlinx.coroutines.Dispatchers
@@ -157,6 +158,31 @@ class ContentUploadFragment : Fragment() {
 
                         val isVerified = videoManager.verifyVideoSaved(finalVideo.id)
                         Log.d("ContentUploadFragment", "Video verification result: $isVerified")
+
+                        // Create a course automatically for the uploaded video
+                        if (isVerified) {
+                            try {
+                                val database = AppDatabase.getDatabase(requireContext())
+                                val newCourse = Course(
+                                    title = if (finalVideo.title.isNotBlank() && finalVideo.title != "Mi video") 
+                                        finalVideo.title else "Curso de ${finalVideo.username}",
+                                    description = if (finalVideo.description.isNotBlank()) 
+                                        finalVideo.description else "Curso creado automáticamente para el video: ${finalVideo.title}",
+                                    creatorUsername = finalVideo.username,
+                                    videoUri = finalVideo.videoUriString,
+                                    localFilePath = finalVideo.localFilePath,
+                                    thumbnailUri = finalVideo.thumbnailUri,
+                                    price = finalVideo.price ?: 0.0,
+                                    isPremium = finalVideo.isPaid,
+                                    timestamp = finalVideo.timestamp
+                                )
+                                val courseId = database.courseDao().insertCourse(newCourse)
+                                Log.d("ContentUploadFragment", "Automatically created course with ID: $courseId for video: ${finalVideo.id}")
+                            } catch (e: Exception) {
+                                Log.e("ContentUploadFragment", "Error creating course for video", e)
+                                // Continue even if course creation fails
+                            }
+                        }
 
                         if (isVerified && finalVideo.localFilePath != null) {
                             val bundle = Bundle().apply {
