@@ -103,3 +103,6 @@ yarn-error.log*
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Avoid nested repositories
+ProjectCourseV1/
