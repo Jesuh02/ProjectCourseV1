@@ -22,8 +22,6 @@ class VideoPlayerActivity : AppCompatActivity() {
     private lateinit var controlsOverlay: FrameLayout
     private lateinit var playPauseOverlay: ImageView
     private lateinit var backButton: ImageView
-    private lateinit var ccButton: ImageView
-    private lateinit var settingsButton: ImageView
     private lateinit var seekBar: SeekBar
     private lateinit var currentTime: TextView
     private lateinit var totalTime: TextView
@@ -64,14 +62,10 @@ class VideoPlayerActivity : AppCompatActivity() {
         controlsOverlay = findViewById(R.id.controlsOverlay)
         playPauseOverlay = findViewById(R.id.playPauseOverlay)
         backButton = findViewById(R.id.backButton)
-        ccButton = findViewById(R.id.ccButton)
-        settingsButton = findViewById(R.id.settingsButton)
         seekBar = findViewById(R.id.seekBar)
         currentTime = findViewById(R.id.currentTime)
         totalTime = findViewById(R.id.totalTime)
         muteButton = findViewById(R.id.muteButton)
-        likeButton = findViewById(R.id.likeButton)
-        shareButton = findViewById(R.id.shareButton)
         titleText = findViewById(R.id.titleText)
         skipBackIcon = findViewById(R.id.skipBackIcon)
         skipForwardIcon = findViewById(R.id.skipForwardIcon)
@@ -213,19 +207,11 @@ class VideoPlayerActivity : AppCompatActivity() {
         skipBackIcon.setOnClickListener { seekBy(-10_000) }
         skipForwardIcon.setOnClickListener { seekBy(10_000) }
 
-        muteButton.setOnClickListener {
+    muteButton.setOnClickListener {
             isMuted = !isMuted
             setMuted(isMuted)
         }
-
-        likeButton.setOnClickListener {
-            Toast.makeText(this, "Te gusta", Toast.LENGTH_SHORT).show()
-            // optionally toggle UI state
-        }
-
-        shareButton.setOnClickListener {
-            shareCurrentVideo(uri, videoTitle, videoDescription)
-        }
+        
 
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -346,17 +332,6 @@ class VideoPlayerActivity : AppCompatActivity() {
         playPauseOverlay.visibility = View.VISIBLE
         playPauseOverlay.alpha = 0.95f
         uiHandler.postDelayed({ playPauseOverlay.visibility = View.GONE }, 1000)
-    }
-
-    private fun shareCurrentVideo(uri: Uri, title: String?, description: String?) {
-        val share = Intent(Intent.ACTION_SEND).apply {
-            type = contentResolver.getType(uri) ?: "video/*"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, title)
-            putExtra(Intent.EXTRA_TEXT, description ?: "")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-    startActivity(Intent.createChooser(share, "Compartir"))
     }
 
     private fun formatTime(ms: Int): String {
