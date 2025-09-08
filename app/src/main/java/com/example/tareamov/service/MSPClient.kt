@@ -33,14 +33,16 @@ class MSPClient(private val context: Context) {
     // Lista de IPs posibles (ordenadas por prioridad)
     // Lista de IPs posibles (ordenadas por prioridad, incluyendo la IP de Wi-Fi y gateway de la última configuración)
     private val possibleBaseUrls = listOf(
-        "http://192.168.1.224:11435",   // IP Wi-Fi actual (ipconfig)
-        "http://192.168.1.254:11435",   // Gateway predeterminado (ipconfig)
+        "http://10.218.57.181:11435",   // IP Wi-Fi actual (ipconfig más reciente)
+        "http://10.218.57.109:11435",   // Gateway predeterminado (ipconfig más reciente)
+        "http://172.17.112.1:11435",    // WSL IP from ipconfig
+        "http://192.168.1.224:11435",   // IP Wi-Fi anterior (ipconfig)
+        "http://192.168.1.254:11435",   // Gateway predeterminado anterior (ipconfig)
         "http://192.168.1.17:11435",    // Anterior IP Wi-Fi
         "http://192.168.1.158:11435",   // Previous IP from ipconfig
         "http://localhost:11435",       // Localhost - High priority
         "http://127.0.0.1:11435",       // Loopback - High priority
-        "http://0.0.0.0:11435",         // Bind address from Ollama logs
-        "http://172.17.112.1:11435"     // WSL IP from ipconfig
+        "http://0.0.0.0:11435"          // Bind address from Ollama logs
     )
     private val emulatorUrl = "http://10.0.2.2:11435"
     private val modelName = "llama3"
@@ -61,9 +63,9 @@ class MSPClient(private val context: Context) {
         }
         
         // Always try the current IP first (from ipconfig)
-        if (isServerRunning("http://192.168.1.158:11435")) {
-            Log.d(tag, "Connected to Ollama at current IP URL: http://192.168.1.158:11435")
-            return "http://192.168.1.158:11435"
+        if (isServerRunning("http://10.218.57.181:11435")) {
+            Log.d(tag, "Connected to Ollama at current IP URL: http://10.218.57.181:11435")
+            return "http://10.218.57.181:11435"
         }
         
         // Try each other URL in order of priority
@@ -76,7 +78,7 @@ class MSPClient(private val context: Context) {
         
         // If none respond, use the current IP as fallback for future attempts
         Log.w(tag, "No Ollama server found, using current IP as fallback")
-        return "http://192.168.1.158:11435"
+        return "http://10.218.57.181:11435"
     }
 
     // Improved server running check with better connection handling
