@@ -784,9 +784,11 @@ class AIAnalysisService(private val context: Context) {
 
             // Agregar IPs comunes de redes privadas como fallback
             val commonPrivateIPs = listOf(
-                "192.168.1.158", // IP local de este dispositivo
+                "10.218.57.181", // IP Wi-Fi actual (nueva configuración)
+                "10.218.57.109", // Puerta de enlace actual
                 "172.17.112.1", // IP de WSL
-                "192.168.1.254", // Puerta de enlace
+                "192.168.1.158", // IP local anterior de este dispositivo
+                "192.168.1.254", // Puerta de enlace anterior
                 "192.168.1.1", "192.168.0.1", "192.168.1.100", "192.168.1.101",
                 "192.168.0.100", "192.168.0.101", "10.0.0.1", "172.16.0.1"
             )

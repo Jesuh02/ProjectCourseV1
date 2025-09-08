@@ -100,9 +100,9 @@ class ChatBotFragment : Fragment() {
     private lateinit var fileAnalysisService: FileAnalysisService
 
     // Retrofit para el microservicio
-    // IP y puerto explícitos del microservicio
-    private val MICROSERVICIO_BASE_URL = "http://192.168.1.158:3001/"
-    private val OLLAMA_URL = "http://192.168.1.158:11435"
+    // IP y puerto explícitos del microservicio (actualizado con nueva configuración de red)
+    private val MICROSERVICIO_BASE_URL = "http://10.218.57.181:3001/"
+    private val OLLAMA_URL = "http://10.218.57.181:11435"
     // Aumentar los timeouts para evitar que el chat cierre la espera antes de que el modelo responda
     private val microservicioApi: MicroservicioApi by lazy {
         val okHttpClient = okhttp3.OkHttpClient.Builder()
