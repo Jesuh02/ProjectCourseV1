@@ -148,11 +148,6 @@ class UserProfileViewFragment : Fragment() {
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
         bottomNavBinding = ComponentBottomNavigationBinding.bind(bottomNavView)
 
-        // Resaltar solo el icono de perfil en morado
-        bottomNavBinding.profileIconImageView.setColorFilter(
-            androidx.core.content.ContextCompat.getColor(requireContext(), R.color.purple_500)
-        )
-
         // Home Button - Navigate to VideoHome
         bottomNavBinding.homeNavLayout.setOnClickListener {
             findNavController().navigate(R.id.action_userProfileViewFragment_to_videoHomeFragment)
@@ -173,9 +168,10 @@ class UserProfileViewFragment : Fragment() {
             findNavController().navigate(R.id.action_userProfileViewFragment_to_notificacionesFragment)
         }
         
-        // Profile Button (ic_profile) - Already in profile, so we could highlight it or do nothing
+        // Profile Button (ic_profile) - navegar al perfil propio cuando se pulsa
         bottomNavBinding.profileNavButton.setOnClickListener {
-            // Already in profile view, no action needed
+            // Navegar al fragmento `ProfileFragment` (perfil propio)
+            findNavController().navigate(R.id.action_userProfileViewFragment_to_profileFragment)
         }
 
         // Setup admin button visibility and functionality
