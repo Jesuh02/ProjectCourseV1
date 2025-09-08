@@ -63,8 +63,14 @@ class OllamaService : Service() {
                 return
             }
             
-            // Try other addresses
+            // Try other addresses (including Windows Wi‑Fi / WSL addresses reported by the user)
             val otherAddresses = listOf(
+                // Wi‑Fi and gateway addresses from Windows ipconfig
+                "http://10.218.57.181:11435" to "10.218.57.181:11435",
+                "http://10.218.57.109:11435" to "10.218.57.109:11435",
+                // WSL / Hyper‑V virtual adapter
+                "http://172.17.112.1:11435" to "172.17.112.1:11435",
+                // Local loopback alternatives
                 "http://localhost:11435" to "localhost:11435",
                 "http://127.0.0.1:11435" to "127.0.0.1:11435",
                 "http://0.0.0.0:11435" to "0.0.0.0:11435"

@@ -56,9 +56,14 @@ class MCPService(private val context: Context) {
         private const val TIMEOUT_SECONDS = 15L
         
         // URLs alternativos en caso de que el principal falle
+        // Incluimos las IPs reportadas por el usuario (Wi‑Fi y WSL/Hyper‑V) y alternativas de loopback
         private val FALLBACK_URLS = listOf(
+            "http://10.218.57.181:3000/convert",
+            "http://10.218.57.109:3000/convert",
+            "http://172.17.112.1:3000/convert",
             "http://10.0.2.2:3000/convert",
             "http://localhost:3000/convert",
+            "http://127.0.0.1:3000/convert",
             "http://10.0.2.2:5000/convert",
             "http://10.0.2.2:8000/convert",
             "http://127.0.0.1:5000/convert"

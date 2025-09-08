@@ -47,6 +47,42 @@ class ChatMessageAdapter(
         taskInfo = newTaskInfo
         notifyDataSetChanged()
     }
+    
+    /**
+     * Actualiza un mensaje existente en la lista
+     */
+    fun updateMessage(messageId: Long, newText: String) {
+        val currentList = currentList.toMutableList()
+        val index = currentList.indexOfFirst { it.id == messageId }
+        if (index != -1) {
+            val updatedMessage = currentList[index].copy(message = newText)
+            currentList[index] = updatedMessage
+            submitList(currentList)
+        }
+    }
+    
+    /**
+     * Remueve mensajes desde una posición específica en adelante
+     */
+    fun removeMessagesFromPosition(position: Int) {
+        val currentList = currentList.toMutableList()
+        if (position < currentList.size) {
+            val newList = currentList.take(position)
+            submitList(newList)
+        }
+    }
+    
+    /**
+     * Remueve mensajes después de un mensaje específico
+     */
+    fun removeMessagesAfter(messageId: Long) {
+        val currentList = currentList.toMutableList()
+        val index = currentList.indexOfFirst { it.id == messageId }
+        if (index != -1 && index < currentList.size - 1) {
+            val newList = currentList.take(index + 1)
+            submitList(newList)
+        }
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
         val view = LayoutInflater.from(parent.context)

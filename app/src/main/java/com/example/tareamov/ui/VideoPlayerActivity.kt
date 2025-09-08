@@ -33,6 +33,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private lateinit var skipForwardIcon: ImageView
 
     private var mediaPlayer: MediaPlayer? = null
+    private var mediaPlayerPrepared: Boolean = false
     private var isControlsVisible = false
     private var isMuted = false
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -132,6 +133,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         videoView.setVideoURI(uri)
         videoView.setOnPreparedListener { mp ->
             mediaPlayer = mp
+            mediaPlayerPrepared = true
             mp.isLooping = true
             totalTime.text = formatTime(mp.duration)
             seekBar.max = mp.duration
@@ -182,6 +184,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
         videoView.setOnErrorListener { _, what, extra ->
             Log.e("VideoPlayerActivity", "Error playing video: what=$what, extra=$extra")
+            mediaPlayerPrepared = false
             Toast.makeText(this, "Error al reproducir el video", Toast.LENGTH_SHORT).show()
             finish()
             true
@@ -311,11 +314,26 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun setMuted(muted: Boolean) {
-        try {
-            val volume = if (muted) 0f else 1f
-            mediaPlayer?.setVolume(volume, volume)
+        // Update desired mute state immediately
+        isMuted = muted
+        
+        // Only apply volume if MediaPlayer is prepared
+        if (mediaPlayerPrepared) {
+            try {
+                val volume = if (muted) 0f else 1f
+                mediaPlayer?.setVolume(volume, volume)
+                muteButton.setImageResource(if (muted) R.drawable.ic_sound_muted_minimal else R.drawable.ic_sound_minimal)
+            } catch (e: IllegalStateException) {
+                Log.e("VideoPlayerActivity", "Error setting volume, MediaPlayer might not be ready.", e)
+                // Keep isMuted flag; volume will be applied later when prepared
+                mediaPlayerPrepared = false
+            }
+        } else {
+            // Not prepared yet: volume will be applied when onPreparedListener runs
+            Log.d("VideoPlayerActivity", "MediaPlayer not prepared yet; saved mute state=$isMuted")
+            // Still update button appearance
             muteButton.setImageResource(if (muted) R.drawable.ic_sound_muted_minimal else R.drawable.ic_sound_minimal)
-        } catch (_: Exception) {}
+        }
     }
 
     private fun seekBy(deltaMs: Int) {

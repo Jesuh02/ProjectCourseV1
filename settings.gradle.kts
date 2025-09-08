@@ -20,6 +20,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "TAREAMOV"
+rootProject.name = "CourseV"
 include(":app")
  

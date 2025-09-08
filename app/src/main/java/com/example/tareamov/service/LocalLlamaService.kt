@@ -19,6 +19,17 @@ class LocalLlamaService(private val context: Context) {
     private val isModelLoaded = AtomicBoolean(false)
     private val modelFileName = "llama3-8b-q4_0.gguf"
 
+    companion object {
+        // Fallback host addresses reported by the Windows ipconfig output
+        val FALLBACK_LLAMA_URLS = listOf(
+            "http://10.218.57.181:11435",
+            "http://10.218.57.109:11435",
+            "http://172.17.112.1:11435",
+            "http://127.0.0.1:11435",
+            "http://localhost:11435"
+        )
+    }
+
     /**
      * Inicializa el modelo Llama 3
      */

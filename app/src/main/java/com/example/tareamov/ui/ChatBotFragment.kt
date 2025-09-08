@@ -1248,24 +1248,59 @@ class ChatBotFragment : Fragment() {
                 // 4. Recargar mensajes en la UI
                 loadMessages()
                 
-                // 5. Enviar el nuevo mensaje al modelo
+                // 5. Procesar el mensaje editado directamente sin duplicar
                 withContext(Dispatchers.Main) {
-                    // Poner el nuevo texto en el campo de entrada temporalmente
-                    val originalText = messageEditText.text.toString()
-                    messageEditText.setText(newMessageText)
+                    // Mostrar indicador de procesamiento
+                    loadingProgressBar.visibility = View.VISIBLE
                     
-                    // Enviar el mensaje
-                    sendMessage()
-                    
-                    // Limpiar el campo de entrada
-                    messageEditText.setText("")
-                    
-                    Toast.makeText(context, "✅ Mensaje actualizado y reenviado", Toast.LENGTH_SHORT).show()
+                    // Procesar directamente con el AI
+                    try {
+                        val botResponse = analizarEntregaYFeedback(newMessageText, currentFileContext)
+                        
+                        // Crear respuesta del bot
+                        val botMessage = ChatMessage(
+                            message = botResponse,
+                            isFromUser = false,
+                            timestamp = System.currentTimeMillis(),
+                            sessionId = sessionId,
+                            hasCalification = detectCalification(newMessageText, botResponse),
+                            calificationAdded = false
+                        )
+                        
+                        // Guardar respuesta del bot en la base de datos
+                        withContext(Dispatchers.IO) {
+                            database.chatMessageDao().insertMessage(botMessage)
+                        }
+                        
+                        // Recargar mensajes para mostrar la nueva respuesta
+                        loadMessages()
+                        
+                    } catch (e: Exception) {
+                        Log.e("ChatBotFragment", "Error processing edited message", e)
+                        val errorMessage = ChatMessage(
+                            message = "Error al procesar el mensaje editado: ${e.message}",
+                            isFromUser = false,
+                            timestamp = System.currentTimeMillis(),
+                            sessionId = sessionId,
+                            hasCalification = false,
+                            calificationAdded = false
+                        )
+                        
+                        withContext(Dispatchers.IO) {
+                            database.chatMessageDao().insertMessage(errorMessage)
+                        }
+                        loadMessages()
+                    } finally {
+                        loadingProgressBar.visibility = View.GONE
+                    }
                 }
-
+                
             } catch (e: Exception) {
-                Log.e("ChatBotFragment", "Error editando mensaje: ${e.message}")
-                Toast.makeText(context, "❌ Error al editar el mensaje", Toast.LENGTH_SHORT).show()
+                Log.e("ChatBotFragment", "Error in handleMessageEdit", e)
+                withContext(Dispatchers.Main) {
+                    loadingProgressBar.visibility = View.GONE
+                    Toast.makeText(requireContext(), "Error al editar mensaje", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

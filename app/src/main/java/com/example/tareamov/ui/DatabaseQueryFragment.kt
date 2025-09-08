@@ -271,6 +271,25 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
 
         // Make brain icon visible initially
         binding.centerBrainIcon.visibility = View.VISIBLE
+
+        // Load logo image from drawable resources
+        try {
+            binding.centerBrainIcon.setImageResource(R.drawable.logo)
+            Log.d("DatabaseQueryFragment", "Logo loaded successfully from drawable resources")
+        } catch (e: Exception) {
+            Log.w("DatabaseQueryFragment", "Could not load logo from drawable: ${e.message}")
+        }
+    }
+
+    // Show the two valid roles to the user when requested
+    private fun showValidRoles() {
+        val roles = com.example.tareamov.service.MSPClient.VALID_ROLES
+        val message = "Roles válidos en el sistema:\n" + roles.joinToString(separator = "\n") { "• $it" }
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle("Roles del sistema")
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .show()
     }
     
     private fun updateUserIndicator() {
@@ -459,10 +478,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         binding.sendButton.setOnClickListener {
             val userInput = binding.queryInput.text.toString().trim()
             if (userInput.isNotEmpty()) {
-                // Add user message to chat
-                val userMessage = ChatMessage.createUserMessage(userInput)
-                chatAdapter.addMessage(userMessage)
-                binding.queryInput.text?.clear()
+                // Add user message to chat (this also updates internal history and persists)
+                addMessageToChat(userInput, true)
+                // Clear input safely
+                binding.queryInput.setText("")
 
                 // Show typing indicator
                 chatAdapter.addTypingIndicator()
@@ -924,6 +943,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         
         binding.chipHelp.setOnClickListener {
             addHelpMessage()
+            showValidRoles()
         }
         
         binding.chipExamples.setOnClickListener {
@@ -954,7 +974,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         val username = sessionManager.getUsername() ?: "anonymous"
         
         // Generate user-specific session ID
-        currentSessionId = chatPrefs.getString(SESSION_ID_KEY, null) ?: "${username}_${UUID.randomUUID()}"
+    currentSessionId = chatPrefs.getString(SESSION_ID_KEY, null) ?: "${username}_${UUID.randomUUID()}"
         totalMessageCount = chatPrefs.getInt(MESSAGE_COUNT_KEY, 0)
         
         // Save session ID if it's new
@@ -964,12 +984,13 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             .apply()
         
         // Restore chat history for current user
-        restoreChatHistory()
+    restoreChatHistory()
     }
 
     private fun restoreChatHistory() {
         try {
-            val savedMessages = chatPrefs.getString(CHAT_HISTORY_KEY, null)
+            val key = "${CHAT_HISTORY_KEY}_$currentSessionId"
+            val savedMessages = chatPrefs.getString(key, null) ?: chatPrefs.getString(CHAT_HISTORY_KEY, null)
             if (!savedMessages.isNullOrEmpty()) {
                 val messageList = savedMessages.split("|||").mapNotNull { messageStr ->
                     ChatMessage.fromStorageString(messageStr)
@@ -1039,9 +1060,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         try {
             val messages = chatHistory.takeLast(maxMessagesPerSession) // Limit saved messages
             val messageStrings = messages.map { it.toStorageString() }
-            
+            val key = "${CHAT_HISTORY_KEY}_$currentSessionId"
             chatPrefs.edit()
-                .putString(CHAT_HISTORY_KEY, messageStrings.joinToString("|||"))
+                .putString(key, messageStrings.joinToString("|||"))
                 .putString(SESSION_ID_KEY, currentSessionId)
                 .putInt(MESSAGE_COUNT_KEY, totalMessageCount)
                 .apply()
@@ -1238,6 +1259,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         """.trimIndent()
         
         addMessageToChat(helpText, false)
+    // Inform about valid roles
+    val roles = com.example.tareamov.service.MSPClient.VALID_ROLES.joinToString(", ")
+    addMessageToChat("Roles válidos en el sistema: $roles", false)
     }
 
     private fun addExampleQueries() {
@@ -1374,47 +1398,35 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                     // Update the message in the adapter
                     chatAdapter.updateMessage(originalMessage.messageId, newText)
                     
-                    // Find if there's a bot response after this message
-                    var botResponseIndex = -1
-                    if (historyIndex + 1 < chatHistory.size && !chatHistory[historyIndex + 1].isUser) {
-                        botResponseIndex = historyIndex + 1
-                    }
-                    
-                    // Remove the old bot response if it exists
-                    if (botResponseIndex != -1) {
-                        val botMessageToRemove = chatHistory[botResponseIndex]
-                        chatHistory.removeAt(botResponseIndex)
-                        chatAdapter.removeMessageById(botMessageToRemove.messageId)
+                    // Remove ALL messages after the edited message (both user and bot responses)
+                    val messagesToRemove = chatHistory.drop(historyIndex + 1)
+                    messagesToRemove.forEach { messageToRemove ->
+                        chatAdapter.removeMessageById(messageToRemove.messageId)
                         totalMessageCount--
                     }
+                    // Remove from chat history
+                    while (chatHistory.size > historyIndex + 1) {
+                        chatHistory.removeAt(historyIndex + 1)
+                    }
                     
-                    // Process the edited query to get new response
-                    addMessageToChat("🔄 Procesando consulta editada...", false)
+                    // Show typing indicator for new response
+                    chatAdapter.addTypingIndicator()
+                    scrollToBottom(smooth = true)
                     
                     try {
                         val result = withContext(Dispatchers.IO) {
                             databaseQueryService.processQuery(newText)
                         }
                         
-                        // Remove processing indicator
-                        val processingMessage = chatHistory.lastOrNull { !it.isUser }
-                        if (processingMessage != null && processingMessage.text.contains("Procesando consulta editada")) {
-                            chatHistory.removeLastOrNull()
-                            chatAdapter.removeMessageById(processingMessage.messageId)
-                            totalMessageCount--
-                        }
+                        // Remove typing indicator
+                        chatAdapter.removeTypingIndicator()
                         
                         // Add new bot response
                         addMessageToChat(result, false)
                         
                     } catch (e: Exception) {
-                        // Remove processing indicator on error
-                        val processingMessage = chatHistory.lastOrNull { !it.isUser }
-                        if (processingMessage != null && processingMessage.text.contains("Procesando consulta editada")) {
-                            chatHistory.removeLastOrNull()
-                            chatAdapter.removeMessageById(processingMessage.messageId)
-                            totalMessageCount--
-                        }
+                        // Remove typing indicator on error
+                        chatAdapter.removeTypingIndicator()
                         
                         addMessageToChat("Error al procesar la consulta editada: ${e.message}", false)
                     }

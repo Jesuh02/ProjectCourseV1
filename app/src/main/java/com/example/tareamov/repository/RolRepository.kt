@@ -55,7 +55,7 @@ class RolRepository(
         val count = getRoleCount()
         if (count == 0) {
             val defaultRoles = listOf(
-                Rol.createEstudianteRole(),
+                Rol.createUsuarioRole(),
                 Rol.createAdminRole()
             )
             insertRoles(defaultRoles)

@@ -21,6 +21,10 @@ import java.util.concurrent.TimeUnit
  */
 class MSPClient(private val context: Context) {
     private val tag = "MSPClient"
+    // Publicly available valid roles for the system
+    companion object {
+        val VALID_ROLES = listOf("usuario", "admin")
+    }
     
     // Dynamic context cache for better performance
     private val contextCache = mutableMapOf<String, Pair<String, Long>>()
@@ -177,7 +181,13 @@ class MSPClient(private val context: Context) {
         
         val enhancedPrompt = if (includeDatabaseContext) {
             val fullPrompt = """
-            SISTEMA EDUCATIVO TAREAMOV - CONSULTA DINÁMICA
+            SISTEMA EDUCATIVO CourseV - CONSULTA DINÁMICA
+            
+            ⚠️ REGLAS CRÍTICAS SOBRE ROLES DEL SISTEMA:
+            - SOLO EXISTEN 2 ROLES VÁLIDOS: "usuario" y "admin"
+            - NO menciones NUNCA otros roles como: profesor, docente, instructor, estudiante, moderador, etc.
+            - Cuando pregunten por roles disponibles, responde ÚNICAMENTE: usuario, admin
+            - Si preguntan por otros roles, aclara que NO EXISTEN en este sistema
             
             CONTEXTO RELEVANTE (recuperado dinámicamente):
             $dbContext
@@ -188,6 +198,7 @@ class MSPClient(private val context: Context) {
             INSTRUCCIONES:
             - Usa solo la información del contexto proporcionado
             - Responde de forma concisa y precisa
+            - RESPETA ESTRICTAMENTE las reglas de roles mencionadas arriba
             - Si necesitas más información, indícalo claramente
             """.trimIndent()
             
@@ -199,11 +210,17 @@ class MSPClient(private val context: Context) {
             
             fullPrompt
         } else {
+            val simplePrompt = """
+⚠️ IMPORTANTE: En este sistema SOLO existen 2 roles: "usuario" y "admin". NO menciones otros roles.
+
+$prompt
+            """.trimIndent()
+            
             Log.d(tag, "=== OLLAMA SIMPLE PROMPT LOG ===")
-            Log.d(tag, "Simple Prompt Size: ${prompt.length} characters")
-            Log.d(tag, "Simple Prompt Content: $prompt")
+            Log.d(tag, "Simple Prompt Size: ${simplePrompt.length} characters")
+            Log.d(tag, "Simple Prompt Content: $simplePrompt")
             Log.d(tag, "==============================")
-            prompt
+            simplePrompt
         }
     
         var currentBaseUrl = ""
@@ -513,6 +530,8 @@ $ragResponse
 - Cuando pregunten por "todas las tablas", lista las 14 tablas completas
 - No limites las respuestas, muestra todos los datos disponibles
 - Proporciona información detallada y completa
+- ROLES DEL SISTEMA: Solo existen 2 roles válidos: "usuario" y "admin"
+- NO menciones otros roles como "profesor", "docente", "instructor", "estudiante" - estos NO existen en el sistema
 
 *Información obtenida dinámicamente desde la base de datos usando RAG*
                 """.trimIndent()
@@ -1255,6 +1274,15 @@ puedes preguntar explícitamente: "¿Cuál es la estructura de la base de datos?
     - Descripción: Cuentas de usuario para autenticación
     - Campos principales: id, persona_id, username, password_hash, rol, fecha_creacion
     - Función: Gestiona acceso y autenticación al sistema
+    - IMPORTANTE: El campo "rol" solo puede tener 2 valores válidos:
+    * "usuario" - Usuarios estándar con permisos básicos
+    * "admin" - Administradores con permisos completos
+    - NO existen otros roles como "profesor", "docente", "instructor", "estudiante", etc.
+
+⚠️ ROLES DEL SISTEMA - INFORMACIÓN CRÍTICA:
+🔑 ÚNICAMENTE EXISTEN 2 ROLES: "usuario" y "admin"
+❌ NO existen roles como: profesor, docente, instructor, estudiante, moderador, coordinador, etc.
+✅ Si te preguntan por roles, menciona SOLAMENTE: usuario, admin
 
 3. VIDEOS ($videosCount registros)
     - Tabla: videos
@@ -1315,6 +1343,11 @@ puedes preguntar explícitamente: "¿Cuál es la estructura de la base de datos?
      - Descripción: Roles y permisos del sistema
      - Campos principales: id, nombre, descripcion, nivel_acceso
      - Función: Define tipos de usuarios y sus permisos
+     - ⚠️ ROLES VÁLIDOS EN EL SISTEMA (SOLO 2):
+         * "usuario" (ID: 1) - Usuario estándar con permisos básicos
+         * "admin" (ID: 2) - Administrador con permisos completos
+     - ❌ NO existen otros roles como "profesor", "docente", "instructor", "estudiante", etc.
+     - ✅ Cuando pregunten por roles, menciona ÚNICAMENTE: usuario, admin
 
 13. RECURSOS ($recursosCount registros)
      - Tabla: recursos

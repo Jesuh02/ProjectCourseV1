@@ -65,6 +65,7 @@ class VideoAdapter(
         private val soundButton: android.widget.ImageView? = itemView.findViewById(R.id.soundButton)
         private var currentJob: Job? = null
         private var mediaPlayer: MediaPlayer? = null
+    private var mediaPlayerPrepared: Boolean = false
         private var isVideoPaused = false
         private var isLiked = false
         private var isMuted = false
@@ -139,6 +140,7 @@ class VideoAdapter(
 
                     videoView.setOnPreparedListener { mp ->
                         this.mediaPlayer = mp
+                        mediaPlayerPrepared = true
                         val videoWidth = mp.videoWidth
                         val videoHeight = mp.videoHeight
                         if (videoWidth > 0 && videoHeight > 0) {
@@ -157,6 +159,7 @@ class VideoAdapter(
 
                     videoView.setOnErrorListener { _, what, extra ->
                         Log.e("VideoAdapter", "Video playback error: what=$what, extra=$extra")
+                        mediaPlayerPrepared = false
                         showErrorPlaceholder()
                         true
                     }
@@ -196,12 +199,23 @@ class VideoAdapter(
          * Sets the mute state of the video.
          */
         fun setMuteState(mute: Boolean) {
-            val volume = if (mute) 0f else 1f
-            try {
-                mediaPlayer?.setVolume(volume, volume)
-            } catch (e: IllegalStateException) {
-                Log.e("VideoAdapter", "Error setting volume, MediaPlayer might not be ready.", e)
-                // Optionally, store desired mute state and apply it in onPreparedListener
+            // update desired mute state immediately
+            isMuted = mute
+
+            // If MediaPlayer is prepared, apply volume immediately. If not, it will be applied
+            // inside the onPreparedListener when the player becomes ready.
+            val volume = if (isMuted) 0f else 1f
+            if (mediaPlayerPrepared) {
+                try {
+                    mediaPlayer?.setVolume(volume, volume)
+                } catch (e: IllegalStateException) {
+                    Log.e("VideoAdapter", "Error setting volume, MediaPlayer might not be ready.", e)
+                    // keep isMuted flag; volume will be applied later when prepared
+                    mediaPlayerPrepared = false
+                }
+            } else {
+                // not prepared yet: volume will be applied when onPreparedListener runs
+                Log.d("VideoAdapter", "MediaPlayer not prepared yet; saved mute state=$isMuted")
             }
         }
 

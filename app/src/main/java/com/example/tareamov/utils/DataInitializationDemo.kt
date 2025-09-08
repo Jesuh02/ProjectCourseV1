@@ -1,5 +1,6 @@
 package com.example.tareamov.utils
 
+import android.util.Log
 import com.example.tareamov.data.DatabaseInitializer
 import com.example.tareamov.data.entity.Recurso
 import com.example.tareamov.data.entity.RolRecurso
@@ -7,10 +8,35 @@ import com.example.tareamov.repository.RecursoRepository
 import com.example.tareamov.repository.RolRepository
 
 /**
- * Clase de utilidad para demostrar cómo poblar las tablas con datos por defecto
- * basados en el companion object de Recurso.kt
+ * Demo class for initializing database data in a controlled manner
  */
 class DataInitializationDemo {
+    companion object {
+    suspend fun initializeDefaultData(
+            rolRepository: RolRepository,
+            recursoRepository: RecursoRepository
+        ) {
+            // 1. Primero inicializar roles si no existen
+            rolRepository.initializeDefaultRoles()
+            
+            // 2. Obtener los roles por defecto
+            val usuarioRole = rolRepository.getRolByNombre("usuario")
+            val adminRole = rolRepository.getRolByNombre("admin")
+            
+            if (usuarioRole != null && adminRole != null) {
+                // 3. Inicializar recursos usando DatabaseInitializer
+                val databaseInitializer = DatabaseInitializer(recursoRepository)
+                databaseInitializer.initializeDefaultData(usuarioRole.id, adminRole.id)
+                
+                // 4. Verificar la inicialización
+                val integrityResult = databaseInitializer.verifyDataIntegrity()
+                Log.i("DataInitializationDemo", "Database recursos initialization: ${integrityResult.message}")
+                Log.i("DataInitializationDemo", "Total recursos created: ${integrityResult.totalRecursos}")
+            } else {
+                Log.w("DataInitializationDemo", "Could not find default roles for recursos initialization")
+            }
+        }
+    }
     
     /**
      * Ejemplo de uso del sistema de inicialización de datos
@@ -23,136 +49,123 @@ class DataInitializationDemo {
         rolRepository.initializeDefaultRoles()
         
         // 2. Obtener los roles por defecto
-        val estudianteRole = rolRepository.getRolByNombre("estudiante")
+        val usuarioRole = rolRepository.getRolByNombre("usuario")
         val adminRole = rolRepository.getRolByNombre("admin")
         
-        if (estudianteRole != null && adminRole != null) {
+        if (usuarioRole != null && adminRole != null) {
             // 3. Inicializar recursos usando DatabaseInitializer
             val databaseInitializer = DatabaseInitializer(recursoRepository)
-            databaseInitializer.initializeDefaultData(estudianteRole.id, adminRole.id)
+            databaseInitializer.initializeDefaultData(usuarioRole.id, adminRole.id)
             
             // 4. Verificar la inicialización
             val integrityResult = databaseInitializer.verifyDataIntegrity()
-            println("Resultado de inicialización: ${integrityResult.message}")
-            println("Total recursos creados: ${integrityResult.totalRecursos}")
-            
-            // 5. Mostrar ejemplos de consultas
-            demonstrateQueries(estudianteRole.id, adminRole.id, recursoRepository)
+            Log.i("DataInitializationDemo", "Database recursos initialization: ${integrityResult.message}")
+            Log.i("DataInitializationDemo", "Total recursos created: ${integrityResult.totalRecursos}")
+        } else {
+            Log.w("DataInitializationDemo", "Could not find default roles for recursos initialization")
         }
     }
     
     /**
-     * Demuestra cómo consultar los datos inicializados
+     * Demuestra cómo crear recursos personalizados usando las factory methods
      */
-    private suspend fun demonstrateQueries(
-        estudianteRolId: Long, 
-        adminRolId: Long, 
+    suspend fun demonstrateCustomResourceCreation(
+        rolRepository: RolRepository,
         recursoRepository: RecursoRepository
     ) {
-        println("\n=== DEMOSTRANDO CONSULTAS ===")
+        // Obtener roles
+        val usuarioRole = rolRepository.getRolByNombre("usuario")
+        val adminRole = rolRepository.getRolByNombre("admin")
         
-        // Recursos disponibles para estudiante
-        val recursosEstudiante = recursoRepository.getRecursosByRol(estudianteRolId)
-        println("Recursos para estudiante (${recursosEstudiante.size}):")
-        recursosEstudiante.forEach { recurso ->
-            println("  - ${recurso.nombre} (${recurso.icono}) en ${recurso.interfaz}")
+        if (usuarioRole == null || adminRole == null) {
+            Log.e("DataInitializationDemo", "Roles not found")
+            return
         }
         
-        // Recursos disponibles para admin
-        val recursosAdmin = recursoRepository.getRecursosByRol(adminRolId)
-        println("\nRecursos para admin (${recursosAdmin.size}):")
-        recursosAdmin.forEach { recurso ->
-            println("  - ${recurso.nombre} (${recurso.icono}) en ${recurso.interfaz}")
-        }
+        // Crear algunos recursos personalizados
+        val customNavegacion = Recurso.createNavegacionRecurso()
+        val navegacionId = recursoRepository.insertRecurso(customNavegacion)
         
-        // Verificar acceso específico
-        val puedeAccederAdminButton = recursoRepository.canAccessAdminButton(estudianteRolId)
-        val puedeAccederDatabase = recursoRepository.canAccessDatabaseOrbit(adminRolId)
+        // Crear sub-recursos de navegación
+        val homeRecurso = Recurso.createHomeRecurso(navegacionId)
+        val exploreRecurso = Recurso.createExploreRecurso(navegacionId)
+        val perfilRecurso = Recurso.createPerfilRecurso(navegacionId)
         
-        println("\n=== VERIFICACIONES DE ACCESO ===")
-        println("¿Estudiante puede acceder al botón admin? $puedeAccederAdminButton")
-        println("¿Admin puede acceder a database orbit? $puedeAccederDatabase")
+        val homeId = recursoRepository.insertRecurso(homeRecurso)
+        val exploreId = recursoRepository.insertRecurso(exploreRecurso)
+        val perfilId = recursoRepository.insertRecurso(perfilRecurso)
         
-        // Recursos por interfaz específica
-        val recursosVideoHome = recursoRepository.getAvailableResourcesForInterface(
-            adminRolId, 
-            Recurso.INTERFAZ_VIDEO_HOME
+        // Asignar estos recursos al rol usuario
+        val rolRecursos = listOf(
+            RolRecurso(usuarioRole.id, navegacionId),
+            RolRecurso(usuarioRole.id, homeId),
+            RolRecurso(usuarioRole.id, exploreId),
+            RolRecurso(usuarioRole.id, perfilId)
         )
-        println("\nRecursos en VideoHomeFragment para admin (${recursosVideoHome.size}):")
-        recursosVideoHome.forEach { recurso ->
-            println("  - ${recurso.nombre} (${recurso.icono})")
-        }
+        
+    // Insertar las relaciones rol-recurso en lote
+    recursoRepository.insertRolRecursos(rolRecursos)
+        
+        Log.i("DataInitializationDemo", "Custom resources created and assigned to usuario role")
     }
     
     /**
-     * Ejemplo de cómo crear recursos personalizados usando el companion object
+     * Demuestra cómo crear recursos de administración
      */
-    suspend fun createCustomResources(recursoRepository: RecursoRepository) {
-        println("\n=== CREANDO RECURSOS PERSONALIZADOS ===")
+    suspend fun demonstrateAdminResourceCreation(
+        rolRepository: RolRepository,
+        recursoRepository: RecursoRepository
+    ) {
+        // Obtener rol admin
+        val adminRole = rolRepository.getRolByNombre("admin")
         
-        // Crear recurso principal personalizado
-        val customMainResource = Recurso(
-            nombre = "Herramientas",
-            icono = "tools_icon",
-            orden = 3,
-            padreId = null,
-            interfaz = "ToolsPanel"
-        )
+        if (adminRole == null) {
+            Log.e("DataInitializationDemo", "Admin role not found")
+            return
+        }
         
-        val customMainId = recursoRepository.insertRecurso(customMainResource)
-        println("Recurso principal personalizado creado con ID: $customMainId")
+        // Crear panel de administración
+        val adminPanel = Recurso.createAdminPanelRecurso()
+        val adminPanelId = recursoRepository.insertRecurso(adminPanel)
         
-        // Crear sub-recursos usando métodos del companion object como base
-        val customSubResource = Recurso(
-            nombre = "Calculadora",
-            icono = "calculator_icon",
-            orden = 1,
-            padreId = customMainId,
-            interfaz = Recurso.INTERFAZ_VIDEO_HOME
-        )
+        // Crear recursos específicos de admin
+        val adminButtons = Recurso.getAdminSubRecursos(adminPanelId)
+        val adminButtonIds = mutableListOf<Long>()
         
-        val customSubId = recursoRepository.insertRecurso(customSubResource)
-        println("Sub-recurso personalizado creado con ID: $customSubId")
+        adminButtons.forEach { adminButton ->
+            val id = recursoRepository.insertRecurso(adminButton)
+            adminButtonIds.add(id)
+        }
+        
+        // Asignar panel de admin y sus sub-recursos al rol admin
+        val adminRolRecursos = mutableListOf<RolRecurso>()
+        adminRolRecursos.add(RolRecurso(adminRole.id, adminPanelId))
+        
+        adminButtonIds.forEach { buttonId ->
+            adminRolRecursos.add(RolRecurso(adminRole.id, buttonId))
+        }
+        
+    // Insertar las relaciones rol-recurso en lote
+    recursoRepository.insertRolRecursos(adminRolRecursos)
+        
+        Log.i("DataInitializationDemo", "Admin resources created and assigned to admin role")
     }
     
     /**
-     * Ejemplo de cómo verificar el estado actual de las tablas
+     * Demuestra cómo verificar la integridad de los datos
      */
-    suspend fun verifyCurrentState(recursoRepository: RecursoRepository) {
-        println("\n=== ESTADO ACTUAL DE LAS TABLAS ===")
+    suspend fun demonstrateDataIntegrityCheck(
+        recursoRepository: RecursoRepository
+    ) {
+        val databaseInitializer = DatabaseInitializer(recursoRepository)
+        val integrityResult = databaseInitializer.verifyDataIntegrity()
         
-        // Obtener todos los recursos
-        val allRecursos = recursoRepository.getAllRecursos()
-        println("Total recursos en base de datos: ${allRecursos.size}")
-        
-        // Mostrar estructura jerárquica
-        val recursosPrincipales = recursoRepository.getRecursosPrincipales()
-        println("\nEstructura jerárquica:")
-        
-        recursosPrincipales.forEach { principal ->
-            println("📁 ${principal.nombre} (ID: ${principal.id})")
-            
-            val subRecursos = recursoRepository.getSubRecursos(principal.id)
-            subRecursos.forEach { sub ->
-                println("  📄 ${sub.nombre} -> ${sub.interfaz}")
-            }
-        }
-        
-        // Mostrar constantes disponibles
-        println("\n=== CONSTANTES DISPONIBLES ===")
-        println("Iconos disponibles:")
-        println("  - ${Recurso.ICONO_HOME}")
-        println("  - ${Recurso.ICONO_EXPLORE}")
-        println("  - ${Recurso.ICONO_PROFILE}")
-        println("  - ${Recurso.ICONO_NOTIFICATIONS}")
-        println("  - ${Recurso.ICONO_ADMIN_BUTTON}")
-        println("  - ${Recurso.ICONO_DATABASE_ORBIT}")
-        
-        println("\nInterfaces disponibles:")
-        println("  - ${Recurso.INTERFAZ_VIDEO_HOME}")
-        println("  - ${Recurso.INTERFAZ_EXPLORE}")
-        println("  - ${Recurso.INTERFAZ_PROFILE}")
-        println("  - ${Recurso.INTERFAZ_USER_PROFILE_VIEW}")
-        println("  - ${Recurso.INTERFAZ_NOTIFICACIONES}")
+    Log.i("DataInitializationDemo", "=== DATA INTEGRITY CHECK ===")
+    Log.i("DataInitializationDemo", "Status: ${integrityResult.message}")
+    Log.i("DataInitializationDemo", "Total recursos: ${integrityResult.totalRecursos}")
+    Log.i("DataInitializationDemo", "Has navigation: ${integrityResult.hasNavigation}")
+    Log.i("DataInitializationDemo", "Has admin panel: ${integrityResult.hasAdminPanel}")
+    Log.i("DataInitializationDemo", "Has sub-recursos: ${integrityResult.hasSubRecursos}")
+    Log.i("DataInitializationDemo", "==========================================")
     }
 }

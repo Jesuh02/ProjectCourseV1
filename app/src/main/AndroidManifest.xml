@@ -40,7 +40,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Tareamov"
+        android:theme="@style/Theme.CourseV"
         android:requestLegacyExternalStorage="true"
         android:preserveLegacyExternalStorage="true"
         android:extractNativeLibs="true"
