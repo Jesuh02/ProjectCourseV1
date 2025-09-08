@@ -1135,115 +1135,119 @@ Pero tienes acceso al esquema completo de las 14 tablas mostrado arriba.
      * Build comprehensive database context with ALL 14 tables
      */
     private suspend fun buildComprehensiveDatabaseContext(): String = withContext(Dispatchers.IO) {
-        return@withContext try {
-            val db = com.example.tareamov.data.AppDatabase.getDatabase(context)
-            
-            // Get real counts from all tables where possible
-            val personasCount = try { db.personaDao().getAllPersonasList().size } catch (e: Exception) { 0 }
-            val usuariosCount = try { db.usuarioDao().getAllUsuarios().size } catch (e: Exception) { 0 }
-            val videosCount = try { db.videoDao().getAllVideos().size } catch (e: Exception) { 0 }
-            val topicsCount = try { db.topicDao().getAllTopics().size } catch (e: Exception) { 0 }
-            val contentItemsCount = try { db.contentItemDao().getAllContentItems().size } catch (e: Exception) { 0 }
-            val tasksCount = try { db.taskDao().getAllTasks().size } catch (e: Exception) { 0 }
-            val subscriptionsCount = try { db.subscriptionDao().getAllSubscriptions().size } catch (e: Exception) { 0 }
-            val taskSubmissionsCount = try { db.taskSubmissionDao().getAllTaskSubmissions().size } catch (e: Exception) { 0 }
-            val coursesCount = try { db.courseDao().getAllCourses().size } catch (e: Exception) { 0 }
-            val rolesCount = try { db.rolDao().getAllRoles().size } catch (e: Exception) { 0 }
-            val recursosCount = try { db.recursoDao().getAllRecursos().size } catch (e: Exception) { 0 }
-            val rolRecursosCount = try { db.rolRecursoDao().getAllRolRecursos().size } catch (e: Exception) { 0 }
-            
-            // For Flow-based DAOs, we'll just show "N/A" since we can't easily get the count synchronously
-            val chatMessagesCount = "N/A"
-            val fileContextsCount = "N/A"
-            
-            """
+          return@withContext try {
+                val dbService = com.example.tareamov.service.DatabaseQueryService(context)
+                val jsonStr = dbService.generateDatabaseJson()
+                val json = org.json.JSONObject(jsonStr)
+
+                // Safely extract counts and schema pieces
+                val stats = json.optJSONObject("statistics")
+                val schemaObj = json.optJSONObject("schema")
+
+                val personasCount = stats?.optInt("total_personas") ?: json.optJSONArray("personas")?.length() ?: 0
+                val usuariosCount = stats?.optInt("total_usuarios") ?: json.optJSONArray("usuarios")?.length() ?: 0
+                val videosCount = stats?.optInt("total_videos") ?: json.optJSONArray("videos")?.length() ?: 0
+                val topicsCount = stats?.optInt("total_topics") ?: json.optJSONArray("topics")?.length() ?: 0
+                val contentItemsCount = stats?.optInt("total_content_items") ?: json.optJSONArray("contentItems")?.length() ?: 0
+                val tasksCount = stats?.optInt("total_tasks") ?: json.optJSONArray("tasks")?.length() ?: 0
+                val subscriptionsCount = stats?.optInt("total_subscriptions") ?: json.optJSONArray("subscriptions")?.length() ?: 0
+                val taskSubmissionsCount = stats?.optInt("total_task_submissions") ?: json.optJSONArray("taskSubmissions")?.length() ?: 0
+                val coursesCount = stats?.optInt("total_courses") ?: json.optJSONArray("courses")?.length() ?: 0
+                val rolesCount = stats?.optInt("total_roles") ?: json.optJSONArray("roles")?.length() ?: 0
+                val recursosCount = stats?.optInt("total_recursos") ?: json.optJSONArray("recursos")?.length() ?: 0
+                val rolRecursosCount = stats?.optInt("total_rol_recursos") ?: json.optJSONArray("rolRecursos")?.length() ?: 0
+
+                val chatMessagesCount = stats?.optInt("total_chat_messages") ?: json.optJSONArray("chatMessages")?.length() ?: 0
+                val fileContextsCount = stats?.optInt("total_file_contexts") ?: json.optJSONArray("fileContexts")?.length() ?: 0
+
+                """
 1. PERSONAS ($personasCount registros)
-   - Tabla: personas
-   - Descripción: Información personal de usuarios del sistema
-   - Campos principales: id, nombre, apellido, email, telefono, fecha_nacimiento
-   - Función: Almacena datos personales de los usuarios
+    - Tabla: personas
+    - Descripción: Información personal de usuarios del sistema
+    - Campos principales: id, nombre, apellido, email, telefono, fecha_nacimiento
+    - Función: Almacena datos personales de los usuarios
 
 2. USUARIOS ($usuariosCount registros)
-   - Tabla: usuarios
-   - Descripción: Cuentas de usuario para autenticación
-   - Campos principales: id, persona_id, username, password_hash, rol, fecha_creacion
-   - Función: Gestiona acceso y autenticación al sistema
+    - Tabla: usuarios
+    - Descripción: Cuentas de usuario para autenticación
+    - Campos principales: id, persona_id, username, password_hash, rol, fecha_creacion
+    - Función: Gestiona acceso y autenticación al sistema
 
 3. VIDEOS ($videosCount registros)
-   - Tabla: videos
-   - Descripción: Videos educativos y contenido multimedia
-   - Campos principales: id, titulo, descripcion, url, duracion, creator_id, precio
-   - Función: Almacena contenido audiovisual educativo
+    - Tabla: videos
+    - Descripción: Videos educativos y contenido multimedia
+    - Campos principales: id, titulo, descripcion, url, duracion, creator_id, precio
+    - Función: Almacena contenido audiovisual educativo
 
 4. TOPICS ($topicsCount registros)
-   - Tabla: topics
-   - Descripción: Temas organizacionales para agrupar contenido
-   - Campos principales: id, nombre, descripcion, creator_id, fecha_creacion
-   - Función: Organiza contenido por temas/categorías
+    - Tabla: topics
+    - Descripción: Temas organizacionales para agrupar contenido
+    - Campos principales: id, nombre, descripcion, creator_id, fecha_creacion
+    - Función: Organiza contenido por temas/categorías
 
 5. CONTENT_ITEMS ($contentItemsCount registros)
-   - Tabla: content_items
-   - Descripción: Elementos de contenido organizados por temas
-   - Campos principales: id, titulo, descripcion, tipo, topic_id, orden
-   - Función: Contenido específico dentro de cada tema
+    - Tabla: content_items
+    - Descripción: Elementos de contenido organizados por temas
+    - Campos principales: id, titulo, descripcion, tipo, topic_id, orden
+    - Función: Contenido específico dentro de cada tema
 
 6. TASKS ($tasksCount registros)
-   - Tabla: tasks
-   - Descripción: Tareas asociadas a temas específicos
-   - Campos principales: id, titulo, descripcion, topic_id, fecha_limite, tipo
-   - Función: Actividades y ejercicios para los estudiantes
+    - Tabla: tasks
+    - Descripción: Tareas asociadas a temas específicos
+    - Campos principales: id, titulo, descripcion, topic_id, fecha_limite, tipo
+    - Función: Actividades y ejercicios para los estudiantes
 
 7. SUBSCRIPTIONS ($subscriptionsCount registros)
-   - Tabla: subscriptions
-   - Descripción: Relaciones de suscripción entre usuarios
-   - Campos principales: id, follower_id, creator_id, fecha_suscripcion
-   - Función: Gestiona seguimientos entre usuarios
+    - Tabla: subscriptions
+    - Descripción: Relaciones de suscripción entre usuarios
+    - Campos principales: id, follower_id, creator_id, fecha_suscripcion
+    - Función: Gestiona seguimientos entre usuarios
 
 8. TASK_SUBMISSIONS ($taskSubmissionsCount registros)
-   - Tabla: task_submissions
-   - Descripción: Entregas de tareas por parte de usuarios
-   - Campos principales: id, task_id, usuario_id, respuesta, fecha_entrega, calificacion
-   - Función: Almacena las respuestas de los estudiantes
+    - Tabla: task_submissions
+    - Descripción: Entregas de tareas por parte de usuarios
+    - Campos principales: id, task_id, usuario_id, respuesta, fecha_entrega, calificacion
+    - Función: Almacena las respuestas de los estudiantes
 
 9. CHAT_MESSAGES ($chatMessagesCount registros)
-   - Tabla: chat_messages
-   - Descripción: Mensajes del sistema de chat
-   - Campos principales: id, usuario_id, mensaje, timestamp, tipo, calificacion
-   - Función: Comunicación dentro de la plataforma
+    - Tabla: chat_messages
+    - Descripción: Mensajes del sistema de chat
+    - Campos principales: id, usuario_id, mensaje, timestamp, tipo, calificacion
+    - Función: Comunicación dentro de la plataforma
 
 10. FILE_CONTEXTS ($fileContextsCount registros)
-    - Tabla: file_contexts
-    - Descripción: Contextos de archivos subidos al sistema
-    - Campos principales: id, nombre_archivo, contenido_json, tipo_mime, usuario_id
-    - Función: Gestiona archivos y documentos subidos
+     - Tabla: file_contexts
+     - Descripción: Contextos de archivos subidos al sistema
+     - Campos principales: id, nombre_archivo, contenido_json, tipo_mime, usuario_id
+     - Función: Gestiona archivos y documentos subidos
 
 11. COURSES ($coursesCount registros)
-    - Tabla: courses
-    - Descripción: Cursos estructurados con contenido educativo
-    - Campos principales: id, titulo, descripcion, creator_id, precio, fecha_creacion
-    - Función: Organiza contenido en cursos completos
+     - Tabla: courses
+     - Descripción: Cursos estructurados con contenido educativo
+     - Campos principales: id, titulo, descripcion, creator_id, precio, fecha_creacion
+     - Función: Organiza contenido en cursos completos
 
 12. ROLES ($rolesCount registros)
-    - Tabla: roles
-    - Descripción: Roles y permisos del sistema
-    - Campos principales: id, nombre, descripcion, nivel_acceso
-    - Función: Define tipos de usuarios y sus permisos
+     - Tabla: roles
+     - Descripción: Roles y permisos del sistema
+     - Campos principales: id, nombre, descripcion, nivel_acceso
+     - Función: Define tipos de usuarios y sus permisos
 
 13. RECURSOS ($recursosCount registros)
-    - Tabla: recursos
-    - Descripción: Recursos disponibles en el sistema
-    - Campos principales: id, nombre, descripcion, tipo, url
-    - Función: Herramientas y materiales adicionales
+     - Tabla: recursos
+     - Descripción: Recursos disponibles en el sistema
+     - Campos principales: id, nombre, descripcion, tipo, url
+     - Función: Herramientas y materiales adicionales
 
 14. ROL_RECURSOS ($rolRecursosCount registros)
-    - Tabla: rol_recursos
-    - Descripción: Relación entre roles y recursos con permisos específicos
-    - Campos principales: id, rol_id, recurso_id, puede_leer, puede_escribir, puede_eliminar
-    - Función: Define qué recursos puede acceder cada rol
+     - Tabla: rol_recursos
+     - Descripción: Relación entre roles y recursos con permisos específicos
+     - Campos principales: id, rol_id, recurso_id, puede_leer, puede_escribir, puede_eliminar
+     - Función: Define qué recursos puede acceder cada rol
 
 TOTAL DE TABLAS: 14
-REGISTROS CONTABILIZADOS: $personasCount + $usuariosCount + $videosCount + $topicsCount + $contentItemsCount + $tasksCount + $subscriptionsCount + $taskSubmissionsCount + $chatMessagesCount + $fileContextsCount + $coursesCount + $rolesCount + $recursosCount + $rolRecursosCount
-            """.trimIndent()
+REGISTROS CONTABILIZADOS: ${personasCount + usuariosCount + videosCount + topicsCount + contentItemsCount + tasksCount + subscriptionsCount + taskSubmissionsCount + chatMessagesCount + fileContextsCount + coursesCount + rolesCount + recursosCount + rolRecursosCount}
+                """.trimIndent()
             
         } catch (e: Exception) {
             Log.e(tag, "Error building comprehensive database context", e)

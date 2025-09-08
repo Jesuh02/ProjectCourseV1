@@ -217,13 +217,57 @@ class MCPService(private val context: Context) {
      * Build enhanced prompt for better LLM understanding
      */
     private fun buildEnhancedPrompt(query: String): String {
-        return """
+        return try {
+            val dbService = DatabaseQueryService(context)
+            val jsonStr = runBlocking { dbService.generateDatabaseJson() }
+            val json = JSONObject(jsonStr)
+
+            val tableNames = json.keys().asSequence().filter { it != "schema" && it != "statistics" }.toList()
+            val tableList = tableNames.mapIndexed { i, name -> "${i + 1}. $name" }.joinToString("\n")
+
+            """
         Eres un asistente experto en bases de datos para TareaMov, una plataforma educativa Android.
-        
+
+        BASE DE DATOS DISPONIBLE - ${tableNames.size} TABLAS:
+$tableList
+
+        CAPACIDADES:
+        - Consultas sobre CUALQUIERA de las tablas disponibles
+        - Análisis de datos y estadísticas completas
+        - Generación de gráficos avanzados
+        - Búsquedas específicas y filtrados complejos
+        - Análisis de relaciones entre tablas
+
+        TIPOS DE GRÁFICOS DISPONIBLES:
+        - GRAPH_REQUEST:USER_VIDEOS - Usuarios con más videos
+        - GRAPH_REQUEST:TOPIC_CONTENT - Contenido por tema
+        - GRAPH_REQUEST:COURSE_TOPICS - Temas por curso
+        - GRAPH_REQUEST:TASKS_TOPICS - Tareas por tema
+        - GRAPH_REQUEST:SUBSCRIPTIONS - Análisis de suscripciones
+        - GRAPH_REQUEST:ROLES_RECURSOS - Análisis de roles y recursos
+
+        INSTRUCCIONES:
+        1. Tienes acceso completo a las tablas listadas arriba
+        2. Si la consulta pide un gráfico, responde con GRAPH_REQUEST:[TIPO]
+        3. Para datos específicos, proporciona información concisa y estructurada
+        4. Para listas, limita a elementos más relevantes
+        5. Para conteos, da números específicos de cualquier tabla
+        6. Si no hay datos, indícalo claramente
+        7. Puedes hacer consultas complejas que involucren múltiples tablas
+
+        CONSULTA DEL USUARIO: $query
+
+        RESPUESTA:
+        """.trimIndent()
+        } catch (e: Exception) {
+            // Fallback to original static prompt if generation fails
+            return """
+        Eres un asistente experto en bases de datos para TareaMov, una plataforma educativa Android.
+
         BASE DE DATOS DISPONIBLE - 14 TABLAS:
         1. personas - Información personal de usuarios
         2. usuarios - Cuentas de usuario para autenticación
-        3. videos - Videos educativos y contenido multimedia  
+        3. videos - Videos educativos y contenido multimedia
         4. topics - Temas organizacionales para agrupar contenido
         5. content_items - Elementos de contenido organizados por temas
         6. tasks - Tareas asociadas a temas específicos
@@ -235,35 +279,10 @@ class MCPService(private val context: Context) {
         12. roles - Roles y permisos del sistema
         13. recursos - Recursos disponibles en el sistema
         14. rol_recursos - Relación entre roles y recursos con permisos
-        
-        CAPACIDADES:
-        - Consultas sobre CUALQUIERA de las 14 tablas disponibles
-        - Análisis de datos y estadísticas completas
-        - Generación de gráficos avanzados
-        - Búsquedas específicas y filtrados complejos
-        - Análisis de relaciones entre tablas
-        
-        TIPOS DE GRÁFICOS DISPONIBLES:
-        - GRAPH_REQUEST:USER_VIDEOS - Usuarios con más videos
-        - GRAPH_REQUEST:TOPIC_CONTENT - Contenido por tema
-        - GRAPH_REQUEST:COURSE_TOPICS - Temas por curso
-        - GRAPH_REQUEST:TASKS_TOPICS - Tareas por tema
-        - GRAPH_REQUEST:SUBSCRIPTIONS - Análisis de suscripciones
-        - GRAPH_REQUEST:ROLES_RECURSOS - Análisis de roles y recursos
-        
-        INSTRUCCIONES:
-        1. Tienes acceso completo a TODAS las 14 tablas de la base de datos
-        2. Si la consulta pide un gráfico, responde con GRAPH_REQUEST:[TIPO]
-        3. Para datos específicos, proporciona información concisa y estructurada
-        4. Para listas, limita a elementos más relevantes
-        5. Para conteos, da números específicos de CUALQUIER tabla
-        6. Si no hay datos, indícalo claramente
-        7. Puedes hacer consultas complejas que involucren múltiples tablas
-        
-        CONSULTA DEL USUARIO: $query
-        
+
         RESPUESTA:
         """.trimIndent()
+        }
     }
 
     /**
