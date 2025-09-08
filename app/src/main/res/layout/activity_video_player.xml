@@ -63,21 +63,7 @@
                 android:textSize="16sp"
                 tools:text="Título del video" />
 
-            <ImageView
-                android:id="@+id/ccButton"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_marginEnd="8dp"
-                android:src="@drawable/ic_visibility"
-                android:tint="#FFFFFF" />
-
-            <ImageView
-                android:id="@+id/settingsButton"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_marginEnd="8dp"
-                android:src="@drawable/ic_settings"
-                android:tint="#FFFFFF" />
+            <!-- ccButton and settingsButton removed -->
         </LinearLayout>
 
         <!-- Center play/pause overlay -->
@@ -99,7 +85,7 @@
             android:layout_marginStart="24dp"
             android:alpha="0"
             android:visibility="gone"
-            android:src="@drawable/ic_chevron_left"
+            android:src="@drawable/ic_arrow_back"
             android:tint="#FFFFFF" />
 
         <ImageView
@@ -179,20 +165,7 @@
                     android:src="@drawable/ic_sound_minimal"
                     android:tint="#FFFFFF" />
 
-                <ImageView
-                    android:id="@+id/likeButton"
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_marginEnd="8dp"
-                    android:src="@drawable/ic_heart_minimal"
-                    android:tint="#FFFFFF" />
-
-                <ImageView
-                    android:id="@+id/shareButton"
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:src="@drawable/ic_share_minimal"
-                    android:tint="#FFFFFF" />
+                <!-- likeButton and shareButton removed -->
             </LinearLayout>
         </LinearLayout>
     </FrameLayout>
