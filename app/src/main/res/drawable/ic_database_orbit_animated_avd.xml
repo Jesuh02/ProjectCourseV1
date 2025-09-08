@@ -1,0 +1,49 @@
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_database_orbit_animated">
+
+    <!-- Orbit group rotation (orbiting dots) -->
+    <target android:name="orbit_group"
+        android:animation="@animator/orbit_rotate" />
+
+    <!-- Glow pulse -->
+    <target android:name="glow_group"
+        android:animation="@animator/glow_pulse" />
+
+    <!-- Cylinder pulse -->
+    <target android:name="cylinder_top"
+        android:animation="@animator/cylinder_pulse" />
+    <target android:name="cylinder_mid"
+        android:animation="@animator/cylinder_pulse" />
+    <target android:name="cylinder_bot"
+        android:animation="@animator/cylinder_pulse" />
+
+    <!-- Data lines horizontal movement -->
+    <target android:name="line1"
+        android:animation="@animator/data_line1_move" />
+    <target android:name="line2"
+        android:animation="@animator/data_line2_move" />
+    <target android:name="line3"
+        android:animation="@animator/data_line3_move" />
+
+    <!-- Floating particles -->
+    <target android:name="float1"
+        android:animation="@animator/float_particle1" />
+    <target android:name="float2"
+        android:animation="@animator/float_particle2" />
+    <target android:name="float3"
+        android:animation="@animator/float_particle3" />
+    <target android:name="float4"
+        android:animation="@animator/float_particle4" />
+    <target android:name="float5"
+        android:animation="@animator/float_particle5" />
+    <target android:name="float6"
+        android:animation="@animator/float_particle6" />
+    <target android:name="float7"
+        android:animation="@animator/float_particle7" />
+    <target android:name="float8"
+        android:animation="@animator/float_particle8" />
+
+    <!-- Connection lines subtle rotation -->
+    <target android:name="connections"
+        android:animation="@animator/connections_rotate" />
+</animated-vector>

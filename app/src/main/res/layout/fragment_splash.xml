@@ -1,0 +1,413 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000"
+    tools:context=".ui.SplashFragment">
+
+    <!-- Gradient background overlay for depth with purple theme (hidden to ensure pure black background) -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone"
+        android:background="@drawable/splash_gradient_background_purple" />
+
+    <!-- Dynamic coding particles background with purple theme -->
+    <ImageView
+        android:id="@+id/codeParticle1"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:src="@drawable/ic_code_bracket"
+        android:tint="#8B5CF6"
+        android:alpha="0"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.1"
+        app:layout_constraintVertical_bias="0.15" />
+
+    <ImageView
+        android:id="@+id/codeParticle2"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:src="@drawable/ic_terminal"
+        android:tint="#A855F7"
+        android:alpha="0"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.9"
+        app:layout_constraintVertical_bias="0.2" />
+
+    <ImageView
+        android:id="@+id/codeParticle3"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:src="@drawable/ic_play_circle"
+        android:tint="#C084FC"
+        android:alpha="0"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.15"
+        app:layout_constraintVertical_bias="0.8" />
+
+    <ImageView
+        android:id="@+id/codeParticle4"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:src="@drawable/ic_monitor"
+        android:tint="#D8B4FE"
+        android:alpha="0"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.85"
+        app:layout_constraintVertical_bias="0.75" />
+
+    <!-- Additional particles for coding theme -->
+    <ImageView
+        android:id="@+id/codeParticle5"
+        android:layout_width="16dp"
+        android:layout_height="16dp"
+        android:src="@drawable/ic_bug_report"
+        android:tint="#8B5CF6"
+        android:alpha="0"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.3"
+        app:layout_constraintVertical_bias="0.4" />
+
+    <ImageView
+        android:id="@+id/codeParticle6"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:src="@drawable/ic_gear"
+        android:tint="#9575CD"
+        android:alpha="0"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.7"
+        app:layout_constraintVertical_bias="0.6" />
+
+    <!-- Central logo with programming theme and purple design -->
+    <ImageView
+        android:id="@+id/splashLogo"
+        android:layout_width="120dp"
+        android:layout_height="120dp"
+        android:background="@drawable/logo_circle_gradient_purple"
+        android:padding="24dp"
+        android:src="@drawable/ic_code_play_combined"
+        android:scaleX="0"
+        android:scaleY="0"
+        android:alpha="0"
+        android:elevation="12dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="0.35"
+        android:contentDescription="CourseV Programming Platform Logo" />
+
+    <!-- Container para las letras animadas de CourseV -->
+    <LinearLayout
+        android:id="@+id/titleContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="32dp"
+        android:orientation="horizontal"
+        android:gravity="center"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/splashLogo">
+
+        <!-- Letra C -->
+        <TextView
+            android:id="@+id/letter_c"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="C"
+            android:textColor="#8B5CF6"
+            android:textSize="48sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-black"
+            android:alpha="0"
+            android:translationY="80dp"
+            android:scaleX="0.5"
+            android:scaleY="0.5"
+            android:elevation="12dp"
+            android:shadowColor="#8B5CF6"
+            android:shadowDx="4"
+            android:shadowDy="4"
+            android:shadowRadius="8"
+            android:letterSpacing="0.05" />
+
+        <!-- Letra o -->
+        <TextView
+            android:id="@+id/letter_o1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="o"
+            android:textColor="#FFFFFF"
+            android:textSize="48sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-black"
+            android:alpha="0"
+            android:translationY="80dp"
+            android:scaleX="0.5"
+            android:scaleY="0.5"
+            android:elevation="12dp"
+            android:shadowColor="#8B5CF6"
+            android:shadowDx="4"
+            android:shadowDy="4"
+            android:shadowRadius="8"
+            android:letterSpacing="0.05" />
+
+        <!-- Letra u -->
+        <TextView
+            android:id="@+id/letter_u"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="u"
+            android:textColor="#FFFFFF"
+            android:textSize="48sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-black"
+            android:alpha="0"
+            android:translationY="80dp"
+            android:scaleX="0.5"
+            android:scaleY="0.5"
+            android:elevation="12dp"
+            android:shadowColor="#8B5CF6"
+            android:shadowDx="4"
+            android:shadowDy="4"
+            android:shadowRadius="8"
+            android:letterSpacing="0.05" />
+
+        <!-- Letra r -->
+        <TextView
+            android:id="@+id/letter_r"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="r"
+            android:textColor="#FFFFFF"
+            android:textSize="48sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-black"
+            android:alpha="0"
+            android:translationY="80dp"
+            android:scaleX="0.5"
+            android:scaleY="0.5"
+            android:elevation="12dp"
+            android:shadowColor="#8B5CF6"
+            android:shadowDx="4"
+            android:shadowDy="4"
+            android:shadowRadius="8"
+            android:letterSpacing="0.05" />
+
+        <!-- Letra s -->
+        <TextView
+            android:id="@+id/letter_s"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="s"
+            android:textColor="#FFFFFF"
+            android:textSize="48sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-black"
+            android:alpha="0"
+            android:translationY="80dp"
+            android:scaleX="0.5"
+            android:scaleY="0.5"
+            android:elevation="12dp"
+            android:shadowColor="#8B5CF6"
+            android:shadowDx="4"
+            android:shadowDy="4"
+            android:shadowRadius="8"
+            android:letterSpacing="0.05" />
+
+        <!-- Letra e -->
+        <TextView
+            android:id="@+id/letter_e"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="e"
+            android:textColor="#FFFFFF"
+            android:textSize="48sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-black"
+            android:alpha="0"
+            android:translationY="80dp"
+            android:scaleX="0.5"
+            android:scaleY="0.5"
+            android:elevation="12dp"
+            android:shadowColor="#8B5CF6"
+            android:shadowDx="4"
+            android:shadowDy="4"
+            android:shadowRadius="8"
+            android:letterSpacing="0.05" />
+
+        <!-- Letra V -->
+        <TextView
+            android:id="@+id/letter_v"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="V"
+            android:textColor="#8B5CF6"
+            android:textSize="48sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-black"
+            android:alpha="0"
+            android:translationY="80dp"
+            android:scaleX="0.5"
+            android:scaleY="0.5"
+            android:elevation="12dp"
+            android:shadowColor="#8B5CF6"
+            android:shadowDx="4"
+            android:shadowDy="4"
+            android:shadowRadius="8"
+            android:letterSpacing="0.05" />
+
+    </LinearLayout>
+
+    <!-- Subtitle for programming platform -->
+    <TextView
+        android:id="@+id/subtitleText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Programming Video Platform"
+        android:textColor="#BBBBBB"
+        android:textSize="14sp"
+        android:fontFamily="sans-serif-medium"
+        android:alpha="0"
+        android:elevation="8dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/titleContainer" />
+
+    <!-- Advanced loading progress with purple theme -->
+    <ProgressBar
+        android:id="@+id/loadingProgressBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="300dp"
+        android:layout_height="4dp"
+        android:layout_marginTop="32dp"
+        android:alpha="0"
+        android:progressTint="#8B5CF6"
+        android:progressBackgroundTint="#1A1A2E"
+        android:elevation="8dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/subtitleText" />
+
+    <!-- Loading text with typing effect -->
+    <TextView
+        android:id="@+id/loadingTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Initializing your coding journey..."
+        android:textColor="#E6FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:alpha="0"
+        android:elevation="4dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/loadingProgressBar" />
+
+    <!-- Floating code elements for animation with purple theme -->
+    <TextView
+        android:id="@+id/floatingCode1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="&lt;/&gt;"
+        android:textColor="#8B5CF6"
+        android:textSize="20sp"
+        android:fontFamily="monospace"
+        android:alpha="0"
+        android:elevation="6dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.2"
+        app:layout_constraintVertical_bias="0.25" />
+
+    <TextView
+        android:id="@+id/floatingCode2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="{ }"
+        android:textColor="#A855F7"
+        android:textSize="18sp"
+        android:fontFamily="monospace"
+        android:alpha="0"
+        android:elevation="6dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.8"
+        app:layout_constraintVertical_bias="0.3" />
+
+    <TextView
+        android:id="@+id/floatingCode3"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="( )"
+        android:textColor="#C084FC"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:alpha="0"
+        android:elevation="6dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.1"
+        app:layout_constraintVertical_bias="0.7" />
+
+    <!-- Binary code rain effect elements with purple theme -->
+    <TextView
+        android:id="@+id/binaryRain1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="01010101"
+        android:textColor="#8B5CF6"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:alpha="0"
+        android:rotation="-15"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.05" />
+
+    <TextView
+        android:id="@+id/binaryRain2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="11000110"
+        android:textColor="#A855F7"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:alpha="0"
+        android:rotation="10"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.95" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

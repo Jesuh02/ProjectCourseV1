@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Netflix-inspired colors -->
+    <color name="netflix_red">#E50914</color>
+    <color name="netflix_black">#000000</color>
+    <color name="netflix_dark_gray">#141414</color>
+    <color name="netflix_gray">#333333</color>
+    <color name="netflix_light_gray">#564D4D</color>
+    
+    <!-- Login and splash purple theme colors -->
+    <color name="splash_background">#0A0A0F</color>
+    <color name="splash_gradient_center">#1A1A2E</color>
+    <color name="purple_primary_splash">#8B5CF6</color>
+    <color name="purple_secondary_splash">#A855F7</color>
+    <color name="purple_tertiary_splash">#C084FC</color>
+    <color name="purple_light_splash">#D8B4FE</color>
+    
+    <!-- Programming theme colors -->
+    <color name="code_green">#00FF00</color>
+    <color name="code_blue">#2196F3</color>
+    <color name="code_orange">#FF9800</color>
+    <color name="code_purple">#9C27B0</color>
+    <color name="code_cyan">#00BCD4</color>
+    
+    <!-- Original colors -->
+    <color name="purple_primary">#6200EE</color>
+    <color name="purple_light">#8E24AA</color>
+    <color name="purple_dark">#4A148C</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="gray_light">#F5F5F5</color>
+    <color name="gray_text">#757575</color>
+    <color name="gray_dark">#333333</color>
+    <color name="colorPrimary">#3F51B5</color>
+    <color name="colorPrimaryDark">#303F9F</color>
+    <color name="colorAccent">#FF4081</color>
+    <color name="colorTextPrimary">#212121</color>
+    <color name="colorTextSecondary">#757575</color>
+    <color name="red_600">#E53935</color>
+    <color name="red_700">#D32F2F</color>
+    <color name="gray_800">#1A1A1A</color>
+    <color name="gray_900">#121212</color>
+    <color name="yellow_900">#F57F17</color>
+    <color name="green_900">#1B5E20</color>
+
+    <!-- Colores para los chips -->
+    <color name="chip_selected">#FFFFFF</color>
+    <color name="chip_unselected">#E0E0E0</color>
+    <color name="chip_text_selected">#6200EE</color>
+    <color name="chip_text_unselected">#757575</color>
+
+    <!-- Material Design default colors -->
+    <color name="purple_500">#9C27B0</color>
+    <color name="red">#FF3B30</color>
+    
+    <!-- Splash Screen Colors -->
+    <color name="splash_purple_primary">#6A1B9A</color>
+    <color name="splash_purple_dark">#4A148C</color>
+    <color name="splash_purple_light">#9C27B0</color>
+    <color name="splash_gold">#FFD700</color>
+    <color name="splash_cyan">#03DAC6</color>
+    <color name="splash_pink">#CF6679</color>
+    <color name="material_purple">#BB86FC</color>
+    <color name="purple_background">#6A1B9A</color>
+    
+    <!-- Dark Mode Colors -->
+    <color name="dark_background">#0A0A0F</color>
+    <color name="dark_card_background">#1A1A2E</color>
+    <color name="dark_surface">#1A1A2E</color>
+    <color name="dark_outline">#16213E</color>
+    <color name="dark_input_background">#16213E</color>
+    <color name="dark_primary_text">#FFFFFF</color>
+    <color name="text_primary_dark">#FFFFFF</color>
+    <color name="dark_secondary_text">#CCCCCC</color>
+    <color name="dark_hint_text">#7C7C7C</color>
+    <color name="text_hint_dark">#9B9BB3</color>
+    <color name="dark_image_background">#404040</color>
+    <color name="rating_color">#FFD700</color>
+    
+    <!-- CourseV Purple Theme -->
+    <color name="primary_color">#8B5CF6</color>
+    <color name="primary_variant">#7C3AED</color>
+    <color name="gradient_start">#7C3AED</color>
+    <color name="secondary_color">#A855F7</color>
+    <color name="gradient_end">#A855F7</color>
+    <color name="accent_purple">#C084FC</color>
+    <color name="light_purple">#DDD6FE</color>
+    <color name="glow_purple">#8B5CF6</color>
+    <color name="course_accent">#F59E0B</color>
+    <color name="success_green">#10B981</color>
+    
+    <!-- Premium Badge -->
+    <color name="premium_badge_color">#FF6B35</color>
+</resources>

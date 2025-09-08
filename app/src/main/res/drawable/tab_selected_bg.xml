@@ -1,0 +1,14 @@
+<!-- res/drawable/tab_selected_bg.xml -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent"/>
+        </shape>
+    </item>
+    <item android:bottom="0dp">
+        <shape android:shape="rectangle">
+            <size android:height="4dp"/>
+            <solid android:color="#9C27B0"/>
+        </shape>
+    </item>
+</layer-list>

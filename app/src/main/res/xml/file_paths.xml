@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Define the path for files stored via context.getFilesDir() -->
+    <files-path
+        name="files"
+        path="/" />
+
+    <!-- Define specific paths for different content types -->
+    <files-path
+        name="course_content_files"
+        path="course_content/" />
+
+    <files-path
+        name="videos"
+        path="videos/" />
+
+    <files-path
+        name="documents"
+        path="document/" />
+
+    <files-path
+        name="content"
+        path="content/" />
+
+    <!-- Cache directory -->
+    <cache-path
+        name="cache"
+        path="/" />
+
+    <!-- External storage paths -->
+    <external-path
+        name="external"
+        path="." />
+
+    <external-files-path
+        name="external_files"
+        path="." />
+
+    <external-cache-path
+        name="external_cache"
+        path="." />
+    path="." />
+    <external-files-path
+        name="external_files"
+        path="." />
+    <external-files-path
+        name="documents"
+        path="Documents/" />
+    <cache-path
+        name="cache"
+        path="." />
+    <external-cache-path
+        name="external_cache"
+        path="." />
+    <external-path
+        name="external"
+        path="." />
+    <!-- Add specific path for DCIM folder -->
+    <external-path
+        name="dcim"
+        path="DCIM/" />
+    <!-- Add specific path for Pictures folder -->
+    <external-path
+        name="pictures"
+        path="Pictures/" />
+    <!-- Add specific path for Movies folder -->
+    <external-path
+        name="movies"
+        path="Movies/" />
+    <!-- Add specific path for Download folder -->
+    <external-path
+        name="download"
+        path="Download/" />
+</paths>

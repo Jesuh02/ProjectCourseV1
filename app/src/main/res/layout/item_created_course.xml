@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="16dp"
+    app:cardBackgroundColor="#242424"
+    app:cardCornerRadius="8dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">        <!-- Container para miniatura y video -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="260dp">
+
+            <!-- Miniatura del video -->
+            <ImageView
+                android:id="@+id/courseVideoThumbnail"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:src="@drawable/placeholder_image"
+                android:contentDescription="Miniatura del curso" />
+
+            <!-- VideoView para reproducción automática -->
+            <VideoView
+                android:id="@+id/courseVideoView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
+            <!-- Menu button (3 dots) for course options - More visible with improved styling -->
+            <LinearLayout
+                android:id="@+id/courseMenuContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_margin="6dp"
+                android:orientation="horizontal"
+                android:background="@drawable/menu_button_container_background"
+                android:paddingStart="8dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="4dp"
+                android:elevation="12dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/menuLabelText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Opciones"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:layout_gravity="center_vertical"
+                    android:layout_marginEnd="4dp"
+                    android:fontFamily="sans-serif-medium" />
+
+                <ImageView
+                    android:id="@+id/courseMenuButton"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="@drawable/menu_button_background_ripple"
+                    android:src="@drawable/ic_more_vert"
+                    android:contentDescription="Opciones del curso"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:tint="#FFFFFF" />
+
+            </LinearLayout>
+
+            <!-- Enhanced indicator with glow effect -->
+            <View
+                android:id="@+id/menuIndicator"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="2dp"
+                android:layout_marginEnd="2dp"
+                android:background="@drawable/menu_indicator_glow"
+                android:elevation="15dp"
+                android:visibility="gone" />
+
+        </FrameLayout>        <!-- Título del curso -->
+        <TextView
+            android:id="@+id/courseTitleTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="8dp"
+            android:text="Título del curso"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:maxLines="2"
+            android:ellipsize="end" />
+
+        <!-- Número de estudiantes -->
+        <TextView
+            android:id="@+id/courseStudentsTextView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_marginBottom="8dp"
+            android:text="0 estudiantes"
+            android:textColor="#FF0000"
+            android:textSize="14sp" />
+
+        <!-- Container para categoría y menú de opciones -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:layout_marginBottom="8dp"
+            android:gravity="center_vertical">
+
+            <!-- Categoría del curso -->
+            <TextView
+                android:id="@+id/courseCategoryTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="#333333"
+                android:paddingStart="8dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="4dp"
+                android:text="Categoría"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp" />
+
+            <!-- Spacer para empujar el menú a la derecha -->
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <!-- Menú de opciones del curso (3 puntos) -->
+            <ImageView
+                android:id="@+id/courseOptionsMenuButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_more_vert"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Opciones del curso"
+                android:padding="6dp"
+                android:scaleType="centerInside"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone"
+                app:tint="#FFFFFF" />
+
+        </LinearLayout>
+    </LinearLayout>
+</androidx.cardview.widget.CardView>

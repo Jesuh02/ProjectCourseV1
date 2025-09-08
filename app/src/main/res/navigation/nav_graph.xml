@@ -1,0 +1,542 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/loginFragment">
+
+    <!-- Keep only one instance of each fragment definition -->
+    <fragment
+        android:id="@+id/splashFragment"
+        android:name="com.example.tareamov.ui.SplashFragment"
+        android:label="Splash"
+        tools:layout="@layout/fragment_splash">
+        <action
+            android:id="@+id/action_splashFragment_to_loginFragment"
+            app:destination="@id/loginFragment"
+            app:popUpTo="@id/splashFragment"
+            app:popUpToInclusive="true"
+            app:enterAnim="@anim/fade_slide_up"
+            app:exitAnim="@android:anim/fade_out" />
+        <!-- Add this action: -->
+        <action
+            android:id="@+id/action_splashFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment"
+            app:popUpTo="@id/splashFragment"
+            app:popUpToInclusive="true"
+            app:enterAnim="@anim/fade_slide_up"
+            app:exitAnim="@android:anim/fade_out" />
+    </fragment>
+
+    <!-- Single videoHomeFragment definition with all actions -->
+    <fragment
+        android:id="@+id/videoHomeFragment"
+        android:name="com.example.tareamov.ui.VideoHomeFragment"
+        android:label="Video Home"
+        tools:layout="@layout/fragment_video_home">
+        <action
+            android:id="@+id/action_videoHomeFragment_to_homeFragment"
+            app:destination="@id/homeFragment" />
+        <!-- Action to LoginFragment removed -->
+        <action
+            android:id="@+id/action_videoHomeFragment_to_exploreFragment"
+            app:destination="@id/exploreFragment" />
+        <action
+            android:id="@+id/action_videoHomeFragment_to_notificacionesFragment"
+            app:destination="@id/notificacionesFragment" />
+        <action
+            android:id="@+id/action_videoHomeFragment_to_contentUploadFragment"
+            app:destination="@id/contentUploadFragment" />
+        <action
+            android:id="@+id/action_videoHomeFragment_to_profileFragment"
+            app:destination="@id/profileFragment" />
+        <action
+            android:id="@+id/action_videoHomeFragment_to_databaseQueryFragment"
+            app:destination="@id/databaseQueryFragment" />        <action
+            android:id="@+id/action_videoHomeFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment" />
+        <action
+            android:id="@+id/action_videoHomeFragment_to_userProfileViewFragment"
+            app:destination="@id/userProfileViewFragment" />
+    </fragment>
+
+    <!-- Single exploreFragment definition -->
+    <fragment
+        android:id="@+id/exploreFragment"
+        android:name="com.example.tareamov.ui.ExploreFragment"
+        android:label="Explore"
+        tools:layout="@layout/fragment_explore">
+        <action
+            android:id="@+id/action_exploreFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment" />
+        <action
+            android:id="@+id/action_exploreFragment_to_notificacionesFragment"
+            app:destination="@id/notificacionesFragment" />
+        <action
+            android:id="@+id/action_exploreFragment_to_profileFragment"
+            app:destination="@id/profileFragment" />
+        <action
+            android:id="@+id/action_exploreFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment" />
+        <!-- Add the missing action -->
+        <action
+            android:id="@+id/action_exploreFragment_to_contentUploadFragment"
+            app:destination="@id/contentUploadFragment" />
+        <action
+            android:id="@+id/action_exploreFragment_to_homeFragment"
+            app:destination="@id/homeFragment" />
+    </fragment>
+
+    <!-- Single notificacionesFragment definition -->
+    <fragment
+        android:id="@+id/notificacionesFragment"
+        android:name="com.example.tareamov.ui.NotificacionesFragment"
+        android:label="Notificaciones"
+        tools:layout="@layout/fragment_notificaciones">
+        <action
+            android:id="@+id/action_notificacionesFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment" />
+        <action
+            android:id="@+id/action_notificacionesFragment_to_exploreFragment"
+            app:destination="@id/exploreFragment" />
+        <action
+            android:id="@+id/action_notificacionesFragment_to_contentUploadFragment"
+            app:destination="@id/contentUploadFragment" />
+        <action
+            android:id="@+id/action_notificacionesFragment_to_profileFragment"
+            app:destination="@id/profileFragment" />
+        <action
+            android:id="@+id/action_notificacionesFragment_to_homeFragment"
+            app:destination="@id/homeFragment" />
+    </fragment>
+
+    <!-- Single registerFragment definition -->
+    <fragment
+        android:id="@+id/registerFragment"
+        android:name="com.example.tareamov.ui.RegisterFragment"
+        android:label="Register"
+        tools:layout="@layout/fragment_register">
+        <action
+            android:id="@+id/action_registerFragment_to_loginFragment"
+            app:destination="@id/loginFragment"
+            app:popUpTo="@id/registerFragment"
+            app:popUpToInclusive="true" />
+        <action
+            android:id="@+id/action_registerFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment"
+            app:popUpTo="@id/registerFragment"
+            app:popUpToInclusive="true" />
+    </fragment>
+
+    <!-- Single loginFragment definition -->
+    <fragment
+        android:id="@+id/loginFragment"
+        android:name="com.example.tareamov.ui.LoginFragment"
+        android:label="Login"
+        tools:layout="@layout/fragment_login">
+        <action
+            android:id="@+id/action_loginFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment"
+            app:popUpTo="@id/loginFragment"
+            app:popUpToInclusive="true" />
+        <action
+            android:id="@+id/action_loginFragment_to_registerFragment"
+            app:destination="@id/registerFragment" />
+        <action
+            android:id="@+id/action_loginFragment_to_homeFragment"
+            app:destination="@id/homeFragment"
+            app:popUpTo="@id/loginFragment"
+            app:popUpToInclusive="true" />
+
+    </fragment>
+
+    <!-- Single homeFragment definition -->
+    <fragment
+        android:id="@+id/homeFragment"
+        android:name="com.example.tareamov.ui.HomeFragment"
+        android:label="Home"
+        tools:layout="@layout/fragment_home">
+
+        <action
+            android:id="@+id/action_homeFragment_to_registerFragment"
+            app:destination="@id/registerFragment" />
+
+        <action
+            android:id="@+id/action_homeFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment"
+            app:popUpTo="@id/homeFragment"
+            app:popUpToInclusive="true" />
+        <action
+            android:id="@+id/action_homeFragment_to_loginFragment"
+            app:destination="@id/loginFragment" />
+    </fragment>
+
+
+
+
+
+    <!-- Content Upload Fragment -->
+    <fragment
+        android:id="@+id/contentUploadFragment"
+        android:name="com.example.tareamov.ui.ContentUploadFragment"
+        android:label="Content Upload"
+        tools:layout="@layout/fragment_content_upload">
+        <action
+            android:id="@+id/action_contentUploadFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment"
+            app:popUpTo="@id/contentUploadFragment"
+            app:popUpToInclusive="true" />
+        <action
+            android:id="@+id/action_contentUploadFragment_to_videoDetailsFragment"
+            app:destination="@id/videoDetailsFragment" />
+        <action
+            android:id="@+id/action_contentUploadFragment_to_courseCreationFragment"
+            app:destination="@id/courseCreationFragment" />
+    </fragment>    <!-- Video Details Fragment -->
+    <fragment
+        android:id="@+id/videoDetailsFragment"
+        android:name="com.example.tareamov.ui.VideoDetailsFragment"
+        android:label="Video Details"
+        tools:layout="@layout/fragment_video_details">
+
+        <!-- Add the missing action to CourseDetailFragment -->
+        <action
+            android:id="@+id/action_videoDetailsFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment" />
+        <!-- Add the missing action to VideoHomeFragment -->
+        <action
+            android:id="@+id/action_videoDetailsFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment"
+            app:popUpTo="@id/videoHomeFragment"
+            app:popUpToInclusive="false" />
+    </fragment>
+
+    <!-- Course Creation Fragment - Update navigation to CourseDetailFragment -->
+    <fragment
+        android:id="@+id/courseCreationFragment"
+        android:name="com.example.tareamov.ui.CourseCreationFragment"
+        android:label="Course Creation"
+        tools:layout="@layout/fragment_course_creation">
+        <action
+            android:id="@+id/action_courseCreationFragment_to_courseTopicFragment"
+            app:destination="@id/courseTopicFragment" />
+        <action
+            android:id="@+id/action_courseCreationFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment" />
+    </fragment>
+
+    <!-- Course Topic Fragment - Add action to CourseDetailFragment -->
+    <fragment
+        android:id="@+id/courseTopicFragment"
+        android:name="com.example.tareamov.ui.CourseTopicFragment"
+        android:label="Course Topic"
+        tools:layout="@layout/fragment_course_topic">
+        <!-- Arguments -->
+        <argument
+            android:name="courseId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="topicId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="topicNumber"
+            app:argType="integer"
+            android:defaultValue="0" />
+        <argument
+            android:name="courseName"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="isTemporary"
+            app:argType="boolean"
+            android:defaultValue="false" />
+
+        <!-- Actions -->
+        <action
+            android:id="@+id/action_courseTopicFragment_to_courseTaskFragment"
+            app:destination="@id/courseTaskFragment" />
+        <action
+            android:id="@+id/action_courseTopicFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment" />
+        <action
+            android:id="@+id/action_courseTopicFragment_to_courseCreationFragment"
+            app:destination="@id/courseCreationFragment"
+            app:popUpTo="@id/courseCreationFragment"
+            app:popUpToInclusive="true" />
+    </fragment>
+
+    <!-- Course Task Fragment - SINGLE definition -->
+    <fragment
+        android:id="@+id/courseTaskFragment"
+        android:name="com.example.tareamov.ui.CourseTaskFragment"
+        android:label="Course Task"
+        tools:layout="@layout/fragment_course_task">
+        <!-- Arguments -->
+        <argument
+            android:name="topicId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="taskId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="courseId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="courseName"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="topicNumber"
+            app:argType="integer"
+            android:defaultValue="0" />
+        <argument
+            android:name="isTemporary"
+            app:argType="boolean"
+            android:defaultValue="false" />
+
+        <!-- Actions -->
+        <action
+            android:id="@+id/action_courseTaskFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment"
+            app:popUpTo="@id/courseDetailFragment"
+            app:popUpToInclusive="true" />
+        <action
+            android:id="@+id/action_courseTaskFragment_to_courseTopicFragment"
+            app:destination="@id/courseTopicFragment" />
+    </fragment>
+
+    <!-- Course Detail Fragment - SINGLE definition -->
+    <fragment
+        android:id="@+id/courseDetailFragment"
+        android:name="com.example.tareamov.ui.CourseDetailFragment"
+        android:label="Course Detail"
+        tools:layout="@layout/fragment_course_detail">
+        <!-- Arguments -->
+        <argument
+            android:name="courseId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="courseName"
+            app:argType="string"
+            android:defaultValue="" />
+        <!-- Actions -->
+        <action
+            android:id="@+id/action_courseDetailFragment_to_courseTaskFragment"
+            app:destination="@id/courseTaskFragment" />
+        <action
+            android:id="@+id/action_courseDetailFragment_to_courseTopicFragment"
+            app:destination="@id/courseTopicFragment" />
+        <action
+            android:id="@+id/action_courseDetailFragment_to_exploreFragment"
+            app:destination="@id/exploreFragment" />
+        <!-- Add action to navigate to SelectTopicFragment -->
+        <action
+            android:id="@+id/action_courseDetailFragment_to_selectTopicFragment"
+            app:destination="@id/selectTopicFragment" />        <!-- Add the missing action to TaskSubmissionFragment -->
+        <action
+            android:id="@+id/action_courseDetailFragment_to_taskSubmissionFragment"
+            app:destination="@id/taskSubmissionFragment" />        <!-- Add action to navigate to UserProfileViewFragment -->
+        <action
+            android:id="@+id/action_courseDetailFragment_to_userProfileViewFragment"
+            app:destination="@id/userProfileViewFragment" />
+        <!-- Add navigation actions for bottom navigation -->
+        <action
+            android:id="@+id/action_courseDetailFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment" />
+        <action
+            android:id="@+id/action_courseDetailFragment_to_contentUploadFragment"
+            app:destination="@id/contentUploadFragment" />
+        <action
+            android:id="@+id/action_courseDetailFragment_to_notificacionesFragment"
+            app:destination="@id/notificacionesFragment" />
+        <action
+            android:id="@+id/action_courseDetailFragment_to_profileFragment"
+            app:destination="@id/profileFragment" />
+        <action
+            android:id="@+id/action_courseDetailFragment_to_homeFragment"
+            app:destination="@id/homeFragment" />
+        <!-- Removed the duplicate action to videoHomeFragment if it existed -->
+        <!-- Add other necessary actions if they were in the duplicate block -->
+    </fragment>
+
+    <!-- Add TaskSubmissionFragment definition -->
+    <!-- Change this fragment definition -->
+    <fragment
+        android:id="@+id/taskSubmissionFragment"
+        android:name="com.example.tareamov.ui.TaskSubmissionsFragment"
+        android:label="Task Submission"
+        tools:layout="@layout/fragment_task_submission">
+        <!-- Arguments -->
+        <argument
+            android:name="taskId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="taskName"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="courseCreatorUsername"
+            app:argType="string"
+            android:defaultValue="" />
+        <!-- Action to go back to CourseDetailFragment -->
+        <action
+            android:id="@+id/action_taskSubmissionFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment"
+            app:popUpTo="@id/courseDetailFragment"
+            app:popUpToInclusive="true" />
+        <!-- Action to ChatBot Fragment - Fix id to match fragment id -->
+        <action
+            android:id="@+id/action_taskSubmissionFragment_to_chatBotFragment"
+            app:destination="@id/chatBotFragment" />
+    </fragment>
+
+    <!-- Add SelectTopicFragment definition -->
+    <fragment
+        android:id="@+id/selectTopicFragment"
+        android:name="com.example.tareamov.ui.SelectTopicFragment"
+        android:label="Select Topic"
+        tools:layout="@layout/fragment_select_topic"> <!-- Make sure you have this layout file -->
+        <!-- Arguments (Assuming it needs courseId and courseName like others) -->
+        <argument
+            android:name="courseId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="courseName"
+            app:argType="string"
+            android:defaultValue="" />
+        <!-- Action to navigate to CourseTaskFragment -->
+        <action
+            android:id="@+id/action_selectTopicFragment_to_courseTaskFragment"
+            app:destination="@id/courseTaskFragment" />
+        <!-- Optional: Action to go back, e.g., to CourseDetailFragment -->
+        <action
+            android:id="@+id/action_selectTopicFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment"
+            app:popUpTo="@id/courseDetailFragment"
+            app:popUpToInclusive="true" />
+    </fragment>
+
+    <!-- Audience Selection Fragment - remove nested profileFragment -->
+
+    <!-- Add ProfileFragment at the root level -->
+    <!-- Add this fragment definition -->
+    <fragment
+        android:id="@+id/editProfileFragment"
+        android:name="com.example.tareamov.ui.EditProfileFragment"
+        android:label="Edit Profile"
+        tools:layout="@layout/fragment_edit_profile">
+        <action
+            android:id="@+id/action_editProfileFragment_to_profileFragment"
+            app:destination="@id/profileFragment"
+            app:popUpTo="@id/profileFragment"
+            app:popUpToInclusive="true" />
+    </fragment>
+
+    <!-- Update the profileFragment to add navigation to editProfileFragment -->
+    <fragment
+        android:id="@+id/profileFragment"
+        android:name="com.example.tareamov.ui.ProfileFragment"
+        android:label="Profile"
+        tools:layout="@layout/fragment_profile">
+        <action
+            android:id="@+id/action_profileFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment" />
+        <action
+            android:id="@+id/action_profileFragment_to_exploreFragment"
+            app:destination="@id/exploreFragment" />
+        <action
+            android:id="@+id/action_profileFragment_to_contentUploadFragment"
+            app:destination="@id/contentUploadFragment" />
+        <action
+            android:id="@+id/action_profileFragment_to_notificacionesFragment"
+            app:destination="@id/notificacionesFragment" />
+        <!-- Add this action -->
+        <action
+            android:id="@+id/action_profileFragment_to_editProfileFragment"
+            app:destination="@id/editProfileFragment" />
+        <!-- Add action to navigate to HomeFragment for admin users -->
+        <action
+            android:id="@+id/action_profileFragment_to_homeFragment"
+            app:destination="@id/homeFragment" />
+    </fragment>
+
+    <!-- REMOVE the duplicate Course Detail Fragment definition -->
+    <!--
+    <fragment
+        android:id="@+id/courseDetailFragment" ... >
+        ...
+    </fragment>
+    -->
+
+    <!-- REMOVE the duplicate Course Task Fragment definition -->
+    <!--
+    <fragment
+        android:id="@+id/courseTaskFragment" ... >
+        ...
+    </fragment>
+    -->    <!-- Add DatabaseQueryFragment definition -->
+    <fragment
+        android:id="@+id/databaseQueryFragment"
+        android:name="com.example.tareamov.ui.DatabaseQueryFragment"
+        android:label="Database Query"
+        tools:layout="@layout/fragment_database_query">
+        <action
+            android:id="@+id/action_databaseQueryFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment"
+            app:popUpTo="@id/videoHomeFragment"
+            app:popUpToInclusive="true" />
+    </fragment>    <!-- Add UserProfileViewFragment definition -->
+    <fragment
+        android:id="@+id/userProfileViewFragment"
+        android:name="com.example.tareamov.ui.UserProfileViewFragment"
+        android:label="User Profile View"
+        tools:layout="@layout/fragment_user_profile_view">
+        <argument
+            android:name="username"
+            app:argType="string"
+            app:nullable="true" />
+        <action
+            android:id="@+id/action_userProfileViewFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment" />
+        <action
+            android:id="@+id/action_userProfileViewFragment_to_exploreFragment"
+            app:destination="@id/exploreFragment" />
+        <action
+            android:id="@+id/action_userProfileViewFragment_to_contentUploadFragment"
+            app:destination="@id/contentUploadFragment" />
+        <action
+            android:id="@+id/action_userProfileViewFragment_to_notificacionesFragment"
+            app:destination="@id/notificacionesFragment" />
+        <action
+            android:id="@+id/action_userProfileViewFragment_to_homeFragment"
+            app:destination="@id/homeFragment" />        <action
+            android:id="@+id/action_userProfileViewFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment" />
+        <action
+            android:id="@+id/action_userProfileViewFragment_to_profileFragment"
+            app:destination="@id/profileFragment" />
+        <action
+            android:id="@+id/action_userProfileViewFragment_to_courseCreationFragment"
+            app:destination="@id/courseCreationFragment" />
+    </fragment>
+
+    <!-- Add ChatBot Fragment definition -->
+    <fragment
+        android:id="@+id/chatBotFragment"
+        android:name="com.example.tareamov.ui.ChatBotFragment"
+        android:label="Chat Bot"
+        tools:layout="@layout/fragment_chatbot">
+        <action
+            android:id="@+id/action_chatBotFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment" />
+    </fragment>
+
+</navigation>

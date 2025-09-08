@@ -1,0 +1,453 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#11101A"
+    tools:context=".ui.CourseDetailFragment">
+
+    <!-- Top AppBar (dark, with back and title) -->
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="#2D1457"
+        android:elevation="4dp"
+        android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
+        app:layout_constraintTop_toTopOf="parent"
+        app:popupTheme="@style/ThemeOverlay.AppCompat.Light">
+
+        <ImageButton
+            android:id="@+id/backButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:src="@drawable/ic_arrow_back"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/back_button_desc"
+            app:tint="@android:color/white"
+            android:minWidth="48dp"
+            android:minHeight="48dp"
+            android:padding="8dp" />
+
+        <TextView
+            android:id="@+id/toolbarTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="Detalles del Curso"
+            android:textColor="@android:color/white"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+    </androidx.appcompat.widget.Toolbar>    <!-- Main Scrollable Content -->
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        app:layout_constraintBottom_toTopOf="@id/courseActionBar"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="0dp">
+
+            <!-- Course Title & Description (big, white, bold) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingTop="24dp"
+                android:paddingBottom="4dp"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/courseTitleTextView"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textSize="28sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFF"
+                    tools:text="¿Quién nació primero?" />
+
+                <ImageButton
+                    android:id="@+id/editCourseButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:src="@android:drawable/ic_menu_edit"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Editar curso"
+                    android:tint="#8F3FFF"
+                    android:layout_marginStart="8dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/courseDescriptionTextView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="16sp"
+                android:textColor="#D1C4E9"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"
+                android:paddingBottom="16dp"
+                tools:text="¿El huevo o la gallina?" />
+
+            <!-- Creator Info Row -->
+            <LinearLayout
+                android:id="@+id/creatorInfoContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"
+                android:paddingBottom="16dp"
+                android:background="@android:color/transparent">
+
+                <de.hdodenhof.circleimageview.CircleImageView
+                    android:id="@+id/creatorAvatarImageView"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:src="@drawable/default_avatar" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="12dp">                    <TextView
+                        android:id="@+id/creatorUsernameTextView"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="#FFFFFF"
+                        android:textStyle="bold"
+                        android:textSize="16sp"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:padding="4dp"
+                        tools:text="jesus" />
+
+                    <TextView
+                        android:id="@+id/subscriberCountTextView"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="#B39DDB"
+                        android:textSize="14sp"
+                        tools:text="1 suscriptores" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/subscribeButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="Suscribirse"
+                    android:textColor="#FFFFFF"
+                    android:background="@drawable/subscribe_button_background"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:layout_marginStart="8dp" />
+
+                <!-- Add the PSE payment button here -->
+                <ImageButton
+                    android:id="@+id/psePaymentButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:src="@drawable/ic_pse"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Pagar con PSE"
+                    android:layout_marginStart="8dp"
+                    android:tint="@null" />
+            </LinearLayout>
+
+            <!-- Add this after the creator info container and before the tabs -->
+            <LinearLayout
+                android:id="@+id/courseProgressContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:background="#1E1E2E"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="8dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/progressTitleTextView"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Tu Progreso en el Curso"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="8dp" />
+
+                <ProgressBar
+                    android:id="@+id/courseProgressBar"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="16dp"
+                    android:progressDrawable="@drawable/progress_bar_drawable"
+                    android:max="100"
+                    android:progress="0" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="8dp">
+
+                    <TextView
+                        android:id="@+id/progressPercentTextView"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="0% completado"
+                        android:textColor="#AAAAAA"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:id="@+id/progressStatusTextView"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Calificación: 0/10"
+                        android:textColor="#AAAAAA"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <!-- Certificate Button Container with Animation -->
+                <FrameLayout
+                    android:id="@+id/certificateButtonContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:visibility="gone">
+
+                    <Button
+                        android:id="@+id/certificateButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:text="Descargar Certificado"
+                        android:textColor="#FFFFFF"
+                        android:textStyle="bold"
+                        android:drawableStart="@drawable/ic_certificate"
+                        android:drawablePadding="8dp"
+                        android:paddingStart="16dp"
+                        android:paddingEnd="16dp"
+                        android:background="@drawable/certificate_button_background"
+                        android:gravity="center" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <!-- Tabs for Contenido / Tareas -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="#181828"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                android:elevation="2dp">
+
+                <TextView
+                    android:id="@+id/tabDocumentos"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Contenido"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:padding="12dp"
+                    android:textColor="#FFFFFF"
+                    android:background="@drawable/tab_selector_left" />
+
+                <TextView
+                    android:id="@+id/tabTareas"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Tareas"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:padding="12dp"
+                    android:textColor="#B39DDB"
+                    android:background="@drawable/tab_selector_right" />
+            </LinearLayout>
+
+            <!-- Section Title -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Contenido del curso"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:paddingStart="24dp"
+                android:paddingTop="20dp"
+                android:paddingEnd="24dp"
+                android:paddingBottom="8dp"
+                android:background="@android:color/transparent" />
+
+            <!-- KEEP ONLY THIS SET -->
+            <LinearLayout
+                android:id="@+id/topicsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="16dp"
+                android:background="@android:color/transparent">
+                <!-- Dynamically added: item_course_topic_detail.xml, item_course_task_detail.xml, etc. -->
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/noTopicsTextView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Este curso aún no tiene temas."
+                android:textColor="#B39DDB"
+                android:gravity="center"
+                android:visibility="gone"
+                android:padding="24dp"
+                tools:visibility="visible"/>
+
+            <TextView
+                android:id="@+id/noTasksTextView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="No hay tareas en este curso."
+                android:textColor="#B39DDB"
+                android:gravity="center"
+                android:visibility="gone"
+                android:padding="24dp"
+                tools:visibility="visible"/>
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>    <!-- Course Action Buttons (above bottom navigation) -->
+    <LinearLayout
+        android:id="@+id/courseActionBar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#181828"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <Button
+            android:id="@+id/addTopicButton"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="Agregar Tema"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#8F3FFF"
+            android:background="@drawable/rounded_button_purple"
+            android:layout_marginEnd="8dp" />
+
+        <Button
+            android:id="@+id/addTaskButton"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="Crear Tarea"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#8F3FFF"
+            android:background="@drawable/rounded_button_purple"
+            android:layout_marginStart="8dp" />
+    </LinearLayout>
+
+    <!-- Bottom Navigation using the component -->
+    <include 
+        android:id="@+id/bottomNavigation"
+        layout="@layout/component_bottom_navigation"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Move this FrameLayout INSIDE the ConstraintLayout, not after it -->
+    <FrameLayout
+        android:id="@+id/studentProgressFragmentContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp"
+        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Payment Container - Will be shown only for paid courses to non-creators -->
+    <!-- Add this after the course description and before the topics container -->
+    <FrameLayout
+        android:id="@+id/paymentButtonContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp"
+        android:background="#1E1E2E"
+        android:padding="16dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/paymentTitleTextView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Curso de Pago"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:id="@+id/paymentDescriptionTextView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Para acceder al contenido completo de este curso, es necesario realizar un pago."
+                android:textColor="#AAAAAA"
+                android:textSize="14sp"
+                android:layout_marginBottom="16dp" />
+
+            <Button
+                android:id="@+id/paymentButton"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="Pagar Ahora"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:background="@drawable/button_background"
+                android:gravity="center" />
+
+            <!-- NUEVO BOTÓN PARA PAGAR CON PSE -->
+            <Button
+                android:id="@+id/paymentPSEButton"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="Pagar con PSE"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:background="@drawable/button_background"
+                android:gravity="center"
+                android:layout_marginTop="8dp"/>
+        </LinearLayout>
+    </FrameLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

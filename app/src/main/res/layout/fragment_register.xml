@@ -1,0 +1,506 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/dark_background"
+    android:fillViewport="true"
+    tools:context=".ui.RegisterFragment">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="16dp">
+
+        <!-- Floating particles for course theme -->
+        <View
+            android:id="@+id/particle1"
+            android:layout_width="6dp"
+            android:layout_height="6dp"
+            android:background="@drawable/floating_particle"
+            android:alpha="0.6"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            android:layout_marginTop="80dp"
+            android:layout_marginEnd="40dp" />
+
+        <View
+            android:id="@+id/particle2"
+            android:layout_width="4dp"
+            android:layout_height="4dp"
+            android:background="@drawable/floating_particle"
+            android:alpha="0.4"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            android:layout_marginTop="120dp"
+            android:layout_marginStart="60dp" />
+
+        <View
+            android:id="@+id/particle3"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="@drawable/floating_particle"
+            android:alpha="0.3"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintBottom_toBottomOf="@id/headerBackground"
+            android:layout_marginEnd="80dp"
+            android:layout_marginBottom="30dp" />
+
+        <!-- Enhanced Header Section -->
+        <View
+            android:id="@+id/headerBackground"
+            android:layout_width="0dp"
+            android:layout_height="140dp"
+            android:background="@drawable/gradient_header"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- Course Platform Icon -->
+        <ImageView
+            android:id="@+id/courseIcon"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_graduation_cap"
+            android:tint="@color/course_accent"
+            android:layout_marginTop="16dp"
+            android:alpha="0"
+            app:layout_constraintEnd_toEndOf="@id/headerBackground"
+            app:layout_constraintStart_toStartOf="@id/headerBackground"
+            app:layout_constraintTop_toTopOf="@id/headerBackground" />
+
+        <TextView
+            android:id="@+id/welcomeText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="¡Únete a EduPlatform!"
+            android:textColor="#FFFFFF"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:alpha="0"
+            android:fontFamily="sans-serif-medium"
+            app:layout_constraintEnd_toEndOf="@id/headerBackground"
+            app:layout_constraintStart_toStartOf="@id/headerBackground"
+            app:layout_constraintTop_toBottomOf="@id/courseIcon" />
+
+        <TextView
+            android:id="@+id/subtitleText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Aprende, crea y transforma tu futuro"
+            android:textColor="#E0FFFFFF"
+            android:textSize="15sp"
+            android:alpha="0"
+            android:fontFamily="sans-serif-light"
+            app:layout_constraintEnd_toEndOf="@id/headerBackground"
+            app:layout_constraintStart_toStartOf="@id/headerBackground"
+            app:layout_constraintTop_toBottomOf="@id/welcomeText" />
+
+        <!-- Glowing Main Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/registerCard"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="70dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="20dp"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="20dp"
+            app:cardBackgroundColor="@color/dark_surface"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="@id/headerBackground"
+            app:strokeColor="@color/primary_color"
+            app:strokeWidth="2dp"
+            android:alpha="0"
+            android:translationY="50dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <!-- Avatar Section with Glow Effect -->
+                <FrameLayout
+                    android:id="@+id/avatarContainer"
+                    android:layout_width="140dp"
+                    android:layout_height="140dp"
+                    android:layout_gravity="center"
+                    android:layout_marginBottom="24dp"
+                    android:alpha="0"
+                    android:translationY="30dp">
+
+                    <!-- Glow Ring -->
+                    <View
+                        android:id="@+id/avatarGlow"
+                        android:layout_width="150dp"
+                        android:layout_height="150dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/glow_border"
+                        android:alpha="0.7" />
+
+                    <de.hdodenhof.circleimageview.CircleImageView
+                        android:id="@+id/avatarImageView"
+                        android:layout_width="130dp"
+                        android:layout_height="130dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/default_avatar"
+                        android:scaleType="centerCrop"
+                        app:civ_border_color="@color/primary_color"
+                        app:civ_border_width="3dp" />
+
+                    <com.google.android.material.floatingactionbutton.FloatingActionButton
+                        android:id="@+id/selectAvatarFab"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="bottom|end"
+                        android:layout_marginEnd="-8dp"
+                        android:layout_marginBottom="-8dp"
+                        android:contentDescription="Seleccionar avatar"
+                        android:src="@drawable/ic_photo_camera"
+                        app:backgroundTint="@color/course_accent"
+                        app:fabSize="mini"
+                        app:tint="#FFFFFF"
+                        app:elevation="12dp" />
+
+                    <ProgressBar
+                        android:id="@+id/avatarProgressBar"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:layout_gravity="center"
+                        android:visibility="gone"
+                        android:indeterminateTint="@color/primary_color" />
+                </FrameLayout>
+
+                <!-- Personal Information Section -->
+                <TextView
+                    android:id="@+id/personalInfoTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Información Personal"
+                    android:textColor="@color/accent_purple"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="16dp"
+                    android:alpha="0"
+                    android:translationX="-20dp" />
+
+                <!-- Name Fields in Grid -->
+                <LinearLayout
+                    android:id="@+id/nameContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="20dp"
+                    android:alpha="0"
+                    android:translationX="-30dp">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/nombresLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="8dp"
+                        android:hint="Nombres"
+                        app:startIconDrawable="@drawable/ic_person"
+                        app:startIconTint="@color/primary_color"
+                        app:boxStrokeColor="@color/primary_color"
+                        app:hintTextColor="@color/primary_color"
+                        app:boxBackgroundColor="@color/dark_input_background"
+                        app:boxCornerRadiusTopStart="16dp"
+                        app:boxCornerRadiusTopEnd="16dp"
+                        app:boxCornerRadiusBottomStart="16dp"
+                        app:boxCornerRadiusBottomEnd="16dp"
+                        android:textColorHint="@color/text_hint_dark">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/nombresEditText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textPersonName"
+                            android:textColor="@color/text_primary_dark"
+                            android:textColorHint="@color/text_hint_dark" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/apellidosLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="8dp"
+                        android:hint="Apellidos"
+                        app:startIconDrawable="@drawable/ic_person"
+                        app:startIconTint="@color/primary_color"
+                        app:boxStrokeColor="@color/primary_color"
+                        app:hintTextColor="@color/primary_color"
+                        app:boxBackgroundColor="@color/dark_input_background"
+                        app:boxCornerRadiusTopStart="16dp"
+                        app:boxCornerRadiusTopEnd="16dp"
+                        app:boxCornerRadiusBottomStart="16dp"
+                        app:boxCornerRadiusBottomEnd="16dp"
+                        android:textColorHint="@color/text_hint_dark">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/apellidosEditText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textPersonName"
+                            android:textColor="@color/text_primary_dark"
+                            android:textColorHint="@color/text_hint_dark" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <!-- Contact Information -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/emailLayout"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="20dp"
+                    android:hint="Correo Electrónico"
+                    app:startIconDrawable="@drawable/ic_email"
+                    app:startIconTint="@color/primary_color"
+                    app:boxStrokeColor="@color/primary_color"
+                    app:hintTextColor="@color/primary_color"
+                    app:boxBackgroundColor="@color/dark_input_background"
+                    app:boxCornerRadiusTopStart="16dp"
+                    app:boxCornerRadiusTopEnd="16dp"
+                    app:boxCornerRadiusBottomStart="16dp"
+                    app:boxCornerRadiusBottomEnd="16dp"
+                    android:textColorHint="@color/text_hint_dark"
+                    android:alpha="0"
+                    android:translationX="-30dp">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/emailEditText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textEmailAddress"
+                        android:textColor="@color/text_primary_dark"
+                        android:textColorHint="@color/text_hint_dark" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <LinearLayout
+                    android:id="@+id/contactContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="24dp"
+                    android:alpha="0"
+                    android:translationX="30dp">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/telefonoLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="8dp"
+                        android:hint="Teléfono"
+                        app:startIconDrawable="@drawable/ic_phone"
+                        app:startIconTint="@color/primary_color"
+                        app:boxStrokeColor="@color/primary_color"
+                        app:hintTextColor="@color/primary_color"
+                        app:boxBackgroundColor="@color/dark_input_background"
+                        app:boxCornerRadiusTopStart="16dp"
+                        app:boxCornerRadiusTopEnd="16dp"
+                        app:boxCornerRadiusBottomStart="16dp"
+                        app:boxCornerRadiusBottomEnd="16dp"
+                        android:textColorHint="@color/text_hint_dark"
+                        app:helperText="Ej: +57 300 123 4567"
+                        app:helperTextTextColor="@color/text_hint_dark">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/telefonoEditText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="phone"
+                            android:textColor="@color/text_primary_dark"
+                            android:textColorHint="@color/text_hint_dark" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/fechaNacimientoLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="8dp"
+                        android:hint="Fecha Nacimiento"
+                        app:startIconDrawable="@drawable/ic_calendar"
+                        app:startIconTint="@color/primary_color"
+                        app:boxStrokeColor="@color/primary_color"
+                        app:hintTextColor="@color/primary_color"
+                        app:boxBackgroundColor="@color/dark_input_background"
+                        app:boxCornerRadiusTopStart="16dp"
+                        app:boxCornerRadiusTopEnd="16dp"
+                        app:boxCornerRadiusBottomStart="16dp"
+                        app:boxCornerRadiusBottomEnd="16dp"
+                        android:textColorHint="@color/text_hint_dark"
+                        app:helperText="Mín. 5 años"
+                        app:helperTextTextColor="@color/text_hint_dark">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/fechaNacimientoEditText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:clickable="true"
+                            android:focusable="false"
+                            android:inputType="none"
+                            android:text="Seleccionar"
+                            android:textColor="@color/text_primary_dark"
+                            android:textColorHint="@color/text_hint_dark" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <!-- Account Credentials Section -->
+                <TextView
+                    android:id="@+id/credentialsTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Credenciales de Acceso"
+                    android:textColor="@color/accent_purple"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="16dp"
+                    android:alpha="0"
+                    android:translationX="20dp" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/usernameLayout"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="20dp"
+                    android:hint="Nombre de Usuario"
+                    app:startIconDrawable="@drawable/ic_account"
+                    app:startIconTint="@color/primary_color"
+                    app:boxStrokeColor="@color/primary_color"
+                    app:hintTextColor="@color/primary_color"
+                    app:boxBackgroundColor="@color/dark_input_background"
+                    app:boxCornerRadiusTopStart="16dp"
+                    app:boxCornerRadiusTopEnd="16dp"
+                    app:boxCornerRadiusBottomStart="16dp"
+                    app:boxCornerRadiusBottomEnd="16dp"
+                    android:textColorHint="@color/text_hint_dark"
+                    app:helperText="Mínimo 4 caracteres alfanuméricos"
+                    app:helperTextTextColor="@color/text_hint_dark"
+                    android:alpha="0"
+                    android:translationX="30dp">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/usernameEditText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="text"
+                        android:textColor="@color/text_primary_dark"
+                        android:textColorHint="@color/text_hint_dark" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/passwordLayout"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="20dp"
+                    android:hint="Contraseña"
+                    app:startIconDrawable="@drawable/ic_lock"
+                    app:startIconTint="@color/primary_color"
+                    app:boxStrokeColor="@color/primary_color"
+                    app:hintTextColor="@color/primary_color"
+                    app:endIconMode="password_toggle"
+                    app:boxBackgroundColor="@color/dark_input_background"
+                    app:boxCornerRadiusTopStart="16dp"
+                    app:boxCornerRadiusTopEnd="16dp"
+                    app:boxCornerRadiusBottomStart="16dp"
+                    app:boxCornerRadiusBottomEnd="16dp"
+                    android:textColorHint="@color/text_hint_dark"
+                    app:helperText="Mínimo 6 caracteres seguros"
+                    app:helperTextTextColor="@color/text_hint_dark"
+                    android:alpha="0"
+                    android:translationX="-30dp">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/passwordEditText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textPassword"
+                        android:textColor="@color/text_primary_dark"
+                        android:textColorHint="@color/text_hint_dark" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/confirmPasswordLayout"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="32dp"
+                    android:hint="Confirmar Contraseña"
+                    app:startIconDrawable="@drawable/ic_lock"
+                    app:startIconTint="@color/primary_color"
+                    app:boxStrokeColor="@color/primary_color"
+                    app:hintTextColor="@color/primary_color"
+                    app:endIconMode="password_toggle"
+                    app:boxBackgroundColor="@color/dark_input_background"
+                    app:boxCornerRadiusTopStart="16dp"
+                    app:boxCornerRadiusTopEnd="16dp"
+                    app:boxCornerRadiusBottomStart="16dp"
+                    app:boxCornerRadiusBottomEnd="16dp"
+                    android:textColorHint="@color/text_hint_dark"
+                    android:alpha="0"
+                    android:translationX="30dp">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/confirmPasswordEditText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textPassword"
+                        android:textColor="@color/text_primary_dark"
+                        android:textColorHint="@color/text_hint_dark" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <!-- Enhanced Register Button with Course Theme -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/registerButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:layout_marginBottom="16dp"
+                    android:backgroundTint="@color/primary_color"
+                    android:text="🎓 CREAR MI CUENTA ESTUDIANTIL"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="20dp"
+                    app:icon="@drawable/ic_graduation_cap"
+                    app:iconGravity="textStart"
+                    app:iconPadding="12dp"
+                    app:iconTint="@color/course_accent"
+                    android:elevation="12dp"
+                    app:rippleColor="#33FFFFFF"
+                    android:alpha="0"
+                    android:translationY="30dp" />
+
+                <!-- Course Platform Info -->
+                <TextView
+                    android:id="@+id/platformInfo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Al registrarte, tendrás acceso a miles de cursos de alta calidad"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_hint_dark"
+                    android:textSize="12sp"
+                    android:layout_marginTop="8dp"
+                    android:alpha="0" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</ScrollView>

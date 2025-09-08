@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="12dp"
+    android:background="@drawable/dark_rounded_card_background"
+    android:layout_marginStart="16dp"
+    android:layout_marginEnd="16dp"
+    android:layout_marginTop="4dp"
+    android:layout_marginBottom="4dp"
+    android:gravity="center_vertical">    <FrameLayout
+        android:layout_width="70dp"
+        android:layout_height="50dp"
+        android:background="@drawable/content_thumbnail_placeholder">
+
+        <ImageView
+            android:id="@+id/contentThumbnailImageView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:contentDescription="Thumbnail" />
+
+        <!-- Overlay icon to indicate content type -->
+        <ImageView
+            android:id="@+id/contentTypeIconView"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="4dp"
+            android:background="@drawable/rounded_icon_background"
+            android:padding="4dp"
+            android:src="@drawable/ic_play_circle"
+            android:tint="#FFFFFF"
+            android:contentDescription="Content Type Icon" />
+    </FrameLayout>    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="8dp">
+
+        <TextView
+            android:id="@+id/contentTitleTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/TextAppearance.AppCompat.Small"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end"
+            tools:text="Lección 1" />
+
+        <TextView
+            android:id="@+id/contentDescriptionTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/TextAppearance.AppCompat.Caption"
+            android:textColor="#B0B0B0"
+            android:layout_marginTop="2dp"
+            android:maxLines="2"
+            android:ellipsize="end"
+            tools:text="CONTENIDO DEL TEMA" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal">
+
+        <TextView
+            android:id="@+id/contentDurationTextView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/TextAppearance.AppCompat.Caption"
+            android:textColor="#B0B0B0"
+            android:layout_marginBottom="2dp"
+            tools:text="15 min" />
+
+        <TextView
+            android:id="@+id/contentTypeTextView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/TextAppearance.AppCompat.Caption"
+            android:textColor="#8F3FFF"
+            android:textStyle="bold"
+            android:textSize="10sp"
+            tools:text="VIDEO" />
+    </LinearLayout>
+
+</LinearLayout>

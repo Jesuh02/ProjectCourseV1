@@ -1,0 +1,93 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+
+    <!-- Glow effect -->
+    <group
+        android:name="glow_group"
+        android:pivotX="32"
+        android:pivotY="32">
+        <path
+            android:name="glow"
+            android:fillColor="#4422D3EE"
+            android:fillAlpha="0.5"
+            android:pathData="M32,32 m-28,0 a28,28 0 1,0 56,0 a28,28 0 1,0 -56,0" />
+    </group>
+
+    <!-- Database cylinders (3) -->
+    <group
+        android:name="cylinders"
+        android:translateX="32"
+        android:translateY="32">
+        <!-- Top -->
+        <group android:name="cylinder_top">
+            <path android:fillColor="#22D3EE" android:pathData="M -16,-16 a16,8 0 1,0 32,0 a16,8 0 1,0 -32,0" />
+        </group>
+        <!-- Middle -->
+        <group android:name="cylinder_mid">
+            <path android:fillColor="#38BDF8" android:fillAlpha="0.85" android:pathData="M -16,-16 L 16,-16 L 16,16 L -16,16 Z" />
+        </group>
+        <!-- Bottom -->
+        <group android:name="cylinder_bot">
+            <path android:fillColor="#22D3EE" android:pathData="M -16,16 a16,8 0 1,0 32,0 a16,8 0 1,0 -32,0" />
+        </group>
+    </group>
+
+    <!-- Data lines (move horizontally) -->
+    <group android:name="data_lines" android:translateX="32" android:translateY="32">
+        <group android:name="line1">
+            <path android:fillColor="#B2FEFA" android:fillAlpha="0.25" android:pathData="M -12,-8 h24 a1,1 0 0 1 0,2 h-24 a1,1 0 0 1 0,-2z"/>
+        </group>
+        <group android:name="line2">
+            <path android:fillColor="#B2FEFA" android:fillAlpha="0.18" android:pathData="M -10,-4 h20 a1,1 0 0 1 0,2 h-20 a1,1 0 0 1 0,-2z"/>
+        </group>
+        <group android:name="line3">
+            <path android:fillColor="#B2FEFA" android:fillAlpha="0.18" android:pathData="M -8,0 h16 a1,1 0 0 1 0,2 h-16 a1,1 0 0 1 0,-2z"/>
+        </group>
+    </group>
+
+    <!-- Orbiting dots group (12 dots) -->
+    <group
+        android:name="orbit_group"
+        android:pivotX="32"
+        android:pivotY="32">
+        <!-- 12 dots in a circle -->
+        <group android:name="dot1"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M32,6 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot2"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M41.2,9.2 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot3"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M50,18 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot4"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M54.8,32 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot5"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M50,46 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot6"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M41.2,54.8 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot7"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M32,58 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot8"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M22.8,54.8 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot9"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M14,46 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot10"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M9.2,32 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot11"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M14,18 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+        <group android:name="dot12"><path android:fillColor="#22D3EE" android:fillAlpha="0.85" android:pathData="M22.8,9.2 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" /></group>
+    </group>
+
+    <!-- Floating particles (8) -->
+    <group android:name="float_particles">
+        <group android:name="float1"><path android:fillColor="#B2FEFA" android:fillAlpha="0.7" android:pathData="M48,20 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" /></group>
+        <group android:name="float2"><path android:fillColor="#B2FEFA" android:fillAlpha="0.7" android:pathData="M40,10 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" /></group>
+        <group android:name="float3"><path android:fillColor="#B2FEFA" android:fillAlpha="0.7" android:pathData="M55,35 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" /></group>
+        <group android:name="float4"><path android:fillColor="#B2FEFA" android:fillAlpha="0.7" android:pathData="M20,50 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" /></group>
+        <group android:name="float5"><path android:fillColor="#B2FEFA" android:fillAlpha="0.7" android:pathData="M10,40 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" /></group>
+        <group android:name="float6"><path android:fillColor="#B2FEFA" android:fillAlpha="0.7" android:pathData="M30,55 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" /></group>
+        <group android:name="float7"><path android:fillColor="#B2FEFA" android:fillAlpha="0.7" android:pathData="M50,50 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" /></group>
+        <group android:name="float8"><path android:fillColor="#B2FEFA" android:fillAlpha="0.7" android:pathData="M15,25 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" /></group>
+    </group>
+
+    <!-- Connection lines (static, but can animate alpha/rotation) -->
+    <group android:name="connections" android:pivotX="32" android:pivotY="32">
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.18"
+            android:pathData="M12,32 Q32,8 52,32" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.18"
+            android:pathData="M32,12 Q56,32 32,52" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.18"
+            android:pathData="M20,20 Q32,32 44,44" />
+    </group>
+</vector>

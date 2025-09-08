@@ -1,0 +1,43 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+    
+    <!-- Fondo del libro -->
+    <group android:name="book_base">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M30,20L90,20Q95,20 95,25L95,95Q95,100 90,100L30,100Q25,100 25,95L25,25Q25,20 30,20Z"/>
+    </group>
+    
+    <!-- Páginas internas -->
+    <group android:name="pages">
+        <path
+            android:fillColor="#F5F5F5"
+            android:pathData="M35,30L85,30L85,90L35,90Z"/>
+        <path
+            android:fillColor="#E0E0E0"
+            android:pathData="M35,35L80,35L80,40L35,40Z"/>
+        <path
+            android:fillColor="#E0E0E0"
+            android:pathData="M35,45L75,45L75,50L35,50Z"/>
+        <path
+            android:fillColor="#E0E0E0"
+            android:pathData="M35,55L80,55L80,60L35,60Z"/>
+    </group>
+    
+    <!-- Marcador de página -->
+    <group android:name="bookmark">
+        <path
+            android:fillColor="#FFD700"
+            android:pathData="M85,25L95,25L95,65L90,60L85,65Z"/>
+    </group>
+    
+    <!-- Brillo/destello -->
+    <group android:name="shine">
+        <path
+            android:fillColor="#40FFFFFF"
+            android:pathData="M45,25L55,25Q60,25 60,30L60,50Q60,55 55,55L45,55Q40,55 40,50L40,30Q40,25 45,25Z"/>
+    </group>
+</vector>

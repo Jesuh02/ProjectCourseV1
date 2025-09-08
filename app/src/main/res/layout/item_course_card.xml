@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="8dp"
+    android:background="@color/dark_card_background"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="8dp"
+    app:cardUseCompatPadding="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/dark_card_background"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- Thumbnail and Premium Badge Container -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="180dp"
+            android:layout_marginBottom="12dp">
+
+            <ImageView
+                android:id="@+id/courseThumbnailImageView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/dark_image_background"
+                android:scaleType="centerCrop"
+                tools:src="@android:drawable/ic_menu_gallery" />
+
+            <!-- Premium Badge -->
+            <View
+                android:id="@+id/premiumBadge"
+                android:layout_width="60dp"
+                android:layout_height="24dp"
+                android:layout_gravity="top|end"
+                android:layout_margin="8dp"
+                android:background="@drawable/premium_badge_background"
+                android:visibility="gone" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_margin="8dp"
+                android:text="PREMIUM"
+                android:textColor="@color/white"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+        </FrameLayout>
+
+        <!-- Course Title -->
+        <TextView
+            android:id="@+id/courseTitleTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textColor="@color/dark_primary_text"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            tools:text="Título del Curso" />
+
+        <!-- Course Description -->
+        <TextView
+            android:id="@+id/courseDescriptionTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:ellipsize="end"
+            android:maxLines="3"
+            android:textColor="@color/dark_secondary_text"
+            android:textSize="14sp"
+            tools:text="Descripción del curso que puede ser un poco larga..." />
+
+        <!-- Creator Info -->
+        <TextView
+            android:id="@+id/courseCreatorTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:textColor="@color/dark_secondary_text"
+            android:textSize="12sp"
+            tools:text="Por: NombreCreador" />
+
+        <!-- Course Info Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:orientation="horizontal">
+
+            <!-- Category -->
+            <TextView
+                android:id="@+id/courseCategoryTextView"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/category_tag_background"
+                android:padding="4dp"
+                android:textColor="@color/purple_500"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                tools:text="Programación" />
+
+            <!-- Rating -->
+            <TextView
+                android:id="@+id/courseRatingTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:textColor="@color/rating_color"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                tools:text="★ 4.5" />
+
+        </LinearLayout>
+
+        <!-- Bottom Row: Enrollment and Price -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <!-- Enrollment Count -->
+            <TextView
+                android:id="@+id/courseEnrollmentTextView"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="@color/dark_secondary_text"
+                android:textSize="12sp"
+                tools:text="120 estudiantes" />
+
+            <!-- Price -->
+            <TextView
+                android:id="@+id/coursePriceTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/purple_500"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                tools:text="$29.99" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</androidx.cardview.widget.CardView>

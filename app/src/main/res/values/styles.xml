@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Estilo para los chips de filtro -->
+    <style name="CustomChipStyle" parent="Widget.MaterialComponents.Chip.Choice">
+        <item name="chipBackgroundColor">@color/chip_background_color</item>
+        <item name="android:textColor">@color/chip_text_color</item>
+        <item name="chipCornerRadius">16dp</item>
+        <item name="chipStrokeWidth">0dp</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+    </style>    <!-- Estilo personalizado para la barra de progreso horizontal -->
+    <style name="CustomHorizontalProgressBar" parent="Widget.AppCompat.ProgressBar.Horizontal">
+        <item name="android:progressTint">@android:color/white</item>
+        <item name="android:progressBackgroundTint">#80FFFFFF</item>
+        <item name="android:minHeight">8dp</item>
+        <item name="android:maxHeight">8dp</item>
+        <item name="android:indeterminateTint">@android:color/white</item>
+    </style>
+
+    <!-- Estilo mejorado para la barra de progreso del splash -->
+    <style name="CustomHorizontalProgressBarPurple" parent="Widget.AppCompat.ProgressBar.Horizontal">
+        <item name="android:progressTint">@color/splash_gold</item>
+        <item name="android:progressBackgroundTint">#40FFFFFF</item>
+        <item name="android:minHeight">8dp</item>
+        <item name="android:maxHeight">8dp</item>
+        <item name="android:indeterminateTint">@color/splash_gold</item>
+    </style>
+
+    <!-- Estilo para el popup menu oscuro -->
+    <style name="DarkPopupMenuTheme" parent="ThemeOverlay.AppCompat.Dark">
+        <item name="android:popupBackground">@drawable/dark_popup_background</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:textColorSecondary">#B3B3B3</item>
+        <item name="android:colorBackground">#1E1E1E</item>
+        <item name="android:windowBackground">#1E1E1E</item>
+        <item name="android:popupElevation">8dp</item>
+        <item name="android:dropDownListViewStyle">@style/DarkDropDownListView</item>
+    </style>
+
+    <!-- Estilo para el ListView del popup menu -->
+    <style name="DarkDropDownListView" parent="Widget.AppCompat.ListView.DropDown">
+        <item name="android:divider">#333333</item>
+        <item name="android:dividerHeight">1dp</item>
+        <item name="android:background">#1E1E1E</item>
+        <item name="android:textColor">#FFFFFF</item>
+    </style>
+
+    <!-- Estilo para AlertDialog oscuro -->
+    <style name="DarkAlertDialogTheme" parent="ThemeOverlay.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dark_dialog_background</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:textColorSecondary">#CCCCCC</item>
+        <item name="colorAccent">#A259FF</item>
+        <item name="android:colorBackground">#2A2A2A</item>
+        <item name="android:buttonBarButtonStyle">@style/DarkDialogButton</item>
+    </style>
+
+    <!-- Estilo para botones de diálogo oscuro -->
+    <style name="DarkDialogButton" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
+        <item name="android:textColor">#A259FF</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+</resources>

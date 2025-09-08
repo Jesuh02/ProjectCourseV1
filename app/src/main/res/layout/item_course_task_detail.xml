@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="8dp"
+    app:cardBackgroundColor="#1E1E2E"
+    app:cardCornerRadius="8dp"
+    app:cardElevation="2dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <View
+                android:id="@+id/taskIndicator"
+                android:layout_width="4dp"
+                android:layout_height="match_parent"
+                android:background="#4CAF50" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginStart="8dp">
+
+                <TextView
+                    android:id="@+id/taskNameTextView"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Nombre de la Tarea"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/taskDescriptionTextView"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Descripción de la tarea"
+                    android:textColor="#AAAAAA"
+                    android:textSize="14sp"
+                    android:layout_marginTop="4dp" />
+
+                <!-- Add grade status text view -->
+                <TextView
+                    android:id="@+id/gradeStatusTextView"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Calificación: 0/10"
+                    android:textColor="#4CAF50"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:layout_marginTop="4dp"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/editTaskButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:src="@android:drawable/ic_menu_edit"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:tint="#AAAAAA"
+                android:padding="8dp"
+                android:contentDescription="Edit Task" />
+        </LinearLayout>        <LinearLayout
+            android:id="@+id/taskContentContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="8dp">
+
+            <!-- Content preview section for tasks -->
+            <TextView
+                android:id="@+id/taskContentLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Archivos adjuntos:"
+                android:textColor="#AAAAAA"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"
+                android:visibility="gone" />
+
+            <!-- This will be populated programmatically with content items -->
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/uploadSubmissionButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Subir Tarea"
+            android:layout_gravity="end"
+            android:layout_marginTop="8dp"
+            android:backgroundTint="#3F51B5" />
+    </LinearLayout>
+</androidx.cardview.widget.CardView>

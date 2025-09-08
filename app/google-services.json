@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "202421618791",
+    "project_id": "curso-e7ca5",
+    "storage_bucket": "curso-e7ca5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:202421618791:android:6506f1373283f269a3acc2",
+        "android_client_info": {
+          "package_name": "com.example.tareamov.service"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBRBrb2Pqza2qyPza5sp-GzJ6HTwiLRvqs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

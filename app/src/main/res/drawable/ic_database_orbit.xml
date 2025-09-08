@@ -1,0 +1,107 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+
+    <!-- Glow effect (blurred circle, semi-transparent) -->
+    <path
+        android:name="glow"
+        android:fillColor="#4422D3EE"
+        android:fillAlpha="0.5"
+        android:pathData="M32,32 m-28,0 a28,28 0 1,0 56,0 a28,28 0 1,0 -56,0" />
+
+    <!-- Central database icon (cylinder, with gradient suggestion) -->
+    <group
+        android:name="database_icon"
+        android:translateX="32"
+        android:translateY="32">
+        <!-- Top ellipse (cylinder top) -->
+        <path
+            android:fillColor="#22D3EE"
+            android:pathData="M -16,-16 a16,8 0 1,0 32,0 a16,8 0 1,0 -32,0" />
+        <!-- Middle rectangle (cylinder body) -->
+        <path
+            android:fillColor="#38BDF8"
+            android:fillAlpha="0.85"
+            android:pathData="M -16,-16 L 16,-16 L 16,16 L -16,16 Z" />
+        <!-- Bottom ellipse (cylinder bottom) -->
+        <path
+            android:fillColor="#22D3EE"
+            android:pathData="M -16,16 a16,8 0 1,0 32,0 a16,8 0 1,0 -32,0" />
+
+        <!-- Data lines (static, for now) -->
+        <path android:name="data_line1"
+            android:fillColor="#B2FEFA"
+            android:fillAlpha="0.25"
+            android:pathData="M -12,-8 h24 a1,1 0 0 1 0,2 h-24 a1,1 0 0 1 0,-2z"/>
+        <path android:name="data_line2"
+            android:fillColor="#B2FEFA"
+            android:fillAlpha="0.18"
+            android:pathData="M -10,-4 h20 a1,1 0 0 1 0,2 h-20 a1,1 0 0 1 0,-2z"/>
+        <path android:name="data_line3"
+            android:fillColor="#B2FEFA"
+            android:fillAlpha="0.18"
+            android:pathData="M -8,0 h16 a1,1 0 0 1 0,2 h-16 a1,1 0 0 1 0,-2z"/>
+        <path android:name="data_line4"
+            android:fillColor="#B2FEFA"
+            android:fillAlpha="0.18"
+            android:pathData="M -10,4 h20 a1,1 0 0 1 0,2 h-20 a1,1 0 0 1 0,-2z"/>
+        <path android:name="data_line5"
+            android:fillColor="#B2FEFA"
+            android:fillAlpha="0.18"
+            android:pathData="M -12,8 h24 a1,1 0 0 1 0,2 h-24 a1,1 0 0 1 0,-2z"/>
+    </group>
+
+    <!-- Orbiting dots group (16 dots) -->
+    <group
+        android:name="orbit_group"
+        android:pivotX="32"
+        android:pivotY="32">
+        <!-- 16 dots in a circle using small circles as paths -->
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M32,6 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M39.6,7.2 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M46,11 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M51,16 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M54.8,22.4 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M56.8,30 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M56.8,38 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M54.8,45.6 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M51,52 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M46,57 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M39.6,60.8 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M32,62 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M24.4,60.8 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M18,57 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M13,52 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M9.2,45.6 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M7.2,38 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M7.2,30 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M9.2,22.4 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M13,16 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M18,11 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        <path android:fillColor="#22D3EE" android:fillAlpha="0.85"
+            android:pathData="M24.4,7.2 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+    </group>
+</vector>

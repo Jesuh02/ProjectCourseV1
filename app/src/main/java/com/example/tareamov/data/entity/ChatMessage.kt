@@ -1,0 +1,19 @@
+package com.example.tareamov.data.entity
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "chat_messages")
+data class ChatMessage(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val message: String,
+    val isFromUser: Boolean,
+    val timestamp: Long = System.currentTimeMillis(),
+    val sessionId: String? = null, // Optional: to group conversations
+    val hasCalification: Boolean = false, // Indica si el mensaje contiene una calificación
+    val calificationValue: String? = null, // El valor de la calificación extraída (ej: "90/100")
+    val calificationAdded: Boolean = false // Indica si la calificación ya fue agregada por el usuario
+)
+
+//Hola Herazo...

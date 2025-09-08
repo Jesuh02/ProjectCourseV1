@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp"
+    android:layout_marginBottom="8dp"
+    android:layout_marginLeft="8dp"
+    android:layout_marginRight="8dp"
+    app:cardCornerRadius="10dp"
+    app:cardElevation="1dp"
+    app:cardBackgroundColor="#23243a">    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp">
+
+        <!-- Thumbnail container with type overlay -->
+        <FrameLayout
+            android:layout_width="60dp"
+            android:layout_height="45dp"
+            android:background="@drawable/content_thumbnail_placeholder">
+
+            <ImageView
+                android:id="@+id/contentThumbnailImageView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:contentDescription="Content Thumbnail" />
+
+            <ImageView
+                android:id="@+id/contentIconView"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="4dp"
+                android:background="@drawable/rounded_icon_background"
+                android:padding="2dp"
+                android:src="@drawable/ic_play_circle"
+                android:tint="#FFFFFF"
+                android:contentDescription="Content Type Icon" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="16dp">
+
+            <TextView
+                android:id="@+id/contentNameTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="16sp"
+                android:text="Contenido" />
+
+            <TextView
+                android:id="@+id/contentDurationTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#B39DDB"
+                android:textSize="13sp"
+                android:text="10:25 min" />
+
+            <!-- File type indicator -->
+            <TextView
+                android:id="@+id/contentTypeTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#8F3FFF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:layout_marginTop="2dp"
+                android:text="VIDEO" />
+        </LinearLayout>
+    </LinearLayout>
+</androidx.cardview.widget.CardView>

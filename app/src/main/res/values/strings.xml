@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TareaMov</string>
+
+    <!-- Explore Fragment -->
+    <string name="search_hint">Buscar cursos, instructores...</string>
+    <string name="filter_button">Filtrar</string>
+    <string name="explore">Explorar</string>
+    <string name="my_courses">Mis Cursos</string>
+    <string name="all_courses">Todos los Cursos</string>
+    <string name="back">Volver</string>
+    <string name="status_connected">Conectado</string>
+    <string name="status_disconnected">Desconectado</string>
+    <!-- Game Categories -->
+    <string name="just_chatting">Just Chatting</string>
+    <string name="just_chatting_viewers">243.7K espectadores</string>
+    <string name="just_chatting_tag">IRL</string>
+
+    <string name="marvel_rivals">Marvel Rivals</string>
+    <string name="marvel_rivals_viewers">95K espectadores</string>
+    <string name="marvel_rivals_tag">Shooter</string>
+
+    <string name="league_of_legends">League of Legends</string>
+    <string name="league_of_legends_viewers">671K espectadores</string>
+    <string name="league_of_legends_tag1">RPG</string>
+    <string name="league_of_legends_tag2">Strategy</string>
+
+    <string name="gta_v">Grand Theft Auto V</string>
+    <string name="gta_v_viewers">125K espectadores</string>
+    <string name="gta_v_tag1">Acción</string>
+    <string name="gta_v_tag2">Aventura</string>
+
+    <!-- Bottom Navigation -->
+    <string name="nav_home">Inicio</string>
+    <string name="nav_explore">Explorar</string>
+    <string name="nav_add">Añadir</string>
+    <string name="nav_activity">Actividad</string>
+    <string name="nav_profile">Perfil</string>
+    <string name="back_button_desc">Volver atrás</string>
+
+    <!-- Course Detail Fragment -->
+    <string name="course_detail_title">Detalles del Curso</string>
+    <string name="no_topics_message">Este curso aún no tiene temas.</string>
+    <string name="course_thumbnail_description">Imagen de portada del curso</string>
+    <string name="course_topics_list">Lista de temas del curso</string>
+    <string name="subscribe">Suscribirse</string>
+    <string name="subscribed">Suscrito</string>
+
+    <!-- Home Fragment -->
+    <string name="welcome_default">¡Bienvenido!</string>
+    <string name="nice_day_default">¡Que tengas un buen día!</string>
+    <string name="welcome_message">¡Bienvenido, %1$s!</string>
+    <string name="nice_day_message">¡Que tengas un buen día, %1$s!</string>
+
+    <string name="default_username">Usuario</string>
+    <string name="status_offline">Desconectado</string>
+    <string name="followers_count">%d seguidores</string>
+
+    <!-- Course Topic Fragment -->
+    <string name="add_video_button_desc">Botón para agregar un video desde la galería</string>
+    <string name="video_icon_desc">Ícono de video</string>
+    <string name="add_document_button_desc">Botón para agregar un documento</string>
+    <string name="document_icon_desc">Ícono de documento</string>
+
+    <string name="llama_downloading">Estado Llama 3: Descargando...</string>
+    <string name="llama_downloaded">Estado Llama 3: Modelo descargado</string>
+    <string name="llama_download_error">Estado Llama 3: Error en la descarga</string>
+    <string name="llama_download_toast">Descargando modelo Llama 3, por favor espera...</string>
+    <string name="llama_download_success_toast">Modelo Llama 3 descargado correctamente.</string>
+    <string name="llama_download_failed_toast">Error al descargar el modelo Llama 3.</string>
+    <string name="prompt_empty">Por favor ingresa una consulta</string>
+    <string name="processing_query">Procesando consulta...</string>
+    <string name="initial_query_text"></string>
+    <string name="graph_not_implemented">Gráfico de Personas y Usuarios aún no implementado.</string>
+    <string name="interactive_graph_not_implemented">Gráfico Interactivo aún no implementado.</string>
+    <string name="unrecognized_graph_type">Tipo de gráfico no reconocido: %1$s</string>
+    <string name="user_video_chart_success">Gráfico de usuarios por videos generado.</string>
+    <string name="topic_content_chart_success">Gráfico de temas por contenido generado.</string>
+    <string name="course_topics_chart_success">Gráfico de temas por curso generado.</string>
+    <string name="tasks_topics_chart_success">Se ha generado un gráfico de tareas por tema.</string>
+    <string name="subscriptions_chart_success">Se ha generado un gráfico de suscripciones por creador.</string>
+    <string name="chart_generated">Gráfico generado.</string>
+    <string name="unexpected_error">Error inesperado al procesar la consulta: %1$s</string>
+
+    <string name="loading_text">Preparando tus cursos...</string>
+    <string name="app_logo">Logo de la aplicación</string>
+    <string name="decorative_icon">Icono decorativo</string>
+    <string name="decorative_particle">Partícula decorativa</string>
+
+    ## 6. Strings (add to `strings.xml`)
+    <string name="banner_image_desc">Imagen del curso</string>
+    <string name="play_button_desc">Reproducir curso</string>
+    <string name="lesson_thumbnail_desc">Miniatura de la lección</string>
+
+    <!-- Add the missing string resource -->
+    <string name="cursos">Cursos</string>
+    <string name="llm_empty_response">No response from LLM.</string>
+</resources>
