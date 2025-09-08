@@ -355,7 +355,7 @@ class TaskSubmissionsFragment : Fragment() {
                 // Calculate progress
                 val totalStudents = students.size
                 val submittedCount = submissions.size
-                val gradedCount = submissions.count { it.grade != null }
+                val gradedCount = submissions.count { it.grade != null && it.grade > 0 } // Solo contar como calificado si la nota es mayor a 0
 
                 // Update UI
                 if (totalStudents > 0) {
@@ -395,7 +395,7 @@ class TaskSubmissionsFragment : Fragment() {
                     val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
                     val dateString = dateFormat.format(submission.submissionDate)
 
-                    val gradeText = if (submission.grade != null) {
+                    val gradeText = if (submission.grade != null && submission.grade > 0) {
                         "Calificación: ${submission.grade}/10"
                     } else {
                         "Pendiente de calificación"
@@ -406,8 +406,8 @@ class TaskSubmissionsFragment : Fragment() {
 
                     // Update progress for student
                     progressBar.max = 100
-                    progressBar.progress = if (submission.grade != null) 100 else 50
-                    progressTextView.text = if (submission.grade != null)
+                    progressBar.progress = if (submission.grade != null && submission.grade > 0) 100 else 50
+                    progressTextView.text = if (submission.grade != null && submission.grade > 0)
                         "Tarea completada y calificada"
                     else
                         "Tarea entregada, pendiente de calificación"
@@ -520,7 +520,7 @@ class TaskSubmissionsFragment : Fragment() {
             fileUri = uri.toString(),
             fileName = fileName,
             submissionDate = System.currentTimeMillis(),
-            grade = null,
+            grade = 0.0f, // Nota por defecto 0 en lugar de null
             feedback = null
         )
 
@@ -546,7 +546,7 @@ class TaskSubmissionsFragment : Fragment() {
 
                 // Update progress after submission
                 progressBar.max = 100
-                progressBar.progress = 50
+                progressBar.progress = 50 // 50% porque está entregado pero no calificado (nota = 0)
                 progressTextView.text = "Tarea entregada, pendiente de calificación"
 
                 // Disable submit button
@@ -1005,8 +1005,8 @@ class TaskSubmissionsFragment : Fragment() {
 
                 fileNameTextView.text = submission.fileName
                 
-                // Manejar calificación IA - solo mostrar si hay calificación real del usuario
-                if (submission.grade != null) {
+                // Manejar calificación IA - solo mostrar si hay calificación real del usuario (mayor a 0)
+                if (submission.grade != null && submission.grade > 0) {
                     val aiGrade = (submission.grade * 10).toInt() // Convertir de 0-10 a 0-100
                     
                     // Mostrar elementos de calificación
@@ -1028,7 +1028,7 @@ class TaskSubmissionsFragment : Fragment() {
                     }
                     qualityLabelTextView.text = qualityLabel
                 } else {
-                    // No hay calificación - mostrar "No calificado"
+                    // No hay calificación real (grade = 0 o null) - mostrar "No calificado"
                     aiGradeTextView.visibility = View.GONE
                     gradeScaleTextView.visibility = View.GONE
                     gradeProgressBar.visibility = View.GONE
@@ -1103,8 +1103,8 @@ class TaskSubmissionsFragment : Fragment() {
                 } else {
                     gradeSection.visibility = View.GONE
 
-                    // For students, show their grade if available
-                    if (submission.grade != null) {
+                    // For students, show their grade if available and greater than 0
+                    if (submission.grade != null && submission.grade > 0) {
                         gradeDisplayTextView.visibility = View.VISIBLE
                         gradeDisplayTextView.text = "Calificación: ${submission.grade}/10"
 
@@ -1116,7 +1116,8 @@ class TaskSubmissionsFragment : Fragment() {
                             feedbackDisplayTextView.visibility = View.GONE
                         }
                     } else {
-                        gradeDisplayTextView.visibility = View.GONE
+                        gradeDisplayTextView.visibility = View.VISIBLE
+                        gradeDisplayTextView.text = "Pendiente de calificación"
                         feedbackDisplayTextView.visibility = View.GONE
                     }
                 }
