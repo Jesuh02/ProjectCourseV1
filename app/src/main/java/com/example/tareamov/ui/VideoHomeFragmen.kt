@@ -145,7 +145,7 @@ class VideoHomeFragment : Fragment() {
                     drawable.start()
                 }
             } else {
-                databaseOrbitButton?.visibility = View.GONE
+                databaseOrbitButton?.visibility = View.INVISIBLE
             }
         }
 
@@ -179,6 +179,9 @@ class VideoHomeFragment : Fragment() {
         }        // Mostrar el botón de admin solo si el usuario es admin
         val goToAdminButton = view.findViewById<LinearLayout>(R.id.goToAdminButton)
 
+        // Initially hide the admin button to avoid reflow during async check
+        goToAdminButton?.visibility = View.INVISIBLE
+
         // Check if the current user is admin
         checkAdminStatus { isAdmin ->
             if (isAdmin) {
@@ -188,7 +191,7 @@ class VideoHomeFragment : Fragment() {
                     findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
                 }
             } else {
-                goToAdminButton?.visibility = View.GONE
+                goToAdminButton?.visibility = View.INVISIBLE
             }
         }        // Load the current user's avatar
         loadCurrentUserAvatar()

@@ -7,6 +7,7 @@
     android:layout_height="wrap_content"
     android:background="#000000"
     android:orientation="horizontal"
+    android:animateLayoutChanges="false"
     android:paddingTop="8dp"
     android:paddingBottom="8dp">
 
@@ -126,6 +127,7 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
+        android:visibility="gone"
         android:gravity="center"
         android:orientation="vertical">
 

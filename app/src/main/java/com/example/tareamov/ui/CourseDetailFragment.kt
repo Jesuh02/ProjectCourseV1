@@ -1237,7 +1237,7 @@ class CourseDetailFragment : Fragment() {
                     findNavController().navigate(R.id.action_courseDetailFragment_to_homeFragment)
                 }
             } else {
-                goToAdminButton.visibility = View.GONE
+                goToAdminButton.visibility = View.INVISIBLE
             }
         }
     }

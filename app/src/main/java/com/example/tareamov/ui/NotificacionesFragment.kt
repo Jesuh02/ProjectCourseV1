@@ -114,6 +114,9 @@ class NotificacionesFragment : Fragment() {
     private fun setupAdminButton() {
         val goToAdminButton = bottomNavBinding.goToAdminButton
         
+        // Initially hide the admin button to avoid reflow during async check
+        goToAdminButton.visibility = View.INVISIBLE
+
         // Check if the current user is admin
         checkAdminStatus { isAdmin ->
             if (isAdmin) {
@@ -123,7 +126,7 @@ class NotificacionesFragment : Fragment() {
                     findNavController().navigate(R.id.action_notificacionesFragment_to_homeFragment)
                 }
             } else {
-                goToAdminButton.visibility = View.GONE
+                goToAdminButton.visibility = View.INVISIBLE
             }
         }
     }
