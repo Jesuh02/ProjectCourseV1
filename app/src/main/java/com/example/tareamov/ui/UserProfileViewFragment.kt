@@ -50,6 +50,12 @@ import java.util.Date
 
 class UserProfileViewFragment : Fragment() {
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Solo registrar el launcher aquí, diferir requireContext() hasta onAttach
+        initializeImagePickerLauncher()
+    }
+
     private lateinit var userAvatarImageView: CircleImageView
     private lateinit var usernameTextView: TextView
     private lateinit var userBadgeTextView: TextView
@@ -69,7 +75,7 @@ class UserProfileViewFragment : Fragment() {
     private lateinit var videoManager: VideoManager
     private lateinit var courseRepository: com.example.tareamov.repository.CourseRepository
     private lateinit var sessionManager: SessionManager
-    private lateinit var bottomNavBinding: ComponentBottomNavigationBinding
+    private var bottomNavBinding: ComponentBottomNavigationBinding? = null
 
     private var allContent = mutableListOf<VideoData>()
     private var allCourses = mutableListOf<VideoData>()
@@ -85,7 +91,7 @@ class UserProfileViewFragment : Fragment() {
 
     // Variables for thumbnail change functionality (similar to ExploreFragment)
     private var currentCourseForThumbnailChange: VideoData? = null
-    private lateinit var imagePickerLauncher: ActivityResultLauncher<Intent>
+    private var imagePickerLauncher: ActivityResultLauncher<Intent>? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -98,13 +104,8 @@ class UserProfileViewFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         
         try {
-            // Initialize SessionManager
+            // Inicializar dependencias después de que la vista esté disponible
             sessionManager = SessionManager.getInstance(requireContext())
-            
-            // Initialize image picker launcher for thumbnail change (like ExploreFragment)
-            initializeImagePickerLauncher()
-
-            // Inicializar VideoManager y CourseRepository
             videoManager = VideoManager(requireContext())
             courseRepository = com.example.tareamov.repository.CourseRepository(requireContext())
             
@@ -148,30 +149,29 @@ class UserProfileViewFragment : Fragment() {
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
         bottomNavBinding = ComponentBottomNavigationBinding.bind(bottomNavView)
 
-        // Home Button - Navigate to VideoHome
-        bottomNavBinding.homeNavLayout.setOnClickListener {
-            findNavController().navigate(R.id.action_userProfileViewFragment_to_videoHomeFragment)
+        // Home Button - Navigate to VideoHome (uso seguro)
+        bottomNavBinding?.homeNavLayout?.setOnClickListener {
+            if (isAdded) findNavController().navigate(R.id.action_userProfileViewFragment_to_videoHomeFragment)
         }
-        
+
         // Explore Button
-        bottomNavBinding.exploreButton.setOnClickListener {
-            findNavController().navigate(R.id.action_userProfileViewFragment_to_exploreFragment)
+        bottomNavBinding?.exploreButton?.setOnClickListener {
+            if (isAdded) findNavController().navigate(R.id.action_userProfileViewFragment_to_exploreFragment)
         }
-        
+
         // Add/Upload Button (ic_add)
-        bottomNavBinding.goToHomeButton.setOnClickListener {
-            findNavController().navigate(R.id.action_userProfileViewFragment_to_contentUploadFragment)
+        bottomNavBinding?.goToHomeButton?.setOnClickListener {
+            if (isAdded) findNavController().navigate(R.id.action_userProfileViewFragment_to_contentUploadFragment)
         }
-        
+
         // Activity Button (ic_activity)
-        bottomNavBinding.activityButton.setOnClickListener {
-            findNavController().navigate(R.id.action_userProfileViewFragment_to_notificacionesFragment)
+        bottomNavBinding?.activityButton?.setOnClickListener {
+            if (isAdded) findNavController().navigate(R.id.action_userProfileViewFragment_to_notificacionesFragment)
         }
-        
+
         // Profile Button (ic_profile) - navegar al perfil propio cuando se pulsa
-        bottomNavBinding.profileNavButton.setOnClickListener {
-            // Navegar al fragmento `ProfileFragment` (perfil propio)
-            findNavController().navigate(R.id.action_userProfileViewFragment_to_profileFragment)
+        bottomNavBinding?.profileNavButton?.setOnClickListener {
+            if (isAdded) findNavController().navigate(R.id.action_userProfileViewFragment_to_profileFragment)
         }
 
         // Setup admin button visibility and functionality
@@ -657,15 +657,6 @@ class UserProfileViewFragment : Fragment() {
             contentAdapter.stopAllVideos()
         }
     }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        // Clean up any resources
-        if (::contentAdapter.isInitialized) {
-            contentAdapter.stopAllVideos()
-        }
-    }
-    
     // Método auxiliar que replica la lógica de ExploreFragment para obtener contenido
     private suspend fun getAllContentLikeExploreFragment(): List<VideoData> {
         return withContext(Dispatchers.IO) {
@@ -990,7 +981,7 @@ class UserProfileViewFragment : Fragment() {
         ) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
-                    handleThumbnailSelection(uri)
+                    if (isAdded) handleThumbnailSelection(uri)
                 }
             }
         }
@@ -1037,7 +1028,7 @@ class UserProfileViewFragment : Fragment() {
         val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
             type = "image/*"
         }
-        imagePickerLauncher.launch(intent)
+    imagePickerLauncher?.launch(intent)
     }
 
     /**
@@ -1100,24 +1091,34 @@ class UserProfileViewFragment : Fragment() {
     }
 
     private fun setupAdminButton() {
-        val goToAdminButton = bottomNavBinding.goToAdminButton
-        Log.d("UserProfileViewFragment", "setupAdminButton called, button found: ${goToAdminButton != null}")
+    val goToAdminButton = bottomNavBinding?.goToAdminButton
+    Log.d("UserProfileViewFragment", "setupAdminButton called, button found: ${goToAdminButton != null}")
         
         // Check if the current user is admin
         checkAdminStatus { isAdmin ->
             Log.d("UserProfileViewFragment", "Admin status received: $isAdmin")
             if (isAdmin) {
-                goToAdminButton.visibility = View.VISIBLE
-                goToAdminButton.setOnClickListener {
+                goToAdminButton?.visibility = View.VISIBLE
+                goToAdminButton?.setOnClickListener {
                     Log.d("UserProfileViewFragment", "Admin button clicked, navigating to HomeFragment")
-                    findNavController().navigate(R.id.action_userProfileViewFragment_to_homeFragment)
+                    if (isAdded) findNavController().navigate(R.id.action_userProfileViewFragment_to_homeFragment)
                 }
                 Log.d("UserProfileViewFragment", "Admin button made visible and click listener set")
             } else {
-                goToAdminButton.visibility = View.GONE
+                goToAdminButton?.visibility = View.GONE
                 Log.d("UserProfileViewFragment", "Admin button hidden")
             }
         }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        // Clean up any resources
+        if (::contentAdapter.isInitialized) {
+            contentAdapter.stopAllVideos()
+        }
+        // Liberar referencia al binding para evitar usar vistas destruidas
+        bottomNavBinding = null
     }
 
     private fun checkAdminStatus(callback: (Boolean) -> Unit) {
