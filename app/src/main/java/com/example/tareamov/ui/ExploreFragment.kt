@@ -140,7 +140,7 @@ class ExploreFragment : Fragment() {
         // Check if the current user is admin
         checkAdminStatus { isAdmin ->   
             if (!isAdmin) {
-                goToAdminButton.visibility = View.GONE
+                goToAdminButton.visibility = View.INVISIBLE
             } else {
                 goToAdminButton.visibility = View.VISIBLE
                 goToAdminButton.setOnClickListener {

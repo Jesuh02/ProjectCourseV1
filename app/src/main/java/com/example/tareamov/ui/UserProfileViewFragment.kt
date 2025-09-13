@@ -1114,8 +1114,8 @@ class UserProfileViewFragment : Fragment() {
                 }
                 Log.d("UserProfileViewFragment", "Admin button made visible and click listener set")
             } else {
-                goToAdminButton.visibility = View.GONE
-                Log.d("UserProfileViewFragment", "Admin button hidden")
+                goToAdminButton.visibility = View.INVISIBLE
+                Log.d("UserProfileViewFragment", "Admin button hidden (INVISIBLE)")
             }
         }
     }

@@ -259,8 +259,8 @@ class ProfileFragment : Fragment() {
     private fun setupAdminButton(bottomNavBinding: ComponentBottomNavigationBinding) {
         android.util.Log.d("ProfileFragment", "setupAdminButton called, button found: ${bottomNavBinding.goToAdminButton != null}")
         
-        // Initially hide the admin button
-        bottomNavBinding.goToAdminButton.visibility = View.GONE
+    // Initially hide the admin button
+    bottomNavBinding.goToAdminButton.visibility = View.INVISIBLE
         
         // Check admin status
         checkAdminStatus { isAdmin ->
@@ -272,7 +272,7 @@ class ProfileFragment : Fragment() {
                     findNavController().navigate(R.id.action_profileFragment_to_homeFragment)
                 }
             } else {
-                bottomNavBinding.goToAdminButton.visibility = View.GONE
+                bottomNavBinding.goToAdminButton.visibility = View.INVISIBLE
             }
         }
     }
