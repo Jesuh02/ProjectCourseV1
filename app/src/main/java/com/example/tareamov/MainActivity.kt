@@ -134,7 +134,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         */
-
+        //waos
         // Set up navigation listener to enforce flow rules
         navController.addOnDestinationChangedListener { _, destination, _ ->
             // If we're coming from RegisterFragment and going to HomeFragment, redirect to LoginFragment
