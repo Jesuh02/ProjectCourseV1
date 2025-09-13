@@ -49,6 +49,7 @@
 
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
             android:persistableMode="persistAcrossReboots">
             <intent-filter>
