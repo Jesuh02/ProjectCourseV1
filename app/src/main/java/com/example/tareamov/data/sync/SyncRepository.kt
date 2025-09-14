@@ -23,6 +23,8 @@ import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import com.example.tareamov.data.repository.SupabaseRepository
+import kotlinx.coroutines.withContext
 
 class SyncRepository(
     private val usuarioDao: UsuarioDao,
@@ -43,6 +45,7 @@ class SyncRepository(
     private var subscriptionListener: ListenerRegistration? = null
     private var taskSubmissionListener: ListenerRegistration? = null
     private val syncScope = CoroutineScope(Dispatchers.IO)
+    private val supabaseRepo = SupabaseRepository()
 
     // Sincroniza cambios de la base local a Firebase
     // This method now syncs only items marked as "pending" and updates their status on success.
@@ -151,6 +154,77 @@ class SyncRepository(
                     .addOnFailureListener { e ->
                         Log.e("SyncRepository", "Error syncing video ${video.id} to Firebase.", e)
                     }
+            }
+        }
+    }
+
+    // New: sincronizar a Supabase via REST
+    fun syncLocalToSupabase() {
+        syncScope.launch {
+            try {
+                // Check that the target table exists before attempting to sync
+                val requiredTable = "app_documents"
+                if (!supabaseRepo.tableExists(requiredTable)) {
+                    Log.w("SyncRepository", "Required Supabase table '$requiredTable' not found. Skipping sync. Apply migrations first.")
+                    return@launch
+                }
+                // Usuarios
+                usuarioDao.getAllUsuarios().forEach { usuario ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("usuarios", usuario) }
+                    if (ok) Log.i("SyncRepository", "Usuario ${usuario.id} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync usuario ${usuario.id} to Supabase.")
+                }
+
+                // Personas
+                personaDao.getAllPersonasList().forEach { persona ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("personas", persona) }
+                    if (ok) Log.i("SyncRepository", "Persona ${persona.id} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync persona ${persona.id} to Supabase.")
+                }
+
+                // Topics
+                topicDao.getAllTopics().forEach { topic ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("topics", topic) }
+                    if (ok) Log.i("SyncRepository", "Topic ${topic.id} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync topic ${topic.id} to Supabase.")
+                }
+
+                // ContentItems
+                contentItemDao.getAllContentItems().forEach { item ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("content_items", item) }
+                    if (ok) Log.i("SyncRepository", "ContentItem ${item.id} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync contentItem ${item.id} to Supabase.")
+                }
+
+                // Tasks
+                taskDao.getAllTasks().forEach { task ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", task) }
+                    if (ok) Log.i("SyncRepository", "Task ${task.id} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync task ${task.id} to Supabase.")
+                }
+
+                // Subscriptions
+                subscriptionDao.getAllSubscriptions().forEach { sub ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("subscriptions", sub) }
+                    if (ok) Log.i("SyncRepository", "Subscription synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync subscription to Supabase.")
+                }
+
+                // TaskSubmissions
+                taskSubmissionDao.getAllTaskSubmissions().forEach { submission ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("task_submissions", submission) }
+                    if (ok) Log.i("SyncRepository", "TaskSubmission ${submission.id} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync taskSubmission ${submission.id} to Supabase.")
+                }
+
+                // Videos
+                videoDao.getAllVideos().forEach { video ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("videos", video) }
+                    if (ok) Log.i("SyncRepository", "Video ${video.id} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync video ${video.id} to Supabase.")
+                }
+            } catch (e: Exception) {
+                Log.e("SyncRepository", "Exception during syncLocalToSupabase", e)
             }
         }
     }

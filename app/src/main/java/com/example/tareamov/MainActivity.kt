@@ -57,6 +57,11 @@ class MainActivity : AppCompatActivity() {
             // firestore eliminado, ya no se usa
         )
 
+    // Trigger an initial sync to Supabase. In production, call this on connectivity changes
+    // and avoid syncing large payloads on main startup. Credentials are loaded from
+    // BuildConfig which reads `local.properties` in the Gradle script; keep that file out of VCS.
+    syncRepository.syncLocalToSupabase()
+
 
         // Initialize ViewModels
         personaViewModel = ViewModelProvider(this)[PersonaViewModel::class.java]
