@@ -18,6 +18,8 @@ import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Topic
 import com.example.tareamov.data.entity.Task
 import com.example.tareamov.data.entity.ContentItem
+import com.example.tareamov.data.entity.Course
+import com.example.tareamov.service.SupabaseClient
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.util.SessionManager // Added import
 import kotlinx.coroutines.CoroutineScope
@@ -167,14 +169,58 @@ class CourseCreationFragment : Fragment() {
             price = coursePrice
         )        // Save course to database
         CoroutineScope(Dispatchers.Main).launch {
-            withContext(Dispatchers.IO) {
-                AppDatabase.getDatabase(requireContext()).videoDao().insertVideo(courseData)
+            try {
+                val savedCourse = withContext(Dispatchers.IO) {
+                    videoManager.saveVideo(courseData)
+                }
+
+                val appDatabase = AppDatabase.getDatabase(requireContext())
+                appDatabase.notifyDatabaseChanged()
+
+                // Also create a Course entity and send to Supabase (best-effort async)
+                try {
+                    val course = Course(
+                        title = savedCourse.title,
+                        description = savedCourse.description,
+                        creatorUsername = savedCourse.username,
+                        thumbnailUri = savedCourse.thumbnailUri,
+                        videoUri = savedCourse.videoUriString,
+                        localFilePath = savedCourse.localFilePath,
+                        duration = null,
+                        category = courseCategory,
+                        price = savedCourse.price ?: 0.0,
+                        isPremium = savedCourse.isPaid,
+                        isPublished = true,
+                        creationDate = "",
+                        lastModifiedDate = "",
+                        enrollmentCount = 0,
+                        rating = 0.0f,
+                        tags = null,
+                        timestamp = savedCourse.timestamp
+                    )
+
+                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            if (SupabaseClient.isConfigured()) {
+                                val remoteId = SupabaseClient.insertCourse(course)
+                                Log.d("CourseCreationFragment", "Supabase insertCourse returned id=$remoteId for localId=${savedCourse.id}")
+                            } else {
+                                Log.w("CourseCreationFragment", "SupabaseClient not configured; skipping remote course sync")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("CourseCreationFragment", "Error syncing course to Supabase", e)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("CourseCreationFragment", "Error preparing course for Supabase", e)
+                }
+
+                Toast.makeText(context, "Curso creado exitosamente", Toast.LENGTH_SHORT).show()
+                findNavController().navigateUp()
+            } catch (e: Exception) {
+                Log.e("CourseCreationFragment", "Error al guardar el curso", e)
+                Toast.makeText(context, "Error al guardar el curso: ${e.message}", Toast.LENGTH_SHORT).show()
             }
-
-            Toast.makeText(context, "Curso creado exitosamente", Toast.LENGTH_SHORT).show()
-
-            // Navigate back to previous screen, we don't have a direct action to ExploreFragment
-            findNavController().navigateUp()
         }
     }
 

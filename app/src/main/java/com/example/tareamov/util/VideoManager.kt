@@ -7,6 +7,9 @@ import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import com.example.tareamov.service.SupabaseClient
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -100,6 +103,25 @@ class VideoManager(private val context: Context) {
             }
 
             Log.d("VideoManager", "Video save completed. Final ID: ${updatedVideoData.id}")
+
+            // Best-effort: send saved video to Supabase asynchronously
+            try {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        if (SupabaseClient.isConfigured()) {
+                            val remoteId = SupabaseClient.insertVideo(updatedVideoData)
+                            Log.d("VideoManager", "Supabase insertVideo returned id=$remoteId for localId=${updatedVideoData.id}")
+                        } else {
+                            Log.w("VideoManager", "SupabaseClient not configured; skipping remote video sync")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("VideoManager", "Error syncing video to Supabase", e)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("VideoManager", "Failed to launch Supabase sync coroutine", e)
+            }
+
             return@withContext updatedVideoData
         } catch (e: Exception) {
             Log.e("VideoManager", "Error saving video", e)

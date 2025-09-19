@@ -139,4 +139,120 @@ object SupabaseClient {
             return@withContext null
         }
     }
+
+    suspend fun insertVideo(video: com.example.tareamov.data.entity.VideoData): Long? = withContext(Dispatchers.IO) {
+        try {
+            val map = mapOf(
+                "username" to video.username,
+                "description" to video.description,
+                "title" to video.title,
+                "video_uri_string" to video.videoUriString,
+                "local_file_path" to video.localFilePath,
+                "timestamp" to video.timestamp,
+                "is_paid" to video.isPaid,
+                "thumbnail_uri" to video.thumbnailUri,
+                "price" to video.price
+            )
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/videos"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val bodyStr = respBody ?: ""
+                    throw Exception("Supabase insertVideo failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                }
+
+                if (respBody.isNullOrEmpty()) return@withContext null
+
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        val idElem = jsonArray[0].asJsonObject.get("id")
+                        return@withContext idElem?.asLong
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext null
+        }
+    }
+
+    suspend fun insertCourse(course: com.example.tareamov.data.entity.Course): Long? = withContext(Dispatchers.IO) {
+        try {
+            val map = mapOf(
+                "title" to course.title,
+                "description" to course.description,
+                "creator_username" to course.creatorUsername,
+                "thumbnail_uri" to course.thumbnailUri,
+                "video_uri" to course.videoUri,
+                "local_file_path" to course.localFilePath,
+                "duration" to course.duration,
+                "category" to course.category,
+                "price" to course.price,
+                "is_premium" to course.isPremium,
+                "is_published" to course.isPublished,
+                "creation_date" to course.creationDate,
+                "last_modified_date" to course.lastModifiedDate,
+                "enrollment_count" to course.enrollmentCount,
+                "rating" to course.rating,
+                "tags" to course.tags,
+                "timestamp" to course.timestamp
+            )
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/courses"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val bodyStr = respBody ?: ""
+                    throw Exception("Supabase insertCourse failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                }
+
+                if (respBody.isNullOrEmpty()) return@withContext null
+
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        val idElem = jsonArray[0].asJsonObject.get("id")
+                        return@withContext idElem?.asLong
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext null
+        }
+    }
 }

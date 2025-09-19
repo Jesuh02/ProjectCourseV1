@@ -63,3 +63,84 @@ CREATE INDEX IF NOT EXISTS idx_roles_nombre ON public.roles (nombre);
 CREATE INDEX IF NOT EXISTS idx_recursos_padre_id ON public.recursos (padre_id);
 CREATE INDEX IF NOT EXISTS idx_rol_recursos_rol_id ON public.rol_recursos (rol_id);
 CREATE INDEX IF NOT EXISTS idx_rol_recursos_recurso_id ON public.rol_recursos (recurso_id);
+
+-- Table: public.videos
+CREATE TABLE IF NOT EXISTS public.videos (
+    id bigserial PRIMARY KEY,
+    username text NOT NULL,
+    description text,
+    title text NOT NULL,
+    video_uri_string text,
+    local_file_path text,
+    timestamp bigint,
+    is_paid boolean DEFAULT false,
+    thumbnail_uri text,
+    price numeric,
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_videos_username ON public.videos (username);
+CREATE INDEX IF NOT EXISTS idx_videos_title ON public.videos USING gin (to_tsvector('simple', title));
+
+-- Table: public.topics (course topics linked to videos/courses)
+CREATE TABLE IF NOT EXISTS public.topics (
+    id bigserial PRIMARY KEY,
+    course_id bigint REFERENCES public.videos(id) ON DELETE CASCADE,
+    name text NOT NULL,
+    description text,
+    order_index integer DEFAULT 0,
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_topics_course_id ON public.topics (course_id);
+CREATE INDEX IF NOT EXISTS idx_topics_name ON public.topics USING gin (to_tsvector('simple', name));
+
+-- Minimal content_items table (optional - Course may use later)
+CREATE TABLE IF NOT EXISTS public.content_items (
+    id bigserial PRIMARY KEY,
+    topic_id bigint REFERENCES public.topics(id) ON DELETE CASCADE,
+    title text NOT NULL,
+    body text,
+    content_type text,
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_items_topic_id ON public.content_items (topic_id);
+
+-- Minimal tasks table (optional)
+CREATE TABLE IF NOT EXISTS public.tasks (
+    id bigserial PRIMARY KEY,
+    topic_id bigint REFERENCES public.topics(id) ON DELETE CASCADE,
+    title text NOT NULL,
+    description text,
+    due_date timestamptz,
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_topic_id ON public.tasks (topic_id);
+
+-- Table: public.courses (mirrors Course.kt)
+CREATE TABLE IF NOT EXISTS public.courses (
+    id bigserial PRIMARY KEY,
+    title text NOT NULL,
+    description text,
+    creator_username text NOT NULL,
+    thumbnail_uri text,
+    video_uri text,
+    local_file_path text,
+    duration text,
+    category text,
+    price numeric DEFAULT 0,
+    is_premium boolean DEFAULT false,
+    is_published boolean DEFAULT true,
+    creation_date text,
+    last_modified_date text,
+    enrollment_count integer DEFAULT 0,
+    rating real DEFAULT 0,
+    tags text,
+    timestamp bigint DEFAULT (extract(epoch from now())::bigint),
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_courses_creator_username ON public.courses (creator_username);
+CREATE INDEX IF NOT EXISTS idx_courses_title ON public.courses USING gin (to_tsvector('simple', title));
