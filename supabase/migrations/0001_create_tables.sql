@@ -1,126 +1,178 @@
--- Migration 0001: create core tables for ProjectCourseV1
--- Run this on your Supabase project (SQL Editor or supabase CLI)
+-- Supabase / Postgres DDL for personas and usuarios tables
+-- Run this in your Supabase SQL editor or psql
 
-CREATE TABLE IF NOT EXISTS public.app_documents (
-  id bigserial PRIMARY KEY,
-  table_name text NOT NULL,
-  entity_id text NOT NULL,
-  data jsonb NOT NULL,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_app_documents_table_entity ON public.app_documents(table_name, entity_id);
-
--- Core tables (basic schemas inferred from Room entities)
-CREATE TABLE IF NOT EXISTS public.usuarios (
-  id bigserial PRIMARY KEY,
-  persona_id bigint,
-  usuario text,
-  password text,
-  rol text,
-  created_at timestamptz DEFAULT now()
-);
-
+-- Table: public.personas
 CREATE TABLE IF NOT EXISTS public.personas (
-  id bigserial PRIMARY KEY,
-  nombre text,
-  apellido text,
-  email text,
-  telefono text,
-  created_at timestamptz DEFAULT now()
+    id bigserial PRIMARY KEY,
+    identificacion text NOT NULL,
+    nombres text NOT NULL,
+    apellidos text NOT NULL,
+    email text NOT NULL,
+    telefono text NOT NULL,
+    direccion text,
+    "fechaNacimiento" text,
+    avatar text,
+    "esUsuario" boolean DEFAULT false,
+    created_at timestamptz DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS public.videos (
-  id bigserial PRIMARY KEY,
-  title text,
-  description text,
-  remoteUrl text,
-  localFilePath text,
-  thumbnailUri text,
-  created_at timestamptz DEFAULT now()
+-- Table: public.usuarios
+CREATE TABLE IF NOT EXISTS public.usuarios (
+    id bigserial PRIMARY KEY,
+    usuario text NOT NULL UNIQUE,
+    contrasena text NOT NULL,
+    persona_id bigint REFERENCES public.personas(id) ON DELETE CASCADE,
+    rol_id integer DEFAULT 1,
+    created_at timestamptz DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS public.topics (
-  id bigserial PRIMARY KEY,
-  courseId bigint,
-  title text,
-  description text,
-  orderIndex integer,
-  created_at timestamptz DEFAULT now()
-);
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_personas_email ON public.personas (email);
+CREATE INDEX IF NOT EXISTS idx_usuarios_persona_id ON public.usuarios (persona_id);
+CREATE INDEX IF NOT EXISTS idx_usuarios_usuario ON public.usuarios (usuario);
 
-CREATE TABLE IF NOT EXISTS public.content_items (
-  id bigserial PRIMARY KEY,
-  topicId bigint,
-  type text,
-  payload jsonb,
-  created_at timestamptz DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS public.tasks (
-  id bigserial PRIMARY KEY,
-  topicId bigint,
-  title text,
-  description text,
-  dueDate timestamptz,
-  created_at timestamptz DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS public.subscriptions (
-  subscriberUsername text NOT NULL,
-  creatorUsername text NOT NULL,
-  subscriptionDate timestamptz DEFAULT now(),
-  PRIMARY KEY (subscriberUsername, creatorUsername)
-);
-
-CREATE TABLE IF NOT EXISTS public.task_submissions (
-  id bigserial PRIMARY KEY,
-  taskId bigint,
-  studentUsername text,
-  submissionData jsonb,
-  created_at timestamptz DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS public.courses (
-  id bigserial PRIMARY KEY,
-  title text,
-  description text,
-  created_at timestamptz DEFAULT now()
-);
-
+-- Table: public.roles
 CREATE TABLE IF NOT EXISTS public.roles (
-  id bigserial PRIMARY KEY,
-  nombre text UNIQUE NOT NULL
+    id bigserial PRIMARY KEY,
+    nombre text NOT NULL UNIQUE,
+    nivel real NOT NULL,
+    "default" boolean DEFAULT false,
+    created_at timestamptz DEFAULT now()
 );
 
+-- Table: public.recursos
 CREATE TABLE IF NOT EXISTS public.recursos (
-  id bigserial PRIMARY KEY,
-  nombre text,
-  key text,
-  position integer
+    id bigserial PRIMARY KEY,
+    nombre text NOT NULL,
+    icono text NOT NULL,
+    orden integer NOT NULL,
+    padre_id bigint REFERENCES public.recursos(id) ON DELETE CASCADE,
+    interfaz text,
+    created_at timestamptz DEFAULT now()
 );
 
+-- Table: public.rol_recursos (many-to-many between roles and recursos)
 CREATE TABLE IF NOT EXISTS public.rol_recursos (
-  id bigserial PRIMARY KEY,
-  rol_id bigint,
-  recurso_id bigint
+    rol_id bigint REFERENCES public.roles(id) ON DELETE CASCADE,
+    recurso_id bigint REFERENCES public.recursos(id) ON DELETE CASCADE,
+    PRIMARY KEY (rol_id, recurso_id)
 );
 
-CREATE TABLE IF NOT EXISTS public.chat_messages (
-  id bigserial PRIMARY KEY,
-  chatId text,
-  sender text,
-  message text,
-  created_at timestamptz DEFAULT now()
+-- Indexes for roles/recursos
+CREATE INDEX IF NOT EXISTS idx_roles_nombre ON public.roles (nombre);
+CREATE INDEX IF NOT EXISTS idx_recursos_padre_id ON public.recursos (padre_id);
+CREATE INDEX IF NOT EXISTS idx_rol_recursos_rol_id ON public.rol_recursos (rol_id);
+CREATE INDEX IF NOT EXISTS idx_rol_recursos_recurso_id ON public.rol_recursos (recurso_id);
+
+-- Table: public.videos
+CREATE TABLE IF NOT EXISTS public.videos (
+    id bigserial PRIMARY KEY,
+    username text NOT NULL,
+    description text,
+    title text NOT NULL,
+    video_uri_string text,
+    local_file_path text,
+    timestamp bigint,
+    remote_id bigint,
+    is_paid boolean DEFAULT false,
+    thumbnail_uri text,
+    price numeric,
+    created_at timestamptz DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS idx_videos_username ON public.videos (username);
+CREATE INDEX IF NOT EXISTS idx_videos_title ON public.videos USING gin (to_tsvector('simple', title));
+
+-- Table: public.topics (course topics linked to videos/courses)
+CREATE TABLE IF NOT EXISTS public.topics (
+    id bigserial PRIMARY KEY,
+    course_id bigint REFERENCES public.videos(id) ON DELETE CASCADE,
+    name text NOT NULL,
+    description text,
+    order_index integer DEFAULT 0,
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_topics_course_id ON public.topics (course_id);
+CREATE INDEX IF NOT EXISTS idx_topics_name ON public.topics USING gin (to_tsvector('simple', name));
+
+-- Minimal content_items table (optional - Course may use later)
+CREATE TABLE IF NOT EXISTS public.content_items (
+    id bigserial PRIMARY KEY,
+    topic_id bigint REFERENCES public.topics(id) ON DELETE CASCADE,
+    title text NOT NULL,
+    body text,
+    content_type text,
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_items_topic_id ON public.content_items (topic_id);
+
+-- Minimal tasks table (optional)
+CREATE TABLE IF NOT EXISTS public.tasks (
+    id bigserial PRIMARY KEY,
+    topic_id bigint REFERENCES public.topics(id) ON DELETE CASCADE,
+    title text NOT NULL,
+    description text,
+    due_date timestamptz,
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_topic_id ON public.tasks (topic_id);
+
+-- Table: public.task_submissions (student submissions for tasks)
+CREATE TABLE IF NOT EXISTS public.task_submissions (
+    id bigserial PRIMARY KEY,
+    task_id bigint REFERENCES public.tasks(id) ON DELETE CASCADE,
+    student_username text NOT NULL,
+    file_uri text,
+    file_name text,
+    submission_date bigint,
+    grade real,
+    feedback text,
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_submissions_task_id ON public.task_submissions (task_id);
+CREATE INDEX IF NOT EXISTS idx_task_submissions_student_username ON public.task_submissions (student_username);
+
+-- Table: public.file_contexts (metadata and extracted content for submitted files)
 CREATE TABLE IF NOT EXISTS public.file_contexts (
-  id bigserial PRIMARY KEY,
-  fileName text,
-  fileUri text,
-  metadata jsonb,
-  created_at timestamptz DEFAULT now()
+    id bigserial PRIMARY KEY,
+    submission_id bigint REFERENCES public.task_submissions(id) ON DELETE CASCADE,
+    file_name text,
+    file_type text,
+    file_content text,
+    extracted_text text,
+    metadata text,
+    content_summary text,
+    created_at timestamptz DEFAULT now()
 );
 
--- End of migration 0001
+CREATE INDEX IF NOT EXISTS idx_file_contexts_submission_id ON public.file_contexts (submission_id);
+
+-- Table: public.courses (mirrors Course.kt)
+CREATE TABLE IF NOT EXISTS public.courses (
+    id bigserial PRIMARY KEY,
+    title text NOT NULL,
+    description text,
+    creator_username text NOT NULL,
+    thumbnail_uri text,
+    video_uri text,
+    local_file_path text,
+    duration text,
+    category text,
+    price numeric DEFAULT 0,
+    is_premium boolean DEFAULT false,
+    is_published boolean DEFAULT true,
+    creation_date text,
+    last_modified_date text,
+    enrollment_count integer DEFAULT 0,
+    rating real DEFAULT 0,
+    tags text,
+    timestamp bigint DEFAULT (extract(epoch from now())::bigint),
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_courses_creator_username ON public.courses (creator_username);
+CREATE INDEX IF NOT EXISTS idx_courses_title ON public.courses USING gin (to_tsvector('simple', title));

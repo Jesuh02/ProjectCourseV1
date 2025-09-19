@@ -63,7 +63,7 @@ import com.example.tareamov.service.DatabaseContextHttpServer
         Recurso::class,
         RolRecurso::class
     ],
-    version = 28, // <-- Update version to apply role name changes
+    version = 29, // bumped to add remote_id to videos
     exportSchema = false
 )
 @TypeConverters(VideoDataConverters::class)
@@ -154,7 +154,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17,
                         MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
                         MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                        MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28
+                        MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -963,10 +963,22 @@ abstract class AppDatabase : RoomDatabase() {
                 try {
                     // Update roles table to change "estudiante" to "usuario"
                     db.execSQL("UPDATE roles SET nombre = 'usuario' WHERE nombre = 'estudiante'")
-                    
+
                     Log.i(TAG, "Migration 27 to 28 completed: Updated role name from 'estudiante' to 'usuario'")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 27 to 28", e)
+                }
+            }
+        }
+
+        // Migration 28 to 29: add remote_id column to videos
+        private val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE videos ADD COLUMN remote_id INTEGER")
+                    Log.i(TAG, "Migration 28 to 29 completed: Added remote_id column to videos")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 28 to 29", e)
                 }
             }
         }

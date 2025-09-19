@@ -134,7 +134,8 @@ class ContentUploadFragment : Fragment() {
                             username = username,
                             description = "",
                             title = "Mi video",
-                            videoUriString = selectedVideoUri.toString()
+                            videoUriString = selectedVideoUri.toString(),
+                            remoteId = null
                         )
 
                         // Save video on IO dispatcher

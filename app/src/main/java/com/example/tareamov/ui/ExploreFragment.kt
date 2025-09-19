@@ -239,6 +239,7 @@ class ExploreFragment : Fragment() {
             localFilePath = course.localFilePath,
             timestamp = course.timestamp,
             isPaid = course.isPremium,
+            remoteId = course.id,
             thumbnailUri = course.thumbnailUri,
             price = if (course.price > 0.0) course.price else null
         )

@@ -74,6 +74,7 @@ class VideoManager(private val context: Context) {
                             localFilePath = localPath,
                             timestamp = videoData.timestamp,
                             isPaid = videoData.isPaid,
+                            remoteId = videoData.remoteId,
                             thumbnailUri = videoData.thumbnailUri,
                             price = videoData.price
                         )
@@ -108,12 +109,22 @@ class VideoManager(private val context: Context) {
             try {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        if (SupabaseClient.isConfigured()) {
-                            val remoteId = SupabaseClient.insertVideo(updatedVideoData)
-                            Log.d("VideoManager", "Supabase insertVideo returned id=$remoteId for localId=${updatedVideoData.id}")
-                        } else {
-                            Log.w("VideoManager", "SupabaseClient not configured; skipping remote video sync")
-                        }
+                            if (SupabaseClient.isConfigured()) {
+                                val remoteId = SupabaseClient.insertVideo(updatedVideoData)
+                                Log.d("VideoManager", "Supabase insertVideo returned id=$remoteId for localId=${updatedVideoData.id}")
+                                // If we got a remoteId, persist it locally so children can reference it
+                                if (remoteId != null) {
+                                    try {
+                                        val withRemote = updatedVideoData.copy(remoteId = remoteId)
+                                        videoDao.updateVideo(withRemote)
+                                        Log.d("VideoManager", "Persisted remoteId=$remoteId into local video id=${updatedVideoData.id}")
+                                    } catch (e: Exception) {
+                                        Log.e("VideoManager", "Failed to persist remoteId for videoid=${updatedVideoData.id}", e)
+                                    }
+                                }
+                            } else {
+                                Log.w("VideoManager", "SupabaseClient not configured; skipping remote video sync")
+                            }
                     } catch (e: Exception) {
                         Log.e("VideoManager", "Error syncing video to Supabase", e)
                     }

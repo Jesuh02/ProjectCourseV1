@@ -568,7 +568,8 @@ class VideoHomeFragment : Fragment() {
                             description = videoData.description,
                             title = videoData.title,
                             videoUriString = "file://$filePath",
-                            timestamp = videoData.timestamp
+                            timestamp = videoData.timestamp,
+                            remoteId = videoData.remoteId
                         )
                     } else {
                         Log.e("VideoHomeFragment", "File does not exist after conversion: $filePath")

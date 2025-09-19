@@ -197,11 +197,39 @@ class SyncRepository(
                     else Log.e("SyncRepository", "Failed to sync persona ${persona.id} to Supabase.")
                 }
 
-                // Topics
+                // IMPORTANT: Upsert parents first to satisfy foreign key constraints
+                // Videos (parents for topics)
+                videoDao.getAllVideos().forEach { video ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("videos", video) }
+                    if (ok) Log.i("SyncRepository", "Video ${video.id} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync video ${video.id} to Supabase.")
+                }
+
+                // Topics (parents for tasks) - if topic upsert fails due to missing course, try upserting the video parent then retry
                 topicDao.getAllTopics().forEach { topic ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("topics", topic) }
+                    var ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("topics", topic) }
+                    if (!ok) {
+                        Log.w("SyncRepository", "Initial upsert failed for topic ${topic.id}; attempting to ensure parent video ${topic.courseId} exists and retry.")
+                        // Try to upsert parent video if available locally
+                        try {
+                            val video = withContext(Dispatchers.IO) { videoDao.getVideoById(topic.courseId) }
+                            if (video != null) {
+                                val vOk = withContext(Dispatchers.IO) { supabaseRepo.upsert("videos", video) }
+                                if (vOk) {
+                                    Log.i("SyncRepository", "Parent video ${video.id} upserted, retrying topic ${topic.id}.")
+                                    ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("topics", topic) }
+                                } else {
+                                    Log.w("SyncRepository", "Failed to upsert parent video ${topic.courseId} while retrying topic ${topic.id}.")
+                                }
+                            } else {
+                                Log.w("SyncRepository", "Local parent video ${topic.courseId} not found for topic ${topic.id}.")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("SyncRepository", "Exception while attempting to upsert parent video for topic ${topic.id}", e)
+                        }
+                    }
                     if (ok) Log.i("SyncRepository", "Topic ${topic.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync topic ${topic.id} to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync topic ${topic.id} to Supabase after retry.")
                 }
 
                 // ContentItems
@@ -211,11 +239,30 @@ class SyncRepository(
                     else Log.e("SyncRepository", "Failed to sync contentItem ${item.id} to Supabase.")
                 }
 
-                // Tasks
+                // Tasks (children referencing topics). If a task upsert fails due to missing topic, try to upsert the topic parent then retry.
                 taskDao.getAllTasks().forEach { task ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", task) }
+                    var ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", task) }
+                    if (!ok) {
+                        Log.w("SyncRepository", "Initial upsert failed for task ${task.id}; attempting to ensure parent topic ${task.topicId} exists and retry.")
+                        try {
+                            val topic = withContext(Dispatchers.IO) { topicDao.getTopicById(task.topicId) }
+                            if (topic != null) {
+                                val tOk = withContext(Dispatchers.IO) { supabaseRepo.upsert("topics", topic) }
+                                if (tOk) {
+                                    Log.i("SyncRepository", "Parent topic ${topic.id} upserted, retrying task ${task.id}.")
+                                    ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", task) }
+                                } else {
+                                    Log.w("SyncRepository", "Failed to upsert parent topic ${task.topicId} while retrying task ${task.id}.")
+                                }
+                            } else {
+                                Log.w("SyncRepository", "Local parent topic ${task.topicId} not found for task ${task.id}.")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("SyncRepository", "Exception while attempting to upsert parent topic for task ${task.id}", e)
+                        }
+                    }
                     if (ok) Log.i("SyncRepository", "Task ${task.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync task ${task.id} to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync task ${task.id} to Supabase after retry.")
                 }
 
                 // Subscriptions
@@ -225,11 +272,16 @@ class SyncRepository(
                     else Log.e("SyncRepository", "Failed to sync subscription to Supabase.")
                 }
 
-                // TaskSubmissions
+                // TaskSubmissions: use direct SupabaseClient method to ensure payload uses snake_case
+                val supabaseClient = com.example.tareamov.service.SupabaseClient
                 taskSubmissionDao.getAllTaskSubmissions().forEach { submission ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("task_submissions", submission) }
-                    if (ok) Log.i("SyncRepository", "TaskSubmission ${submission.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync taskSubmission ${submission.id} to Supabase.")
+                    val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
+                    if (remoteId != null) {
+                        Log.i("SyncRepository", "TaskSubmission ${submission.id} synced to Supabase with remote id=$remoteId.")
+                        // Optionally persist mapping from local submission.id to remoteId if you have a column
+                    } else {
+                        Log.e("SyncRepository", "Failed to sync taskSubmission ${submission.id} to Supabase.")
+                    }
                 }
 
                 // Videos

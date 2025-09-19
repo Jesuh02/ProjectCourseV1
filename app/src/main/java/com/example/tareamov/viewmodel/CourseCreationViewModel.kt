@@ -97,7 +97,8 @@ class CourseCreationViewModel : ViewModel() {
             description = "$courseDescription\nCategoría: $courseCategory",
             videoUriString = "content://media/external/video/dummy_${System.currentTimeMillis()}",
             timestamp = System.currentTimeMillis(),
-            localFilePath = null
+            localFilePath = null,
+            remoteId = null
         )
     }
 

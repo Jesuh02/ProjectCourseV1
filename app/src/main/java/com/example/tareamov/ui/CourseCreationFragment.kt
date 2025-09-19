@@ -165,9 +165,11 @@ class CourseCreationFragment : Fragment() {
             description = courseDescription,
             title = courseName,
             isPaid = isPaid,
+            remoteId = null,
             thumbnailUri = thumbnailUriString,
             price = coursePrice
-        )        // Save course to database
+        )
+        // Save course to database
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 val savedCourse = withContext(Dispatchers.IO) {

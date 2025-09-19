@@ -255,4 +255,105 @@ object SupabaseClient {
             return@withContext null
         }
     }
+
+    suspend fun insertTopic(topic: com.example.tareamov.data.entity.Topic): Long? = withContext(Dispatchers.IO) {
+        try {
+            val map = mapOf(
+                "course_id" to topic.courseId,
+                "name" to topic.name,
+                "description" to topic.description,
+                "order_index" to topic.orderIndex
+            )
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/topics"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val bodyStr = respBody ?: ""
+                    throw Exception("Supabase insertTopic failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                }
+
+                if (respBody.isNullOrEmpty()) return@withContext null
+
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        val idElem = jsonArray[0].asJsonObject.get("id")
+                        return@withContext idElem?.asLong
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext null
+        }
+    }
+
+    suspend fun insertTaskSubmission(submission: com.example.tareamov.data.entity.TaskSubmission): Long? = withContext(Dispatchers.IO) {
+        try {
+            val map = mapOf(
+                "task_id" to submission.taskId,
+                "student_username" to submission.studentUsername,
+                "file_uri" to submission.fileUri,
+                "file_name" to submission.fileName,
+                "submission_date" to submission.submissionDate,
+                "grade" to submission.grade,
+                "feedback" to submission.feedback
+            )
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/task_submissions"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val bodyStr = respBody ?: ""
+                    throw Exception("Supabase insertTaskSubmission failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                }
+
+                if (respBody.isNullOrEmpty()) return@withContext null
+
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        val idElem = jsonArray[0].asJsonObject.get("id")
+                        return@withContext idElem?.asLong
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext null
+        }
+    }
 }
