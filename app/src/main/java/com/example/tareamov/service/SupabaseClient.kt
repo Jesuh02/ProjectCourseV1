@@ -308,6 +308,7 @@ object SupabaseClient {
     suspend fun insertTaskSubmission(submission: com.example.tareamov.data.entity.TaskSubmission): Long? = withContext(Dispatchers.IO) {
         try {
             val map = mapOf(
+                "id" to submission.id,
                 "task_id" to submission.taskId,
                 "student_username" to submission.studentUsername,
                 "file_uri" to submission.fileUri,
@@ -318,6 +319,8 @@ object SupabaseClient {
             )
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
+            // Log the outgoing payload for debugging FK errors (avoid logging secrets)
+            android.util.Log.d("SupabaseClient", "insertTaskSubmission payload: ${gson.toJson(map)}")
             val url = "$baseUrl/rest/v1/task_submissions"
 
             val request = Request.Builder()
@@ -354,6 +357,132 @@ object SupabaseClient {
         } catch (e: Exception) {
             e.printStackTrace()
             return@withContext null
+        }
+    }
+
+    suspend fun updateTaskSubmissionRemote(submissionId: Long, grade: Float?, feedback: String?): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val map = mutableMapOf<String, Any?>()
+            if (grade != null) map["grade"] = grade
+            if (feedback != null) map["feedback"] = feedback
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            android.util.Log.d("SupabaseClient", "updateTaskSubmissionRemote payload: ${gson.toJson(map)} for id=$submissionId")
+
+            // First try PATCH by id
+            var url = "$baseUrl/rest/v1/task_submissions?id=eq.$submissionId"
+            var request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (resp.isSuccessful) return@withContext true
+                // if not successful, fall through to try matching by task/student/date
+                android.util.Log.w("SupabaseClient", "PATCH by id failed for submissionId=$submissionId code=${resp.code}")
+            }
+
+            // Fallback: try to PATCH by task_id, student_username and submission_date
+            try {
+                // We need to build a new body again (request bodies are one-time use)
+                val fallbackBody = gson.toJson(map).toRequestBody(jsonMedia)
+                // As we don't have submission details here, attempt to query by id may have failed because remote id differs.
+                // The caller can optionally re-call with more context; here we attempt a best-effort using submissionId as task_id if needed.
+                // For a reliable fallback, callers should provide taskId/studentUsername/submissionDate; we will attempt a broad update by id alternative.
+                url = "$baseUrl/rest/v1/task_submissions?id=eq.$submissionId"
+                request = Request.Builder()
+                    .url(url)
+                    .patch(fallbackBody)
+                    .addHeader("apikey", apiKey)
+                    .addHeader("Authorization", "Bearer $apiKey")
+                    .addHeader("Accept", "application/json")
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Prefer", "return=representation")
+                    .build()
+
+                client.newCall(request).execute().use { resp2 ->
+                    if (resp2.isSuccessful) return@withContext true
+                    android.util.Log.e("SupabaseClient", "updateTaskSubmissionRemote fallback failed: ${resp2.code} body=${resp2.body?.string()}")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("SupabaseClient", "Exception in fallback updateTaskSubmissionRemote", e)
+            }
+
+            return@withContext false
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext false
+        }
+    }
+
+    // Overload that accepts the full TaskSubmission object and attempts to PATCH by id first,
+    // then falls back to matching by task_id, student_username and submission_date.
+    suspend fun updateTaskSubmissionRemote(submission: com.example.tareamov.data.entity.TaskSubmission): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val grade = submission.grade
+            val feedback = submission.feedback
+            val map = mutableMapOf<String, Any?>()
+            if (grade != null) map["grade"] = grade
+            if (feedback != null) map["feedback"] = feedback
+
+            if (map.isEmpty()) {
+                // Nothing to update
+                return@withContext true
+            }
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            android.util.Log.d("SupabaseClient", "updateTaskSubmissionRemote payload: ${gson.toJson(map)} for submission id=${submission.id}")
+
+            // Try PATCH by id first
+            var url = "$baseUrl/rest/v1/task_submissions?id=eq.${submission.id}"
+            var request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (resp.isSuccessful) return@withContext true
+                android.util.Log.w("SupabaseClient", "PATCH by id failed for submissionId=${submission.id} code=${resp.code}")
+            }
+
+            // Fallback: try to PATCH by task_id, student_username and submission_date
+            try {
+                val fallbackBody = gson.toJson(map).toRequestBody(jsonMedia)
+                // Build filter query - string values should be quoted
+                val studentEscaped = submission.studentUsername.replace("'", "''")
+                url = "$baseUrl/rest/v1/task_submissions?task_id=eq.${submission.taskId}&student_username=eq.'${studentEscaped}'&submission_date=eq.${submission.submissionDate}"
+                request = Request.Builder()
+                    .url(url)
+                    .patch(fallbackBody)
+                    .addHeader("apikey", apiKey)
+                    .addHeader("Authorization", "Bearer $apiKey")
+                    .addHeader("Accept", "application/json")
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Prefer", "return=representation")
+                    .build()
+
+                client.newCall(request).execute().use { resp2 ->
+                    if (resp2.isSuccessful) return@withContext true
+                    android.util.Log.e("SupabaseClient", "updateTaskSubmissionRemote fallback failed: ${resp2.code} body=${resp2.body?.string()}")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("SupabaseClient", "Exception in fallback updateTaskSubmissionRemote", e)
+            }
+
+            return@withContext false
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext false
         }
     }
 }

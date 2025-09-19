@@ -312,7 +312,27 @@ class ChatBotFragment : Fragment() {
                     )
 
                     withContext(Dispatchers.IO) {
-                        database.chatMessageDao().insertMessage(errorChatMessage)
+                        val savedId = database.chatMessageDao().insertMessage(errorChatMessage)
+                        try {
+                            val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                            val toSend = com.example.tareamov.data.entity.ChatMessage(
+                                id = savedId,
+                                message = errorChatMessage.message,
+                                isFromUser = errorChatMessage.isFromUser,
+                                timestamp = errorChatMessage.timestamp,
+                                sessionId = errorChatMessage.sessionId,
+                                hasCalification = errorChatMessage.hasCalification,
+                                calificationValue = errorChatMessage.calificationValue,
+                                calificationAdded = errorChatMessage.calificationAdded
+                            )
+                            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                val ok = supabaseRepo.upsert("chat_messages", toSend)
+                                if (ok) Log.i("ChatBotFragment", "ChatMessage $savedId upserted to Supabase.")
+                                else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedId to Supabase.")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("ChatBotFragment", "Exception sending chat message to Supabase: ${e.message}")
+                        }
                     }
                 }
 
@@ -398,7 +418,18 @@ class ChatBotFragment : Fragment() {
                 }
 
                 withContext(Dispatchers.IO) {
-                    database.chatMessageDao().insertMessage(contextMessage)
+                    val savedIdCtx = database.chatMessageDao().insertMessage(contextMessage)
+                    try {
+                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                        val toSend = contextMessage.copy(id = savedIdCtx)
+                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            val ok = supabaseRepo.upsert("chat_messages", toSend)
+                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedIdCtx upserted to Supabase.")
+                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedIdCtx to Supabase.")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ChatBotFragment", "Exception sending chat context to Supabase: ${e.message}")
+                    }
                 }
             }
         }
@@ -508,7 +539,18 @@ class ChatBotFragment : Fragment() {
                 sessionId = sessionId
             )
             withContext(Dispatchers.IO) {
-                database.chatMessageDao().insertMessage(userMessage)
+                val savedUserId = database.chatMessageDao().insertMessage(userMessage)
+                try {
+                    val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                    val toSend = userMessage.copy(id = savedUserId)
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val ok = supabaseRepo.upsert("chat_messages", toSend)
+                        if (ok) Log.i("ChatBotFragment", "ChatMessage $savedUserId upserted to Supabase.")
+                        else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedUserId to Supabase.")
+                    }
+                } catch (e: Exception) {
+                    Log.w("ChatBotFragment", "Exception sending user chat to Supabase: ${e.message}")
+                }
             }
             loadingProgressBar.visibility = View.VISIBLE
 
@@ -666,7 +708,18 @@ class ChatBotFragment : Fragment() {
                     calificationAdded = false
                 )
                 withContext(Dispatchers.IO) {
-                    database.chatMessageDao().insertMessage(botMessage)
+                    val savedBotId = database.chatMessageDao().insertMessage(botMessage)
+                    try {
+                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                        val toSend = botMessage.copy(id = savedBotId)
+                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            val ok = supabaseRepo.upsert("chat_messages", toSend)
+                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedBotId upserted to Supabase.")
+                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedBotId to Supabase.")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ChatBotFragment", "Exception sending bot chat to Supabase: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
                 val errorMessage = ChatMessage(
@@ -675,7 +728,18 @@ class ChatBotFragment : Fragment() {
                     sessionId = sessionId
                 )
                 withContext(Dispatchers.IO) {
-                    database.chatMessageDao().insertMessage(errorMessage)
+                    val savedErrId = database.chatMessageDao().insertMessage(errorMessage)
+                    try {
+                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                        val toSend = errorMessage.copy(id = savedErrId)
+                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            val ok = supabaseRepo.upsert("chat_messages", toSend)
+                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedErrId upserted to Supabase.")
+                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedErrId to Supabase.")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ChatBotFragment", "Exception sending error chat to Supabase: ${e.message}")
+                    }
                 }
             } finally {
                 loadingProgressBar.visibility = View.GONE

@@ -26,6 +26,7 @@ import com.example.tareamov.data.entity.TaskSubmission
 import com.example.tareamov.data.entity.FileContext
 import com.example.tareamov.service.FileAnalysisService
 import com.example.tareamov.service.MCPService
+import com.example.tareamov.service.SupabaseClient
 import com.example.tareamov.util.CalificationManager
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -493,6 +494,22 @@ class TaskSubmissionsFragment : Fragment() {
                 if (isCourseCreator) {
                     loadTaskProgress()
                 }
+                // Try to push the grade and feedback to Supabase immediately (use object overload)
+                try {
+                    val pushed = withContext(Dispatchers.IO) {
+                        SupabaseClient.updateTaskSubmissionRemote(updatedSubmission)
+                    }
+                    if (pushed) {
+                        Log.i("TaskSubmissionsFragment", "Updated submission ${updatedSubmission.id} pushed to Supabase.")
+                        Toast.makeText(context, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Log.w("TaskSubmissionsFragment", "Failed to push updated submission ${updatedSubmission.id} to Supabase. Will retry in sync.")
+                        Toast.makeText(context, "Calificación guardada localmente; se reintentará subirla más tarde.", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "Exception pushing updated submission to Supabase", e)
+                    Toast.makeText(context, "Error enviando calificación al servidor; se reintentará.", Toast.LENGTH_SHORT).show()
+                }
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "Error updating grade", e)
                 Toast.makeText(context, "Error al guardar calificación: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -527,8 +544,24 @@ class TaskSubmissionsFragment : Fragment() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 val db = AppDatabase.getDatabase(requireContext())
-                withContext(Dispatchers.IO) {
+                val localId = withContext(Dispatchers.IO) {
                     db.taskSubmissionDao().insertSubmission(submission)
+                }
+
+                // Try sending immediately to Supabase and log the returned remote id
+                try {
+                    val submissionWithLocalId = submission.copy(id = localId)
+                    val remoteId = withContext(Dispatchers.IO) {
+                        SupabaseClient.insertTaskSubmission(submissionWithLocalId)
+                    }
+                    if (remoteId != null) {
+                        Log.i("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned remote id=$remoteId for local id=$localId")
+                        Toast.makeText(context, "Tarea subida a servidor (id=$remoteId)", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Log.w("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned null for local id=$localId")
+                    }
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "Error sending submission to Supabase", e)
                 }
 
                 Toast.makeText(context, "Tarea enviada correctamente", Toast.LENGTH_SHORT).show()
@@ -840,6 +873,20 @@ class TaskSubmissionsFragment : Fragment() {
             val database = AppDatabase.getDatabase(requireContext())
             val savedId = database.fileContextDao().insertFileContext(fileContext)
             Log.d("TaskSubmissionsFragment", "📝 FileContext guardado con ID: $savedId")
+
+            // Intentar enviar el FileContext a Supabase en background
+            try {
+                val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                // Ensure we send the same object with id set to savedId for FK mapping
+                val toSend = fileContext.copy(id = savedId)
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val ok = supabaseRepo.upsert("file_contexts", toSend)
+                    if (ok) Log.i("TaskSubmissionsFragment", "FileContext $savedId upserted to Supabase.")
+                    else Log.w("TaskSubmissionsFragment", "Failed to upsert FileContext $savedId to Supabase.")
+                }
+            } catch (e: Exception) {
+                Log.w("TaskSubmissionsFragment", "Exception sending FileContext to Supabase: ${e.message}")
+            }
             
             // El resto del código debe ejecutarse en el hilo principal para UI
             withContext(Dispatchers.Main) {

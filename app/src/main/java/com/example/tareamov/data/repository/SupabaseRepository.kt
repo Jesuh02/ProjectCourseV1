@@ -96,6 +96,8 @@ class SupabaseRepository(
                     val mappedPayload: Any = when (table) {
                         "tasks" -> {
                             val m = mutableMapOf<String, Any?>()
+                            // Ensure we include local id as the remote id so FK from submissions (task_id) matches
+                            m["id"] = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["taskId"] ?: asMap["task_id"]) ?: coerceToLong(asMap["id"])
                             // Postgres DDL uses snake_case: topic_id (bigint) — coerce to Long
                             m["topic_id"] = coerceToLong(asMap["topicId"] ?: asMap["topic_id"])
                             m["title"] = (asMap["name"] ?: asMap["title"] ?: "")
@@ -107,8 +109,10 @@ class SupabaseRepository(
                         }
                         "topics" -> {
                             val m = mutableMapOf<String, Any?>()
+                            // include local id for topics too so tasks referencing topic.id will match
+                            m["id"] = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["topicId"] ?: asMap["topic_id"]) ?: coerceToLong(asMap["id"])
                             // course_id in DDL (bigint)
-                            m["course_id"] = coerceToLong(asMap["courseId"] ?: asMap["course_id"])
+                            m["course_id"] = coerceToLong(asMap["courseId"] ?: asMap["course_id"]) ?: coerceToLong(asMap["courseId"] ?: asMap["course_id"]) 
                             m["name"] = (asMap["name"] ?: asMap["title"] ?: "")
                             m["description"] = (asMap["description"] ?: null)
                             // order_index is integer
@@ -117,7 +121,8 @@ class SupabaseRepository(
                         }
                         "content_items" -> {
                             val m = mutableMapOf<String, Any?>()
-                            m["topic_id"] = coerceToLong(asMap["topicId"] ?: asMap["topic_id"])
+                            m["id"] = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["contentItemId"] ?: asMap["content_item_id"]) ?: coerceToLong(asMap["id"])
+                            m["topic_id"] = coerceToLong(asMap["topicId"] ?: asMap["topic_id"]) 
                             m["title"] = (asMap["title"] ?: asMap["name"] ?: "")
                             m["body"] = asMap["body"] ?: asMap["content"] ?: null
                             m["content_type"] = (asMap["contentType"] ?: asMap["type"] ?: "unknown")
@@ -126,12 +131,83 @@ class SupabaseRepository(
                         }
                         "videos" -> {
                             val m = mutableMapOf<String, Any?>()
+                            m["id"] = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["videoId"] ?: asMap["video_id"]) ?: coerceToLong(asMap["id"])
                             m["username"] = asMap["username"] ?: asMap["creator_username"] ?: asMap["creator"]
                             m["title"] = (asMap["title"] ?: asMap["name"] ?: "")
                             m["description"] = (asMap["description"] ?: null)
                             m["video_uri_string"] = (asMap["videoUriString"] ?: asMap["remoteUrl"] ?: null)
                             m["local_file_path"] = (asMap["localFilePath"] ?: null)
                             m["thumbnail_uri"] = (asMap["thumbnailUri"] ?: null)
+                            m["price"] = when (val p = asMap["price"] ?: asMap["priceUsd"]) {
+                                is Number -> p
+                                is String -> p.toDoubleOrNull()
+                                else -> null
+                            }
+                            m["created_at"] = java.time.OffsetDateTime.now().toString()
+                            m
+                        }
+                        "file_contexts" -> {
+                            val m = mutableMapOf<String, Any?>()
+                            coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["fileContextId"] ?: asMap["file_context_id"])?.let { m["id"] = it }
+                            coerceToLong(asMap["submissionId"] ?: asMap["submission_id"] ?: asMap["submissionId"])?.let { m["submission_id"] = it }
+                            (asMap["fileName"] ?: asMap["file_name"] ?: asMap["fileName"])?.let { m["file_name"] = it }
+                            (asMap["fileType"] ?: asMap["file_type"])?.let { m["file_type"] = it }
+                            (asMap["fileContent"] ?: asMap["file_content"])?.let { m["file_content"] = it }
+                            (asMap["extractedText"] ?: asMap["extracted_text"])?.let { m["extracted_text"] = it }
+                            (asMap["metadata"])?.let { m["metadata"] = it }
+                            // Do not send `timestamp` column by default to avoid schema mismatch on remote
+                            // json_content may be stored as String (json) in Room
+                            (asMap["jsonContent"] ?: asMap["json_content"])?.let { m["json_content"] = it }
+                            (asMap["contentSummary"] ?: asMap["content_summary"])?.let { m["content_summary"] = it }
+                            m["created_at"] = java.time.OffsetDateTime.now().toString()
+                            m
+                        }
+                        "chat_messages" -> {
+                            val m = mutableMapOf<String, Any?>()
+                            coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["messageId"] ?: asMap["message_id"])?.let { m["id"] = it }
+                            // message/text/body
+                            (asMap["message"] ?: asMap["text"] ?: asMap["body"])?.let { m["message"] = it }
+                            // boolean fields
+                            (asMap["isFromUser"] ?: asMap["is_from_user"])?.let { v ->
+                                val boolVal = when (v) {
+                                    is Boolean -> v
+                                    is Number -> v.toInt() != 0
+                                    is String -> v.toBoolean()
+                                    else -> false
+                                }
+                                m["is_from_user"] = boolVal
+                            }
+                            // Do not send `timestamp` column by default to avoid schema mismatch on remote
+                            (asMap["sessionId"] ?: asMap["session_id"])?.let { m["session_id"] = it }
+                            (asMap["hasCalification"] ?: asMap["has_calification"])?.let { v ->
+                                val boolVal = when (v) {
+                                    is Boolean -> v
+                                    is Number -> v.toInt() != 0
+                                    is String -> v.toBoolean()
+                                    else -> false
+                                }
+                                m["has_calification"] = boolVal
+                            }
+                            (asMap["calificationValue"] ?: asMap["calification_value"])?.let { m["calification_value"] = it }
+                            (asMap["calificationAdded"] ?: asMap["calification_added"])?.let { v ->
+                                val boolVal = when (v) {
+                                    is Boolean -> v
+                                    is Number -> v.toInt() != 0
+                                    is String -> v.toBoolean()
+                                    else -> false
+                                }
+                                m["calification_added"] = boolVal
+                            }
+                            m["created_at"] = java.time.OffsetDateTime.now().toString()
+                            m
+                        }
+                        "subscriptions" -> {
+                            val m = mutableMapOf<String, Any?>()
+                            // composite PK of (subscriber_username, creator_username) — keep as provided
+                            m["subscriber_username"] = asMap["subscriberUsername"] ?: asMap["subscriber_username"] ?: asMap["subscriber"] ?: asMap["subscriber_username"]
+                            m["creator_username"] = asMap["creatorUsername"] ?: asMap["creator_username"] ?: asMap["creator"] ?: asMap["creator_username"]
+                            // coerce subscription_date to Long if possible
+                            coerceToLong(asMap["subscriptionDate"] ?: asMap["subscription_date"])?.let { m["subscription_date"] = it }
                             m["created_at"] = java.time.OffsetDateTime.now().toString()
                             m
                         }
@@ -223,6 +299,10 @@ class SupabaseRepository(
 
             client.newCall(request).execute().use { resp ->
                 // 200 means the table exists (even if empty). 404 or 400 likely means not found
+                if (!resp.isSuccessful) {
+                    val body = try { resp.body?.string() } catch (_: Exception) { null }
+                    Log.w("SupabaseRepository", "tableExists check for $table returned code=${resp.code} body=$body")
+                }
                 return resp.isSuccessful
             }
         } catch (e: Exception) {

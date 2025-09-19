@@ -145,11 +145,29 @@ CREATE TABLE IF NOT EXISTS public.file_contexts (
     file_content text,
     extracted_text text,
     metadata text,
+    timestamp bigint,
+    json_content jsonb,
     content_summary text,
     created_at timestamptz DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_file_contexts_submission_id ON public.file_contexts (submission_id);
+
+-- Table: public.chat_messages (messages created/received in the in-app chat)
+CREATE TABLE IF NOT EXISTS public.chat_messages (
+    id bigserial PRIMARY KEY,
+    message text NOT NULL,
+    is_from_user boolean DEFAULT false,
+    timestamp bigint,
+    session_id text,
+    has_calification boolean DEFAULT false,
+    calification_value text,
+    calification_added boolean DEFAULT false,
+    created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON public.chat_messages (session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON public.chat_messages (timestamp);
 
 -- Table: public.courses (mirrors Course.kt)
 CREATE TABLE IF NOT EXISTS public.courses (
@@ -176,3 +194,17 @@ CREATE TABLE IF NOT EXISTS public.courses (
 
 CREATE INDEX IF NOT EXISTS idx_courses_creator_username ON public.courses (creator_username);
 CREATE INDEX IF NOT EXISTS idx_courses_title ON public.courses USING gin (to_tsvector('simple', title));
+
+-- Table: public.subscriptions (users subscribing to creators)
+CREATE TABLE IF NOT EXISTS public.subscriptions (
+    subscriber_username text NOT NULL,
+    creator_username text NOT NULL,
+    subscription_date bigint,
+    created_at timestamptz DEFAULT now(),
+    PRIMARY KEY (subscriber_username, creator_username),
+    FOREIGN KEY (subscriber_username) REFERENCES public.usuarios(usuario) ON DELETE CASCADE,
+    FOREIGN KEY (creator_username) REFERENCES public.usuarios(usuario) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_subscriber ON public.subscriptions (subscriber_username);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_creator ON public.subscriptions (creator_username);

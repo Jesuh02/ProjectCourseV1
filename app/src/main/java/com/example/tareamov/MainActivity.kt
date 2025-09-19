@@ -59,7 +59,9 @@ class MainActivity : AppCompatActivity() {
             videoDao, // <-- Pasa el videoDao aquí
             rolDao,
             recursoDao,
-            rolRecursoDao
+            rolRecursoDao,
+            appDb.chatMessageDao(),
+            appDb.fileContextDao()
             // firestore eliminado, ya no se usa
         )
 

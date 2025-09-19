@@ -29,6 +29,7 @@ import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import com.example.tareamov.data.repository.SupabaseRepository
 import kotlinx.coroutines.withContext
 
@@ -44,6 +45,8 @@ class SyncRepository(
     private val rolDao: RolDao,
     private val recursoDao: RecursoDao,
     private val rolRecursoDao: RolRecursoDao,
+    private val chatMessageDao: com.example.tareamov.data.dao.ChatMessageDao,
+    private val fileContextDao: com.example.tareamov.data.dao.FileContextDao,
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) {
     private var userListener: ListenerRegistration? = null
@@ -55,6 +58,7 @@ class SyncRepository(
     private var taskSubmissionListener: ListenerRegistration? = null
     private val syncScope = CoroutineScope(Dispatchers.IO)
     private val supabaseRepo = SupabaseRepository()
+    
 
     // Sincroniza cambios de la base local a Firebase
     // This method now syncs only items marked as "pending" and updates their status on success.
@@ -176,11 +180,12 @@ class SyncRepository(
                 return@launch
             }
             try {
-                // Check that the target tables exist before attempting to sync
-                val requiredTables = listOf("personas", "usuarios")
-                val missing = requiredTables.filter { !supabaseRepo.tableExists(it) }
-                if (missing.isNotEmpty()) {
-                    Log.w("SyncRepository", "Required Supabase tables missing: ${missing.joinToString(",")}. Skipping sync. Apply migrations first.")
+                // Check that at least one usable sync target exists before attempting to sync
+                // Previously we required 'personas' and 'usuarios' which blocked syncing file/chat contexts.
+                val allowIf = listOf("app_documents", "file_contexts", "chat_messages", "task_submissions", "subscriptions")
+                val available = allowIf.any { supabaseRepo.tableExists(it) }
+                if (!available) {
+                    Log.w("SyncRepository", "No usable Supabase target tables found (checked: ${allowIf.joinToString(",")}). Skipping sync. Apply migrations first.")
                     return@launch
                 }
                 // Usuarios
@@ -239,7 +244,7 @@ class SyncRepository(
                     else Log.e("SyncRepository", "Failed to sync contentItem ${item.id} to Supabase.")
                 }
 
-                // Tasks (children referencing topics). If a task upsert fails due to missing topic, try to upsert the topic parent then retry.
+                // Tasks (children referencing topics). Ensure topics were upserted above; if a task upsert fails due to missing topic, try to upsert the topic parent then retry.
                 taskDao.getAllTasks().forEach { task ->
                     var ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", task) }
                     if (!ok) {
@@ -265,24 +270,80 @@ class SyncRepository(
                     else Log.e("SyncRepository", "Failed to sync task ${task.id} to Supabase after retry.")
                 }
 
-                // Subscriptions
-                subscriptionDao.getAllSubscriptions().forEach { sub ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("subscriptions", sub) }
-                    if (ok) Log.i("SyncRepository", "Subscription synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync subscription to Supabase.")
-                }
-
                 // TaskSubmissions: use direct SupabaseClient method to ensure payload uses snake_case
+                // Try submissions after tasks are upserted so task_id FK exists remotely. If insert fails due to missing task, attempt to upsert the task then retry.
                 val supabaseClient = com.example.tareamov.service.SupabaseClient
                 taskSubmissionDao.getAllTaskSubmissions().forEach { submission ->
-                    val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
-                    if (remoteId != null) {
-                        Log.i("SyncRepository", "TaskSubmission ${submission.id} synced to Supabase with remote id=$remoteId.")
-                        // Optionally persist mapping from local submission.id to remoteId if you have a column
-                    } else {
-                        Log.e("SyncRepository", "Failed to sync taskSubmission ${submission.id} to Supabase.")
+                    try {
+                        // If the submission contains grading info, try update; otherwise insert
+                        val hasGrade = submission.grade != null || !submission.feedback.isNullOrBlank()
+                        var success = false
+
+                        if (hasGrade) {
+                            success = withContext(Dispatchers.IO) { supabaseClient.updateTaskSubmissionRemote(submission) }
+                        } else {
+                            val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
+                            success = remoteId != null
+                        }
+
+                        if (!success) {
+                            Log.w("SyncRepository", "Initial submission sync failed for ${submission.id}; attempting to upsert parent task ${submission.taskId} and retry.")
+                            val taskParent = withContext(Dispatchers.IO) { taskDao.getTaskById(submission.taskId) }
+                            if (taskParent != null) {
+                                val tOk = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", taskParent) }
+                                if (tOk) {
+                                    Log.i("SyncRepository", "Parent task ${taskParent.id} upserted, retrying submission ${submission.id}.")
+                                    if (hasGrade) {
+                                        success = withContext(Dispatchers.IO) { supabaseClient.updateTaskSubmissionRemote(submission) }
+                                    } else {
+                                        val remoteId2 = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
+                                        success = remoteId2 != null
+                                    }
+                                } else {
+                                    Log.w("SyncRepository", "Failed to upsert parent task ${submission.taskId} while retrying submission ${submission.id}.")
+                                }
+                            } else {
+                                Log.w("SyncRepository", "Local parent task ${submission.taskId} not found for submission ${submission.id}.")
+                            }
+                        }
+
+                        if (success) Log.i("SyncRepository", "TaskSubmission ${submission.id} synced to Supabase.")
+                        else Log.e("SyncRepository", "Failed to sync taskSubmission ${submission.id} to Supabase.")
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Exception while syncing submission ${submission.id}", e)
                     }
                 }
+
+                // Subscriptions
+                subscriptionDao.getAllSubscriptions().forEach { sub ->
+                    try {
+                        // Map Room entity fields to snake_case expected by Supabase/Postgres
+                        val mapped = mapOf(
+                            "subscriber_username" to sub.subscriberUsername,
+                            "creator_username" to sub.creatorUsername,
+                            "subscription_date" to sub.subscriptionDate
+                        )
+                        val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("subscriptions", mapped) }
+                        if (ok) Log.i("SyncRepository", "Subscription ${sub.subscriberUsername}_${sub.creatorUsername} synced to Supabase.")
+                        else Log.e("SyncRepository", "Failed to sync subscription ${sub.subscriberUsername}_${sub.creatorUsername} to Supabase.")
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Exception while syncing subscription ${sub.subscriberUsername}_${sub.creatorUsername}", e)
+                    }
+                }
+
+                // File contexts (metadata/extracted content) - ensure file_contexts table exists in migrations
+                try {
+                    val fileContexts = withContext(Dispatchers.IO) { fileContextDao.getAllFileContexts().first() }
+                    fileContexts.forEach { fc ->
+                        val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("file_contexts", fc) }
+                        if (ok) Log.i("SyncRepository", "FileContext ${fc.id} synced to Supabase.")
+                        else Log.e("SyncRepository", "Failed to sync FileContext ${fc.id} to Supabase.")
+                    }
+                } catch (e: Exception) {
+                    Log.w("SyncRepository", "Could not sync file_contexts: ${e.message}")
+                }
+
+
 
                 // Videos
                 videoDao.getAllVideos().forEach { video ->
@@ -296,6 +357,18 @@ class SyncRepository(
                     val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("roles", rol) }
                     if (ok) Log.i("SyncRepository", "Rol ${rol.id} synced to Supabase.")
                     else Log.e("SyncRepository", "Failed to sync rol ${rol.id} to Supabase.")
+                }
+
+                // Chat messages - sync in-app chat messages to Supabase
+                try {
+                    val messages = withContext(Dispatchers.IO) { chatMessageDao.getAllMessages().first() }
+                    messages.forEach { msg ->
+                        val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("chat_messages", msg) }
+                        if (ok) Log.i("SyncRepository", "ChatMessage ${msg.id} synced to Supabase.")
+                        else Log.e("SyncRepository", "Failed to sync ChatMessage ${msg.id} to Supabase.")
+                    }
+                } catch (e: Exception) {
+                    Log.w("SyncRepository", "Could not sync chat_messages: ${e.message}")
                 }
 
                 // Recursos
