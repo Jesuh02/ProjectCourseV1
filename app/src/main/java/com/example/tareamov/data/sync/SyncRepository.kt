@@ -11,6 +11,9 @@ import com.example.tareamov.data.dao.TaskDao
 import com.example.tareamov.data.dao.SubscriptionDao
 import com.example.tareamov.data.dao.TaskSubmissionDao
 import com.example.tareamov.data.dao.VideoDao
+import com.example.tareamov.data.dao.RolDao
+import com.example.tareamov.data.dao.RecursoDao
+import com.example.tareamov.data.dao.RolRecursoDao
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Topic
@@ -18,6 +21,9 @@ import com.example.tareamov.data.entity.ContentItem
 import com.example.tareamov.data.entity.Task
 import com.example.tareamov.data.entity.Subscription
 import com.example.tareamov.data.entity.TaskSubmission
+import com.example.tareamov.data.entity.Rol
+import com.example.tareamov.data.entity.Recurso
+import com.example.tareamov.data.entity.RolRecurso
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.CoroutineScope
@@ -35,6 +41,9 @@ class SyncRepository(
     private val subscriptionDao: SubscriptionDao,
     private val taskSubmissionDao: TaskSubmissionDao,
     private val videoDao: VideoDao,
+    private val rolDao: RolDao,
+    private val recursoDao: RecursoDao,
+    private val rolRecursoDao: RolRecursoDao,
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) {
     private var userListener: ListenerRegistration? = null
@@ -161,11 +170,17 @@ class SyncRepository(
     // New: sincronizar a Supabase via REST
     fun syncLocalToSupabase() {
         syncScope.launch {
+            // If Supabase isn't configured in BuildConfig, skip
+            if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "SupabaseClient not configured. Skipping syncLocalToSupabase.")
+                return@launch
+            }
             try {
-                // Check that the target table exists before attempting to sync
-                val requiredTable = "app_documents"
-                if (!supabaseRepo.tableExists(requiredTable)) {
-                    Log.w("SyncRepository", "Required Supabase table '$requiredTable' not found. Skipping sync. Apply migrations first.")
+                // Check that the target tables exist before attempting to sync
+                val requiredTables = listOf("personas", "usuarios")
+                val missing = requiredTables.filter { !supabaseRepo.tableExists(it) }
+                if (missing.isNotEmpty()) {
+                    Log.w("SyncRepository", "Required Supabase tables missing: ${missing.joinToString(",")}. Skipping sync. Apply migrations first.")
                     return@launch
                 }
                 // Usuarios
@@ -222,6 +237,27 @@ class SyncRepository(
                     val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("videos", video) }
                     if (ok) Log.i("SyncRepository", "Video ${video.id} synced to Supabase.")
                     else Log.e("SyncRepository", "Failed to sync video ${video.id} to Supabase.")
+                }
+
+                // Roles
+                rolDao.getAllRoles().forEach { rol ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("roles", rol) }
+                    if (ok) Log.i("SyncRepository", "Rol ${rol.id} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync rol ${rol.id} to Supabase.")
+                }
+
+                // Recursos
+                recursoDao.getAllRecursos().forEach { recurso ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("recursos", recurso) }
+                    if (ok) Log.i("SyncRepository", "Recurso ${recurso.id} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync recurso ${recurso.id} to Supabase.")
+                }
+
+                // Rol-Recursos
+                rolRecursoDao.getAllRolRecursos().forEach { rr ->
+                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("rol_recursos", rr) }
+                    if (ok) Log.i("SyncRepository", "RolRecurso ${rr.rolId}-${rr.recursoId} synced to Supabase.")
+                    else Log.e("SyncRepository", "Failed to sync rol_recurso ${rr.rolId}-${rr.recursoId} to Supabase.")
                 }
             } catch (e: Exception) {
                 Log.e("SyncRepository", "Exception during syncLocalToSupabase", e)

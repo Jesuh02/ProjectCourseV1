@@ -96,7 +96,11 @@ class SupabaseRepository(
     // Check if a REST endpoint (table) exists by making a lightweight HEAD-like request
     fun tableExists(table: String): Boolean {
         try {
-            val url = "${supabaseUrl}/rest/v1/$table?select=1&limit=1"
+            if (supabaseUrl.isBlank()) {
+                Log.w("SupabaseRepository", "supabaseUrl is blank, cannot check tableExists for $table")
+                return false
+            }
+            val url = "${supabaseUrl.trimEnd('/')}/rest/v1/$table?select=1&limit=1"
             val request = Request.Builder()
                 .url(url)
                 .get()

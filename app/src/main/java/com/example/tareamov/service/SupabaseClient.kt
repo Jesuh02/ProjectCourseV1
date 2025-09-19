@@ -1,0 +1,142 @@
+package com.example.tareamov.service
+
+import com.example.tareamov.BuildConfig
+import com.example.tareamov.data.entity.Persona
+import com.example.tareamov.data.entity.Usuario
+import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.lang.Exception
+
+object SupabaseClient {
+    private val client = OkHttpClient()
+    private val gson = Gson()
+    private val baseUrl = BuildConfig.SUPABASE_URL.trimEnd('/')
+    private val apiKey = BuildConfig.SUPABASE_KEY
+    private val jsonMedia = "application/json; charset=utf-8".toMediaType()
+
+    fun isConfigured(): Boolean {
+        val url = baseUrl.trim()
+        val key = apiKey.trim()
+        val configured = url.isNotEmpty() && key.isNotEmpty()
+        if (!configured) {
+            try {
+                val maskedUrl = if (url.length <= 12) url else url.substring(0, 12) + "..."
+                val maskedKey = if (key.length <= 8) "(hidden)" else key.substring(0, 6) + "..." + key.takeLast(4)
+                android.util.Log.w("SupabaseClient", "Supabase not configured: SUPABASE_URL=$maskedUrl SUPABASE_KEY=$maskedKey HOST_IP=${BuildConfig.HOST_IP}. Check local.properties and rebuild.")
+            } catch (t: Throwable) {
+                // ignore logging failures
+            }
+        }
+        return configured
+    }
+
+    suspend fun insertPersona(persona: Persona): Long? = withContext(Dispatchers.IO) {
+        try {
+            val map = mapOf(
+                "identificacion" to persona.identificacion,
+                "nombres" to persona.nombres,
+                "apellidos" to persona.apellidos,
+                "email" to persona.email,
+                "telefono" to persona.telefono,
+                "direccion" to persona.direccion,
+                "fechaNacimiento" to persona.fechaNacimiento,
+                "avatar" to persona.avatar,
+                "esUsuario" to persona.esUsuario
+            )
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/personas"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    // Log response body to help debugging permissions/RLS issues
+                    val bodyStr = respBody ?: ""
+                    throw Exception("Supabase insertPersona failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                }
+
+                if (respBody.isNullOrEmpty()) return@withContext null
+
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        val idElem = jsonArray[0].asJsonObject.get("id")
+                        return@withContext idElem?.asLong
+                    }
+                } catch (e: Exception) {
+                    // ignore parse errors but log
+                    e.printStackTrace()
+                }
+
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext null
+        }
+    }
+
+    suspend fun insertUsuario(usuario: Usuario): Long? = withContext(Dispatchers.IO) {
+        try {
+            val map = mapOf(
+                "usuario" to usuario.usuario,
+                "contrasena" to usuario.contrasena,
+                "persona_id" to usuario.persona_id,
+                "rol_id" to usuario.rol_id
+            )
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/usuarios"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val bodyStr = respBody ?: ""
+                    throw Exception("Supabase insertUsuario failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                }
+
+                if (respBody.isNullOrEmpty()) return@withContext null
+
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        val idElem = jsonArray[0].asJsonObject.get("id")
+                        return@withContext idElem?.asLong
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext null
+        }
+    }
+}

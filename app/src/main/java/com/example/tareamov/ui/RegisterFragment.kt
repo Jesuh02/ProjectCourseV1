@@ -38,6 +38,8 @@ import de.hdodenhof.circleimageview.CircleImageView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import at.favre.lib.crypto.bcrypt.BCrypt
+import com.example.tareamov.service.SupabaseClient
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -788,20 +790,50 @@ class RegisterFragment : Fragment() {
                     esUsuario = true  // This person is a user
                 )
 
-                // Insert the persona first
+                // Insert the persona first (local DB)
                 val personaId = withContext(Dispatchers.IO) {
                     viewModel.insertAndGetId(persona)
                 }
 
-                // Then create and insert the usuario separately
+                // Hash password before storing
+                val hashedPassword = withContext(Dispatchers.IO) {
+                    BCrypt.withDefaults().hashToString(12, password.toCharArray())
+                }
+
+                // Then create and insert the usuario locally
                 val usuario = Usuario(
                     usuario = username,
-                    contrasena = password,
+                    contrasena = hashedPassword,
                     persona_id = personaId
                 )
 
                 withContext(Dispatchers.IO) {
                     viewModel.insertUsuario(usuario)
+                }
+
+                // Also attempt to send to Supabase (best-effort). Use service role key carefully.
+                // We send persona first to supabase, then usuario with returned persona id if available.
+                if (SupabaseClient.isConfigured()) {
+                    try {
+                        val remotePersonaId = withContext(Dispatchers.IO) { SupabaseClient.insertPersona(persona) }
+                        val usuarioToSend = usuario.copy(persona_id = remotePersonaId ?: personaId)
+                        val remoteUserId = withContext(Dispatchers.IO) { SupabaseClient.insertUsuario(usuarioToSend) }
+                        if (remoteUserId == null) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), "Advertencia: usuario no sincronizado con servidor remoto", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "Error al sincronizar con Supabase: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                } else {
+                    // Not configured - notify developer/tester
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "Supabase no está configurado (chequear local.properties)", Toast.LENGTH_LONG).show()
+                    }
                 }
 
                 // Navegar a la pantalla de inicio de sesión
