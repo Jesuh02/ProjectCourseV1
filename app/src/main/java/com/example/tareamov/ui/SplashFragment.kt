@@ -26,7 +26,7 @@ import com.example.tareamov.util.SessionManager
 class SplashFragment : Fragment() {
     
     // Increased timeout so the splash animation lasts longer
-    private val splashTimeOut: Long = 6000 // ~7 seconds total
+    private val splashTimeOut: Long = 5500 // ~7 seconds total
     private lateinit var letterViews: List<TextView>
     private lateinit var particleViews: List<ImageView>
     private lateinit var codeElements: List<TextView>
