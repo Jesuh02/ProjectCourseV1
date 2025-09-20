@@ -11,6 +11,7 @@ import com.example.tareamov.viewmodel.PersonaViewModel
 import com.example.tareamov.viewmodel.SupabaseViewModel
 import com.example.tareamov.data.AppDatabase // Added
 import com.example.tareamov.data.sync.SyncRepository // Added
+import kotlinx.coroutines.launch
 
 
 class MainActivity : AppCompatActivity() {
@@ -73,6 +74,14 @@ class MainActivity : AppCompatActivity() {
         if (configured) {
             println("MainActivity: Supabase configured, starting initial syncLocalToSupabase()")
             syncRepository.syncLocalToSupabase()
+                // Also pull remote data to local DB on startup
+                try {
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        syncRepository.syncSupabaseToLocal()
+                    }
+                } catch (t: Throwable) {
+                    t.printStackTrace()
+                }
         } else {
             println("MainActivity: Supabase NOT configured (check local.properties). Skipping immediate sync.")
             // Helpful debug: print masked BuildConfig values so developer can verify props

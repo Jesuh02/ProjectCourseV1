@@ -11,6 +11,18 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.lang.Exception
+import com.example.tareamov.data.entity.VideoData
+import com.example.tareamov.data.entity.Topic
+import com.example.tareamov.data.entity.ContentItem
+import com.example.tareamov.data.entity.Task
+import com.example.tareamov.data.entity.Subscription
+import com.example.tareamov.data.entity.TaskSubmission
+import com.example.tareamov.data.entity.ChatMessage
+import com.example.tareamov.data.entity.FileContext
+import com.example.tareamov.data.entity.Course
+import com.example.tareamov.data.entity.Rol
+import com.example.tareamov.data.entity.Recurso
+import com.example.tareamov.data.entity.RolRecurso
 
 object SupabaseClient {
     private val client = OkHttpClient()
@@ -485,4 +497,55 @@ object SupabaseClient {
             return@withContext false
         }
     }
+
+    // Generic GET helper
+    private fun buildGetRequest(path: String): Request {
+        val url = "$baseUrl/rest/v1/$path"
+        return Request.Builder()
+            .url(url)
+            .get()
+            .addHeader("apikey", apiKey)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Accept", "application/json")
+            .build()
+    }
+
+    private suspend fun <T> fetchList(path: String, clazz: Class<Array<T>>): List<T> = withContext(Dispatchers.IO) {
+        try {
+            val request = buildGetRequest(path)
+            client.newCall(request).execute().use { resp ->
+                val body = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    android.util.Log.w("SupabaseClient", "GET $path failed: ${resp.code} body=$body")
+                    return@withContext emptyList()
+                }
+                if (body.isNullOrEmpty()) return@withContext emptyList()
+                try {
+                    val arr = gson.fromJson(body, clazz)
+                    return@withContext arr?.toList() ?: emptyList()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    return@withContext emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext emptyList()
+        }
+    }
+
+    suspend fun fetchPersonas(): List<Persona> = fetchList("personas", Array<Persona>::class.java)
+    suspend fun fetchUsuarios(): List<Usuario> = fetchList("usuarios", Array<Usuario>::class.java)
+    suspend fun fetchVideos(): List<VideoData> = fetchList("videos", Array<VideoData>::class.java)
+    suspend fun fetchTopics(): List<Topic> = fetchList("topics", Array<Topic>::class.java)
+    suspend fun fetchContentItems(): List<ContentItem> = fetchList("content_items", Array<ContentItem>::class.java)
+    suspend fun fetchTasks(): List<Task> = fetchList("tasks", Array<Task>::class.java)
+    suspend fun fetchSubscriptions(): List<Subscription> = fetchList("subscriptions", Array<Subscription>::class.java)
+    suspend fun fetchTaskSubmissions(): List<TaskSubmission> = fetchList("task_submissions", Array<TaskSubmission>::class.java)
+    suspend fun fetchChatMessages(): List<ChatMessage> = fetchList("chat_messages", Array<ChatMessage>::class.java)
+    suspend fun fetchFileContexts(): List<FileContext> = fetchList("file_contexts", Array<FileContext>::class.java)
+    suspend fun fetchCourses(): List<Course> = fetchList("courses", Array<Course>::class.java)
+    suspend fun fetchRoles(): List<Rol> = fetchList("roles", Array<Rol>::class.java)
+    suspend fun fetchRecursos(): List<Recurso> = fetchList("recursos", Array<Recurso>::class.java)
+    suspend fun fetchRolRecursos(): List<RolRecurso> = fetchList("rol_recursos", Array<RolRecurso>::class.java)
 }

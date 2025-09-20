@@ -390,6 +390,146 @@ class SyncRepository(
         }
     }
 
+    // New: traer datos desde Supabase y guardarlos localmente en Room
+    fun syncSupabaseToLocal() {
+        syncScope.launch {
+            if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "Supabase not configured. Skipping syncSupabaseToLocal.")
+                return@launch
+            }
+
+            try {
+                Log.i("SyncRepository", "Starting syncSupabaseToLocal()")
+
+                // Personas
+                val personas = com.example.tareamov.service.SupabaseClient.fetchPersonas()
+                personas.forEach { p ->
+                    try {
+                        personaDao.insertPersona(p)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert persona ${p.id}", e)
+                    }
+                }
+
+                // Usuarios
+                val usuarios = com.example.tareamov.service.SupabaseClient.fetchUsuarios()
+                usuarios.forEach { u ->
+                    try {
+                        usuarioDao.insertUsuario(u)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert usuario ${u.id}", e)
+                    }
+                }
+
+                // Roles
+                val roles = com.example.tareamov.service.SupabaseClient.fetchRoles()
+                roles.forEach { r ->
+                    try {
+                        rolDao.insertRol(r)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert rol ${r.id}", e)
+                    }
+                }
+
+                // Recursos
+                val recursos = com.example.tareamov.service.SupabaseClient.fetchRecursos()
+                recursos.forEach { rc ->
+                    try {
+                        recursoDao.insertRecurso(rc)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert recurso ${rc.id}", e)
+                    }
+                }
+
+                // RolRecursos
+                val rolRecursos = com.example.tareamov.service.SupabaseClient.fetchRolRecursos()
+                rolRecursos.forEach { rr ->
+                    try {
+                        rolRecursoDao.insertRolRecurso(rr)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert rol_recurso ${rr.rolId}-${rr.recursoId}", e)
+                    }
+                }
+
+                // Courses: skipped (no courseDao available in this repository). Add courseDao to SyncRepository if needed.
+
+                // Topics
+                val topics = com.example.tareamov.service.SupabaseClient.fetchTopics()
+                topics.forEach { t ->
+                    try {
+                        topicDao.insertTopic(t)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert topic ${t.id}", e)
+                    }
+                }
+
+                // Content Items
+                val contentItems = com.example.tareamov.service.SupabaseClient.fetchContentItems()
+                contentItems.forEach { ci ->
+                    try {
+                        contentItemDao.insertContentItem(ci)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert content item ${ci.id}", e)
+                    }
+                }
+
+                // Tasks
+                val tasks = com.example.tareamov.service.SupabaseClient.fetchTasks()
+                tasks.forEach { task ->
+                    try {
+                        taskDao.insertTask(task)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert task ${task.id}", e)
+                    }
+                }
+
+                // Subscriptions
+                val subs = com.example.tareamov.service.SupabaseClient.fetchSubscriptions()
+                subs.forEach { s ->
+                    try {
+                        subscriptionDao.insertSubscription(s)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert subscription", e)
+                    }
+                }
+
+                // TaskSubmissions
+                val submissions = com.example.tareamov.service.SupabaseClient.fetchTaskSubmissions()
+                submissions.forEach { ss ->
+                    try {
+                        taskSubmissionDao.insertSubmission(ss)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert task submission ${ss.id}", e)
+                    }
+                }
+
+                // Chat messages
+                val chats = com.example.tareamov.service.SupabaseClient.fetchChatMessages()
+                chats.forEach { cm ->
+                    try {
+                        chatMessageDao.insertMessage(cm)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert chat message ${cm.id}", e)
+                    }
+                }
+
+                // File contexts
+                val files = com.example.tareamov.service.SupabaseClient.fetchFileContexts()
+                files.forEach { fc ->
+                    try {
+                        fileContextDao.insertFileContext(fc)
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Failed to insert file context ${fc.id}", e)
+                    }
+                }
+
+                Log.i("SyncRepository", "syncSupabaseToLocal() completed")
+            } catch (e: Exception) {
+                Log.e("SyncRepository", "Exception during syncSupabaseToLocal", e)
+            }
+        }
+    }
+
     // --- Sincronización de Firebase a Room para todas las entidades ---
     fun startAllSync() {
         Log.i("SyncRepository", "Iniciando sincronización en tiempo real con Firebase...")
