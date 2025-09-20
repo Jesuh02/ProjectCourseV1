@@ -35,33 +35,65 @@ class CourseTopicFragment : Fragment() {
     private lateinit var documentPickerLauncher: ActivityResultLauncher<Intent>
 
     // Add this method at the class level, not inside another function
-    private suspend fun ensureValidCourseId(videoDao: com.example.tareamov.data.dao.VideoDao, courseId: Long): Long {
-        // First check if the provided courseId exists
-        val courseExists = videoDao.videoExistsById(courseId)
-
-        if (courseExists) {
-            return courseId
+    private suspend fun ensureValidCourseId(courseId: Long): Long {
+        val db = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
+        val courseDao = try {
+            db.courseDao()
+        } catch (e: Exception) {
+            null
         }
 
-        // If courseId doesn't exist, try to get the first available course
-        val firstCourseId = videoDao.getFirstVideoId()
-        if (firstCourseId != null) {
-            return firstCourseId
+        // If Course table is available, prefer it
+        if (courseDao != null) {
+            val existing = courseDao.getCourseById(courseId)
+            if (existing != null) return existing.id
+
+            val all = courseDao.getAllCourses()
+            if (all.isNotEmpty()) return all.first().id
+
+            // Create a default Course if none exist
+            val defaultCourse = com.example.tareamov.data.entity.Course(
+                title = "Curso predeterminado",
+                description = "Curso predeterminado",
+                creatorUsername = "default_user",
+                thumbnailUri = null,
+                videoUri = null,
+                localFilePath = null,
+                duration = null,
+                category = null,
+                price = 0.0,
+                isPremium = false,
+                isPublished = true,
+                creationDate = "",
+                lastModifiedDate = "",
+                enrollmentCount = 0,
+                rating = 0.0f,
+                tags = null,
+                timestamp = System.currentTimeMillis()
+            )
+
+            return courseDao.insertCourse(defaultCourse)
+        } else {
+            // Fallback: if CourseDao isn't available, try VideoDao behavior
+            val videoDao = db.videoDao()
+            val courseExists = videoDao.videoExistsById(courseId)
+            if (courseExists) return courseId
+
+            val firstCourseId = videoDao.getFirstVideoId()
+            if (firstCourseId != null) return firstCourseId
+
+            val defaultCourse = com.example.tareamov.data.entity.VideoData(
+                id = 0,
+                username = "default_user",
+                description = "Curso predeterminado",
+                title = "Curso predeterminado",
+                videoUriString = null,
+                timestamp = System.currentTimeMillis(),
+                localFilePath = null
+            )
+
+            return videoDao.insertVideo(defaultCourse)
         }
-
-        // If no courses exist, create a default one
-        val defaultCourse = com.example.tareamov.data.entity.VideoData(
-            id = 0, // Will be auto-generated
-            username = "default_user",
-            description = "Curso predeterminado",
-            title = "Curso predeterminado",
-            videoUriString = null,
-            timestamp = System.currentTimeMillis(),
-            localFilePath = null
-        )
-
-        // Insert the default course and return its ID
-        return videoDao.insertVideo(defaultCourse)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -194,7 +226,7 @@ class CourseTopicFragment : Fragment() {
             try {
                 // Use the ensureValidCourseId method to get a valid courseId
                 val validCourseId = withContext(Dispatchers.IO) {
-                    ensureValidCourseId(videoDao, courseId)
+                    ensureValidCourseId(courseId)
                 }
 
                 Log.d("CourseTopicFragment", "Using validated courseId: $validCourseId")
@@ -434,7 +466,7 @@ class CourseTopicFragment : Fragment() {
             try {
                 // Ensure we have a valid courseId before proceeding
                 val validCourseId = withContext(Dispatchers.IO) {
-                    ensureValidCourseId(videoDao, courseId)
+                    ensureValidCourseId(courseId)
                 }
 
                 Log.d("CourseTopicFragment", "Using validated courseId: $validCourseId")

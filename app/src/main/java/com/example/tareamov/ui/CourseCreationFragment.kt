@@ -158,63 +158,60 @@ class CourseCreationFragment : Fragment() {
 
 
 
-        // Create VideoData with course information and current user as creator
+        // Create Course entity with course information and current user as creator
         val thumbnailUriString = selectedThumbnailUri?.toString()
-        val courseData = VideoData(
-            username = currentUsername,
-            description = courseDescription,
+        val course = Course(
             title = courseName,
-            isPaid = isPaid,
-            remoteId = null,
+            description = courseDescription,
+            creatorUsername = currentUsername,
             thumbnailUri = thumbnailUriString,
-            price = coursePrice
+            videoUri = null,
+            localFilePath = null,
+            duration = null,
+            category = courseCategory,
+            price = coursePrice,
+            isPremium = isPaid,
+            isPublished = true,
+            creationDate = "",
+            lastModifiedDate = "",
+            enrollmentCount = 0,
+            rating = 0.0f,
+            tags = null,
+            timestamp = System.currentTimeMillis()
         )
-        // Save course to database
+
+        // Save Course entity to Course table only (do NOT create a VideoData entry)
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val savedCourse = withContext(Dispatchers.IO) {
-                    videoManager.saveVideo(courseData)
+                withContext(Dispatchers.IO) {
+                    try {
+                        val repo = com.example.tareamov.repository.CourseRepository(requireContext())
+                        repo.saveCourse(course)
+                    } catch (e: Exception) {
+                        val db = AppDatabase.getDatabase(requireContext())
+                        db.courseDao().insertCourse(course)
+                    }
                 }
 
                 val appDatabase = AppDatabase.getDatabase(requireContext())
                 appDatabase.notifyDatabaseChanged()
 
-                // Also create a Course entity and send to Supabase (best-effort async)
-                try {
-                    val course = Course(
-                        title = savedCourse.title,
-                        description = savedCourse.description,
-                        creatorUsername = savedCourse.username,
-                        thumbnailUri = savedCourse.thumbnailUri,
-                        videoUri = savedCourse.videoUriString,
-                        localFilePath = savedCourse.localFilePath,
-                        duration = null,
-                        category = courseCategory,
-                        price = savedCourse.price ?: 0.0,
-                        isPremium = savedCourse.isPaid,
-                        isPublished = true,
-                        creationDate = "",
-                        lastModifiedDate = "",
-                        enrollmentCount = 0,
-                        rating = 0.0f,
-                        tags = null,
-                        timestamp = savedCourse.timestamp
-                    )
-
-                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            if (SupabaseClient.isConfigured()) {
-                                val remoteId = SupabaseClient.insertCourse(course)
-                                Log.d("CourseCreationFragment", "Supabase insertCourse returned id=$remoteId for localId=${savedCourse.id}")
-                            } else {
-                                Log.w("CourseCreationFragment", "SupabaseClient not configured; skipping remote course sync")
+                // Best-effort: send Course to Supabase in background
+                kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        if (SupabaseClient.isConfigured()) {
+                            try {
+                                SupabaseClient.insertCourse(course)
+                                Log.d("CourseCreationFragment", "Supabase insertCourse requested for course=${course.title}")
+                            } catch (e: Exception) {
+                                Log.e("CourseCreationFragment", "Error sending course to Supabase", e)
                             }
-                        } catch (e: Exception) {
-                            Log.e("CourseCreationFragment", "Error syncing course to Supabase", e)
+                        } else {
+                            Log.w("CourseCreationFragment", "SupabaseClient not configured; skipping remote course sync")
                         }
+                    } catch (e: Exception) {
+                        Log.e("CourseCreationFragment", "Error in Supabase background send", e)
                     }
-                } catch (e: Exception) {
-                    Log.e("CourseCreationFragment", "Error preparing course for Supabase", e)
                 }
 
                 Toast.makeText(context, "Curso creado exitosamente", Toast.LENGTH_SHORT).show()
@@ -246,38 +243,55 @@ class CourseCreationFragment : Fragment() {
             return
         }
 
-        // Crear el objeto VideoData con la información del curso
-        val courseData = VideoData(
-            username = currentUserUsername, // Use actual username
+        // Create a minimal Course entity to represent this new course (no VideoData)
+        val newCourse = Course(
             title = courseName,
             description = "$courseDescription\nCategoría: $courseCategory",
-            videoUriString = dummyVideoUri
+            creatorUsername = currentUserUsername,
+            thumbnailUri = null,
+            videoUri = dummyVideoUri,
+            localFilePath = null,
+            duration = null,
+            category = courseCategory,
+            price = 0.0,
+            isPremium = false,
+            isPublished = true,
+            creationDate = "",
+            lastModifiedDate = "",
+            enrollmentCount = 0,
+            rating = 0.0f,
+            tags = null,
+            timestamp = System.currentTimeMillis()
         )
 
-        // Guardar el curso en la base de datos y luego navegar al tema
+        // Save Course to DB and navigate to CourseTopicFragment with the new Course id
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val savedCourse = withContext(Dispatchers.IO) {
-                    videoManager.saveVideo(courseData)
+                val savedCourseId = withContext(Dispatchers.IO) {
+                    try {
+                        val repo = com.example.tareamov.repository.CourseRepository(requireContext())
+                        repo.saveCourse(newCourse)
+                    } catch (e: Exception) {
+                        val db = AppDatabase.getDatabase(requireContext())
+                        db.courseDao().insertCourse(newCourse)
+                    }
                 }
 
-                Log.d("CourseCreationFragment", "Curso guardado con ID: ${savedCourse.id}")
+                Log.d("CourseCreationFragment", "Curso guardado con ID: $savedCourseId")
 
-                // Notify database changed to update JSON
+                // Notify database changed
                 val appDatabase = AppDatabase.getDatabase(requireContext())
                 appDatabase.notifyDatabaseChanged()
 
-                // Increment topic count
                 topicCount++
 
-                // Navigate to CourseTopicFragment with topic number and course ID
                 val bundle = Bundle()
                 bundle.putInt("topicNumber", topicCount)
-                bundle.putLong("courseId", savedCourse.id)
-                bundle.putString("courseName", savedCourse.title)
+                bundle.putLong("courseId", savedCourseId as Long)
+                bundle.putString("courseName", courseName)
                 findNavController().navigate(R.id.action_courseCreationFragment_to_courseTopicFragment, bundle)
             } catch (e: Exception) {
-                Log.e("CourseCreationFragment", "Error al guardar el curso", e)
+                Log.e("CourseCreationFragment", "Error al guardar el curso (Course table)", e)
                 Toast.makeText(context, "Error al guardar el curso", Toast.LENGTH_SHORT).show()
             }
         }
