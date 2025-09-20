@@ -795,15 +795,11 @@ class RegisterFragment : Fragment() {
                     viewModel.insertAndGetId(persona)
                 }
 
-                // Hash password before storing
-                val hashedPassword = withContext(Dispatchers.IO) {
-                    BCrypt.withDefaults().hashToString(12, password.toCharArray())
-                }
-
                 // Then create and insert the usuario locally
+                // Note: do NOT pre-hash here — UsuarioRepository will hash the password
                 val usuario = Usuario(
                     usuario = username,
-                    contrasena = hashedPassword,
+                    contrasena = password,
                     persona_id = personaId
                 )
 
