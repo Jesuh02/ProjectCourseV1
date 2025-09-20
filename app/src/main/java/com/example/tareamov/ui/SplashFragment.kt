@@ -25,7 +25,8 @@ import com.example.tareamov.util.SessionManager
 
 class SplashFragment : Fragment() {
     
-    private val splashTimeOut: Long = 3000 // Exactly 3 seconds as requested
+    // Increased timeout so the splash animation lasts longer
+    private val splashTimeOut: Long = 6000 // ~7 seconds total
     private lateinit var letterViews: List<TextView>
     private lateinit var particleViews: List<ImageView>
     private lateinit var codeElements: List<TextView>
@@ -124,38 +125,38 @@ class SplashFragment : Fragment() {
         // Step 1: Start binary rain effect (0ms)
         startBinaryRainEffect()
 
-        // Step 2: Animate logo entrance with burst effect (200ms)
+        // Step 2: Animate logo entrance with burst effect (400ms)
         Handler(Looper.getMainLooper()).postDelayed({
             logoImage?.let { logo ->
                 animateNetflixStyleLogo(logo)
             }
-        }, 200)
-
-        // Step 3: Animate particles with orbit effect (400ms)
-        Handler(Looper.getMainLooper()).postDelayed({
-            animateCodeParticlesOrbit()
         }, 400)
 
-        // Step 4: Animate floating code elements (600ms)
+        // Step 3: Animate particles with orbit effect (800ms)
         Handler(Looper.getMainLooper()).postDelayed({
-            animateFloatingCodeElements()
-        }, 600)
-
-        // Step 5: Netflix-style letter animation sequence (800ms)
-        Handler(Looper.getMainLooper()).postDelayed({
-            animateNetflixLetterSequence()
+            animateCodeParticlesOrbit()
         }, 800)
 
-        // Step 6: Show subtitle with typing effect (1800ms)
+        // Step 4: Animate floating code elements (1200ms)
+        Handler(Looper.getMainLooper()).postDelayed({
+            animateFloatingCodeElements()
+        }, 1200)
+
+        // Step 5: Netflix-style letter animation sequence (1600ms)
+        Handler(Looper.getMainLooper()).postDelayed({
+            animateNetflixLetterSequence()
+        }, 1600)
+
+        // Step 6: Show subtitle with typing effect (3600ms)
         Handler(Looper.getMainLooper()).postDelayed({
             subtitleText?.let { animateTypingEffect(it) }
-        }, 1800)
+        }, 3600)
 
-        // Step 7: Show progress bar with Netflix style (2200ms)
+        // Step 7: Show progress bar with Netflix style (4400ms)
         Handler(Looper.getMainLooper()).postDelayed({
             progressBar?.let { animateNetflixProgressBar(it) }
             loadingTextView?.let { animateLoadingTextWithCursor(it) }
-        }, 2200)
+        }, 4400)
     }
 
     private fun startBinaryRainEffect() {
