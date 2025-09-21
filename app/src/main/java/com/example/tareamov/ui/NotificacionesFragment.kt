@@ -112,46 +112,25 @@ class NotificacionesFragment : Fragment() {
     }
 
     private fun setupAdminButton() {
+        // Usar la propiedad de clase bottomNavBinding inicializada en onViewCreated
+        val adminSlot = bottomNavBinding.adminSlot
         val goToAdminButton = bottomNavBinding.goToAdminButton
-        
-        // Initially hide the admin button to avoid reflow during async check
+
+        // Inicializa como INVISIBLE para evitar salto al inflar
         goToAdminButton.visibility = View.INVISIBLE
 
-        // Check if the current user is admin
-        checkAdminStatus { isAdmin ->
-            if (isAdmin) {
-                goToAdminButton.visibility = View.VISIBLE
-                goToAdminButton.setOnClickListener {
-                    Log.d("NotificacionesFragment", "Admin button clicked, navigating to HomeFragment")
-                    findNavController().navigate(R.id.action_notificacionesFragment_to_homeFragment)
-                }
-            } else {
-                goToAdminButton.visibility = View.INVISIBLE
-            }
-        }
-    }
-
-    private fun checkAdminStatus(callback: (Boolean) -> Unit) {
-        val username = sessionManager.getUsername()
-        if (username == null) {
-            callback(false)
+        // Si SessionManager ya conoce el rol del usuario, podemos decidir antes del primer render
+        val sess = SessionManager.getInstance(requireContext())
+        if (!sess.isAdmin()) {
+            // Ocultar completamente el slot antes de que se dibuje para que no quede hueco
+            adminSlot.visibility = View.GONE
             return
         }
 
-        lifecycleScope.launch {
-            try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val usuarioWithRole = withContext(Dispatchers.IO) {
-                    db.usuarioDao().getUsuarioWithRoleByUsername(username)
-                }
-                
-                val isAdmin = usuarioWithRole?.isAdmin == true
-                Log.d("NotificacionesFragment", "User $username is admin: $isAdmin (role: ${usuarioWithRole?.rolNombre})")
-                callback(isAdmin)
-            } catch (e: Exception) {
-                Log.e("NotificacionesFragment", "Error checking admin status", e)
-                callback(false)
-            }
+        // Si llegó aquí, el usuario es admin según SessionManager: mostrar y asignar listener
+        goToAdminButton.visibility = View.VISIBLE
+        goToAdminButton.setOnClickListener {
+            findNavController().navigate(R.id.action_notificacionesFragment_to_homeFragment)
         }
     }
 }

@@ -130,23 +130,24 @@ class ExploreFragment : Fragment() {
     private fun setupAdminButton() {
         val bottomNavView: View = view?.findViewById(R.id.bottomNavigation) ?: return
         val bottomNavBinding = ComponentBottomNavigationBinding.bind(bottomNavView)
-        
-        // Mostrar el botón de admin solo si el usuario es admin
+
+        val adminSlot = bottomNavBinding.adminSlot
         val goToAdminButton = bottomNavBinding.goToAdminButton
-        
-        // Initially hide the button until we check admin status
-        goToAdminButton.visibility = View.GONE
-        
-        // Check if the current user is admin
-        checkAdminStatus { isAdmin ->   
-            if (!isAdmin) {
-                goToAdminButton.visibility = View.INVISIBLE
-            } else {
-                goToAdminButton.visibility = View.VISIBLE
-                goToAdminButton.setOnClickListener {
-                    findNavController().navigate(R.id.action_exploreFragment_to_homeFragment)
-                }
-            }
+
+        // Inicializa como INVISIBLE para evitar salto al inflar
+        goToAdminButton.visibility = View.INVISIBLE
+
+        val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        if (!sess.isAdmin()) {
+            // Ocultar el slot antes del render para que no quede hueco visible
+            adminSlot.visibility = View.GONE
+            return
+        }
+
+        // Usuario admin: mostrar botón y asignar listener
+        goToAdminButton.visibility = View.VISIBLE
+        goToAdminButton.setOnClickListener {
+            findNavController().navigate(R.id.action_exploreFragment_to_homeFragment)
         }
     }
 
@@ -973,40 +974,6 @@ class ExploreFragment : Fragment() {
         // Clean up any resources
         coursesAdapter.stopAllVideos()
     }
-
-    // Add this method to check if current user is admin and invoke callback with result
-    private fun checkAdminStatus(callback: (Boolean) -> Unit) {
-        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        val username = sessionManager.getUsername()
-        if (username == null) {
-            callback(false)
-            return
-        }
-
-        // First try the SessionManager's cached role
-        if (sessionManager.isAdmin()) {
-            callback(true)
-            return
-        }
-
-        // Fallback: Check database directly
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val usuarioWithRole = withContext(Dispatchers.IO) {
-                    db.usuarioDao().getUsuarioWithRoleByUsername(username)
-                }
-                
-                val isAdmin = usuarioWithRole?.isAdmin == true
-                Log.d("ExploreFragment", "User $username is admin: $isAdmin (role: ${usuarioWithRole?.rolNombre})")
-                callback(isAdmin)
-            } catch (e: Exception) {
-                Log.e("ExploreFragment", "Error checking admin status", e)
-                callback(false)
-            }
-        }
-    }
-
     // Debug function to show detailed stats info - remove in production
     private fun showDebugStatsInfo() {
         val currentTime = System.currentTimeMillis()
