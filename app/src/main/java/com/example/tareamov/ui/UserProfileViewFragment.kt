@@ -1135,24 +1135,29 @@ class UserProfileViewFragment : Fragment() {
     }
 
     private fun setupAdminButton() {
+        val adminSlot = bottomNavBinding.adminSlot
         val goToAdminButton = bottomNavBinding.goToAdminButton
         Log.d("UserProfileViewFragment", "setupAdminButton called, button found: ${goToAdminButton != null}")
-        
-        // Check if the current user is admin
-        checkAdminStatus { isAdmin ->
-            Log.d("UserProfileViewFragment", "Admin status received: $isAdmin")
-            if (isAdmin) {
-                goToAdminButton.visibility = View.VISIBLE
-                goToAdminButton.setOnClickListener {
-                    Log.d("UserProfileViewFragment", "Admin button clicked, navigating to HomeFragment")
-                    findNavController().navigate(R.id.action_userProfileViewFragment_to_homeFragment)
-                }
-                Log.d("UserProfileViewFragment", "Admin button made visible and click listener set")
-            } else {
-                goToAdminButton.visibility = View.INVISIBLE
-                Log.d("UserProfileViewFragment", "Admin button hidden (INVISIBLE)")
-            }
+
+        // Inicializa como INVISIBLE para evitar salto al inflar
+        goToAdminButton.visibility = View.INVISIBLE
+
+        // Decidir con SessionManager antes del primer render para evitar hueco
+        val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        if (!sess.isAdmin()) {
+            // Ocultar slot completo antes del render para que no quede hueco
+            adminSlot.visibility = View.GONE
+            Log.d("UserProfileViewFragment", "Admin slot hidden (user not admin)")
+            return
         }
+
+        // Usuario admin: mostrar botón y asignar listener
+        goToAdminButton.visibility = View.VISIBLE
+        goToAdminButton.setOnClickListener {
+            Log.d("UserProfileViewFragment", "Admin button clicked, navigating to HomeFragment")
+            findNavController().navigate(R.id.action_userProfileViewFragment_to_homeFragment)
+        }
+        Log.d("UserProfileViewFragment", "Admin button made visible and click listener set")
     }
 
     private fun checkAdminStatus(callback: (Boolean) -> Unit) {

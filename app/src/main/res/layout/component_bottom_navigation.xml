@@ -121,27 +121,37 @@
             android:textSize="12sp" />
     </LinearLayout>
 
-    <!-- New button to navigate to HomeFragment -->
-    <LinearLayout
-        android:id="@+id/goToAdminButton"
+    <!-- Admin slot: fixed-weight FrameLayout prevents reflow when inner child visibility changes -->
+    <FrameLayout
+        android:id="@+id/adminSlot"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:visibility="gone"
-        android:gravity="center"
-        android:orientation="vertical">
+        android:gravity="center">
 
-        <ImageView
-            android:layout_width="wrap_content"
+        <!-- The actual admin button is placed inside the slot. Keep it INVISIBLE by default to avoid
+             initial jumps; toggling visibility will not change sibling layout because the FrameLayout
+             keeps its allocated weight-space. -->
+        <LinearLayout
+            android:id="@+id/goToAdminButton"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:src="@drawable/ic_home"
-            app:tint="#9C27B0" />
+            android:gravity="center"
+            android:orientation="vertical"
+            android:visibility="invisible">
++
+            <ImageView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:src="@drawable/ic_home"
+                app:tint="#9C27B0" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Admin"
-            android:textColor="#9C27B0"
-            android:textSize="12sp" />
-    </LinearLayout>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Admin"
+                android:textColor="#9C27B0"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </FrameLayout>
 </LinearLayout>
