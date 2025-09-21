@@ -432,23 +432,24 @@ class UserProfileViewFragment : Fragment() {
             ContentType.COURSE -> {
                 allContent.clear()
                 allContent.addAll(filteredContent)
-                contentRecyclerView.adapter = contentAdapter
-                contentAdapter.updateCourses(allContent)
-
-                // Asegurar que las miniaturas se carguen correctamente
-                contentAdapter.notifyDataSetChanged()
-
-                Log.d("UserProfileView", "Updated course adapter with ${allContent.size} courses")
-                Log.d("UserProfileView", "Course options menu is now active for course creators")
+                if (::contentAdapter.isInitialized) {
+                    contentRecyclerView.adapter = contentAdapter
+                    contentAdapter.updateCourses(allContent)
+                    contentAdapter.notifyDataSetChanged()
+                    Log.d("UserProfileView", "Updated course adapter with ${allContent.size} courses")
+                } else {
+                    Log.w("UserProfileView", "contentAdapter not initialized when filtering courses")
+                }
             }
             ContentType.VIDEO -> {
-                contentRecyclerView.adapter = videoAdapter
-                videoAdapter.updateVideos(filteredContent)
-
-                // Asegurar que las miniaturas se carguen correctamente
-                videoAdapter.notifyDataSetChanged()
-
-                Log.d("UserProfileView", "Updated video adapter with ${filteredContent.size} videos")
+                if (::videoAdapter.isInitialized) {
+                    contentRecyclerView.adapter = videoAdapter
+                    videoAdapter.updateVideos(filteredContent)
+                    videoAdapter.notifyDataSetChanged()
+                    Log.d("UserProfileView", "Updated video adapter with ${filteredContent.size} videos")
+                } else {
+                    Log.w("UserProfileView", "videoAdapter not initialized when filtering videos")
+                }
             }
         }
 
@@ -579,10 +580,38 @@ class UserProfileViewFragment : Fragment() {
 
             withContext(Dispatchers.Main) {
                 // Actualizar las listas con los datos filtrados del usuario
+                // Normalizar URIs de miniaturas y paths locales para que Glide/adapter puedan cargarlas
+                fun normalizePath(path: String?): String? {
+                    if (path.isNullOrEmpty()) return null
+                    val lower = path.lowercase()
+                    return when {
+                        lower.startsWith("file://") -> path
+                        lower.startsWith("http://") || lower.startsWith("https://") -> path
+                        lower.startsWith("content://") -> path
+                        lower.startsWith("android.resource://") -> path
+                        path.startsWith("/") -> "file://$path"
+                        // Windows-style absolute paths (may contain backslashes or drive letter)
+                        path.matches(Regex("^[a-zA-Z]:\\.*")) || path.contains('\\') -> "file://$path"
+                        else -> path
+                    }
+                }
+
+                val normalizedCourses = userCourses.map { course ->
+                    val thumb = normalizePath(course.thumbnailUri)
+                    val local = normalizePath(course.localFilePath)
+                    course.copy(thumbnailUri = thumb, localFilePath = local)
+                }
+
+                val normalizedVideos = userVideos.map { video ->
+                    val thumb = normalizePath(video.thumbnailUri)
+                    val local = normalizePath(video.localFilePath)
+                    video.copy(thumbnailUri = thumb, localFilePath = local)
+                }
+
                 allCourses.clear()
-                allCourses.addAll(userCourses)
-                allVideos.clear() 
-                allVideos.addAll(userVideos)
+                allCourses.addAll(normalizedCourses)
+                allVideos.clear()
+                allVideos.addAll(normalizedVideos)
                 
                 // Actualizar contadores en la UI
                 coursesCountTextView.text = userCourses.size.toString()
@@ -593,7 +622,12 @@ class UserProfileViewFragment : Fragment() {
                 
                 // Aplicar el filtro actual para mostrar el contenido correcto
                 filterContent()
-                
+
+                // Forzar actualización del adaptador con los datos normalizados
+                if (::contentAdapter.isInitialized) {
+                    contentAdapter.updateCourses(allCourses)
+                }
+
                 // Asegurar que las miniaturas se carguen correctamente
                 ensureThumbnailsLoaded()
                 
@@ -726,6 +760,7 @@ class UserProfileViewFragment : Fragment() {
         // Actualizar el adapter si está inicializado y hay contenido disponible
         if (::contentAdapter.isInitialized && allContent.isNotEmpty()) {
             contentAdapter.notifyDataSetChanged()
+            contentRecyclerView.adapter?.notifyDataSetChanged()
         }
         
         if (::videoAdapter.isInitialized && allVideos.isNotEmpty()) {

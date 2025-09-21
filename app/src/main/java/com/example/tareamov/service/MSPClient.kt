@@ -21,6 +21,10 @@ import java.util.concurrent.TimeUnit
  */
 class MSPClient(private val context: Context) {
     private val tag = "MSPClient"
+    // Publicly available valid roles for the system
+    companion object {
+        val VALID_ROLES = listOf("usuario", "admin")
+    }
     
     // Dynamic context cache for better performance
     private val contextCache = mutableMapOf<String, Pair<String, Long>>()
@@ -29,14 +33,16 @@ class MSPClient(private val context: Context) {
     // Lista de IPs posibles (ordenadas por prioridad)
     // Lista de IPs posibles (ordenadas por prioridad, incluyendo la IP de Wi-Fi y gateway de la última configuración)
     private val possibleBaseUrls = listOf(
-        "http://192.168.1.224:11435",   // IP Wi-Fi actual (ipconfig)
-        "http://192.168.1.254:11435",   // Gateway predeterminado (ipconfig)
+        "http://10.218.57.181:11435",   // IP Wi-Fi actual (ipconfig más reciente)
+        "http://10.218.57.109:11435",   // Gateway predeterminado (ipconfig más reciente)
+        "http://172.17.112.1:11435",    // WSL IP from ipconfig
+        "http://192.168.1.224:11435",   // IP Wi-Fi anterior (ipconfig)
+        "http://192.168.1.254:11435",   // Gateway predeterminado anterior (ipconfig)
         "http://192.168.1.17:11435",    // Anterior IP Wi-Fi
         "http://192.168.1.158:11435",   // Previous IP from ipconfig
         "http://localhost:11435",       // Localhost - High priority
         "http://127.0.0.1:11435",       // Loopback - High priority
-        "http://0.0.0.0:11435",         // Bind address from Ollama logs
-        "http://172.17.112.1:11435"     // WSL IP from ipconfig
+        "http://0.0.0.0:11435"          // Bind address from Ollama logs
     )
     private val emulatorUrl = "http://10.0.2.2:11435"
     private val modelName = "llama3"
@@ -57,9 +63,9 @@ class MSPClient(private val context: Context) {
         }
         
         // Always try the current IP first (from ipconfig)
-        if (isServerRunning("http://192.168.1.158:11435")) {
-            Log.d(tag, "Connected to Ollama at current IP URL: http://192.168.1.158:11435")
-            return "http://192.168.1.158:11435"
+        if (isServerRunning("http://10.218.57.181:11435")) {
+            Log.d(tag, "Connected to Ollama at current IP URL: http://10.218.57.181:11435")
+            return "http://10.218.57.181:11435"
         }
         
         // Try each other URL in order of priority
@@ -72,7 +78,7 @@ class MSPClient(private val context: Context) {
         
         // If none respond, use the current IP as fallback for future attempts
         Log.w(tag, "No Ollama server found, using current IP as fallback")
-        return "http://192.168.1.158:11435"
+        return "http://10.218.57.181:11435"
     }
 
     // Improved server running check with better connection handling
@@ -177,7 +183,13 @@ class MSPClient(private val context: Context) {
         
         val enhancedPrompt = if (includeDatabaseContext) {
             val fullPrompt = """
-            SISTEMA EDUCATIVO TAREAMOV - CONSULTA DINÁMICA
+            SISTEMA EDUCATIVO CourseV - CONSULTA DINÁMICA
+            
+            ⚠️ REGLAS CRÍTICAS SOBRE ROLES DEL SISTEMA:
+            - SOLO EXISTEN 2 ROLES VÁLIDOS: "usuario" y "admin"
+            - NO menciones NUNCA otros roles como: profesor, docente, instructor, estudiante, moderador, etc.
+            - Cuando pregunten por roles disponibles, responde ÚNICAMENTE: usuario, admin
+            - Si preguntan por otros roles, aclara que NO EXISTEN en este sistema
             
             CONTEXTO RELEVANTE (recuperado dinámicamente):
             $dbContext
@@ -188,6 +200,7 @@ class MSPClient(private val context: Context) {
             INSTRUCCIONES:
             - Usa solo la información del contexto proporcionado
             - Responde de forma concisa y precisa
+            - RESPETA ESTRICTAMENTE las reglas de roles mencionadas arriba
             - Si necesitas más información, indícalo claramente
             """.trimIndent()
             
@@ -199,11 +212,17 @@ class MSPClient(private val context: Context) {
             
             fullPrompt
         } else {
+            val simplePrompt = """
+⚠️ IMPORTANTE: En este sistema SOLO existen 2 roles: "usuario" y "admin". NO menciones otros roles.
+
+$prompt
+            """.trimIndent()
+            
             Log.d(tag, "=== OLLAMA SIMPLE PROMPT LOG ===")
-            Log.d(tag, "Simple Prompt Size: ${prompt.length} characters")
-            Log.d(tag, "Simple Prompt Content: $prompt")
+            Log.d(tag, "Simple Prompt Size: ${simplePrompt.length} characters")
+            Log.d(tag, "Simple Prompt Content: $simplePrompt")
             Log.d(tag, "==============================")
-            prompt
+            simplePrompt
         }
     
         var currentBaseUrl = ""
@@ -475,14 +494,17 @@ class MSPClient(private val context: Context) {
 
     /**
      * Build query-specific context using RAG analysis
+     * Only includes full database schema when explicitly requested
      */
     suspend fun buildQuerySpecificContext(query: String): String = withContext(Dispatchers.IO) {
         Log.d(tag, "=== RAG CONTEXT BUILDING LOG ===")
         Log.d(tag, "Input Query: $query")
         
         try {
-            // Always build comprehensive database schema context first
-            val fullSchemaContext = buildComprehensiveDatabaseContext()
+            // Check if user is specifically asking for database schema/structure
+            val isRequestingDatabaseInfo = isExplicitDatabaseSchemaRequest(query)
+            
+            Log.d(tag, "Is explicit database request: $isRequestingDatabaseInfo")
             
             // Use RAG service to get dynamic context based on the query
             val ragService = RAGDatabaseService(context)
@@ -491,7 +513,10 @@ class MSPClient(private val context: Context) {
             Log.d(tag, "RAG Service Response Length: ${ragResponse.length} characters")
             Log.d(tag, "RAG Service Response Content: $ragResponse")
             
-            val finalContext = """
+            val finalContext = if (isRequestingDatabaseInfo) {
+                // Only when explicitly requested, include full schema
+                val fullSchemaContext = buildComprehensiveDatabaseContext()
+                """
 # CONTEXTO COMPLETO DE BASE DE DATOS TAREAMOV
 
 ## ESQUEMA COMPLETO DE TODAS LAS TABLAS (14 TABLAS):
@@ -507,9 +532,27 @@ $ragResponse
 - Cuando pregunten por "todas las tablas", lista las 14 tablas completas
 - No limites las respuestas, muestra todos los datos disponibles
 - Proporciona información detallada y completa
+- ROLES DEL SISTEMA: Solo existen 2 roles válidos: "usuario" y "admin"
+- NO menciones otros roles como "profesor", "docente", "instructor", "estudiante" - estos NO existen en el sistema
 
 *Información obtenida dinámicamente desde la base de datos usando RAG*
-            """.trimIndent()
+                """.trimIndent()
+            } else {
+                // For regular queries, only include relevant RAG data
+                """
+# CONTEXTO ESPECÍFICO PARA TU CONSULTA
+
+## DATOS RELEVANTES:
+$ragResponse
+
+## INSTRUCCIONES:
+- Usa solo la información proporcionada para responder
+- Si necesitas información adicional sobre la estructura de la base de datos, pídela específicamente
+- Responde de manera concisa y precisa
+
+*Información específica obtenida usando RAG*
+                """.trimIndent()
+            }
             
             Log.d(tag, "Final Context Length: ${finalContext.length} characters")
             Log.d(tag, "Final Context Content: $finalContext")
@@ -519,9 +562,12 @@ $ragResponse
             
         } catch (e: Exception) {
             Log.e(tag, "Error in RAG context building", e)
-            // Even in error case, provide comprehensive schema
-            val fallbackContext = buildComprehensiveDatabaseContext()
-            return@withContext """
+            // In error case, only provide schema if explicitly requested
+            val isRequestingDatabaseInfo = isExplicitDatabaseSchemaRequest(query)
+            
+            if (isRequestingDatabaseInfo) {
+                val fallbackContext = buildComprehensiveDatabaseContext()
+                return@withContext """
 # CONTEXTO DE BASE DE DATOS (MODO EMERGENCIA)
 
 $fallbackContext
@@ -533,8 +579,66 @@ Error: ${e.message}
 Pero tienes acceso al esquema completo de las 14 tablas mostrado arriba.
 
 *Usa el esquema para responder preguntas sobre la estructura de la base de datos*
-            """.trimIndent()
+                """.trimIndent()
+            } else {
+                return@withContext """
+Error al procesar la consulta: ${e.message}
+
+Si necesitas información específica sobre la estructura de la base de datos, 
+puedes preguntar explícitamente: "¿Cuál es la estructura de la base de datos?" o "Muéstrame todas las tablas"
+                """.trimIndent()
+            }
         }
+    }
+
+    /**
+     * Determines if the user is explicitly requesting database schema information
+     */
+    private fun isExplicitDatabaseSchemaRequest(query: String): Boolean {
+        val queryLower = query.lowercase().trim()
+        
+        // Explicit requests for database structure/schema
+        val explicitDatabaseKeywords = listOf(
+            "estructura de la base de datos",
+            "esquema de la base de datos", 
+            "todas las tablas",
+            "tablas de la base de datos",
+            "muestra la base de datos",
+            "muéstrame la base de datos",
+            "información de la base de datos",
+            "describe la base de datos",
+            "qué tablas hay",
+            "qué contiene la base de datos",
+            "estructura completa",
+            "esquema completo",
+            "database schema",
+            "show tables",
+            "describe database",
+            "table structure"
+        )
+        
+        // Check for explicit database schema requests
+        val hasExplicitRequest = explicitDatabaseKeywords.any { keyword ->
+            queryLower.contains(keyword)
+        }
+        
+        // Exclude casual mentions of "base de datos" in context
+        val casualMentions = listOf(
+            "consulta la base de datos",
+            "busca en la base de datos", 
+            "encuentra en la base de datos",
+            "información de",
+            "datos de",
+            "registros de"
+        )
+        
+        val isCasualMention = casualMentions.any { casual ->
+            queryLower.contains(casual)
+        } && !hasExplicitRequest
+        
+        Log.d(tag, "Query analysis - Explicit request: $hasExplicitRequest, Casual mention: $isCasualMention")
+        
+        return hasExplicitRequest && !isCasualMention
     }
     /**
      * Send prompt with dynamic database context based on query analysis
@@ -1135,115 +1239,133 @@ Pero tienes acceso al esquema completo de las 14 tablas mostrado arriba.
      * Build comprehensive database context with ALL 14 tables
      */
     private suspend fun buildComprehensiveDatabaseContext(): String = withContext(Dispatchers.IO) {
-        return@withContext try {
-            val db = com.example.tareamov.data.AppDatabase.getDatabase(context)
-            
-            // Get real counts from all tables where possible
-            val personasCount = try { db.personaDao().getAllPersonasList().size } catch (e: Exception) { 0 }
-            val usuariosCount = try { db.usuarioDao().getAllUsuarios().size } catch (e: Exception) { 0 }
-            val videosCount = try { db.videoDao().getAllVideos().size } catch (e: Exception) { 0 }
-            val topicsCount = try { db.topicDao().getAllTopics().size } catch (e: Exception) { 0 }
-            val contentItemsCount = try { db.contentItemDao().getAllContentItems().size } catch (e: Exception) { 0 }
-            val tasksCount = try { db.taskDao().getAllTasks().size } catch (e: Exception) { 0 }
-            val subscriptionsCount = try { db.subscriptionDao().getAllSubscriptions().size } catch (e: Exception) { 0 }
-            val taskSubmissionsCount = try { db.taskSubmissionDao().getAllTaskSubmissions().size } catch (e: Exception) { 0 }
-            val coursesCount = try { db.courseDao().getAllCourses().size } catch (e: Exception) { 0 }
-            val rolesCount = try { db.rolDao().getAllRoles().size } catch (e: Exception) { 0 }
-            val recursosCount = try { db.recursoDao().getAllRecursos().size } catch (e: Exception) { 0 }
-            val rolRecursosCount = try { db.rolRecursoDao().getAllRolRecursos().size } catch (e: Exception) { 0 }
-            
-            // For Flow-based DAOs, we'll just show "N/A" since we can't easily get the count synchronously
-            val chatMessagesCount = "N/A"
-            val fileContextsCount = "N/A"
-            
-            """
+          return@withContext try {
+                val dbService = com.example.tareamov.service.DatabaseQueryService(context)
+                val jsonStr = dbService.generateDatabaseJson()
+                val json = org.json.JSONObject(jsonStr)
+
+                // Safely extract counts and schema pieces
+                val stats = json.optJSONObject("statistics")
+                val schemaObj = json.optJSONObject("schema")
+
+                val personasCount = stats?.optInt("total_personas") ?: json.optJSONArray("personas")?.length() ?: 0
+                val usuariosCount = stats?.optInt("total_usuarios") ?: json.optJSONArray("usuarios")?.length() ?: 0
+                val videosCount = stats?.optInt("total_videos") ?: json.optJSONArray("videos")?.length() ?: 0
+                val topicsCount = stats?.optInt("total_topics") ?: json.optJSONArray("topics")?.length() ?: 0
+                val contentItemsCount = stats?.optInt("total_content_items") ?: json.optJSONArray("contentItems")?.length() ?: 0
+                val tasksCount = stats?.optInt("total_tasks") ?: json.optJSONArray("tasks")?.length() ?: 0
+                val subscriptionsCount = stats?.optInt("total_subscriptions") ?: json.optJSONArray("subscriptions")?.length() ?: 0
+                val taskSubmissionsCount = stats?.optInt("total_task_submissions") ?: json.optJSONArray("taskSubmissions")?.length() ?: 0
+                val coursesCount = stats?.optInt("total_courses") ?: json.optJSONArray("courses")?.length() ?: 0
+                val rolesCount = stats?.optInt("total_roles") ?: json.optJSONArray("roles")?.length() ?: 0
+                val recursosCount = stats?.optInt("total_recursos") ?: json.optJSONArray("recursos")?.length() ?: 0
+                val rolRecursosCount = stats?.optInt("total_rol_recursos") ?: json.optJSONArray("rolRecursos")?.length() ?: 0
+
+                val chatMessagesCount = stats?.optInt("total_chat_messages") ?: json.optJSONArray("chatMessages")?.length() ?: 0
+                val fileContextsCount = stats?.optInt("total_file_contexts") ?: json.optJSONArray("fileContexts")?.length() ?: 0
+
+                """
 1. PERSONAS ($personasCount registros)
-   - Tabla: personas
-   - Descripción: Información personal de usuarios del sistema
-   - Campos principales: id, nombre, apellido, email, telefono, fecha_nacimiento
-   - Función: Almacena datos personales de los usuarios
+    - Tabla: personas
+    - Descripción: Información personal de usuarios del sistema
+    - Campos principales: id, nombre, apellido, email, telefono, fecha_nacimiento
+    - Función: Almacena datos personales de los usuarios
 
 2. USUARIOS ($usuariosCount registros)
-   - Tabla: usuarios
-   - Descripción: Cuentas de usuario para autenticación
-   - Campos principales: id, persona_id, username, password_hash, rol, fecha_creacion
-   - Función: Gestiona acceso y autenticación al sistema
+    - Tabla: usuarios
+    - Descripción: Cuentas de usuario para autenticación
+    - Campos principales: id, persona_id, username, password_hash, rol, fecha_creacion
+    - Función: Gestiona acceso y autenticación al sistema
+    - IMPORTANTE: El campo "rol" solo puede tener 2 valores válidos:
+    * "usuario" - Usuarios estándar con permisos básicos
+    * "admin" - Administradores con permisos completos
+    - NO existen otros roles como "profesor", "docente", "instructor", "estudiante", etc.
+
+⚠️ ROLES DEL SISTEMA - INFORMACIÓN CRÍTICA:
+🔑 ÚNICAMENTE EXISTEN 2 ROLES: "usuario" y "admin"
+❌ NO existen roles como: profesor, docente, instructor, estudiante, moderador, coordinador, etc.
+✅ Si te preguntan por roles, menciona SOLAMENTE: usuario, admin
 
 3. VIDEOS ($videosCount registros)
-   - Tabla: videos
-   - Descripción: Videos educativos y contenido multimedia
-   - Campos principales: id, titulo, descripcion, url, duracion, creator_id, precio
-   - Función: Almacena contenido audiovisual educativo
+    - Tabla: videos
+    - Descripción: Videos educativos y contenido multimedia
+    - Campos principales: id, titulo, descripcion, url, duracion, creator_id, precio
+    - Función: Almacena contenido audiovisual educativo
 
 4. TOPICS ($topicsCount registros)
-   - Tabla: topics
-   - Descripción: Temas organizacionales para agrupar contenido
-   - Campos principales: id, nombre, descripcion, creator_id, fecha_creacion
-   - Función: Organiza contenido por temas/categorías
+    - Tabla: topics
+    - Descripción: Temas organizacionales para agrupar contenido
+    - Campos principales: id, nombre, descripcion, creator_id, fecha_creacion
+    - Función: Organiza contenido por temas/categorías
 
 5. CONTENT_ITEMS ($contentItemsCount registros)
-   - Tabla: content_items
-   - Descripción: Elementos de contenido organizados por temas
-   - Campos principales: id, titulo, descripcion, tipo, topic_id, orden
-   - Función: Contenido específico dentro de cada tema
+    - Tabla: content_items
+    - Descripción: Elementos de contenido organizados por temas
+    - Campos principales: id, titulo, descripcion, tipo, topic_id, orden
+    - Función: Contenido específico dentro de cada tema
 
 6. TASKS ($tasksCount registros)
-   - Tabla: tasks
-   - Descripción: Tareas asociadas a temas específicos
-   - Campos principales: id, titulo, descripcion, topic_id, fecha_limite, tipo
-   - Función: Actividades y ejercicios para los estudiantes
+    - Tabla: tasks
+    - Descripción: Tareas asociadas a temas específicos
+    - Campos principales: id, titulo, descripcion, topic_id, fecha_limite, tipo
+    - Función: Actividades y ejercicios para los estudiantes
 
 7. SUBSCRIPTIONS ($subscriptionsCount registros)
-   - Tabla: subscriptions
-   - Descripción: Relaciones de suscripción entre usuarios
-   - Campos principales: id, follower_id, creator_id, fecha_suscripcion
-   - Función: Gestiona seguimientos entre usuarios
+    - Tabla: subscriptions
+    - Descripción: Relaciones de suscripción entre usuarios
+    - Campos principales: id, follower_id, creator_id, fecha_suscripcion
+    - Función: Gestiona seguimientos entre usuarios
 
 8. TASK_SUBMISSIONS ($taskSubmissionsCount registros)
-   - Tabla: task_submissions
-   - Descripción: Entregas de tareas por parte de usuarios
-   - Campos principales: id, task_id, usuario_id, respuesta, fecha_entrega, calificacion
-   - Función: Almacena las respuestas de los estudiantes
+    - Tabla: task_submissions
+    - Descripción: Entregas de tareas por parte de usuarios
+    - Campos principales: id, task_id, usuario_id, respuesta, fecha_entrega, calificacion
+    - Función: Almacena las respuestas de los estudiantes
 
 9. CHAT_MESSAGES ($chatMessagesCount registros)
-   - Tabla: chat_messages
-   - Descripción: Mensajes del sistema de chat
-   - Campos principales: id, usuario_id, mensaje, timestamp, tipo, calificacion
-   - Función: Comunicación dentro de la plataforma
+    - Tabla: chat_messages
+    - Descripción: Mensajes del sistema de chat
+    - Campos principales: id, usuario_id, mensaje, timestamp, tipo, calificacion
+    - Función: Comunicación dentro de la plataforma
 
 10. FILE_CONTEXTS ($fileContextsCount registros)
-    - Tabla: file_contexts
-    - Descripción: Contextos de archivos subidos al sistema
-    - Campos principales: id, nombre_archivo, contenido_json, tipo_mime, usuario_id
-    - Función: Gestiona archivos y documentos subidos
+     - Tabla: file_contexts
+     - Descripción: Contextos de archivos subidos al sistema
+     - Campos principales: id, nombre_archivo, contenido_json, tipo_mime, usuario_id
+     - Función: Gestiona archivos y documentos subidos
 
 11. COURSES ($coursesCount registros)
-    - Tabla: courses
-    - Descripción: Cursos estructurados con contenido educativo
-    - Campos principales: id, titulo, descripcion, creator_id, precio, fecha_creacion
-    - Función: Organiza contenido en cursos completos
+     - Tabla: courses
+     - Descripción: Cursos estructurados con contenido educativo
+     - Campos principales: id, titulo, descripcion, creator_id, precio, fecha_creacion
+     - Función: Organiza contenido en cursos completos
 
 12. ROLES ($rolesCount registros)
-    - Tabla: roles
-    - Descripción: Roles y permisos del sistema
-    - Campos principales: id, nombre, descripcion, nivel_acceso
-    - Función: Define tipos de usuarios y sus permisos
+     - Tabla: roles
+     - Descripción: Roles y permisos del sistema
+     - Campos principales: id, nombre, descripcion, nivel_acceso
+     - Función: Define tipos de usuarios y sus permisos
+     - ⚠️ ROLES VÁLIDOS EN EL SISTEMA (SOLO 2):
+         * "usuario" (ID: 1) - Usuario estándar con permisos básicos
+         * "admin" (ID: 2) - Administrador con permisos completos
+     - ❌ NO existen otros roles como "profesor", "docente", "instructor", "estudiante", etc.
+     - ✅ Cuando pregunten por roles, menciona ÚNICAMENTE: usuario, admin
 
 13. RECURSOS ($recursosCount registros)
-    - Tabla: recursos
-    - Descripción: Recursos disponibles en el sistema
-    - Campos principales: id, nombre, descripcion, tipo, url
-    - Función: Herramientas y materiales adicionales
+     - Tabla: recursos
+     - Descripción: Recursos disponibles en el sistema
+     - Campos principales: id, nombre, descripcion, tipo, url
+     - Función: Herramientas y materiales adicionales
 
 14. ROL_RECURSOS ($rolRecursosCount registros)
-    - Tabla: rol_recursos
-    - Descripción: Relación entre roles y recursos con permisos específicos
-    - Campos principales: id, rol_id, recurso_id, puede_leer, puede_escribir, puede_eliminar
-    - Función: Define qué recursos puede acceder cada rol
+     - Tabla: rol_recursos
+     - Descripción: Relación entre roles y recursos con permisos específicos
+     - Campos principales: id, rol_id, recurso_id, puede_leer, puede_escribir, puede_eliminar
+     - Función: Define qué recursos puede acceder cada rol
 
 TOTAL DE TABLAS: 14
-REGISTROS CONTABILIZADOS: $personasCount + $usuariosCount + $videosCount + $topicsCount + $contentItemsCount + $tasksCount + $subscriptionsCount + $taskSubmissionsCount + $chatMessagesCount + $fileContextsCount + $coursesCount + $rolesCount + $recursosCount + $rolRecursosCount
-            """.trimIndent()
+REGISTROS CONTABILIZADOS: ${personasCount + usuariosCount + videosCount + topicsCount + contentItemsCount + tasksCount + subscriptionsCount + taskSubmissionsCount + chatMessagesCount + fileContextsCount + coursesCount + rolesCount + recursosCount + rolRecursosCount}
+                """.trimIndent()
             
         } catch (e: Exception) {
             Log.e(tag, "Error building comprehensive database context", e)

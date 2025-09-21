@@ -4,6 +4,7 @@ import android.media.MediaPlayer // Added for MediaPlayer
 import android.net.Uri
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -24,7 +25,8 @@ import kotlinx.coroutines.*
  */
 class VideoAdapter(
     private var videos: List<VideoData>,
-    private val onProfileClick: ((String) -> Unit)? = null
+    private val onProfileClick: ((String) -> Unit)? = null,
+    private val onUsernameClick: ((VideoData) -> Unit)? = null
 ) : RecyclerView.Adapter<VideoAdapter.VideoViewHolder>() {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoViewHolder {
@@ -63,6 +65,7 @@ class VideoAdapter(
         private val soundButton: android.widget.ImageView? = itemView.findViewById(R.id.soundButton)
         private var currentJob: Job? = null
         private var mediaPlayer: MediaPlayer? = null
+    private var mediaPlayerPrepared: Boolean = false
         private var isVideoPaused = false
         private var isLiked = false
         private var isMuted = false
@@ -96,6 +99,11 @@ class VideoAdapter(
             // Setup profile button click
             profileButton.setOnClickListener {
                 onProfileClick?.invoke(videoData.username)
+            }
+
+            // Setup username text click to navigate to course
+            usernameText.setOnClickListener {
+                onUsernameClick?.invoke(videoData)
             }
 
             // --- AVATAR LOADING LOGIC ---
@@ -132,6 +140,7 @@ class VideoAdapter(
 
                     videoView.setOnPreparedListener { mp ->
                         this.mediaPlayer = mp
+                        mediaPlayerPrepared = true
                         val videoWidth = mp.videoWidth
                         val videoHeight = mp.videoHeight
                         if (videoWidth > 0 && videoHeight > 0) {
@@ -150,6 +159,7 @@ class VideoAdapter(
 
                     videoView.setOnErrorListener { _, what, extra ->
                         Log.e("VideoAdapter", "Video playback error: what=$what, extra=$extra")
+                        mediaPlayerPrepared = false
                         showErrorPlaceholder()
                         true
                     }
@@ -189,12 +199,23 @@ class VideoAdapter(
          * Sets the mute state of the video.
          */
         fun setMuteState(mute: Boolean) {
-            val volume = if (mute) 0f else 1f
-            try {
-                mediaPlayer?.setVolume(volume, volume)
-            } catch (e: IllegalStateException) {
-                Log.e("VideoAdapter", "Error setting volume, MediaPlayer might not be ready.", e)
-                // Optionally, store desired mute state and apply it in onPreparedListener
+            // update desired mute state immediately
+            isMuted = mute
+
+            // If MediaPlayer is prepared, apply volume immediately. If not, it will be applied
+            // inside the onPreparedListener when the player becomes ready.
+            val volume = if (isMuted) 0f else 1f
+            if (mediaPlayerPrepared) {
+                try {
+                    mediaPlayer?.setVolume(volume, volume)
+                } catch (e: IllegalStateException) {
+                    Log.e("VideoAdapter", "Error setting volume, MediaPlayer might not be ready.", e)
+                    // keep isMuted flag; volume will be applied later when prepared
+                    mediaPlayerPrepared = false
+                }
+            } else {
+                // not prepared yet: volume will be applied when onPreparedListener runs
+                Log.d("VideoAdapter", "MediaPlayer not prepared yet; saved mute state=$isMuted")
             }
         }
 
@@ -259,6 +280,52 @@ class VideoAdapter(
             fullscreenButton?.setOnClickListener {
                 // Navigate to fullscreen activity
                 navigateToFullscreen()
+            }
+
+            // Setup gesture detector for swipe left to navigate to course
+            setupVideoGestureDetector()
+        }
+
+        private fun setupVideoGestureDetector() {
+            var startX = 0f
+            var startY = 0f
+            var startTime = 0L
+
+            videoView.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        startX = event.x
+                        startY = event.y
+                        startTime = System.currentTimeMillis()
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val endX = event.x
+                        val endY = event.y
+                        val endTime = System.currentTimeMillis()
+                        
+                        val diffX = endX - startX
+                        val diffY = endY - startY
+                        val timeDiff = endTime - startTime
+                        
+                        // Check if it's a swipe gesture (not just a tap)
+                        if (timeDiff < 300 && Math.abs(diffX) > 100) {
+                            // Check if it's a horizontal swipe (left)
+                            if (Math.abs(diffX) > Math.abs(diffY) && diffX < -100) {
+                                // Swipe left detected - navigate to course
+                                val position = adapterPosition
+                                if (position != RecyclerView.NO_POSITION && position < videos.size) {
+                                    val videoData = videos[position]
+                                    onUsernameClick?.invoke(videoData)
+                                    return@setOnTouchListener true
+                                }
+                            }
+                        } else if (timeDiff < 200 && Math.abs(diffX) < 50 && Math.abs(diffY) < 50) {
+                            // Single tap detected - toggle play/pause
+                            togglePlayPause()
+                        }
+                    }
+                }
+                true
             }
         }
 

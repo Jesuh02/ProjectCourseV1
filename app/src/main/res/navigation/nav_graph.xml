@@ -23,9 +23,7 @@
             android:id="@+id/action_splashFragment_to_videoHomeFragment"
             app:destination="@id/videoHomeFragment"
             app:popUpTo="@id/splashFragment"
-            app:popUpToInclusive="true"
-            app:enterAnim="@anim/fade_slide_up"
-            app:exitAnim="@android:anim/fade_out" />
+            app:popUpToInclusive="true" />
     </fragment>
 
     <!-- Single videoHomeFragment definition with all actions -->

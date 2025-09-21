@@ -100,9 +100,9 @@ class ChatBotFragment : Fragment() {
     private lateinit var fileAnalysisService: FileAnalysisService
 
     // Retrofit para el microservicio
-    // IP y puerto explícitos del microservicio
-    private val MICROSERVICIO_BASE_URL = "http://192.168.1.158:3001/"
-    private val OLLAMA_URL = "http://192.168.1.158:11435"
+    // IP y puerto explícitos del microservicio (actualizado con nueva configuración de red)
+    private val MICROSERVICIO_BASE_URL = "http://10.218.57.181:3001/"
+    private val OLLAMA_URL = "http://10.218.57.181:11435"
     // Aumentar los timeouts para evitar que el chat cierre la espera antes de que el modelo responda
     private val microservicioApi: MicroservicioApi by lazy {
         val okHttpClient = okhttp3.OkHttpClient.Builder()
@@ -312,7 +312,27 @@ class ChatBotFragment : Fragment() {
                     )
 
                     withContext(Dispatchers.IO) {
-                        database.chatMessageDao().insertMessage(errorChatMessage)
+                        val savedId = database.chatMessageDao().insertMessage(errorChatMessage)
+                        try {
+                            val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                            val toSend = com.example.tareamov.data.entity.ChatMessage(
+                                id = savedId,
+                                message = errorChatMessage.message,
+                                isFromUser = errorChatMessage.isFromUser,
+                                timestamp = errorChatMessage.timestamp,
+                                sessionId = errorChatMessage.sessionId,
+                                hasCalification = errorChatMessage.hasCalification,
+                                calificationValue = errorChatMessage.calificationValue,
+                                calificationAdded = errorChatMessage.calificationAdded
+                            )
+                            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                val ok = supabaseRepo.upsert("chat_messages", toSend)
+                                if (ok) Log.i("ChatBotFragment", "ChatMessage $savedId upserted to Supabase.")
+                                else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedId to Supabase.")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("ChatBotFragment", "Exception sending chat message to Supabase: ${e.message}")
+                        }
                     }
                 }
 
@@ -398,7 +418,18 @@ class ChatBotFragment : Fragment() {
                 }
 
                 withContext(Dispatchers.IO) {
-                    database.chatMessageDao().insertMessage(contextMessage)
+                    val savedIdCtx = database.chatMessageDao().insertMessage(contextMessage)
+                    try {
+                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                        val toSend = contextMessage.copy(id = savedIdCtx)
+                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            val ok = supabaseRepo.upsert("chat_messages", toSend)
+                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedIdCtx upserted to Supabase.")
+                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedIdCtx to Supabase.")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ChatBotFragment", "Exception sending chat context to Supabase: ${e.message}")
+                    }
                 }
             }
         }
@@ -411,6 +442,9 @@ class ChatBotFragment : Fragment() {
             },
             onRejectCalificationClick = { message ->
                 handleRejectCalification(message)
+            },
+            onEditUserMessageClick = { message ->
+                handleEditUserMessage(message)
             },
             taskInfo = null // Se actualizará dinámicamente cuando se cargue la información
         )
@@ -505,7 +539,18 @@ class ChatBotFragment : Fragment() {
                 sessionId = sessionId
             )
             withContext(Dispatchers.IO) {
-                database.chatMessageDao().insertMessage(userMessage)
+                val savedUserId = database.chatMessageDao().insertMessage(userMessage)
+                try {
+                    val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                    val toSend = userMessage.copy(id = savedUserId)
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val ok = supabaseRepo.upsert("chat_messages", toSend)
+                        if (ok) Log.i("ChatBotFragment", "ChatMessage $savedUserId upserted to Supabase.")
+                        else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedUserId to Supabase.")
+                    }
+                } catch (e: Exception) {
+                    Log.w("ChatBotFragment", "Exception sending user chat to Supabase: ${e.message}")
+                }
             }
             loadingProgressBar.visibility = View.VISIBLE
 
@@ -663,7 +708,18 @@ class ChatBotFragment : Fragment() {
                     calificationAdded = false
                 )
                 withContext(Dispatchers.IO) {
-                    database.chatMessageDao().insertMessage(botMessage)
+                    val savedBotId = database.chatMessageDao().insertMessage(botMessage)
+                    try {
+                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                        val toSend = botMessage.copy(id = savedBotId)
+                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            val ok = supabaseRepo.upsert("chat_messages", toSend)
+                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedBotId upserted to Supabase.")
+                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedBotId to Supabase.")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ChatBotFragment", "Exception sending bot chat to Supabase: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
                 val errorMessage = ChatMessage(
@@ -672,7 +728,18 @@ class ChatBotFragment : Fragment() {
                     sessionId = sessionId
                 )
                 withContext(Dispatchers.IO) {
-                    database.chatMessageDao().insertMessage(errorMessage)
+                    val savedErrId = database.chatMessageDao().insertMessage(errorMessage)
+                    try {
+                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                        val toSend = errorMessage.copy(id = savedErrId)
+                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            val ok = supabaseRepo.upsert("chat_messages", toSend)
+                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedErrId upserted to Supabase.")
+                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedErrId to Supabase.")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ChatBotFragment", "Exception sending error chat to Supabase: ${e.message}")
+                    }
                 }
             } finally {
                 loadingProgressBar.visibility = View.GONE
@@ -914,21 +981,34 @@ class ChatBotFragment : Fragment() {
     private fun extractGradeFromMessage(message: String): String? {
         // Buscar patrones para extraer solo el número de la calificación
         val patterns = listOf(
-            "calificación:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
-            "nota:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
-            "puntaje:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
-            "score:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
-            "grade:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
-            "(\\d+(?:\\.\\d+)?)/10".toRegex(RegexOption.IGNORE_CASE),
-            "\\*\\*calificación\\s+actual:\\s*(\\d+(?:\\.\\d+)?)".toRegex(RegexOption.IGNORE_CASE)
+            "calificación:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
+            "nota:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
+            "puntaje:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
+            "score:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
+            "grade:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
+            "(\\d+(?:[.,]\\d+)?)/10".toRegex(RegexOption.IGNORE_CASE),
+            "\\*\\*calificación\\s+actual:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE)
         )
         
         for (pattern in patterns) {
             val match = pattern.find(message)
             if (match != null) {
                 val grade = match.groupValues[1]
+                
+                // Log para debugging
+                Log.d("ChatBotFragment", "🔍 Grade extraído: '$grade'")
+                
+                // Normalizar el formato decimal: reemplazar coma por punto
+                val normalizedGrade = grade.replace(",", ".")
+                
                 // Convertir a escala de 10 si es necesario
-                val gradeValue = grade.toFloatOrNull()
+                val gradeValue = try {
+                    normalizedGrade.toFloat()
+                } catch (e: NumberFormatException) {
+                    Log.e("ChatBotFragment", "❌ No se pudo convertir grade a Float: $grade (normalizado: $normalizedGrade)", e)
+                    null
+                }
+                
                 return if (gradeValue != null) {
                     if (gradeValue > 10) {
                         // Convertir de escala 100 a 10
@@ -1050,7 +1130,15 @@ class ChatBotFragment : Fragment() {
                     
                     // Actualizar directamente la tabla TaskSubmission
                     if (targetSubmissionId != null) {
-                        val gradeFloat = grade.toFloatOrNull()
+                        // Normalizar el formato decimal: reemplazar coma por punto antes de convertir
+                        val normalizedGrade = grade.replace(",", ".")
+                        val gradeFloat = try {
+                            normalizedGrade.toFloat()
+                        } catch (e: NumberFormatException) {
+                            Log.e("ChatBotFragment", "❌ Error convirtiendo grade '$grade' (normalizado: '$normalizedGrade') a Float", e)
+                            null
+                        }
+                        
                         if (gradeFloat != null) {
                             withContext(Dispatchers.IO) {
                                 // Obtener la entrega por ID
@@ -1151,6 +1239,132 @@ class ChatBotFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error rechazando calificación: ${e.message}")
                 Toast.makeText(context, "Error al procesar la acción", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * Maneja la edición de un mensaje del usuario
+     */
+    private fun handleEditUserMessage(message: ChatMessage) {
+        // Crear un diálogo para editar el mensaje
+        val editText = EditText(requireContext()).apply {
+            setText(message.message)
+            setSelection(message.message.length) // Poner cursor al final
+            hint = "Editar mensaje..."
+            setTextColor(ContextCompat.getColor(requireContext(), android.R.color.white))
+            setHintTextColor(ContextCompat.getColor(requireContext(), android.R.color.darker_gray))
+            backgroundTintList = ContextCompat.getColorStateList(requireContext(), android.R.color.white)
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("✏️ Editar Mensaje")
+            .setMessage("Modifica tu mensaje y se volverá a enviar al modelo:")
+            .setView(editText)
+            .setPositiveButton("🔄 Actualizar y Reenviar") { _, _ ->
+                val newMessageText = editText.text.toString().trim()
+                if (newMessageText.isNotEmpty() && newMessageText != message.message) {
+                    handleMessageEdit(message, newMessageText)
+                }
+            }
+            .setNegativeButton("❌ Cancelar", null)
+            .create()
+            .apply {
+                // Estilo del diálogo
+                window?.setBackgroundDrawableResource(android.R.color.black)
+                show()
+                getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setTextColor(
+                    ContextCompat.getColor(requireContext(), android.R.color.holo_green_light)
+                )
+                getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.setTextColor(
+                    ContextCompat.getColor(requireContext(), android.R.color.holo_red_light)
+                )
+            }
+    }
+
+    /**
+     * Procesa la edición del mensaje: actualiza el mensaje original y elimina respuestas subsecuentes
+     */
+    private fun handleMessageEdit(originalMessage: ChatMessage, newMessageText: String) {
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    // 1. Obtener todos los mensajes después del mensaje editado
+                    val allMessages = database.chatMessageDao().getAllMessages().first()
+                    val messageIndex = allMessages.indexOfFirst { it.id == originalMessage.id }
+                    
+                    if (messageIndex != -1) {
+                        // 2. Eliminar todos los mensajes posteriores (respuestas del bot y otros mensajes)
+                        val messagesToDelete = allMessages.drop(messageIndex + 1)
+                        messagesToDelete.forEach { msg ->
+                            database.chatMessageDao().deleteMessage(msg)
+                        }
+                        
+                        // 3. Actualizar el mensaje original con el nuevo texto
+                        val updatedMessage = originalMessage.copy(
+                            message = newMessageText,
+                            timestamp = System.currentTimeMillis() // Actualizar timestamp
+                        )
+                        database.chatMessageDao().updateMessage(updatedMessage)
+                    }
+                }
+
+                // 4. Recargar mensajes en la UI
+                loadMessages()
+                
+                // 5. Procesar el mensaje editado directamente sin duplicar
+                withContext(Dispatchers.Main) {
+                    // Mostrar indicador de procesamiento
+                    loadingProgressBar.visibility = View.VISIBLE
+                    
+                    // Procesar directamente con el AI
+                    try {
+                        val botResponse = analizarEntregaYFeedback(newMessageText, currentFileContext)
+                        
+                        // Crear respuesta del bot
+                        val botMessage = ChatMessage(
+                            message = botResponse,
+                            isFromUser = false,
+                            timestamp = System.currentTimeMillis(),
+                            sessionId = sessionId,
+                            hasCalification = detectCalification(newMessageText, botResponse),
+                            calificationAdded = false
+                        )
+                        
+                        // Guardar respuesta del bot en la base de datos
+                        withContext(Dispatchers.IO) {
+                            database.chatMessageDao().insertMessage(botMessage)
+                        }
+                        
+                        // Recargar mensajes para mostrar la nueva respuesta
+                        loadMessages()
+                        
+                    } catch (e: Exception) {
+                        Log.e("ChatBotFragment", "Error processing edited message", e)
+                        val errorMessage = ChatMessage(
+                            message = "Error al procesar el mensaje editado: ${e.message}",
+                            isFromUser = false,
+                            timestamp = System.currentTimeMillis(),
+                            sessionId = sessionId,
+                            hasCalification = false,
+                            calificationAdded = false
+                        )
+                        
+                        withContext(Dispatchers.IO) {
+                            database.chatMessageDao().insertMessage(errorMessage)
+                        }
+                        loadMessages()
+                    } finally {
+                        loadingProgressBar.visibility = View.GONE
+                    }
+                }
+                
+            } catch (e: Exception) {
+                Log.e("ChatBotFragment", "Error in handleMessageEdit", e)
+                withContext(Dispatchers.Main) {
+                    loadingProgressBar.visibility = View.GONE
+                    Toast.makeText(requireContext(), "Error al editar mensaje", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

@@ -127,13 +127,14 @@ class VideoDetailsFragment : Fragment() {
                     }
                 } else {
                     // Fallback: create new video if no ID provided
-                    val videoData = VideoData(
-                        username = currentUsername,
-                        description = description,
-                        title = title,
-                        videoUriString = videoUri.toString(),
-                        isPaid = isPaidCourse
-                    )
+                        val videoData = VideoData(
+                            username = currentUsername,
+                            description = description,
+                            title = title,
+                            videoUriString = videoUri.toString(),
+                            isPaid = isPaidCourse,
+                            remoteId = null
+                        )
                     
                     val savedVideo = withContext(Dispatchers.IO) {
                         videoManager.saveVideo(videoData)

@@ -258,9 +258,11 @@ class CreatedCourseAdapter(
     inner class CourseViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val thumbnailImageView: ImageView = itemView.findViewById(R.id.courseVideoThumbnail)
         private val videoView: VideoView = itemView.findViewById(R.id.courseVideoView)
-        private val titleTextView: TextView = itemView.findViewById(R.id.courseTitleTextView)
-        private val studentsTextView: TextView = itemView.findViewById(R.id.courseStudentsTextView)
-        private val categoryTextView: TextView = itemView.findViewById(R.id.courseCategoryTextView)
+    private val titleTextView: TextView = itemView.findViewById(R.id.courseTitleTextView)
+    private val studentsTextView: TextView = itemView.findViewById(R.id.courseStudentsTextView)
+    private val categoryTextView: TextView = itemView.findViewById(R.id.courseCategoryTextView)
+    private val authorTextView: TextView = itemView.findViewById(R.id.courseAuthorTextView)
+    private val priceTextView: TextView = itemView.findViewById(R.id.coursePriceTextView)
 
         // New menu button next to category
         // private val optionsMenuButton: ImageView? = itemView.findViewById(R.id.courseOptionsMenuButton)
@@ -328,7 +330,36 @@ class CreatedCourseAdapter(
             titleTextView.text = course.title.takeIf { !it.isNullOrEmpty() } ?: "Curso sin título"
             titleTextView.maxLines = 2
             titleTextView.ellipsize = android.text.TextUtils.TruncateAt.END
-            studentsTextView.text = "${(0..1000).random()} estudiantes"
+            // Bind author and price synchronously
+            authorTextView.text = course.username
+            priceTextView.text = if (course.price != null && course.price > 0.0) {
+                String.format("$%.2f", course.price)
+            } else {
+                "Gratis"
+            }
+
+            // Fetch subscriber count asynchronously from Room
+            studentsTextView.text = "... estudiantes"
+            try {
+                val db = com.example.tareamov.data.AppDatabase.getDatabase(itemView.context)
+                val subscriptionDao = db.subscriptionDao()
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    try {
+                        val count = subscriptionDao.getSubscriptionCountForCreator(course.username)
+                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            studentsTextView.text = if (count == 1) "1 estudiante" else "${count} estudiantes"
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("CreatedCourseAdapter", "Error fetching subscription count for ${course.username}", e)
+                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            studentsTextView.text = "0 estudiantes"
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("CreatedCourseAdapter", "Error starting coroutine to fetch subscription count", e)
+                studentsTextView.text = "0 estudiantes"
+            }
 
             // Show different category text for owned vs other courses
             if (canUserModifyCourse(course)) {

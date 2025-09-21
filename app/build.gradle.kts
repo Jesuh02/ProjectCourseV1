@@ -1,9 +1,12 @@
+import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     id("com.google.devtools.ksp")
     id("com.google.gms.google-services") // Google Services plugin for Firebase integration
 }
+
+
 
 // Add this task to clean KSP cache
 tasks.register("cleanKspCache") {
@@ -17,9 +20,46 @@ tasks.named("clean") {
     dependsOn("cleanKspCache")
 }
 
-// Leer variables de Supabase desde local.properties
-val supabaseUrl = project.findProperty("SUPABASE_URL") as? String ?: ""
-val supabaseKey = project.findProperty("SUPABASE_KEY") as? String ?: ""
+// Leer variables de Supabase desde local.properties (carga ligera sin java.util.Properties)
+val localPropsFile = rootProject.file("local.properties")
+val localPropsMap: Map<String, String> = if (localPropsFile.exists()) {
+    localPropsFile.readLines()
+        .mapNotNull { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#") || !trimmed.contains("=")) return@mapNotNull null
+            val (k, v) = trimmed.split("=", limit = 2)
+            k.trim() to v.trim()
+        }
+        .toMap()
+} else emptyMap()
+
+// Primary property names: SUPABASE_URL, SUPABASE_KEY
+// Backwards-compatible fallbacks: projectid (to build URL), supabaseapi (anon key), service_role
+val supabaseUrlProp = (project.findProperty("SUPABASE_URL") as? String)
+    ?: localPropsMap["SUPABASE_URL"]
+    ?: ""
+val supabaseProjectId = (project.findProperty("projectid") as? String)
+    ?: localPropsMap["projectid"]
+    ?: (project.findProperty("supabase_project_id") as? String)
+    ?: localPropsMap["supabase_project_id"]
+    ?: ""
+
+val supabaseUrl = if (supabaseUrlProp?.isNotBlank() == true) {
+    supabaseUrlProp
+} else if (supabaseProjectId?.isNotBlank() == true) {
+    "https://${supabaseProjectId}.supabase.co"
+} else ""
+
+val supabaseKey = (project.findProperty("SUPABASE_KEY") as? String)
+    ?: localPropsMap["SUPABASE_KEY"]
+    ?: (project.findProperty("supabaseapi") as? String)
+    ?: localPropsMap["supabaseapi"]
+    ?: (project.findProperty("service_role") as? String)
+    ?: localPropsMap["service_role"]
+    ?: ""
+
+// Leer la IP del host (útil para emuladores). Por defecto 10.0.2.2 para Android Emulator
+val hostIp = project.findProperty("HOST_IP") as? String ?: localPropsMap["HOST_IP"] ?: "10.0.2.2"
 
 android {
     buildFeatures {
@@ -39,9 +79,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Exponer variables de Supabase como BuildConfig
-        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
-        buildConfigField("String", "SUPABASE_KEY", "\"$supabaseKey\"")
+    // Exponer variables de Supabase y HOST_IP como BuildConfig
+    buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+    buildConfigField("String", "SUPABASE_KEY", "\"$supabaseKey\"")
+    buildConfigField("String", "HOST_IP", "\"$hostIp\"")
 
         // Add Room schema location
         ksp {

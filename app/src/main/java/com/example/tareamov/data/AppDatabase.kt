@@ -63,7 +63,7 @@ import com.example.tareamov.service.DatabaseContextHttpServer
         Recurso::class,
         RolRecurso::class
     ],
-    version = 27, // <-- Update version to remove Purchase table
+    version = 29, // bumped to add remote_id to videos
     exportSchema = false
 )
 @TypeConverters(VideoDataConverters::class)
@@ -154,7 +154,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17,
                         MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
                         MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                        MIGRATION_25_26, MIGRATION_26_27
+                        MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -172,13 +172,13 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                     
                     // Get role IDs for initialization
-                    val estudianteRole = instance.rolDao().getRolByNombre("estudiante")
+                    val usuarioRole = instance.rolDao().getRolByNombre("usuario")
                     val adminRole = instance.rolDao().getRolByNombre("admin")
                     
-                    if (estudianteRole != null && adminRole != null) {
+                    if (usuarioRole != null && adminRole != null) {
                         // Initialize recursos and role-resource relationships
                         val databaseInitializer = DatabaseInitializer(recursoRepository)
-                        databaseInitializer.initializeDefaultData(estudianteRole.id, adminRole.id)
+                        databaseInitializer.initializeDefaultData(usuarioRole.id, adminRole.id)
                         
                         // Verify the initialization
                         val integrityResult = databaseInitializer.verifyDataIntegrity()
@@ -562,9 +562,9 @@ abstract class AppDatabase : RoomDatabase() {
         // Define migration from version 16 to 17 (Update user roles)
         private val MIGRATION_16_17 = object : Migration(16, 17) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Update any existing "usuario" roles to "estudiante"
-                db.execSQL("UPDATE usuarios SET rol = 'estudiante' WHERE rol = 'usuario'")
-                Log.i(TAG, "Migration 16 to 17 completed: Updated user roles from 'usuario' to 'estudiante'")
+                // Update any existing "estudiante" roles to "usuario"
+                db.execSQL("UPDATE usuarios SET rol = 'usuario' WHERE rol = 'estudiante'")
+                Log.i(TAG, "Migration 16 to 17 completed: Updated user roles from 'estudiante' to 'usuario'")
             }
         }
 
@@ -774,7 +774,7 @@ abstract class AppDatabase : RoomDatabase() {
                     """)
 
                     // Insert default roles
-                    db.execSQL("INSERT INTO roles (nombre, nivel, `default`) VALUES ('estudiante', 1.0, 1)")
+                    db.execSQL("INSERT INTO roles (nombre, nivel, `default`) VALUES ('usuario', 1.0, 1)")
                     db.execSQL("INSERT INTO roles (nombre, nivel, `default`) VALUES ('admin', 2.0, 0)")
 
                     // Create new usuarios table with rol_id instead of rol
@@ -898,7 +898,7 @@ abstract class AppDatabase : RoomDatabase() {
                 """)
                 
                 // Assign resources to roles
-                // Estudiante role (assuming id = 1) gets navigation resources only
+                // Usuario role (assuming id = 1) gets navigation resources only
                 db.execSQL("""
                     INSERT OR IGNORE INTO rol_recursos (rolId, recursoId) VALUES
                     (1, 1), (1, 2), (1, 3), (1, 4), (1, 5)
@@ -953,6 +953,32 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.i(TAG, "Migration 26 to 27 completed: Removed purchases table and cleaned up videos table")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 26 to 27", e)
+                }
+            }
+        }
+
+        // Migration 27 to 28: Update role names from "estudiante" to "usuario"
+        private val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    // Update roles table to change "estudiante" to "usuario"
+                    db.execSQL("UPDATE roles SET nombre = 'usuario' WHERE nombre = 'estudiante'")
+
+                    Log.i(TAG, "Migration 27 to 28 completed: Updated role name from 'estudiante' to 'usuario'")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 27 to 28", e)
+                }
+            }
+        }
+
+        // Migration 28 to 29: add remote_id column to videos
+        private val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE videos ADD COLUMN remote_id INTEGER")
+                    Log.i(TAG, "Migration 28 to 29 completed: Added remote_id column to videos")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 28 to 29", e)
                 }
             }
         }

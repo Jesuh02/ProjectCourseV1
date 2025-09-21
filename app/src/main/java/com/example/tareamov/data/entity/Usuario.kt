@@ -41,8 +41,8 @@ data class Usuario(
 
     companion object {
         // Deprecated: Use Rol entity instead
-        @Deprecated("Use Rol.NOMBRE_ESTUDIANTE instead")
-        const val ROL_ESTUDIANTE = "estudiante"
+        @Deprecated("Use Rol.NOMBRE_USUARIO instead")
+        const val ROL_USUARIO = "usuario"
         @Deprecated("Use Rol.NOMBRE_ADMIN instead") 
         const val ROL_ADMIN = "admin"
     }

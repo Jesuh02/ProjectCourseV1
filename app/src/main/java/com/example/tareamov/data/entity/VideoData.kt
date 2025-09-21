@@ -31,6 +31,7 @@ data class VideoData(
     val localFilePath: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val isPaid: Boolean = false,
+    @ColumnInfo(name = "remote_id") val remoteId: Long? = null,
     val thumbnailUri: String? = null, // <-- existing line
     val price: Double? = null // <-- add this line
 ) {
@@ -55,7 +56,8 @@ data class VideoData(
         null,
         System.currentTimeMillis(),
         isPaid,
-        thumbnailUri // <-- Pass to primary constructor
+        null,
+        thumbnailUri // <-- Pass to primary constructor (remoteId=null, then thumbnailUri)
     )
 
     // Check if the video file exists
