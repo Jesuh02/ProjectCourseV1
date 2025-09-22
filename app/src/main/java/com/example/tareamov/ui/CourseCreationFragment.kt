@@ -18,9 +18,9 @@ import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Topic
 import com.example.tareamov.data.entity.Task
 import com.example.tareamov.data.entity.ContentItem
-import com.example.tareamov.data.entity.Course
-import com.example.tareamov.service.SupabaseClient
 import com.example.tareamov.util.VideoManager
+import com.example.tareamov.data.entity.Course
+import com.example.tareamov.MainActivity
 import com.example.tareamov.util.SessionManager // Added import
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -158,68 +158,82 @@ class CourseCreationFragment : Fragment() {
 
 
 
-        // Create Course entity with course information and current user as creator
+        // Create VideoData with course information and current user as creator
         val thumbnailUriString = selectedThumbnailUri?.toString()
-        val course = Course(
-            title = courseName,
+        val courseData = VideoData(
+            username = currentUsername,
             description = courseDescription,
-            creatorUsername = currentUsername,
+            title = courseName,
+            isPaid = isPaid,
             thumbnailUri = thumbnailUriString,
-            videoUri = null,
-            localFilePath = null,
-            duration = null,
-            category = courseCategory,
-            price = coursePrice,
-            isPremium = isPaid,
-            isPublished = true,
-            creationDate = "",
-            lastModifiedDate = "",
-            enrollmentCount = 0,
-            rating = 0.0f,
-            tags = null,
-            timestamp = System.currentTimeMillis()
+            price = coursePrice
         )
-
-        // Save Course entity to Course table only (do NOT create a VideoData entry)
+        // Save course to database
         CoroutineScope(Dispatchers.Main).launch {
+            // First, validate uniqueness against Supabase (preferred) and fallback to local DB
+            var duplicateFound = false
             try {
-                withContext(Dispatchers.IO) {
-                    try {
-                        val repo = com.example.tareamov.repository.CourseRepository(requireContext())
-                        repo.saveCourse(course)
-                    } catch (e: Exception) {
-                        val db = AppDatabase.getDatabase(requireContext())
-                        db.courseDao().insertCourse(course)
-                    }
+                if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    val supaList = com.example.tareamov.service.SupabaseClient.fetchVideos()
+                    duplicateFound = supaList.any { it.title.equals(courseName, ignoreCase = true) }
                 }
-
-                val appDatabase = AppDatabase.getDatabase(requireContext())
-                appDatabase.notifyDatabaseChanged()
-
-                // Best-effort: send Course to Supabase in background
-                kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        if (SupabaseClient.isConfigured()) {
-                            try {
-                                SupabaseClient.insertCourse(course)
-                                Log.d("CourseCreationFragment", "Supabase insertCourse requested for course=${course.title}")
-                            } catch (e: Exception) {
-                                Log.e("CourseCreationFragment", "Error sending course to Supabase", e)
-                            }
-                        } else {
-                            Log.w("CourseCreationFragment", "SupabaseClient not configured; skipping remote course sync")
-                        }
-                    } catch (e: Exception) {
-                        Log.e("CourseCreationFragment", "Error in Supabase background send", e)
-                    }
-                }
-
-                Toast.makeText(context, "Curso creado exitosamente", Toast.LENGTH_SHORT).show()
-                findNavController().navigateUp()
             } catch (e: Exception) {
-                Log.e("CourseCreationFragment", "Error al guardar el curso", e)
-                Toast.makeText(context, "Error al guardar el curso: ${e.message}", Toast.LENGTH_SHORT).show()
+                // Supabase check failed; we'll fallback to local DB check below
+                android.util.Log.w("CourseCreationFragment", "Supabase title-check failed, falling back to local DB", e)
             }
+
+            if (!duplicateFound) {
+                // Fallback: check local DB via VideoManager/VideoDao
+                try {
+                    val local = withContext(Dispatchers.IO) { videoManager.getAllVideos() }
+                    if (local.any { it.title.equals(courseName, ignoreCase = true) }) {
+                        duplicateFound = true
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("CourseCreationFragment", "Local DB title-check failed", e)
+                }
+            }
+
+            if (duplicateFound) {
+                Toast.makeText(context, "Ya existe un curso/video con este título. Elige otro título.", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
+            withContext(Dispatchers.IO) {
+                AppDatabase.getDatabase(requireContext()).videoDao().insertVideo(courseData)
+            }
+
+            // Also map VideoData -> Course and request sync to Supabase via SyncRepository
+            try {
+                val main = requireActivity() as MainActivity
+                val mappedCourse = Course(
+                    title = courseName,
+                    description = courseDescription,
+                    creatorUsername = currentUsername,
+                    thumbnailUri = selectedThumbnailUri?.toString(),
+                    videoUri = courseData.videoUriString ?: courseData.localFilePath,
+                    localFilePath = courseData.localFilePath,
+                    duration = null,
+                    category = courseCategory,
+                    price = coursePrice,
+                    isPremium = isPaid,
+                    isPublished = true,
+                    creationDate = System.currentTimeMillis().toString(),
+                    lastModifiedDate = System.currentTimeMillis().toString(),
+                    enrollmentCount = 0,
+                    rating = 0.0f,
+                    tags = null,
+                    timestamp = System.currentTimeMillis()
+                )
+                main.syncRepository.upsertCourseToSupabase(mappedCourse)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            Toast.makeText(context, "Curso creado exitosamente", Toast.LENGTH_SHORT).show()
+
+            // Navigate back to previous screen, we don't have a direct action to ExploreFragment
+            findNavController().navigateUp()
         }
     }
 
@@ -243,55 +257,64 @@ class CourseCreationFragment : Fragment() {
             return
         }
 
-        // Create a minimal Course entity to represent this new course (no VideoData)
-        val newCourse = Course(
+        // Crear el objeto VideoData con la información del curso
+        val courseData = VideoData(
+            username = currentUserUsername, // Use actual username
             title = courseName,
             description = "$courseDescription\nCategoría: $courseCategory",
-            creatorUsername = currentUserUsername,
-            thumbnailUri = null,
-            videoUri = dummyVideoUri,
-            localFilePath = null,
-            duration = null,
-            category = courseCategory,
-            price = 0.0,
-            isPremium = false,
-            isPublished = true,
-            creationDate = "",
-            lastModifiedDate = "",
-            enrollmentCount = 0,
-            rating = 0.0f,
-            tags = null,
-            timestamp = System.currentTimeMillis()
+            videoUriString = dummyVideoUri
         )
 
-        // Save Course to DB and navigate to CourseTopicFragment with the new Course id
+        // Guardar el curso en la base de datos y luego navegar al tema
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val savedCourseId = withContext(Dispatchers.IO) {
-                    try {
-                        val repo = com.example.tareamov.repository.CourseRepository(requireContext())
-                        repo.saveCourse(newCourse)
-                    } catch (e: Exception) {
-                        val db = AppDatabase.getDatabase(requireContext())
-                        db.courseDao().insertCourse(newCourse)
-                    }
+                val savedCourse = withContext(Dispatchers.IO) {
+                    videoManager.saveVideo(courseData)
                 }
 
-                Log.d("CourseCreationFragment", "Curso guardado con ID: $savedCourseId")
+                Log.d("CourseCreationFragment", "Curso guardado con ID: ${savedCourse.id}")
 
-                // Notify database changed
+                // Notify database changed to update JSON
                 val appDatabase = AppDatabase.getDatabase(requireContext())
                 appDatabase.notifyDatabaseChanged()
 
+                // Increment topic count
                 topicCount++
 
+                // Navigate to CourseTopicFragment with topic number and course ID
                 val bundle = Bundle()
                 bundle.putInt("topicNumber", topicCount)
-                bundle.putLong("courseId", savedCourseId as Long)
-                bundle.putString("courseName", courseName)
+                bundle.putLong("courseId", savedCourse.id)
+                bundle.putString("courseName", savedCourse.title)
                 findNavController().navigate(R.id.action_courseCreationFragment_to_courseTopicFragment, bundle)
+                // After saving the course/video, also upsert a Course row in Supabase
+                try {
+                    val main = requireActivity() as MainActivity
+                    val mappedCourse = Course(
+                        title = savedCourse.title ?: courseName,
+                        description = savedCourse.description ?: courseDescription,
+                        creatorUsername = currentUserUsername,
+                        thumbnailUri = savedCourse.thumbnailUri,
+                        videoUri = savedCourse.videoUriString ?: savedCourse.localFilePath,
+                        localFilePath = savedCourse.localFilePath,
+                        duration = null,
+                        category = courseCategory,
+                        price = savedCourse.price ?: 0.0,
+                        isPremium = savedCourse.isPaid,
+                        isPublished = true,
+                        creationDate = savedCourse.timestamp.toString(),
+                        lastModifiedDate = System.currentTimeMillis().toString(),
+                        enrollmentCount = 0,
+                        rating = 0.0f,
+                        tags = null,
+                        timestamp = savedCourse.timestamp
+                    )
+                    main.syncRepository.upsertCourseToSupabase(mappedCourse)
+                } catch (e: Exception) {
+                    Log.w("CourseCreationFragment", "Failed to request Supabase upsert for course", e)
+                }
             } catch (e: Exception) {
-                Log.e("CourseCreationFragment", "Error al guardar el curso (Course table)", e)
+                Log.e("CourseCreationFragment", "Error al guardar el curso", e)
                 Toast.makeText(context, "Error al guardar el curso", Toast.LENGTH_SHORT).show()
             }
         }

@@ -572,11 +572,44 @@ class UserProfileViewFragment : Fragment() {
         }
     }    private suspend fun loadUserContent(username: String) {
         try {
-            // Obtener todos los datos usando EXACTAMENTE la misma lógica que ExploreFragment
-            val allVideosData = getAllContentLikeExploreFragment()
+            // Prefer Supabase server-side filtered fetch for this specific user
+            val act = activity as? com.example.tareamov.MainActivity
+            var userCoursesList: List<com.example.tareamov.data.entity.Course> = emptyList()
+            var userVideosList: List<VideoData> = emptyList()
 
-            // Filtrar el contenido específico del usuario usando la lógica consistente
-            val (userCourses, userVideos) = filterContentLikeExploreFragment(allVideosData, username)
+            if (act != null) {
+                try {
+                    // Try to fetch courses by creator from Supabase
+                    val remoteCourses = withContext(Dispatchers.IO) { act.syncRepository.fetchCoursesByCreatorFromSupabase(username) }
+                    if (!remoteCourses.isNullOrEmpty()) {
+                        userCoursesList = remoteCourses
+                    }
+
+                    // Try to fetch videos by username from Supabase
+                    val remoteVideos = withContext(Dispatchers.IO) { act.syncRepository.fetchVideosByUsernameFromSupabase(username) }
+                    if (!remoteVideos.isNullOrEmpty()) {
+                        userVideosList = remoteVideos
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("UserProfileView", "Supabase fetch by creator/username failed, will fallback to local DB", e)
+                }
+            }
+
+            // If Supabase didn't return results for one of the lists, fallback to local DB for that list
+            if (userCoursesList.isEmpty()) {
+                val allVideosData = getAllContentLikeExploreFragment()
+                val (courses, _) = filterContentLikeExploreFragment(allVideosData, username)
+                userCoursesList = courses.map { course -> com.example.tareamov.repository.CourseRepository(requireContext()).convertVideoDataToCoursePublic(course) }
+            }
+            if (userVideosList.isEmpty()) {
+                val allVideosData = getAllContentLikeExploreFragment()
+                val (_, videos) = filterContentLikeExploreFragment(allVideosData, username)
+                userVideosList = videos
+            }
+
+            // Ensure both lists are sorted newest first by timestamp (remote should already be ordered)
+            userCoursesList = userCoursesList.sortedWith(compareByDescending<com.example.tareamov.data.entity.Course> { it.timestamp }.thenByDescending { it.creationDate })
+            userVideosList = userVideosList.sortedByDescending { it.timestamp }
 
             withContext(Dispatchers.Main) {
                 // Actualizar las listas con los datos filtrados del usuario
@@ -596,26 +629,41 @@ class UserProfileViewFragment : Fragment() {
                     }
                 }
 
-                val normalizedCourses = userCourses.map { course ->
-                    val thumb = normalizePath(course.thumbnailUri)
-                    val local = normalizePath(course.localFilePath)
-                    course.copy(thumbnailUri = thumb, localFilePath = local)
+                // Normalize and map remote Course entities to VideoData
+                val normalizedCourses = userCoursesList.map { course ->
+                    val usernameSafe = course.creatorUsername ?: ""
+                    val v = VideoData(
+                        id = course.id,
+                        username = usernameSafe,
+                        description = course.description ?: "",
+                        title = course.title ?: "",
+                        videoUriString = course.videoUri ?: "",
+                        localFilePath = course.localFilePath,
+                        timestamp = course.timestamp,
+                        isPaid = course.isPremium,
+                        thumbnailUri = course.thumbnailUri,
+                        price = if (course.price > 0.0) course.price else null
+                    )
+                    val thumb = normalizePath(v.thumbnailUri)
+                    val local = normalizePath(v.localFilePath)
+                    v.copy(thumbnailUri = thumb, localFilePath = local)
                 }
 
-                val normalizedVideos = userVideos.map { video ->
+                val normalizedVideos = userVideosList.map { video ->
                     val thumb = normalizePath(video.thumbnailUri)
                     val local = normalizePath(video.localFilePath)
                     video.copy(thumbnailUri = thumb, localFilePath = local)
                 }
 
+                // Replace local lists with remote-normalized lists (prefer remote freshness)
                 allCourses.clear()
                 allCourses.addAll(normalizedCourses)
                 allVideos.clear()
                 allVideos.addAll(normalizedVideos)
-                
+
                 // Actualizar contadores en la UI
-                coursesCountTextView.text = userCourses.size.toString()
-                videosCountTextView.text = userVideos.size.toString()
+                coursesCountTextView.text = userCoursesList.size.toString()
+                videosCountTextView.text = userVideosList.size.toString()
                 
                 // Update count badges
                 updateCountBadges()
@@ -631,7 +679,7 @@ class UserProfileViewFragment : Fragment() {
                 // Asegurar que las miniaturas se carguen correctamente
                 ensureThumbnailsLoaded()
                 
-                Log.d("UserProfileView", "Loaded content for user: $username - Courses: ${userCourses.size}, Videos: ${userVideos.size}")
+                Log.d("UserProfileView", "Loaded content for user: $username - Courses: ${userCoursesList.size}, Videos: ${userVideosList.size}")
             }
         } catch (e: Exception) {
             Log.e("UserProfileView", "Error loading user content for: $username", e)

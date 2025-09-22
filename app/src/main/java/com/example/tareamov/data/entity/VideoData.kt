@@ -2,6 +2,7 @@ package com.example.tareamov.data.entity
 
 import android.net.Uri
 import androidx.room.ColumnInfo
+import com.google.gson.annotations.SerializedName
 import androidx.room.Entity
 import androidx.room.Ignore
 import androidx.room.PrimaryKey
@@ -24,15 +25,14 @@ import java.io.File
 @Entity(tableName = "videos")
 data class VideoData(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val username: String, // This is the creator's username
+    @SerializedName("username") val username: String, // This is the creator's username
     val description: String,
     val title: String,
-    val videoUriString: String? = null,
-    val localFilePath: String? = null,
+    @SerializedName("video_uri_string") val videoUriString: String? = null,
+    @SerializedName("local_file_path") val localFilePath: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val isPaid: Boolean = false,
-    @ColumnInfo(name = "remote_id") val remoteId: Long? = null,
-    val thumbnailUri: String? = null, // <-- existing line
+    @SerializedName("thumbnail_uri") val thumbnailUri: String? = null, // <-- existing line
     val price: Double? = null // <-- add this line
 ) {
     // Transient property that's not stored in the database
@@ -56,8 +56,7 @@ data class VideoData(
         null,
         System.currentTimeMillis(),
         isPaid,
-        null,
-        thumbnailUri // <-- Pass to primary constructor (remoteId=null, then thumbnailUri)
+        thumbnailUri // <-- Pass to primary constructor
     )
 
     // Check if the video file exists
@@ -87,6 +86,19 @@ data class VideoData(
         }
 
         // Then try the original URI
+        // If the stored string looks like a full HTTP URL (Supabase storage public URL), parse it
+        if (!videoUriString.isNullOrEmpty()) {
+            try {
+                val uri = Uri.parse(videoUriString)
+                // Accept http(s) and file schemes
+                if (uri.scheme == "http" || uri.scheme == "https" || uri.scheme == "file" || uri.scheme == "content") {
+                    return uri
+                }
+            } catch (e: Exception) {
+                // fall through to returning the parsed property if available
+            }
+        }
+
         return videoUri
     }
 }

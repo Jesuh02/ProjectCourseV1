@@ -4,6 +4,8 @@ import com.example.tareamov.BuildConfig
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Usuario
 import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.google.gson.FieldNamingPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -27,6 +29,8 @@ import com.example.tareamov.data.entity.RolRecurso
 object SupabaseClient {
     private val client = OkHttpClient()
     private val gson = Gson()
+    // Gson configured to map snake_case JSON (typical Postgres/Supabase) to camelCase Kotlin fields
+    private val underscoredGson = GsonBuilder().setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create()
     private val baseUrl = BuildConfig.SUPABASE_URL.trimEnd('/')
     private val apiKey = BuildConfig.SUPABASE_KEY
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
@@ -317,6 +321,81 @@ object SupabaseClient {
         }
     }
 
+    // Update an existing Persona by id. Returns true on success.
+    suspend fun updatePersona(persona: Persona): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val map = mutableMapOf<String, Any?>()
+            map["identificacion"] = persona.identificacion
+            map["nombres"] = persona.nombres
+            map["apellidos"] = persona.apellidos
+            map["email"] = persona.email
+            map["telefono"] = persona.telefono
+            map["direccion"] = persona.direccion
+            map["fechaNacimiento"] = persona.fechaNacimiento
+            map["avatar"] = persona.avatar
+            map["esUsuario"] = persona.esUsuario
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/personas?id=eq.${persona.id}"
+
+            val request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    android.util.Log.w("SupabaseClient", "updatePersona failed status=${resp.code} body=${resp.body?.string()}")
+                    return@withContext false
+                }
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext false
+        }
+    }
+
+    // Update an existing Usuario by id. Returns true on success.
+    suspend fun updateUsuario(usuario: Usuario): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val map = mutableMapOf<String, Any?>()
+            map["usuario"] = usuario.usuario
+            map["contrasena"] = usuario.contrasena
+            map["persona_id"] = usuario.persona_id
+            map["rol_id"] = usuario.rol_id
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/usuarios?id=eq.${usuario.id}"
+
+            val request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    android.util.Log.w("SupabaseClient", "updateUsuario failed status=${resp.code} body=${resp.body?.string()}")
+                    return@withContext false
+                }
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext false
+        }
+    }
+
     suspend fun insertTaskSubmission(submission: com.example.tareamov.data.entity.TaskSubmission): Long? = withContext(Dispatchers.IO) {
         try {
             val map = mapOf(
@@ -521,7 +600,9 @@ object SupabaseClient {
                 }
                 if (body.isNullOrEmpty()) return@withContext emptyList()
                 try {
-                    val arr = gson.fromJson(body, clazz)
+                    // Use underscoredGson for Course parsing so snake_case keys like 'creator_username' map to 'creatorUsername'
+                    val parser = if (clazz == Array<Course>::class.java) underscoredGson else gson
+                    val arr = parser.fromJson(body, clazz)
                     return@withContext arr?.toList() ?: emptyList()
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -536,7 +617,150 @@ object SupabaseClient {
 
     suspend fun fetchPersonas(): List<Persona> = fetchList("personas", Array<Persona>::class.java)
     suspend fun fetchUsuarios(): List<Usuario> = fetchList("usuarios", Array<Usuario>::class.java)
+    // Fetch a single Usuario by username using Supabase filter (case-sensitive on DB side).
+    // We perform a case-insensitive match in the client by filtering the returned result.
+    suspend fun fetchUsuarioByUsername(username: String): Usuario? = withContext(Dispatchers.IO) {
+        fun maskSecret(s: String?): String {
+            if (s == null) return "null"
+            val len = s.length
+            return when {
+                len <= 2 -> "*".repeat(len)
+                else -> s.first() + "*".repeat(len - 2) + s.last()
+            }
+        }
+
+        fun normalizeForCompare(s: String?): String {
+            if (s == null) return ""
+            try {
+                val trimmed = s.trim().lowercase()
+                val normalized = java.text.Normalizer.normalize(trimmed, java.text.Normalizer.Form.NFKD)
+                return normalized.replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            } catch (t: Throwable) {
+                return s.trim().lowercase()
+            }
+        }
+
+        android.util.Log.d("SupabaseClient", "fetchUsuarioByUsername requested for username=$username")
+        var result: Usuario? = null
+
+        try {
+            val escaped = username.replace("'", "''")
+
+            // Try a case-insensitive server-side match first (ilike)
+            val pathIlike = "usuarios?usuario=ilike.'${escaped}'"
+            client.newCall(buildGetRequest(pathIlike)).execute().use { resp ->
+                val body = resp.body?.string()
+                android.util.Log.d("SupabaseClient", "GET $pathIlike code=${resp.code} body_len=${body?.length ?: 0}")
+                if (resp.isSuccessful && !body.isNullOrEmpty()) {
+                    try {
+                        val arr = gson.fromJson(body, Array<Usuario>::class.java)
+                        val list = arr?.toList() ?: emptyList()
+                        val targetNorm = normalizeForCompare(username)
+                        val found = list.firstOrNull { u -> normalizeForCompare(u.usuario) == targetNorm }
+                        if (found != null) {
+                            android.util.Log.d("SupabaseClient", "fetchUsuarioByUsername(ilike): found id=${found.id} stored_password_mask=${maskSecret(found.contrasena)}")
+                            result = found
+                        } else {
+                            android.util.Log.d("SupabaseClient", "fetchUsuarioByUsername(ilike): no exact case-insensitive match in returned list for username=$username")
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("SupabaseClient", "Failed parsing ilike response", e)
+                    }
+                }
+            }
+
+            // If not found yet, try exact eq filter
+            if (result == null) {
+                val pathEq = "usuarios?usuario=eq.'${escaped}'"
+                client.newCall(buildGetRequest(pathEq)).execute().use { resp2 ->
+                    val body2 = resp2.body?.string()
+                    android.util.Log.d("SupabaseClient", "GET $pathEq code=${resp2.code} body_len=${body2?.length ?: 0}")
+                    if (resp2.isSuccessful && !body2.isNullOrEmpty()) {
+                        try {
+                            val arr2 = gson.fromJson(body2, Array<Usuario>::class.java)
+                            val list2 = arr2?.toList() ?: emptyList()
+                            val targetNorm = normalizeForCompare(username)
+                            val found2 = list2.firstOrNull { u -> normalizeForCompare(u.usuario) == targetNorm }
+                            if (found2 != null) {
+                                android.util.Log.d("SupabaseClient", "fetchUsuarioByUsername(eq): found id=${found2.id} stored_password_mask=${maskSecret(found2.contrasena)}")
+                                result = found2
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.w("SupabaseClient", "Failed parsing eq response", e)
+                        }
+                    }
+                }
+            }
+
+            // Last-resort fallback: fetch full usuarios and match client-side
+            if (result == null) {
+                android.util.Log.d("SupabaseClient", "fetchUsuarioByUsername: falling back to full list fetch for username=$username")
+                val all = fetchUsuarios()
+                val targetNorm = normalizeForCompare(username)
+                val foundFull = all.firstOrNull { u -> normalizeForCompare(u.usuario) == targetNorm }
+                if (foundFull != null) {
+                    android.util.Log.d("SupabaseClient", "fetchUsuarioByUsername(fallback full): found id=${foundFull.id} stored_password_mask=${maskSecret(foundFull.contrasena)}")
+                    result = foundFull
+                } else {
+                    android.util.Log.d("SupabaseClient", "fetchUsuarioByUsername: no user found for username=$username after full fetch")
+                }
+            }
+
+            return@withContext result
+        } catch (e: Exception) {
+            android.util.Log.w("SupabaseClient", "fetchUsuarioByUsername exception: ${e.message}", e)
+            return@withContext null
+        }
+    }
     suspend fun fetchVideos(): List<VideoData> = fetchList("videos", Array<VideoData>::class.java)
+    // Fetch videos for a specific username (server-side filter). Attempts exact eq match.
+    suspend fun fetchVideosByUsername(username: String): List<VideoData> = withContext(Dispatchers.IO) {
+        try {
+            val escaped = username.replace("'", "''")
+            // Ask the server to order newest first by timestamp or created_at (fallback)
+            val path = "videos?username=eq.'${escaped}'&order=timestamp.desc,created_at.desc.nullslast"
+            var list = fetchList(path, Array<VideoData>::class.java)
+            if (list.isNotEmpty()) return@withContext list
+
+            // Fallback to ilike for case-insensitive matches, still ordered
+            val pathIlike = "videos?username=ilike.'${escaped}'&order=timestamp.desc,created_at.desc.nullslast"
+            list = fetchList(pathIlike, Array<VideoData>::class.java)
+            if (list.isNotEmpty()) return@withContext list
+
+            // Last resort: fetch all videos ordered and filter client-side
+            val allPath = "videos?order=timestamp.desc,created_at.desc.nullslast"
+            val all = fetchList(allPath, Array<VideoData>::class.java)
+            return@withContext all.filter { v -> (v.username ?: "").trim().equals(username.trim(), ignoreCase = true) }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext emptyList()
+        }
+    }
+    
+    // Fetch raw JSON array for a table; useful when we need defensive mapping
+    suspend fun fetchTableJson(table: String): com.google.gson.JsonArray = withContext(Dispatchers.IO) {
+        try {
+            val request = buildGetRequest(table)
+            client.newCall(request).execute().use { resp ->
+                val body = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    android.util.Log.w("SupabaseClient", "GET $table failed: ${resp.code} body=$body")
+                    return@withContext com.google.gson.JsonArray()
+                }
+                if (body.isNullOrEmpty()) return@withContext com.google.gson.JsonArray()
+                try {
+                    val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
+                    return@withContext arr
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    return@withContext com.google.gson.JsonArray()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext com.google.gson.JsonArray()
+        }
+    }
     suspend fun fetchTopics(): List<Topic> = fetchList("topics", Array<Topic>::class.java)
     suspend fun fetchContentItems(): List<ContentItem> = fetchList("content_items", Array<ContentItem>::class.java)
     suspend fun fetchTasks(): List<Task> = fetchList("tasks", Array<Task>::class.java)
@@ -545,7 +769,81 @@ object SupabaseClient {
     suspend fun fetchChatMessages(): List<ChatMessage> = fetchList("chat_messages", Array<ChatMessage>::class.java)
     suspend fun fetchFileContexts(): List<FileContext> = fetchList("file_contexts", Array<FileContext>::class.java)
     suspend fun fetchCourses(): List<Course> = fetchList("courses", Array<Course>::class.java)
+    // Fetch courses created by a specific username (server-side filter on creator_username).
+    suspend fun fetchCoursesByCreator(username: String): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            val escaped = username.replace("'", "''")
+            // Request server to return newest courses first (prefer timestamp then created_at)
+            val path = "courses?creator_username=eq.'${escaped}'&order=timestamp.desc,created_at.desc.nullslast"
+            var list = fetchList(path, Array<Course>::class.java)
+            if (list.isNotEmpty()) return@withContext list
+
+            // Fallback to ilike for case-insensitive matching, still ordered
+            val pathIlike = "courses?creator_username=ilike.'${escaped}'&order=timestamp.desc,created_at.desc.nullslast"
+            list = fetchList(pathIlike, Array<Course>::class.java)
+            if (list.isNotEmpty()) return@withContext list
+
+            // Last resort: fetch all courses ordered and filter client-side
+            val allPath = "courses?order=timestamp.desc,created_at.desc.nullslast"
+            val all = fetchList(allPath, Array<Course>::class.java)
+            if (all.isEmpty()) android.util.Log.d("SupabaseClient", "fetchCoursesByCreator: server returned no courses at all for paths: $path / $pathIlike / $allPath")
+            return@withContext all.filter { c -> (c.creatorUsername ?: "").trim().equals(username.trim(), ignoreCase = true) }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext emptyList()
+        }
+    }
     suspend fun fetchRoles(): List<Rol> = fetchList("roles", Array<Rol>::class.java)
     suspend fun fetchRecursos(): List<Recurso> = fetchList("recursos", Array<Recurso>::class.java)
     suspend fun fetchRolRecursos(): List<RolRecurso> = fetchList("rol_recursos", Array<RolRecurso>::class.java)
+
+    // Lightweight helper to fetch the most recent timestamp value for a table.
+    // This can be used to detect remote changes without downloading entire tables.
+    suspend fun fetchTableMaxUpdatedAt(table: String, field: String = "updated_at"): String? = withContext(Dispatchers.IO) {
+        try {
+            // Try a small set of commonly used timestamp fields when the default is not present.
+            val candidates = listOf(field, "timestamp", "last_modified", "last_modified_date", "updatedat", "modified_at")
+                .distinct()
+
+            for (f in candidates) {
+                try {
+                    val path = "${table}?select=${f}&order=${f}.desc&limit=1"
+                    val request = buildGetRequest(path)
+                    client.newCall(request).execute().use { resp ->
+                        val body = resp.body?.string()
+                        if (!resp.isSuccessful) {
+                            // If server returns 400 (bad request) it's likely the field doesn't exist — try next candidate.
+                            if (resp.code == 400) {
+                                android.util.Log.w("SupabaseClient", "fetchTableMaxUpdatedAt: field '$f' not valid for table '$table' (400). Trying next candidate.")
+                                return@use
+                            }
+                            android.util.Log.w("SupabaseClient", "fetchTableMaxUpdatedAt failed for $table (field=$f): ${resp.code} body=${body}")
+                            return@withContext null
+                        }
+
+                        if (body.isNullOrEmpty()) return@use
+                        try {
+                            val json = com.google.gson.JsonParser.parseString(body).asJsonArray
+                            if (json.size() == 0) return@use
+                            val obj = json[0].asJsonObject
+                            if (!obj.has(f)) return@use
+                            return@withContext obj.get(f).asString
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            return@use
+                        }
+                    }
+                } catch (inner: Exception) {
+                    // Continue trying other candidates on transient failures
+                    android.util.Log.w("SupabaseClient", "Error trying field '$f' for table '$table': ${inner.message}")
+                }
+            }
+
+            // No candidate produced a value
+            return@withContext null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext null
+        }
+    }
 }

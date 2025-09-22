@@ -24,7 +24,6 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.UriPermissionManager
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.viewmodel.CourseCreationViewModel
-import com.example.tareamov.data.repository.SupabaseRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -55,7 +54,6 @@ class CourseTaskFragment : Fragment() {
     private lateinit var sessionManager: SessionManager
     private var isCourseCreator: Boolean = false
     private var courseCreatorUsername: String? = null
-    private val supabaseRepo = SupabaseRepository()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -332,32 +330,6 @@ class CourseTaskFragment : Fragment() {
                         contentItemsToSave.forEach { contentItemDao.insertContentItem(it) }
                     }
                     Log.d("CourseTaskFragment", "Saved ${contentItemsToSave.size} content items for task ID: $savedTaskId")
-                }
-
-                // Best-effort: send task and content items to Supabase if configured
-                try {
-                    if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                        withContext(Dispatchers.IO) {
-                            // Send task
-                            val taskToSend = com.example.tareamov.data.entity.Task(
-                                id = savedTaskId,
-                                topicId = savedTopicId,
-                                name = taskName,
-                                description = taskDescription.ifBlank { null },
-                                orderIndex = 0
-                            )
-                            val okTask = supabaseRepo.upsert("tasks", taskToSend)
-                            if (!okTask) Log.w("CourseTaskFragment", "Failed to upsert task $savedTaskId to Supabase")
-
-                            // Send content items
-                            contentItemsToSave.forEach { ci ->
-                                val ok = supabaseRepo.upsert("content_items", ci)
-                                if (!ok) Log.w("CourseTaskFragment", "Failed to upsert content item for task $savedTaskId to Supabase")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("CourseTaskFragment", "Supabase sync failed", e)
                 }
 
                 Toast.makeText(context, "Tarea guardada exitosamente", Toast.LENGTH_SHORT).show()

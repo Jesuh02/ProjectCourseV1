@@ -230,11 +230,20 @@ class CourseDetailFragment : Fragment() {
                 courseDescriptionTextView = view.findViewById(R.id.courseDescriptionTextView)
                 editCourseButton = view.findViewById(R.id.editCourseButton)
                 // Show edit button only if current user is the creator
-                if (sessionManager.getUsername() == it.username) {
+                if (sessionManager.getUsername() == it.creatorUsername) {
                     editCourseButton.visibility = View.VISIBLE
                 } else {
                     editCourseButton.visibility = View.GONE
                 }
+            }
+        }
+
+        // If a courseName was passed via arguments, prefer it for the displayed title
+        if (courseName.isNotBlank()) {
+            try {
+                courseTitleTextView.text = courseName
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Could not set courseTitleTextView from argument: ${e.message}")
             }
         }
 
@@ -256,16 +265,59 @@ class CourseDetailFragment : Fragment() {
                 .setPositiveButton("Guardar") { _, _ ->
                     val newTitle = titleEdit.text.toString().trim()
                     val newDesc = descEdit.text.toString().trim()
-                    // Update in DB and UI
+                    // Update Course and related VideoData, then sync to Supabase
                     lifecycleScope.launch {
-                        val db = AppDatabase.getDatabase(context)
-                        val course = courseViewModel.course.value
-                        if (course != null) {
-                            val updatedCourse = course.copy(title = newTitle, description = newDesc)
-                            withContext(Dispatchers.IO) {
-                                db.videoDao().updateVideo(updatedCourse)
+                        try {
+                            val repo = com.example.tareamov.repository.CourseRepository(requireContext())
+                            val db = AppDatabase.getDatabase(requireContext())
+                            val course = courseViewModel.course.value
+                            if (course != null) {
+                                val updatedCourse = course.copy(title = newTitle, description = newDesc)
+                                withContext(Dispatchers.IO) {
+                                    // Update Course table (if available)
+                                    try {
+                                        repo.updateCourse(updatedCourse)
+                                    } catch (e: Exception) {
+                                        // Fallback: update CourseDao directly if repo failed
+                                        try {
+                                            db.courseDao()?.updateCourse(updatedCourse)
+                                        } catch (ignored: Exception) { }
+                                    }
+
+                                    // Update VideoData entry if it exists
+                                    try {
+                                        val videoDao = db.videoDao()
+                                        val video = videoDao.getVideoById(course.id)
+                                        if (video != null) {
+                                            val updatedVideo = video.copy(title = newTitle, description = newDesc)
+                                            videoDao.updateVideo(updatedVideo)
+                                        }
+                                    } catch (ignored: Exception) { }
+                                }
+
+                                // Request Supabase upsert for the updated course
+                                try {
+                                    val act = requireActivity()
+                                    if (act is com.example.tareamov.MainActivity) {
+                                        // Ensure values match Course fields and handle nullables
+                                        val courseToUpsert = updatedCourse.copy(
+                                            // Keep existing course fields; ensure price and flags are valid
+                                            price = updatedCourse.price ?: 0.0,
+                                            isPremium = updatedCourse.isPremium
+                                        )
+                                        withContext(Dispatchers.IO) {
+                                            act.syncRepository.upsertCourseToSupabase(courseToUpsert)
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w("CourseDetailFragment", "Failed to upsert updated course to Supabase: ${e.message}", e)
+                                }
+
+                                // Refresh UI
+                                courseViewModel.getCourseById(courseId)
                             }
-                            courseViewModel.getCourseById(courseId) // Refresh
+                        } catch (e: Exception) {
+                            Log.e("CourseDetailFragment", "Error updating course and videos", e)
                         }
                     }
                 }
@@ -275,9 +327,33 @@ class CourseDetailFragment : Fragment() {
         // Load course details
         courseViewModel.getCourseById(courseId)
 
-        // Set up subscribe button click listener (use centralized handler that also syncs to Supabase)
+        // Set up subscribe button click listener
         subscribeButton.setOnClickListener {
-            handleSubscription()
+            if (sessionManager.isLoggedIn()) {
+                // User is logged in, proceed with subscription
+                lifecycleScope.launch {
+                    val db = AppDatabase.getDatabase(requireContext())
+                    val username = sessionManager.getUsername() ?: return@launch
+                    val course = courseViewModel.course.value ?: return@launch
+
+                    val subscription = Subscription(
+                        subscriberUsername = username,
+                        creatorUsername = course.creatorUsername,
+                        subscriptionDate = System.currentTimeMillis()
+                    )
+ 
+                    withContext(Dispatchers.IO) {
+                        db.subscriptionDao().insertSubscription(subscription)
+                    }
+
+                    Toast.makeText(requireContext(), "Te has suscrito al curso exitosamente", Toast.LENGTH_SHORT).show()
+                    findNavController().navigateUp()
+                }
+            } else {
+                // User is not logged in, show message and navigate to login
+                Toast.makeText(requireContext(), "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
+                findNavController().navigate(R.id.loginFragment)
+            }
         }
         
         // Setup bottom navigation
@@ -370,57 +446,114 @@ class CourseDetailFragment : Fragment() {
 
         CoroutineScope(Dispatchers.Main).launch {
             try { // Start of the main try block
-                // First, get the course details to display the title
-                val course = withContext(Dispatchers.IO) {
-                    videoDao.getVideoById(courseId)
+                // Try to fetch the Course from Supabase first (via MainActivity.syncRepository)
+                var remoteCourse: com.example.tareamov.data.entity.Course? = null
+                try {
+                    val act = requireActivity()
+                    if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        remoteCourse = withContext(Dispatchers.IO) { act.syncRepository.fetchCourseById(courseId) }
+                        Log.d("CourseDetailFragment", "fetchCourseById returned: ${remoteCourse?.id}")
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseDetailFragment", "Remote fetch failed", e)
                 }
 
-                // Set the course title
-                courseTitleTextView?.text = course?.title ?: "Curso sin título"
-                courseName = course?.title ?: "Curso sin título"
+                if (remoteCourse != null) {
+                    // Populate UI from remote Course
+                    val title = remoteCourse.title ?: "Curso sin título"
+                    courseTitleTextView?.text = title
+                    courseName = title
 
-                // Get course creator username and check if current user is the creator
-                courseCreatorUsername = course?.username
-                isCurrentUserCreator = courseCreatorUsername == currentUsername
+                    // Map creator username and flags
+                    courseCreatorUsername = remoteCourse.creatorUsername
+                    isCurrentUserCreator = courseCreatorUsername == currentUsername
+                    courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
 
-                // Control visibility of the bottom action bar based on creator status
-                courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
-
-                // Load creator info if the current user is not the creator
-                if (!isCurrentUserCreator && courseCreatorUsername != null) {
-                    // Get subscription count using SubscriptionDao
-                    val subscriptionCount = withContext(Dispatchers.IO) {
-                        subscriptionDao.getSubscriptionCountForCreator(courseCreatorUsername!!)
+                    // Show payment container if course is premium and viewer is not the creator
+                    val paymentContainer = view?.findViewById<FrameLayout>(R.id.paymentButtonContainer)
+                    if (remoteCourse.isPremium == true && !isCurrentUserCreator) {
+                        paymentContainer?.visibility = View.VISIBLE
+                    } else {
+                        paymentContainer?.visibility = View.GONE
                     }
 
-                    // Check if current user is subscribed using SubscriptionDao
-                    val isSubscribed = withContext(Dispatchers.IO) {
-                        currentUsername?.let { username ->
-                            subscriptionDao.isSubscribed(username, courseCreatorUsername!!)
-                        } ?: false
+                    // Load creator info if the current user is not the creator
+                    if (!isCurrentUserCreator && !courseCreatorUsername.isNullOrEmpty()) {
+                        val subscriptionCount = withContext(Dispatchers.IO) {
+                            subscriptionDao.getSubscriptionCountForCreator(courseCreatorUsername!!)
+                        }
+                        val isSubscribed = withContext(Dispatchers.IO) {
+                            currentUsername?.let { username -> subscriptionDao.isSubscribed(username, courseCreatorUsername!!) } ?: false
+                        }
+
+                        loadCreatorInfo(
+                            creatorUsername = courseCreatorUsername!!,
+                            personaDao = personaDao,
+                            usuarioDao = usuarioDao,
+                            subscriptionCount = subscriptionCount,
+                            isSubscribed = isSubscribed
+                        )
+
+                        creatorInfoContainer.visibility = View.VISIBLE
+                        initializeAndLoadCourseProgress(
+                            courseId = courseId,
+                            username = currentUsername,
+                            isCurrentUserCreator = isCurrentUserCreator
+                        )
+                    } else {
+                        creatorInfoContainer.visibility = View.GONE
                     }
-
-                    loadCreatorInfo(
-                        creatorUsername = courseCreatorUsername!!,
-                        personaDao = personaDao,
-                        usuarioDao = usuarioDao,
-                        subscriptionCount = subscriptionCount,
-                        isSubscribed = isSubscribed
-                    )
-
-                    creatorInfoContainer.visibility = View.VISIBLE
-
-                    // Initialize and load course progress for non-creator users
-                    initializeAndLoadCourseProgress(
-                        courseId = courseId,
-                        username = currentUsername,
-                        isCurrentUserCreator = isCurrentUserCreator
-                    )
                 } else {
-                    creatorInfoContainer.visibility = View.GONE
+                    // Fallback: load local video/course info
+                    val course = withContext(Dispatchers.IO) { videoDao.getVideoById(courseId) }
+
+                    // Set the course title
+                    courseTitleTextView?.text = course?.title ?: "Curso sin título"
+                    courseName = course?.title ?: "Curso sin título"
+
+                    // Map creator username from local video record
+                    courseCreatorUsername = course?.username
+                    isCurrentUserCreator = courseCreatorUsername == currentUsername
+
+                    // Control visibility of the bottom action bar based on creator status
+                    courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+
+                    // Load creator info if the current user is not the creator
+                    if (!isCurrentUserCreator && courseCreatorUsername != null) {
+                        // Get subscription count using SubscriptionDao
+                        val subscriptionCount = withContext(Dispatchers.IO) {
+                            subscriptionDao.getSubscriptionCountForCreator(courseCreatorUsername!!)
+                        }
+
+                        // Check if current user is subscribed using SubscriptionDao
+                        val isSubscribed = withContext(Dispatchers.IO) {
+                            currentUsername?.let { username ->
+                                subscriptionDao.isSubscribed(username, courseCreatorUsername!!)
+                            } ?: false
+                        }
+
+                        loadCreatorInfo(
+                            creatorUsername = courseCreatorUsername!!,
+                            personaDao = personaDao,
+                            usuarioDao = usuarioDao,
+                            subscriptionCount = subscriptionCount,
+                            isSubscribed = isSubscribed
+                        )
+
+                        creatorInfoContainer.visibility = View.VISIBLE
+
+                        // Initialize and load course progress for non-creator users
+                        initializeAndLoadCourseProgress(
+                            courseId = courseId,
+                            username = currentUsername,
+                            isCurrentUserCreator = isCurrentUserCreator
+                        )
+                    } else {
+                        creatorInfoContainer.visibility = View.GONE
+                    }
                 }
 
-                // Get topics for this course directly
+                // Get topics for this course directly (topics are stored locally)
                 val topics = withContext(Dispatchers.IO) {
                     topicDao.getTopicsByCourse(courseId)
                 }
@@ -670,35 +803,6 @@ class CourseDetailFragment : Fragment() {
 
                     withContext(Dispatchers.IO) {
                         subscriptionDao.insertSubscription(subscription)
-                    }
-                    // Try to sync the subscription to Supabase (best-effort)
-                    try {
-                        if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                            Log.w("CourseDetailFragment", "SupabaseClient not configured; skipping remote subscription sync.")
-                        } else {
-                            val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                            val mapped = mapOf(
-                                "subscriber_username" to subscription.subscriberUsername,
-                                "creator_username" to subscription.creatorUsername,
-                                "subscription_date" to subscription.subscriptionDate
-                            )
-
-                            // Try direct upsert even if tableExists() previously returned false. Let the repository report the HTTP error body.
-                            val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("subscriptions", mapped) }
-                            if (!ok) {
-                                Log.w("CourseDetailFragment", "Supabase upsert returned false for subscription ${subscription.subscriberUsername}_${subscription.creatorUsername}")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "No se pudo sincronizar la suscripción en remoto", Toast.LENGTH_SHORT).show()
-                                }
-                            } else {
-                                Log.i("CourseDetailFragment", "Supabase upsert succeeded for subscription ${subscription.subscriberUsername}_${subscription.creatorUsername}")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "Suscripción sincronizada en Supabase", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w("CourseDetailFragment", "Failed to sync subscription to Supabase: ${e.message}")
                     }
                     isSubscribed = true
 
@@ -1242,7 +1346,7 @@ class CourseDetailFragment : Fragment() {
                     findNavController().navigate(R.id.action_courseDetailFragment_to_homeFragment)
                 }
             } else {
-                goToAdminButton.visibility = View.INVISIBLE
+                goToAdminButton.visibility = View.GONE
             }
         }
     }

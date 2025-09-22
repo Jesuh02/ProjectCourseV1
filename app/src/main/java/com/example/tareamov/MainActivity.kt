@@ -58,6 +58,7 @@ class MainActivity : AppCompatActivity() {
             subscriptionDao,
             taskSubmissionDao,
             videoDao, // <-- Pasa el videoDao aquí
+            appDb.courseDao(),
             rolDao,
             recursoDao,
             rolRecursoDao,
@@ -65,6 +66,13 @@ class MainActivity : AppCompatActivity() {
             appDb.fileContextDao()
             // firestore eliminado, ya no se usa
         )
+
+        // Initialize SyncRepository cache helpers
+        try {
+            syncRepository.initWithContext(applicationContext)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
     // Trigger an initial sync to Supabase if configured. In production, call this on connectivity changes
     // and avoid syncing large payloads on main startup. Credentials are loaded from

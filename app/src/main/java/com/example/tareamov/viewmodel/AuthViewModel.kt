@@ -51,21 +51,35 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     usuarioRepository.getUsuarioWithRoleByUsername(username)
                 }
                 
+
                 if (usuarioWithRole != null) {
                     Log.d("AuthViewModel", "User found in database: ${usuarioWithRole.usuario}")
+
+                    fun maskSecret(s: String?): String {
+                        if (s.isNullOrEmpty()) return "<empty>"
+                        if (s.length <= 2) return "*".repeat(s.length)
+                        return s.first() + "*".repeat(s.length - 2) + s.last()
+                    }
+
+                    val storedMaskLocal = maskSecret(usuarioWithRole.contrasena)
+                    Log.d("AuthViewModel", "Stored password mask (local): $storedMaskLocal")
 
                     // Verify bcrypt hashed password so user enters plain password
                     val verifyResult = try {
                         at.favre.lib.crypto.bcrypt.BCrypt.verifyer().verify(password.toCharArray(), usuarioWithRole.contrasena)
                     } catch (e: Exception) {
                         // If verify throws, fall back to plain comparison for legacy or malformed values
-                        Log.w("AuthViewModel", "BCrypt verify failed, falling back to plain comparison: ${e.message}")
+                        Log.w("AuthViewModel", "BCrypt verify failed (local), will try plain comparison: ${e.message}")
                         null
                     }
 
-                    val passwordMatches = when {
-                        verifyResult != null -> verifyResult.verified
-                        else -> usuarioWithRole.contrasena == password
+                    val passwordMatches = if (verifyResult?.verified == true) {
+                        true
+                    } else {
+                        // Even if verifyResult exists but is not verified, still allow plaintext fallback
+                        val plainMatch = usuarioWithRole.contrasena == password
+                        Log.d("AuthViewModel", "BCrypt verified: ${verifyResult?.verified}, fallback plainMatch: $plainMatch")
+                        plainMatch
                     }
 
                     Log.d("AuthViewModel", "Password match: $passwordMatches")
@@ -100,9 +114,87 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         _currentUserId.value = null
                     }
                 } else {
-                    Log.d("AuthViewModel", "User not found in database")
-                    _loginResult.value = LoginResult(success = false)
-                    _currentUserId.value = null
+                    Log.d("AuthViewModel", "User not found in local database, trying Supabase if configured")
+
+                    try {
+                        val supabaseClient = com.example.tareamov.service.SupabaseClient
+                        if (supabaseClient.isConfigured()) {
+                                val remoteUsuario = withContext(Dispatchers.IO) {
+                                    try {
+                                        supabaseClient.fetchUsuarioByUsername(username)
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                }
+
+                            if (remoteUsuario != null) {
+                                fun maskSecret(s: String?): String {
+                                    if (s.isNullOrEmpty()) return "<empty>"
+                                    if (s.length <= 2) return "*".repeat(s.length)
+                                    return s.first() + "*".repeat(s.length - 2) + s.last()
+                                }
+
+                                val storedMaskRemote = maskSecret(remoteUsuario.contrasena)
+                                Log.d("AuthViewModel", "Stored password mask (remote): $storedMaskRemote")
+
+                                val verifyResult = try {
+                                    at.favre.lib.crypto.bcrypt.BCrypt.verifyer().verify(password.toCharArray(), remoteUsuario.contrasena)
+                                } catch (e: Exception) {
+                                    Log.w("AuthViewModel", "BCrypt verify (remote) failed, will try plain comparison: ${e.message}")
+                                    null
+                                }
+
+                                val passwordMatches = if (verifyResult?.verified == true) {
+                                    true
+                                } else {
+                                    val plainMatch = remoteUsuario.contrasena == password
+                                    Log.d("AuthViewModel", "Remote BCrypt verified: ${verifyResult?.verified}, fallback plainMatch: $plainMatch")
+                                    plainMatch
+                                }
+
+                                if (passwordMatches) {
+                                    val persona = withContext(Dispatchers.IO) {
+                                        try {
+                                            supabaseClient.fetchPersonas().firstOrNull { p -> p.id == remoteUsuario.persona_id }
+                                        } catch (e: Exception) { null }
+                                    }
+                                    val avatarUri = persona?.avatar
+                                    val roleName = withContext(Dispatchers.IO) {
+                                        try {
+                                            supabaseClient.fetchRoles().firstOrNull { r -> r.id == remoteUsuario.rol_id }?.nombre ?: ""
+                                        } catch (e: Exception) { "" }
+                                    }
+
+                                    sessionManager.createLoginSession(
+                                        remoteUsuario.usuario,
+                                        remoteUsuario.id,
+                                        remoteUsuario.persona_id,
+                                        roleName,
+                                        avatarUri
+                                    )
+
+                                    _loginResult.value = LoginResult(success = true, userId = remoteUsuario.id, userRole = roleName)
+                                    _currentUserId.value = remoteUsuario.id
+                                } else {
+                                    Log.d("AuthViewModel", "Remote password match failed")
+                                    _loginResult.value = LoginResult(success = false)
+                                    _currentUserId.value = null
+                                }
+                            } else {
+                                Log.d("AuthViewModel", "User not found on Supabase")
+                                _loginResult.value = LoginResult(success = false)
+                                _currentUserId.value = null
+                            }
+                        } else {
+                            Log.d("AuthViewModel", "Supabase not configured")
+                            _loginResult.value = LoginResult(success = false)
+                            _currentUserId.value = null
+                        }
+                    } catch (e: Exception) {
+                        Log.e("AuthViewModel", "Error while trying Supabase auth: ${e.message}", e)
+                        _loginResult.value = LoginResult(success = false)
+                        _currentUserId.value = null
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("AuthViewModel", "Login error: ${e.message}", e)

@@ -83,7 +83,50 @@ class LoginFragment : Fragment() {
     
         // Set up click listener for the register button
         registerButton.setOnClickListener {
-            findNavController().navigate(R.id.registerFragment)
+            // Before navigating to register, check Supabase for existing username if configured.
+            // We'll prompt the user for the desired username via the usernameEditText field.
+            val desiredUsername = usernameEditText.text.toString().trim()
+            if (desiredUsername.isEmpty()) {
+                Toast.makeText(requireContext(), "Por favor ingrese el usuario que desea registrar en el campo usuario antes de continuar", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            lifecycleScope.launch {
+                var existsOnSupabase = false
+                try {
+                    val db = AppDatabase.getDatabase(requireContext())
+                    val syncRepo = com.example.tareamov.data.sync.SyncRepository(
+                        db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
+                        db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
+                        db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
+                    )
+
+                    existsOnSupabase = withContext(Dispatchers.IO) {
+                        try {
+                            syncRepo.isUsuarioExistsInSupabase(desiredUsername)
+                        } catch (e: Exception) {
+                            false
+                        }
+                    }
+                } catch (e: Exception) {
+                    existsOnSupabase = false
+                }
+
+                if (existsOnSupabase) {
+                    Toast.makeText(requireContext(), "El usuario ya existe en Supabase. Por favor elija otro usuario.", Toast.LENGTH_SHORT).show()
+                } else {
+                    // Double-check local DB just in case
+                    val db = AppDatabase.getDatabase(requireContext())
+                    val localExists = withContext(Dispatchers.IO) {
+                        db.usuarioDao().getUsuarioByUsername(desiredUsername) != null
+                    }
+                    if (localExists) {
+                        Toast.makeText(requireContext(), "El usuario ya existe localmente. Por favor elija otro usuario.", Toast.LENGTH_SHORT).show()
+                    } else {
+                        findNavController().navigate(R.id.registerFragment)
+                    }
+                }
+            }
         }
 
         // Observe login result
@@ -116,21 +159,80 @@ class LoginFragment : Fragment() {
                 return@setOnClickListener
             }
 
-            // First check if the user exists in local DB before attempting login
+            // First try to check Supabase for the user; fallback to local DB if not configured or not found
             lifecycleScope.launch {
-                val usuarioWithRole = withContext(Dispatchers.IO) {
-                    try {
-                        authViewModel.getUsuarioWithRoleByUsername(username)
-                    } catch (e: Exception) {
-                        null
+                var foundOnSupabase = false
+
+                fun maskSecret(s: String?): String {
+                    if (s == null) return "null"
+                    val len = s.length
+                    return when {
+                        len <= 2 -> "*".repeat(len)
+                        else -> s.first() + "*".repeat(len - 2) + s.last()
                     }
                 }
 
-                if (usuarioWithRole == null) {
-                    Toast.makeText(requireContext(), "Usuario no encontrado", Toast.LENGTH_SHORT).show()
-                } else {
-                    // Proceed to login (AuthViewModel will verify password/hash)
+                android.util.Log.d("LoginFragment", "Login attempt for user=$username password_mask=${maskSecret(password)}")
+
+                try {
+                    val supabaseClient = com.example.tareamov.service.SupabaseClient
+                    if (supabaseClient.isConfigured()) {
+                        val remoteUser = withContext(Dispatchers.IO) {
+                            try {
+                                supabaseClient.fetchUsuarioByUsername(username)
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                        android.util.Log.d("LoginFragment", "Login attempt for user=$username password_mask=${maskSecret(password)}")
+                    }
+                        // Check Supabase existence and log
+                        try {
+                            val db = AppDatabase.getDatabase(requireContext())
+                            val syncRepo = com.example.tareamov.data.sync.SyncRepository(
+                                db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
+                                db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
+                                db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
+                            )
+
+                            foundOnSupabase = withContext(Dispatchers.IO) {
+                                try {
+                                    val exists = syncRepo.isUsuarioExistsInSupabase(username)
+                                    android.util.Log.d("LoginFragment", "Supabase existence check for user=$username -> $exists")
+                                    exists
+                                } catch (e: Exception) {
+                                    android.util.Log.w("LoginFragment", "Supabase existence check failed: ${e.message}")
+                                    false
+                                }
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.w("LoginFragment", "Error preparing SyncRepository: ${e.message}")
+                            foundOnSupabase = false
+                        }
+                } catch (e: Exception) {
+                    foundOnSupabase = false
+                }
+
+                if (foundOnSupabase) {
+                    // Proceed to login; AuthViewModel should handle remote/local credential verification.
                     authViewModel.login(username, password)
+                } else {
+                    // Fallback to local DB check
+                    val usuarioWithRole = withContext(Dispatchers.IO) {
+                        try {
+                            authViewModel.getUsuarioWithRoleByUsername(username)
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+
+                    if (usuarioWithRole == null) {
+                        android.util.Log.d("LoginFragment", "Local user not found for username=$username")
+                        Toast.makeText(requireContext(), "Usuario no encontrado", Toast.LENGTH_SHORT).show()
+                    } else {
+                        // Proceed to login (AuthViewModel will verify password/hash)
+                        authViewModel.login(username, password)
+                    }
                 }
             }
         }
