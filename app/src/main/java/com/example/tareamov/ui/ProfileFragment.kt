@@ -286,6 +286,7 @@ class ProfileFragment : Fragment() {
     }
 
     private fun setupAdminButton(bottomNavBinding: ComponentBottomNavigationBinding) {
+<<<<<<< HEAD
         android.util.Log.d("ProfileFragment", "setupAdminButton called, button found: ${bottomNavBinding.goToAdminButton != null}")
         
         // Initially hide the admin button
@@ -303,44 +304,27 @@ class ProfileFragment : Fragment() {
             } else {
                 bottomNavBinding.goToAdminButton.visibility = View.GONE
             }
+=======
+        // Mostrar el botón de admin solo si el usuario es admin
+        val adminSlot = bottomNavBinding.adminSlot
+        val goToAdminButton = bottomNavBinding.goToAdminButton
+
+        // Inicializa como INVISIBLE para evitar salto al inflar
+        goToAdminButton.visibility = View.INVISIBLE
+
+        val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        if (!sess.isAdmin()) {
+            adminSlot.visibility = View.GONE
+            return
+        }
+
+        // Usuario es admin según SessionManager: mostrar el botón y asignar listener
+        goToAdminButton.visibility = View.VISIBLE
+        goToAdminButton.setOnClickListener {
+            findNavController().navigate(R.id.action_profileFragment_to_homeFragment)
+>>>>>>> e12f921d7427e3e2b6d8294ba89af4b1ea3a4bc0
         }
     }
-
-    private fun checkAdminStatus(callback: (Boolean) -> Unit) {
-        lifecycleScope.launch {
-            try {
-                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-                val username = sessionManager.getUsername()
-                android.util.Log.d("ProfileFragment", "Checking admin status for user: $username")
-                
-                if (username != null) {
-                    val db = AppDatabase.getDatabase(requireContext())
-                    val usuarioWithRole = withContext(Dispatchers.IO) {
-                        db.usuarioDao().getUsuarioWithRoleByUsername(username)
-                    }
-                    
-                    val isAdmin = usuarioWithRole?.isAdmin == true
-                    android.util.Log.d("ProfileFragment", "User $username is admin: $isAdmin (role: ${usuarioWithRole?.rolNombre})")
-                    
-                    // Ensure UI updates happen on main thread
-                    withContext(Dispatchers.Main) {
-                        callback(isAdmin)
-                    }
-                } else {
-                    android.util.Log.d("ProfileFragment", "No username found in session")
-                    withContext(Dispatchers.Main) {
-                        callback(false)
-                    }
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("ProfileFragment", "Error checking admin status", e)
-                withContext(Dispatchers.Main) {
-                    callback(false)
-                }
-            }
-        }
-    }
-
     // Add this method to ProfileFragment class
     override fun onResume() {
         super.onResume()

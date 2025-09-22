@@ -145,22 +145,30 @@ class VideoHomeFragment : Fragment() {
         // Set up database orbit button click to navigate to DatabaseQueryFragment
         val databaseOrbitButton = view.findViewById<ImageView>(R.id.databaseOrbitButton)
 
-        // Check if the current user is admin to show/hide the database orbit button
-        checkAdminStatus { isAdmin ->
-            if (isAdmin) {
+        // Decide visibility synchronously to avoid leaving a gap for non-admin users.
+        // Default to GONE so the initial layout does not reserve space for the button.
+        databaseOrbitButton?.visibility = View.GONE
+
+        // Use the sessionManager initialized above to check admin synchronously
+        try {
+            if (sessionManager.isAdmin()) {
                 databaseOrbitButton?.visibility = View.VISIBLE
                 databaseOrbitButton?.setOnClickListener {
                     findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
                 }
 
-                // Start the animated vector drawable for the orbit icon
+                // Start the animated vector drawable for the orbit icon if present
                 val drawable = databaseOrbitButton?.drawable
                 if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
                     drawable.start()
                 }
             } else {
-                databaseOrbitButton?.visibility = View.GONE
+                databaseOrbitButton?.visibility = View.INVISIBLE
             }
+        } catch (e: Exception) {
+            // If anything goes wrong, ensure the button does not leave a gap
+            databaseOrbitButton?.visibility = View.GONE
+            Log.e("VideoHomeFragment", "Error checking admin for databaseOrbitButton: ${e.message}", e)
         }
 
         // Also set up the profile avatars in the top bar to navigate to profile
@@ -190,8 +198,14 @@ class VideoHomeFragment : Fragment() {
         val activityButton = view.findViewById<LinearLayout>(R.id.activityButton)
         activityButton?.setOnClickListener {
             findNavController().navigate(R.id.action_videoHomeFragment_to_notificacionesFragment)
-        }        // Mostrar el botón de admin solo si el usuario es admin
+        }
+
+        // Mostrar/ocultar slot admin según rol (evita hueco para no-admins)
+        val adminSlot = view.findViewById<android.widget.FrameLayout>(R.id.adminSlot)
         val goToAdminButton = view.findViewById<LinearLayout>(R.id.goToAdminButton)
+
+        // Initially hide the admin button to avoid reflow during async check
+        goToAdminButton?.visibility = View.INVISIBLE
 
         // Check if the current user is admin
         checkAdminStatus { isAdmin ->
@@ -202,7 +216,7 @@ class VideoHomeFragment : Fragment() {
                     findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
                 }
             } else {
-                goToAdminButton?.visibility = View.GONE
+                goToAdminButton?.visibility = View.INVISIBLE
             }
         }        // Load the current user's avatar
         loadCurrentUserAvatar()
