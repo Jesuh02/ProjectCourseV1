@@ -424,6 +424,37 @@ class SyncRepository(
         }
     }
 
+    // Subscriptions helpers
+    suspend fun insertSubscriptionRemote(sub: Subscription): Boolean {
+        return try {
+            if (!supabaseClient.isConfigured()) return false
+            withContext(Dispatchers.IO) { supabaseClient.insertSubscriptionToSupabase(sub) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "insertSubscriptionRemote failed", e)
+            false
+        }
+    }
+
+    suspend fun deleteSubscriptionRemote(subscriber: String, creator: String): Boolean {
+        return try {
+            if (!supabaseClient.isConfigured()) return false
+            withContext(Dispatchers.IO) { supabaseClient.deleteSubscriptionFromSupabase(subscriber, creator) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "deleteSubscriptionRemote failed", e)
+            false
+        }
+    }
+
+    suspend fun isSubscribedRemote(subscriber: String, creator: String): Boolean {
+        return try {
+            if (!supabaseClient.isConfigured()) return false
+            withContext(Dispatchers.IO) { supabaseClient.isSubscribedRemote(subscriber, creator) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "isSubscribedRemote failed", e)
+            false
+        }
+    }
+
 
     // Sincroniza cambios de la base local a Firebase
     // This method now syncs only items marked as "pending" and updates their status on success.

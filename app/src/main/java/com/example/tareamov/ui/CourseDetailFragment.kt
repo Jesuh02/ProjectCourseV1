@@ -80,6 +80,23 @@ class CourseDetailFragment : Fragment() {
     private lateinit var courseTitleTextView: TextView
     private lateinit var courseDescriptionTextView: TextView
     private lateinit var editCourseButton: ImageButton
+    // Repository for remote checks
+    private val syncRepository by lazy { com.example.tareamov.data.sync.SyncRepository(
+        AppDatabase.getDatabase(requireContext()).usuarioDao(),
+        AppDatabase.getDatabase(requireContext()).personaDao(),
+        AppDatabase.getDatabase(requireContext()).topicDao(),
+        AppDatabase.getDatabase(requireContext()).contentItemDao(),
+        AppDatabase.getDatabase(requireContext()).taskDao(),
+        AppDatabase.getDatabase(requireContext()).subscriptionDao(),
+        AppDatabase.getDatabase(requireContext()).taskSubmissionDao(),
+        AppDatabase.getDatabase(requireContext()).videoDao(),
+        AppDatabase.getDatabase(requireContext()).courseDao(),
+        AppDatabase.getDatabase(requireContext()).rolDao(),
+        AppDatabase.getDatabase(requireContext()).recursoDao(),
+        AppDatabase.getDatabase(requireContext()).rolRecursoDao(),
+        AppDatabase.getDatabase(requireContext()).chatMessageDao(),
+        AppDatabase.getDatabase(requireContext()).fileContextDao()
+    ) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -217,6 +234,10 @@ class CourseDetailFragment : Fragment() {
         courseDescriptionTextView = view.findViewById(R.id.courseDescriptionTextView)
         editCourseButton = view.findViewById(R.id.editCourseButton)
 
+    // Initially hide edit controls until we verify creator ownership remotely
+    editCourseButton.visibility = View.GONE
+    courseTitleTextView.isClickable = false
+
         val courseTitle = view.findViewById<TextView>(R.id.courseTitleTextView)
         val courseDescription = view.findViewById<TextView>(R.id.courseDescriptionTextView)
         val subscribeButton = view.findViewById<Button>(R.id.subscribeButton)
@@ -229,11 +250,32 @@ class CourseDetailFragment : Fragment() {
                 courseTitleTextView = view.findViewById(R.id.courseTitleTextView)
                 courseDescriptionTextView = view.findViewById(R.id.courseDescriptionTextView)
                 editCourseButton = view.findViewById(R.id.editCourseButton)
-                // Show edit button only if current user is the creator
-                if (sessionManager.getUsername() == it.creatorUsername) {
-                    editCourseButton.visibility = View.VISIBLE
-                } else {
-                    editCourseButton.visibility = View.GONE
+                // Decide edit button visibility using Supabase when possible
+                val localUsername = sessionManager.getUsername()
+                editCourseButton.visibility = View.GONE
+                if (localUsername != null) {
+                    lifecycleScope.launch {
+                        var showEdit = false
+                        try {
+                            val act = requireActivity()
+                            if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                val remoteCourse = withContext(Dispatchers.IO) { act.syncRepository.fetchCourseById(courseId) }
+                                if (remoteCourse != null) {
+                                    showEdit = (remoteCourse.creatorUsername ?: "") == localUsername
+                                } else {
+                                    // fallback to local course data if remote missing
+                                    showEdit = (localUsername == it.creatorUsername)
+                                }
+                            } else {
+                                // Supabase not configured, fallback to local check
+                                showEdit = (localUsername == it.creatorUsername)
+                            }
+                        } catch (e: Exception) {
+                            Log.w("CourseDetailFragment", "Error checking remote creator", e)
+                            showEdit = (localUsername == it.creatorUsername)
+                        }
+                        editCourseButton.visibility = if (showEdit) View.VISIBLE else View.GONE
+                    }
                 }
             }
         }
@@ -329,30 +371,119 @@ class CourseDetailFragment : Fragment() {
 
         // Set up subscribe button click listener
         subscribeButton.setOnClickListener {
-            if (sessionManager.isLoggedIn()) {
-                // User is logged in, proceed with subscription
-                lifecycleScope.launch {
-                    val db = AppDatabase.getDatabase(requireContext())
-                    val username = sessionManager.getUsername() ?: return@launch
-                    val course = courseViewModel.course.value ?: return@launch
+        lifecycleScope.launch {
+            try {
+                val remoteCourse = syncRepository.fetchCourseById(courseId)
+                val remoteCreator = remoteCourse?.creatorUsername?.trim()
+                val currentUser = sessionManager.getUsername()?.trim()
+                val isOwner = !remoteCreator.isNullOrBlank() && !currentUser.isNullOrBlank() && remoteCreator.equals(currentUser, ignoreCase = true)
 
-                    val subscription = Subscription(
-                        subscriberUsername = username,
-                        creatorUsername = course.creatorUsername,
-                        subscriptionDate = System.currentTimeMillis()
-                    )
- 
-                    withContext(Dispatchers.IO) {
-                        db.subscriptionDao().insertSubscription(subscription)
+                withContext(Dispatchers.Main) {
+                    if (isOwner) {
+                        editCourseButton.visibility = View.VISIBLE
+                        courseTitleTextView.isClickable = true
+                    } else {
+                        editCourseButton.visibility = View.GONE
+                        courseTitleTextView.isClickable = false
                     }
-
-                    Toast.makeText(requireContext(), "Te has suscrito al curso exitosamente", Toast.LENGTH_SHORT).show()
-                    findNavController().navigateUp()
                 }
-            } else {
-                // User is not logged in, show message and navigate to login
+            } catch (e: Exception) {
+                // On error, fall back to local check: show edit only if session username equals local course creator
+                try {
+                    val localCourse = AppDatabase.getDatabase(requireContext()).courseDao().getCourseById(courseId)
+                    val localCreator = localCourse?.creatorUsername?.trim()
+                    val currentUser = sessionManager.getUsername()?.trim()
+                    val isOwnerLocal = !localCreator.isNullOrBlank() && !currentUser.isNullOrBlank() && localCreator.equals(currentUser, ignoreCase = true)
+                    withContext(Dispatchers.Main) {
+                        if (isOwnerLocal) {
+                            editCourseButton.visibility = View.VISIBLE
+                            courseTitleTextView.isClickable = true
+                        } else {
+                            editCourseButton.visibility = View.GONE
+                            courseTitleTextView.isClickable = false
+                        }
+                    }
+                } catch (ex: Exception) {
+                    // If even local check fails, keep edit hidden
+                    withContext(Dispatchers.Main) {
+                        editCourseButton.visibility = View.GONE
+                        courseTitleTextView.isClickable = false
+                    }
+                }
+            }
+        }
+            if (!sessionManager.isLoggedIn()) {
                 Toast.makeText(requireContext(), "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
                 findNavController().navigate(R.id.loginFragment)
+                return@setOnClickListener
+            }
+
+            lifecycleScope.launch {
+                val username = sessionManager.getUsername() ?: return@launch
+                val creator = courseCreatorUsername ?: return@launch
+
+                // Check remote subscription state first
+                var remoteSubscribed = false
+                try {
+                    val act = requireActivity()
+                    if (act is MainActivity) {
+                        remoteSubscribed = withContext(Dispatchers.IO) { act.syncRepository.isSubscribedRemote(username, creator) }
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseDetailFragment", "Remote isSubscribed check failed", e)
+                }
+
+                if (!remoteSubscribed) {
+                    // Subscribe remotely
+                    val sub = Subscription(subscriberUsername = username, creatorUsername = creator, subscriptionDate = System.currentTimeMillis())
+                    var ok = false
+                    try {
+                        val act = requireActivity()
+                        if (act is MainActivity) {
+                            ok = withContext(Dispatchers.IO) { act.syncRepository.insertSubscriptionRemote(sub) }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "Remote subscribe failed", e)
+                    }
+
+                    if (ok) {
+                        // Persist locally as well
+                        withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().insertSubscription(sub) }
+                        isSubscribed = true
+                        // Increase UI count by 1
+                        val currentCount = try { Integer.parseInt(subscriberCountTextView.text.toString().filter { it.isDigit() }) } catch (t: Exception) { -1 }
+                        // We will re-fetch accurate count below; update UI state
+                        updateSubscribeButtonState(true)
+                        Toast.makeText(requireContext(), "Te has suscrito al curso exitosamente", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(requireContext(), "No se pudo suscribir (error de red)", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    // Already subscribed remotely -> unsubscribe
+                    var ok = false
+                    try {
+                        val act = requireActivity()
+                        if (act is MainActivity) {
+                            ok = withContext(Dispatchers.IO) { act.syncRepository.deleteSubscriptionRemote(username, creator) }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "Remote unsubscribe failed", e)
+                    }
+
+                    if (ok) {
+                        // Remove local record
+                        withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().deleteSubscription(username, creator) }
+                        isSubscribed = false
+                        updateSubscribeButtonState(false)
+                        Toast.makeText(requireContext(), "Se ha desuscrito del curso", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(requireContext(), "No se pudo desuscribir (error de red)", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                // Refresh subscriber count from local DAO (or optionally from Supabase)
+                val newCount = withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().getSubscriptionCountForCreator(creator) }
+                subscriberCountTextView.text = formatSubscriberCount(newCount)
             }
         }
         
@@ -479,12 +610,32 @@ class CourseDetailFragment : Fragment() {
 
                     // Load creator info if the current user is not the creator
                     if (!isCurrentUserCreator && !courseCreatorUsername.isNullOrEmpty()) {
-                        val subscriptionCount = withContext(Dispatchers.IO) {
+                        // Prefer remote subscription state when available
+                        var subscriptionCount = withContext(Dispatchers.IO) {
                             subscriptionDao.getSubscriptionCountForCreator(courseCreatorUsername!!)
                         }
-                        val isSubscribed = withContext(Dispatchers.IO) {
+                        var isSubscribedLocal = withContext(Dispatchers.IO) {
                             currentUsername?.let { username -> subscriptionDao.isSubscribed(username, courseCreatorUsername!!) } ?: false
                         }
+                        var isSubscribedRemote = false
+                        try {
+                            val act = requireActivity()
+                            if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured() && currentUsername != null) {
+                                isSubscribedRemote = withContext(Dispatchers.IO) { act.syncRepository.isSubscribedRemote(currentUsername!!, courseCreatorUsername!!) }
+                                // If remote is true but local count doesn't include this subscriber, adjust
+                                if (isSubscribedRemote && !isSubscribedLocal) {
+                                    // persist locally
+                                    withContext(Dispatchers.IO) {
+                                        subscriptionDao.insertSubscription(Subscription(subscriberUsername = currentUsername!!, creatorUsername = courseCreatorUsername!!, subscriptionDate = System.currentTimeMillis()))
+                                    }
+                                    isSubscribedLocal = true
+                                    subscriptionCount += 1
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("CourseDetailFragment", "Remote subscription check failed", e)
+                        }
+                        val isSubscribed = isSubscribedLocal
 
                         loadCreatorInfo(
                             creatorUsername = courseCreatorUsername!!,
@@ -656,24 +807,67 @@ class CourseDetailFragment : Fragment() {
         isSubscribed: Boolean
     ) {
         try {
-            // Get the creator's user information
+            // Prefer Supabase: try to fetch usuario and persona via SyncRepository/SupabaseClient
+            var personaFromRemote: Persona? = null
+            var usuarioFromRemote: com.example.tareamov.data.dao.UsuarioWithRole? = null
+
+            try {
+                val act = requireActivity()
+                if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    usuarioFromRemote = withContext(Dispatchers.IO) { act.syncRepository.fetchUsuarioWithRoleFromSupabase(creatorUsername) }
+                    if (usuarioFromRemote != null) {
+                        val personas = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.fetchPersonas() }
+                        personaFromRemote = personas.firstOrNull { p -> p.id == usuarioFromRemote.persona_id }
+                        Log.d("CourseDetailFragment", "Remote usuario found for $creatorUsername persona_id=${usuarioFromRemote.persona_id}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Supabase remote creator fetch failed", e)
+            }
+
+            if (personaFromRemote != null || usuarioFromRemote != null) {
+                // Build UI using remote data (persona preferred for avatar)
+                withContext(Dispatchers.Main) {
+                    creatorUsernameTextView.text = creatorUsername
+
+                    if (personaFromRemote?.avatar.isNullOrEmpty()) {
+                        creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                    } else {
+                        try {
+                            Glide.with(requireContext())
+                                .load(Uri.parse(personaFromRemote!!.avatar))
+                                .placeholder(R.drawable.default_avatar)
+                                .error(R.drawable.default_avatar)
+                                .into(creatorAvatarImageView)
+                        } catch (e: Exception) {
+                            Log.e("CourseDetailFragment", "Error loading remote avatar", e)
+                            creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                        }
+                    }
+
+                    subscriberCountTextView.text = formatSubscriberCount(subscriptionCount)
+                    this@CourseDetailFragment.isSubscribed = isSubscribed
+                    updateSubscribeButtonState(isSubscribed)
+
+                    subscribeButton.visibility = if (currentUsername == creatorUsername) View.GONE else View.VISIBLE
+                    creatorInfoContainer.visibility = View.VISIBLE
+                }
+                return
+            }
+
+            // Fallback to local DAOs if remote lookup failed
             val usuario = withContext(Dispatchers.IO) {
                 usuarioDao.getUsuarioByUsername(creatorUsername)
             }
 
             if (usuario != null) {
-                // Get the creator's persona information
                 val persona = withContext(Dispatchers.IO) {
                     personaDao.getPersonaById(usuario.personaId)
                 }
 
-                // Update UI with creator info
                 if (persona != null) {
                     withContext(Dispatchers.Main) {
-                        // Set creator username
                         creatorUsernameTextView.text = creatorUsername
-
-                        // Load avatar image
                         if (!persona.avatar.isNullOrEmpty()) {
                             try {
                                 Glide.with(requireContext())
@@ -689,34 +883,20 @@ class CourseDetailFragment : Fragment() {
                             creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
                         }
 
-                        // Set subscriber count
                         subscriberCountTextView.text = formatSubscriberCount(subscriptionCount)
-
-                        // Update subscribe button state based on current subscription status
                         this@CourseDetailFragment.isSubscribed = isSubscribed
                         updateSubscribeButtonState(isSubscribed)
-                        
-                        // Show/hide subscribe button based on whether user is viewing their own course
-                        if (currentUsername == creatorUsername) {
-                            subscribeButton.visibility = View.GONE
-                        } else {
-                            subscribeButton.visibility = View.VISIBLE
-                        }
 
-                        // Show creator info container
+                        subscribeButton.visibility = if (currentUsername == creatorUsername) View.GONE else View.VISIBLE
                         creatorInfoContainer.visibility = View.VISIBLE
                     }
                 } else {
                     Log.e("CourseDetailFragment", "Persona not found for user: $creatorUsername")
-                    withContext(Dispatchers.Main) {
-                        creatorInfoContainer.visibility = View.GONE
-                    }
+                    withContext(Dispatchers.Main) { creatorInfoContainer.visibility = View.GONE }
                 }
             } else {
-                Log.e("CourseDetailFragment", "Usuario not found: $creatorUsername")
-                withContext(Dispatchers.Main) {
-                    creatorInfoContainer.visibility = View.GONE
-                }
+                Log.e("CourseDetailFragment", "Usuario not found locally: $creatorUsername")
+                withContext(Dispatchers.Main) { creatorInfoContainer.visibility = View.GONE }
             }
         } catch (e: Exception) {
             Log.e("CourseDetailFragment", "Error loading creator info", e)

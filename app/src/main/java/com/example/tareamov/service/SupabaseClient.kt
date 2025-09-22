@@ -8,6 +8,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.FieldNamingPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -765,6 +766,80 @@ object SupabaseClient {
     suspend fun fetchContentItems(): List<ContentItem> = fetchList("content_items", Array<ContentItem>::class.java)
     suspend fun fetchTasks(): List<Task> = fetchList("tasks", Array<Task>::class.java)
     suspend fun fetchSubscriptions(): List<Subscription> = fetchList("subscriptions", Array<Subscription>::class.java)
+
+    // Insert a subscription record into Supabase
+    suspend fun insertSubscriptionToSupabase(sub: Subscription): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val map = mapOf(
+                "subscriber_username" to sub.subscriberUsername,
+                "creator_username" to sub.creatorUsername,
+                "subscription_date" to sub.subscriptionDate
+            )
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/subscriptions"
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("apiKey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Content-Type", "application/json")
+                .post(body)
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val success = resp.isSuccessful
+                android.util.Log.d("SupabaseClient", "insertSubscriptionToSupabase status=${resp.code} success=$success")
+                return@withContext success
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "insertSubscriptionToSupabase failed", e)
+            return@withContext false
+        }
+    }
+
+    // Delete a subscription (unsubscribe) from Supabase
+    suspend fun deleteSubscriptionFromSupabase(subscriber: String, creator: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/subscriptions?subscriber_username=eq.'${subscriber.replace("'", "''")}'&creator_username=eq.'${creator.replace("'", "''")}'"
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("apiKey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .delete()
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val success = resp.isSuccessful
+                android.util.Log.d("SupabaseClient", "deleteSubscriptionFromSupabase status=${resp.code} success=$success")
+                return@withContext success
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "deleteSubscriptionFromSupabase failed", e)
+            return@withContext false
+        }
+    }
+
+    // Check if a user is subscribed to a creator via Supabase
+    suspend fun isSubscribedRemote(subscriber: String, creator: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/subscriptions?subscriber_username=eq.'${subscriber.replace("'", "''")}'&creator_username=eq.'${creator.replace("'", "''")}'&select=subscriber_username"
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("apiKey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext false
+                val body = resp.body?.string() ?: return@withContext false
+                val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
+                return@withContext arr.size() > 0
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "isSubscribedRemote failed", e)
+            return@withContext false
+        }
+    }
     suspend fun fetchTaskSubmissions(): List<TaskSubmission> = fetchList("task_submissions", Array<TaskSubmission>::class.java)
     suspend fun fetchChatMessages(): List<ChatMessage> = fetchList("chat_messages", Array<ChatMessage>::class.java)
     suspend fun fetchFileContexts(): List<FileContext> = fetchList("file_contexts", Array<FileContext>::class.java)
