@@ -81,6 +81,40 @@ class SyncRepository(
     private val supabaseRepo = SupabaseRepository()
     private val supabaseClient = com.example.tareamov.service.SupabaseClient
 
+    // Fetch usuario plus role info from Supabase for a given username
+    suspend fun fetchUsuarioWithRoleFromSupabase(username: String): com.example.tareamov.data.dao.UsuarioWithRole? {
+        return try {
+            if (!supabaseClient.isConfigured()) return null
+            val (u, r) = withContext(Dispatchers.IO) { supabaseClient.fetchUsuarioWithRoleByUsername(username) }
+            if (u == null) return null
+            val rolNombre = r?.nombre ?: ""
+            val rolNivel = r?.nivel ?: 0.0f
+            com.example.tareamov.data.dao.UsuarioWithRole(
+                id = u.id,
+                usuario = u.usuario,
+                contrasena = u.contrasena,
+                persona_id = u.persona_id,
+                rol_id = u.rol_id,
+                rolNombre = rolNombre,
+                rolNivel = rolNivel
+            )
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchUsuarioWithRoleFromSupabase failed for $username", e)
+            null
+        }
+    }
+
+    // Wrapper to fetch role by id from Supabase
+    suspend fun fetchRolByIdFromSupabase(id: Long): com.example.tareamov.data.entity.Rol? {
+        return try {
+            if (!supabaseClient.isConfigured()) return null
+            withContext(Dispatchers.IO) { supabaseClient.fetchRolById(id) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchRolByIdFromSupabase failed for id=$id", e)
+            null
+        }
+    }
+
     // Utility: check if a username exists in Supabase (case-insensitive)
     suspend fun isUsuarioExistsInSupabase(username: String): Boolean {
         try {

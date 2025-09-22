@@ -72,6 +72,16 @@ class VideoHomeFragment : Fragment() {
         videoManager = VideoManager(requireContext())
         sessionManager = SessionManager.getInstance(requireContext()) // Initialize SessionManager
 
+        // Refresh session info from Supabase in background so role checks are current
+        lifecycleScope.launch {
+            try {
+                val refreshed = sessionManager.refreshFromSupabase()
+                android.util.Log.d("VideoHomeFragment", "Session refreshFromSupabase returned: $refreshed")
+            } catch (e: Exception) {
+                android.util.Log.w("VideoHomeFragment", "Failed to refresh session from Supabase", e)
+            }
+        }
+
         // Obtener parámetros de navegación para video específico
         val videoId = arguments?.getLong("videoId", -1L) ?: -1L
         val videoTitle = arguments?.getString("videoTitle")

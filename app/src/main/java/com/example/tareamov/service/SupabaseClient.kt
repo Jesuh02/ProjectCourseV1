@@ -797,6 +797,33 @@ object SupabaseClient {
     suspend fun fetchRecursos(): List<Recurso> = fetchList("recursos", Array<Recurso>::class.java)
     suspend fun fetchRolRecursos(): List<RolRecurso> = fetchList("rol_recursos", Array<RolRecurso>::class.java)
 
+    // Fetch a single role by id
+    suspend fun fetchRolById(id: Long): Rol? = withContext(Dispatchers.IO) {
+        try {
+            val path = "roles?id=eq.$id"
+            val list = fetchList(path, Array<Rol>::class.java)
+            return@withContext list.firstOrNull()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext null
+        }
+    }
+
+    // Fetch a Usuario by username and include its role via separate request (safe for PostgREST)
+    suspend fun fetchUsuarioWithRoleByUsername(username: String): Pair<Usuario?, Rol?> = withContext(Dispatchers.IO) {
+        try {
+            val u = fetchUsuarioByUsername(username)
+            if (u == null) return@withContext Pair(null, null)
+            val role = if (u.rol_id != null && u.rol_id > 0) {
+                fetchRolById(u.rol_id)
+            } else null
+            return@withContext Pair(u, role)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext Pair(null, null)
+        }
+    }
+
     // Lightweight helper to fetch the most recent timestamp value for a table.
     // This can be used to detect remote changes without downloading entire tables.
     suspend fun fetchTableMaxUpdatedAt(table: String, field: String = "updated_at"): String? = withContext(Dispatchers.IO) {

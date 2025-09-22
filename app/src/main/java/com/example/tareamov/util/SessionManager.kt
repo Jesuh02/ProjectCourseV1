@@ -123,6 +123,39 @@ class SessionManager private constructor(private val context: Context) {
     }
 
     /**
+     * Refresh the stored session info from Supabase for the current username.
+     * This will fetch the usuario and its role and update SharedPreferences.
+     * Returns true if refresh succeeded and data was updated.
+     */
+    suspend fun refreshFromSupabase(): Boolean {
+        val current = getUsername() ?: return false
+        try {
+            // Call SupabaseClient directly to avoid circular dependency on SyncRepository
+            val (u, r) = com.example.tareamov.service.SupabaseClient.fetchUsuarioWithRoleByUsername(current)
+            if (u == null) return false
+
+            val roleName = r?.nombre ?: getUserRole() ?: ""
+            val avatar = try { // fetch persona avatar if possible
+                val persona = if (u.persona_id > 0) com.example.tareamov.service.SupabaseClient.fetchPersonas().firstOrNull { p -> p.id == u.persona_id } else null
+                persona?.avatar
+            } catch (_: Exception) { null }
+
+            editor.putString(KEY_USERNAME, u.usuario)
+            editor.putLong(KEY_USER_ID, u.id)
+            editor.putLong(KEY_PERSONA_ID, u.persona_id)
+            editor.putString(KEY_USER_ROLE, roleName)
+            if (avatar != null) editor.putString(KEY_USER_AVATAR, avatar)
+            editor.apply()
+
+            notifyUserChanged(getLastActiveUser(), u.usuario)
+            return true
+        } catch (e: Exception) {
+            android.util.Log.w("SessionManager", "refreshFromSupabase failed for user=$current", e)
+            return false
+        }
+    }
+
+    /**
      * Check if user is logged in
      */
     fun isLoggedIn(): Boolean {
