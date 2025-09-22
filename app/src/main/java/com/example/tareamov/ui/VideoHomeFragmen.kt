@@ -142,7 +142,7 @@ class VideoHomeFragment : Fragment() {
             }
         }
 
-        // Set up database orbit button click to navigate to DatabaseQueryFragment
+       // Set up database orbit button click to navigate to DatabaseQueryFragment
         val databaseOrbitButton = view.findViewById<ImageView>(R.id.databaseOrbitButton)
 
         // Decide visibility synchronously to avoid leaving a gap for non-admin users.
@@ -163,7 +163,8 @@ class VideoHomeFragment : Fragment() {
                     drawable.start()
                 }
             } else {
-                databaseOrbitButton?.visibility = View.INVISIBLE
+                // non-admin: keep GONE to remove any visual gap
+                databaseOrbitButton?.visibility = View.GONE
             }
         } catch (e: Exception) {
             // If anything goes wrong, ensure the button does not leave a gap
@@ -208,17 +209,18 @@ class VideoHomeFragment : Fragment() {
         goToAdminButton?.visibility = View.INVISIBLE
 
         // Check if the current user is admin
-        checkAdminStatus { isAdmin ->
-            if (isAdmin) {
-                goToAdminButton?.visibility = View.VISIBLE
-                goToAdminButton?.setOnClickListener {
-                    Log.d("VideoHomeFragment", "Admin button clicked, navigating to HomeFragment")
-                    findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
-                }
-            } else {
-                goToAdminButton?.visibility = View.INVISIBLE
+        val sess = SessionManager.getInstance(requireContext())
+        if (!sess.isAdmin()) {
+            // Ocultar por completo el slot antes del primer render para que no quede hueco
+            adminSlot?.visibility = View.GONE
+        } else {
+            // Usuario admin: mostrar y asignar listener
+            goToAdminButton?.visibility = View.VISIBLE
+            goToAdminButton?.setOnClickListener {
+                Log.d("VideoHomeFragment", "Admin button clicked, navigating to HomeFragment")
+                findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
             }
-        }        // Load the current user's avatar
+        }   // Load the current user's avatar
         loadCurrentUserAvatar()
 
         // Load videos directly from Supabase (ordered newest -> oldest) and display

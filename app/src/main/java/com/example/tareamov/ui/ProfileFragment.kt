@@ -286,26 +286,7 @@ class ProfileFragment : Fragment() {
     }
 
     private fun setupAdminButton(bottomNavBinding: ComponentBottomNavigationBinding) {
-<<<<<<< HEAD
-        android.util.Log.d("ProfileFragment", "setupAdminButton called, button found: ${bottomNavBinding.goToAdminButton != null}")
-        
-        // Initially hide the admin button
-        bottomNavBinding.goToAdminButton.visibility = View.GONE
-        
-        // Check admin status
-        checkAdminStatus { isAdmin ->
-            android.util.Log.d("ProfileFragment", "Admin status received: $isAdmin")
-            if (isAdmin) {
-                bottomNavBinding.goToAdminButton.visibility = View.VISIBLE
-                bottomNavBinding.goToAdminButton.setOnClickListener {
-                    android.util.Log.d("ProfileFragment", "Admin button clicked, navigating to homeFragment")
-                    findNavController().navigate(R.id.action_profileFragment_to_homeFragment)
-                }
-            } else {
-                bottomNavBinding.goToAdminButton.visibility = View.GONE
-            }
-=======
-        // Mostrar el botón de admin solo si el usuario es admin
+         // Mostrar el botón de admin solo si el usuario es admin
         val adminSlot = bottomNavBinding.adminSlot
         val goToAdminButton = bottomNavBinding.goToAdminButton
 
@@ -322,9 +303,9 @@ class ProfileFragment : Fragment() {
         goToAdminButton.visibility = View.VISIBLE
         goToAdminButton.setOnClickListener {
             findNavController().navigate(R.id.action_profileFragment_to_homeFragment)
->>>>>>> e12f921d7427e3e2b6d8294ba89af4b1ea3a4bc0
         }
     }
+
     // Add this method to ProfileFragment class
     override fun onResume() {
         super.onResume()
