@@ -434,6 +434,26 @@ class SyncRepository(
             false
         }
     }
+    
+    // Insert a Topic into Supabase and return remote id (or null)
+    suspend fun insertTopicRemote(topic: com.example.tareamov.data.entity.Topic): Long? {
+        return try {
+            withContext(Dispatchers.IO) { supabaseClient.insertTopic(topic) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "insertTopicRemote failed", e)
+            null
+        }
+    }
+    
+    // Insert a Task into Supabase and return remote id (or null)
+    suspend fun insertTaskRemote(task: com.example.tareamov.data.entity.Task): Long? {
+        return try {
+            withContext(Dispatchers.IO) { supabaseClient.insertTask(task) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "insertTaskRemote failed", e)
+            null
+        }
+    }
 
     suspend fun deleteSubscriptionRemote(subscriber: String, creator: String): Boolean {
         return try {

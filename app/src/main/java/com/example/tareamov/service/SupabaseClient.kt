@@ -299,7 +299,8 @@ object SupabaseClient {
                 val respBody = resp.body?.string()
                 if (!resp.isSuccessful) {
                     val bodyStr = respBody ?: ""
-                    throw Exception("Supabase insertTopic failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                    Log.w("SupabaseClient", "insertTopic failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                    return@withContext null
                 }
 
                 if (respBody.isNullOrEmpty()) return@withContext null
@@ -311,13 +312,64 @@ object SupabaseClient {
                         return@withContext idElem?.asLong
                     }
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    Log.e("SupabaseClient","insertTopic parse error", e)
                 }
 
                 return@withContext null
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("SupabaseClient","insertTopic error", e)
+            return@withContext null
+        }
+    }
+
+    // Insert a Task (belongs to a Topic)
+    suspend fun insertTask(task: com.example.tareamov.data.entity.Task): Long? = withContext(Dispatchers.IO) {
+        try {
+            val map = mapOf(
+                "topic_id" to task.topicId,
+                "name" to task.name,
+                "description" to task.description,
+                "order_index" to task.orderIndex
+            )
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/tasks"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val bodyStr = respBody ?: ""
+                    Log.w("SupabaseClient", "insertTask failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                    return@withContext null
+                }
+
+                if (respBody.isNullOrEmpty()) return@withContext null
+
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        val idElem = jsonArray[0].asJsonObject.get("id")
+                        return@withContext idElem?.asLong
+                    }
+                } catch (e: Exception) {
+                    Log.e("SupabaseClient","insertTask parse error", e)
+                }
+
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient","insertTask error", e)
             return@withContext null
         }
     }

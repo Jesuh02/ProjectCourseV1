@@ -299,35 +299,36 @@ class VideoHomeFragment : Fragment() {
                 findNavController().navigate(R.id.userProfileViewFragment, bundle)
             },
             onUsernameClick = { videoData ->
-                // Navigate to CourseDetailFragment for a Course that has the same title as the video.
+                // Navigate to CourseDetailFragment using Supabase as authoritative source.
                 lifecycleScope.launch {
                     try {
-                        val repo = com.example.tareamov.repository.CourseRepository(requireContext())
+                        var matchingCourse: com.example.tareamov.data.entity.Course? = null
+                        val act = requireActivity()
 
-                        // Try to find course by title (case-insensitive)
-                        var matchingCourse: com.example.tareamov.data.entity.Course? = withContext(Dispatchers.IO) {
-                            repo.getAllCourses().firstOrNull { it.title.equals(videoData.title, ignoreCase = true) }
-                        }
-
-                        // If not found, attempt to create a Course row from the VideoData
-                        if (matchingCourse == null) {
+                        if (act is com.example.tareamov.MainActivity) {
                             try {
-                                val mapped = repo.convertVideoDataToCoursePublic(videoData)
-                                withContext(Dispatchers.IO) { repo.saveCourse(mapped) }
-                                // Re-query to obtain generated id
-                                matchingCourse = withContext(Dispatchers.IO) {
-                                    repo.getAllCourses().firstOrNull { it.title.equals(videoData.title, ignoreCase = true) }
+                                // Try server-side: fetch courses by this creator and match title
+                                val remoteList = withContext(Dispatchers.IO) {
+                                    act.syncRepository.fetchCoursesByCreatorFromSupabase(videoData.username ?: "")
+                                }
+                                matchingCourse = remoteList.firstOrNull { c -> (c.title ?: "").equals(videoData.title ?: "", ignoreCase = true) }
+
+                                // If not found among creator's courses, try searching all remote courses as fallback
+                                if (matchingCourse == null) {
+                                    val all = withContext(Dispatchers.IO) { act.syncRepository.fetchCoursesFromSupabase() }
+                                    matchingCourse = all.firstOrNull { c -> (c.title ?: "").equals(videoData.title ?: "", ignoreCase = true) && (c.creatorUsername ?: "").equals(videoData.username ?: "", ignoreCase = true) }
                                 }
                             } catch (e: Exception) {
-                                Log.w("VideoHomeFragment", "Failed to create Course from VideoData: ${e.message}", e)
+                                Log.w("VideoHomeFragment", "Supabase course lookup failed, falling back to local: ${e.message}", e)
                             }
                         }
 
                         val bundle = Bundle().apply {
                             if (matchingCourse != null) {
-                                putLong("courseId", matchingCourse.id)
-                                putString("courseName", matchingCourse.title)
+                                putLong("courseId", matchingCourse.id ?: -1L)
+                                putString("courseName", matchingCourse.title ?: videoData.title)
                             } else {
+                                // No remote course found — navigate with video title only (CourseDetail will handle fallback)
                                 putLong("courseId", -1L)
                                 putString("courseName", videoData.title)
                             }

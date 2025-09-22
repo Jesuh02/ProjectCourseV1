@@ -250,27 +250,56 @@ class CourseTaskFragment : Fragment() {
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
+                // Resolve authoritative course id from Supabase first
+                val appDatabase = AppDatabase.getDatabase(requireContext())
+                val syncRepo = (activity as? com.example.tareamov.MainActivity)?.syncRepository
+                    ?: com.example.tareamov.data.sync.SyncRepository(
+                        appDatabase.usuarioDao(), appDatabase.personaDao(), appDatabase.topicDao(),
+                        appDatabase.contentItemDao(), appDatabase.taskDao(), appDatabase.subscriptionDao(),
+                        appDatabase.taskSubmissionDao(), appDatabase.videoDao(), appDatabase.courseDao(),
+                        appDatabase.rolDao(), appDatabase.recursoDao(), appDatabase.rolRecursoDao(),
+                        appDatabase.chatMessageDao(), appDatabase.fileContextDao()
+                    )
+
+                val resolvedCourseId = withContext(Dispatchers.IO) {
+                    try {
+                        if (courseId > 0) {
+                            val remote = syncRepo.fetchCourseById(courseId)
+                            if (remote != null) return@withContext remote.id
+                        }
+                        if (courseName.isNotBlank()) {
+                            val all = syncRepo.fetchCoursesFromSupabase()
+                            val byName = all.firstOrNull { it.title?.trim()?.equals(courseName.trim(), ignoreCase = true) == true }
+                            if (byName != null) return@withContext byName.id
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseTaskFragment", "Error resolving remote course id", e)
+                    }
+                    // fallback to passed courseId or -1 handled below
+                    courseId
+                }
+
                 var savedTopicId = topicId
-                // If topicId is not set, create a new topic
+                val effectiveCourseId = if (resolvedCourseId > 0) resolvedCourseId else courseId
+
+                // If topicId is not set, create or find a topic in the resolved course
                 if (savedTopicId == -1L) {
-                    // Check if there's already a topic for this course with the given number
                     val existingTopic = withContext(Dispatchers.IO) {
-                        topicDao.getTopicByCourseIdAndOrderIndex(courseId, topicNumber)
+                        topicDao.getTopicByCourseIdAndOrderIndex(effectiveCourseId, topicNumber)
                     }
 
                     if (existingTopic != null) {
                         savedTopicId = existingTopic.id
                         Log.d("CourseTaskFragment", "Using existing topic with ID: $savedTopicId")
                     } else {
-                        // Create a new topic if none exists
                         val newTopic = com.example.tareamov.data.entity.Topic(
-                            courseId = courseId,
+                            courseId = effectiveCourseId,
                             name = "Tema $topicNumber",
                             description = "",
                             orderIndex = topicNumber
                         )
                         savedTopicId = withContext(Dispatchers.IO) { topicDao.insertTopic(newTopic) }
-                        Log.d("CourseTaskFragment", "Created new topic with ID: $savedTopicId")
+                        Log.d("CourseTaskFragment", "Created new topic with ID: $savedTopicId (course $effectiveCourseId)")
                     }
                 }
 
@@ -334,10 +363,42 @@ class CourseTaskFragment : Fragment() {
 
                 Toast.makeText(context, "Tarea guardada exitosamente", Toast.LENGTH_SHORT).show()
 
-                // Navigate to CourseDetailFragment instead of going back
+                // Navigate to CourseDetailFragment with the authoritative course id
                 val bundle = Bundle().apply {
-                    putLong("courseId", courseId)
+                    putLong("courseId", if (resolvedCourseId > 0) resolvedCourseId else courseId)
                 }
+                // Fire-and-forget: push task to Supabase
+                try {
+                    val appDatabase = AppDatabase.getDatabase(requireContext())
+                    val syncRepo = (activity as? com.example.tareamov.MainActivity)?.syncRepository
+                        ?: com.example.tareamov.data.sync.SyncRepository(
+                            appDatabase.usuarioDao(), appDatabase.personaDao(), appDatabase.topicDao(),
+                            appDatabase.contentItemDao(), appDatabase.taskDao(), appDatabase.subscriptionDao(),
+                            appDatabase.taskSubmissionDao(), appDatabase.videoDao(), appDatabase.courseDao(),
+                            appDatabase.rolDao(), appDatabase.recursoDao(), appDatabase.rolRecursoDao(),
+                            appDatabase.chatMessageDao(), appDatabase.fileContextDao()
+                        )
+
+                    val taskToPush = Task(
+                        id = savedTaskId,
+                        topicId = savedTopicId,
+                        name = taskName,
+                        description = taskDescription.ifBlank { null },
+                        orderIndex = 0
+                    )
+
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val remoteId = syncRepo.insertTaskRemote(taskToPush)
+                        if (remoteId != null) {
+                            Log.i("CourseTaskFragment", "Pushed task remote id=$remoteId for local id=$savedTaskId")
+                        } else {
+                            Log.w("CourseTaskFragment", "Failed to push task for local id=$savedTaskId")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseTaskFragment", "Failed to push task to Supabase", e)
+                }
+
                 findNavController().navigate(R.id.action_courseTaskFragment_to_courseDetailFragment, bundle)
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error saving task", e)
