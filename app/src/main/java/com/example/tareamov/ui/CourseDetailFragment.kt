@@ -1226,19 +1226,26 @@ class CourseDetailFragment : Fragment() {
     }
 
     private fun setupAdminButton() {
+        // Use the ComponentBottomNavigationBinding slot pattern to avoid layout jumps/huecos
+        val adminSlot = bottomNavBinding.adminSlot
         val goToAdminButton = bottomNavBinding.goToAdminButton
-        
-        // Check if the current user is admin
-        checkAdminStatus { isAdmin ->
-            if (isAdmin) {
-                goToAdminButton.visibility = View.VISIBLE
-                goToAdminButton.setOnClickListener {
-                    Log.d("CourseDetailFragment", "Admin button clicked, navigating to HomeFragment")
-                    findNavController().navigate(R.id.action_courseDetailFragment_to_homeFragment)
-                }
-            } else {
-                goToAdminButton.visibility = View.INVISIBLE
-            }
+
+        // Initialize as INVISIBLE while we decide to avoid visual jumps
+        goToAdminButton.visibility = View.INVISIBLE
+
+        // Prefer synchronous SessionManager check so the slot can be hidden before first render
+        val sess = SessionManager.getInstance(requireContext())
+        if (!sess.isAdmin()) {
+            // Hide the entire slot before drawing to prevent any gap for non-admin users
+            adminSlot.visibility = View.GONE
+            return
+        }
+
+        // User is admin according to SessionManager: show button and wire listener
+        goToAdminButton.visibility = View.VISIBLE
+        goToAdminButton.setOnClickListener {
+            Log.d("CourseDetailFragment", "Admin button clicked, navigating to HomeFragment")
+            findNavController().navigate(R.id.action_courseDetailFragment_to_homeFragment)
         }
     }
 
