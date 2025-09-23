@@ -120,7 +120,13 @@
             android:layout_height="wrap_content"
             android:textColor="#FFFFFF"
             android:textSize="18sp"
-            android:textStyle="bold" />
+            android:textStyle="bold"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="8dp"
+            android:drawablePadding="8dp"
+            android:drawableTint="#CCCCCC" />
 
         <TextView
             android:id="@+id/videoDescription"

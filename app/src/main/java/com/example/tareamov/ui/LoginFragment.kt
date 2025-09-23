@@ -108,7 +108,7 @@ class LoginFragment : Fragment() {
 
         // Set up login button click listener
         loginButton.setOnClickListener {
-            val username = usernameEditText.text.toString()
+            val username = usernameEditText.text.toString().trim()
             val password = passwordEditText.text.toString()
 
             if (username.isEmpty() || password.isEmpty()) {
@@ -116,8 +116,23 @@ class LoginFragment : Fragment() {
                 return@setOnClickListener
             }
 
-            // Attempt login
-            authViewModel.login(username, password)
+            // First check if the user exists in local DB before attempting login
+            lifecycleScope.launch {
+                val usuarioWithRole = withContext(Dispatchers.IO) {
+                    try {
+                        authViewModel.getUsuarioWithRoleByUsername(username)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+
+                if (usuarioWithRole == null) {
+                    Toast.makeText(requireContext(), "Usuario no encontrado", Toast.LENGTH_SHORT).show()
+                } else {
+                    // Proceed to login (AuthViewModel will verify password/hash)
+                    authViewModel.login(username, password)
+                }
+            }
         }
 
         // Añade este código en el método onViewCreated:

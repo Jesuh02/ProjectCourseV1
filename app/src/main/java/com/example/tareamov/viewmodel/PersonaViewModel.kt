@@ -50,7 +50,7 @@ class PersonaViewModel(application: Application) : AndroidViewModel(application)
         val personaId = repository.insert(persona)
         val usuario = Usuario(
             usuario = username,
-            contrasena = password,
+            contrasena = password, // store plain here; UsuarioRepository will hash before insert
             persona_id = personaId,
             rol_id = 1 // Default to estudiante role (ID 1)
         )

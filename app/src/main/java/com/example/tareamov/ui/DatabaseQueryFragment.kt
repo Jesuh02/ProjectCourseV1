@@ -2,7 +2,6 @@ package com.example.tareamov.ui
 
 import android.content.Context
 import android.graphics.Color
-import android.graphics.Matrix
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -20,13 +19,6 @@ import com.example.tareamov.databinding.FragmentDatabaseQueryBinding
 import com.example.tareamov.service.DatabaseQueryService
 import com.example.tareamov.service.LocalLlamaService
 import com.example.tareamov.service.MCPService
-import com.github.mikephil.charting.charts.BarChart
-import com.github.mikephil.charting.charts.PieChart
-import com.github.mikephil.charting.components.XAxis
-import com.github.mikephil.charting.data.*
-import com.github.mikephil.charting.formatter.IndexAxisValueFormatter
-import com.github.mikephil.charting.utils.ColorTemplate
-import com.github.mikephil.charting.animation.Easing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -34,59 +26,11 @@ import androidx.work.WorkManager
 import androidx.work.WorkInfo
 import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
+import com.example.tareamov.ui.adapter.DatabaseChatAdapter
 import com.example.tareamov.service.LocalLlamaService.ModelDownloadWorker
+import com.example.tareamov.util.SessionManager
 import java.text.SimpleDateFormat
 import java.util.*
-
-// Extension functions for charts
-fun BarChart.zoomIn() {
-    val centerX = width / 2f
-    val centerY = height / 2f
-    val matrix = Matrix()
-    matrix.set(this.viewPortHandler.matrixTouch)
-    matrix.postScale(1.2f, 1.2f, centerX, centerY)
-    this.viewPortHandler.refresh(matrix, this, false)
-    this.invalidate()
-}
-
-fun BarChart.zoomOut() {
-    val centerX = width / 2f
-    val centerY = height / 2f
-    val matrix = Matrix()
-    matrix.set(this.viewPortHandler.matrixTouch)
-    matrix.postScale(0.8f, 0.8f, centerX, centerY)
-    this.viewPortHandler.refresh(matrix, this, false)
-    this.invalidate()
-}
-
-fun PieChart.zoomIn() {
-    val centerX = width / 2f
-    val centerY = height / 2f
-    val matrix = Matrix()
-    matrix.set(this.viewPortHandler.matrixTouch)
-    matrix.postScale(1.2f, 1.2f, centerX, centerY)
-    this.viewPortHandler.refresh(matrix, this, false)
-    this.invalidate()
-}
-
-fun PieChart.zoomOut() {
-    val centerX = width / 2f
-    val centerY = height / 2f
-    val matrix = Matrix()
-    matrix.set(this.viewPortHandler.matrixTouch)
-    matrix.postScale(0.8f, 0.8f, centerX, centerY)
-    this.viewPortHandler.refresh(matrix, this, false)
-    this.invalidate()
-}
-
-// Message data class for chat with enhanced features
-data class ChatMessage(
-    val text: String,
-    val isUser: Boolean,
-    val timestamp: Long = System.currentTimeMillis(),
-    val isTyping: Boolean = false,
-    val messageId: String = java.util.UUID.randomUUID().toString()
-)
 
 // Enhanced Chat adapter for RecyclerView with smooth animations
 class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
@@ -221,7 +165,7 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     }
 }
 
-class DatabaseQueryFragment : Fragment() {
+class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeListener {
 
     private var _binding: FragmentDatabaseQueryBinding? = null
     private val binding get() = _binding!!
@@ -230,22 +174,33 @@ class DatabaseQueryFragment : Fragment() {
     private lateinit var database: AppDatabase
     private var currentChart: View? = null
     private lateinit var localLlamaService: LocalLlamaService
-    private lateinit var chatAdapter: ChatAdapter
+    private lateinit var chatAdapter: DatabaseChatAdapter
     private lateinit var databaseQueryService: DatabaseQueryService
+    private lateinit var sessionManager: SessionManager
     
-    // Enhanced chat state management
+    // Enhanced chat state management per user
     private val chatHistory = mutableListOf<ChatMessage>()
     private var isProcessingQuery = false
     private var currentConversationContext = mutableListOf<String>()
+    private var totalMessageCount = 0
+    private var isScrolledToBottom = true
+    private var currentUser: String? = null
     
-    // SharedPreferences for chat persistence
+    // User-specific SharedPreferences for better persistence
     private val chatPrefs by lazy {
-        requireContext().getSharedPreferences("chat_history", Context.MODE_PRIVATE)
+        sessionManager.getChatPreferences(requireContext())
     }
+
+    // Session management per user
+    private var currentSessionId: String = ""
+    private val maxMessagesPerSession = 1000 // Prevent memory issues
 
     companion object {
         private const val CHAT_HISTORY_KEY = "saved_chat_messages"
+        private const val SESSION_ID_KEY = "current_session_id"
+        private const val MESSAGE_COUNT_KEY = "total_message_count"
         private const val MAX_CONTEXT_MESSAGES = 10 // Keep last 10 messages for context
+        private const val SCROLL_THRESHOLD = 5 // Show scroll to bottom after 5+ messages
     }
 
     override fun onCreateView(
@@ -262,6 +217,11 @@ class DatabaseQueryFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Initialize SessionManager and register for user changes
+        sessionManager = SessionManager.getInstance(requireContext())
+        SessionManager.addUserChangeListener(this)
+        currentUser = sessionManager.getUsername()
+
         mcpService = MCPService(requireContext())
         database = AppDatabase.getDatabase(requireContext())
         databaseQueryService = DatabaseQueryService(requireContext())
@@ -269,8 +229,11 @@ class DatabaseQueryFragment : Fragment() {
         // Initialize UI components
         setupUIComponents()
 
-        // Setup chat RecyclerView
+        // Setup chat RecyclerView with enhanced scrolling
         setupChatRecyclerView()
+
+        // Setup floating action buttons
+        setupFloatingActionButtons()
 
         // Initialize LocalLlamaService and trigger model download if needed
         setupLocalLlamaService()
@@ -287,10 +250,10 @@ class DatabaseQueryFragment : Fragment() {
         // Check server connection status
         checkServerStatus()
 
-        // Restore chat history
-        restoreChatHistory()
+        // Initialize or restore session for current user
+        initializeSession()
 
-        // Add welcome message if no history exists
+        // Add welcome message if no history exists for this user
         if (chatAdapter.getMessages().isEmpty()) {
             addWelcomeMessage()
         }
@@ -301,34 +264,179 @@ class DatabaseQueryFragment : Fragment() {
         resultTextView = binding.resultText
 
         // Set initial text
-        resultTextView.text = getString(R.string.initial_query_text)
+        resultTextView.text = "Sistema MCP - Consulta Inteligente\n\nUtiliza lenguaje natural para consultar la base de datos. El sistema procesará tu consulta y mostrará los resultados relevantes."
+
+        // Update user indicator
+        updateUserIndicator()
 
         // Make brain icon visible initially
         binding.centerBrainIcon.visibility = View.VISIBLE
+
+        // Load logo image from drawable resources
+        try {
+            binding.centerBrainIcon.setImageResource(R.drawable.logo)
+            Log.d("DatabaseQueryFragment", "Logo loaded successfully from drawable resources")
+        } catch (e: Exception) {
+            Log.w("DatabaseQueryFragment", "Could not load logo from drawable: ${e.message}")
+        }
+    }
+
+    // Show the two valid roles to the user when requested
+    private fun showValidRoles() {
+        val roles = com.example.tareamov.service.MSPClient.VALID_ROLES
+        val message = "Roles válidos en el sistema:\n" + roles.joinToString(separator = "\n") { "• $it" }
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle("Roles del sistema")
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .show()
+    }
+    
+    private fun updateUserIndicator() {
+        val username = sessionManager.getUsername() ?: "Usuario"
+        binding.currentUserText.text = username
+        Log.d("DatabaseQueryFragment", "Updated user indicator to: $username")
     }
 
     private fun setupChatRecyclerView() {
-        chatAdapter = ChatAdapter()
+        chatAdapter = DatabaseChatAdapter { message ->
+            handleEditUserMessage(message)
+        }
         binding.chatRecyclerView.apply {
             layoutManager = LinearLayoutManager(context).apply {
                 stackFromEnd = true // Messages appear from bottom
             }
             adapter = chatAdapter
+            itemAnimator = androidx.recyclerview.widget.DefaultItemAnimator().apply {
+                addDuration = 200
+                removeDuration = 200
+                moveDuration = 200
+                changeDuration = 200
+            }
+            
+            // Enhanced scroll listener for better UX
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    super.onScrolled(recyclerView, dx, dy)
+                    
+                    val layoutManager = recyclerView.layoutManager as LinearLayoutManager
+                    val lastVisiblePosition = layoutManager.findLastVisibleItemPosition()
+                    val totalItems = chatAdapter.itemCount
+                    
+                    // Update scroll state
+                    isScrolledToBottom = lastVisiblePosition >= totalItems - 2
+                    
+                    // Show/hide scroll to bottom button
+                    if (totalItems > SCROLL_THRESHOLD && _binding != null) {
+                        binding.fabScrollToBottom.visibility = 
+                            if (isScrolledToBottom) View.GONE else View.VISIBLE
+                    }
+                    
+                    // Auto-save chat periodically when scrolling stops
+                    view?.removeCallbacks(autoSaveRunnable)
+                    view?.postDelayed(autoSaveRunnable, 2000)
+                }
+            })
+            
+            // Smooth scroll behavior with better performance
+            setHasFixedSize(true)
+            isNestedScrollingEnabled = true
+        }
+    }
+    
+    private val autoSaveRunnable = Runnable {
+        saveChatHistory()
+    }
+
+    private fun setupFloatingActionButtons() {
+        // Scroll to bottom button
+        binding.fabScrollToBottom.setOnClickListener {
+            scrollToBottom(smooth = true)
+        }
+        
+        // Chat history button
+        binding.fabChatHistory.setOnClickListener {
+            showChatHistoryDialog()
+        }
+        
+        // Clear history button in header
+        binding.clearHistoryButton.setOnClickListener {
+            showClearHistoryDialog()
+        }
+    }
+    
+    private fun scrollToBottom(smooth: Boolean = false) {
+        // Check if binding is still valid before accessing it
+        if (_binding == null) return
+        
+        if (chatAdapter.itemCount > 0) {
+            if (smooth) {
+                binding.chatRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)
+            } else {
+                binding.chatRecyclerView.scrollToPosition(chatAdapter.itemCount - 1)
+            }
+            isScrolledToBottom = true
+            binding.fabScrollToBottom.visibility = View.GONE
         }
     }
 
     private fun addMessageToChat(text: String, isUser: Boolean): String {
-        val message = ChatMessage(text, isUser)
+        val message = ChatMessage.createUserMessage(text).let { 
+            if (isUser) it else ChatMessage.createSystemMessage(text) 
+        }
+        
+        // Add to both adapter and internal history
         chatAdapter.addMessage(message)
-        binding.chatRecyclerView.scrollToPosition(chatAdapter.itemCount - 1)
-
-        // Hide brain icon when chat has messages
-        if (chatAdapter.itemCount > 0) {
-            binding.centerBrainIcon.visibility = View.GONE
+        chatHistory.add(message)
+        totalMessageCount++
+        
+        // Update message count display (with null check)
+        updateMessageCountDisplay()
+        
+        // Smart scroll behavior (with null check)
+        if (isScrolledToBottom || isUser) {
+            scrollToBottom(smooth = true)
         }
 
-        // Return the message ID or position as a unique identifier
+        // Hide brain icon when chat has messages (with null check)
+        if (_binding != null && chatAdapter.itemCount > 0) {
+            binding.centerBrainIcon.visibility = View.GONE
+            binding.chatHistoryHeader.visibility = View.VISIBLE
+        }
+
+        // Auto-save after adding message
+        saveChatHistory()
+        
+        // Manage memory by limiting messages
+        if (chatAdapter.itemCount > maxMessagesPerSession) {
+            removeOldestMessages(100) // Remove 100 oldest messages
+        }
+
+        // Log message addition for debugging
+        Log.d("DatabaseQueryFragment", "Added message - User: $isUser, Text: ${text.take(50)}...")
+
+        // Return the message ID
         return message.messageId
+    }
+    
+    private fun updateMessageCountDisplay() {
+        // Check if binding is still valid before accessing it
+        if (_binding == null) return
+        
+        binding.messageCountText.text = "$totalMessageCount mensajes en esta conversación"
+        binding.messageInfoBar.visibility = if (totalMessageCount > 0) View.VISIBLE else View.GONE
+    }
+    
+    private fun removeOldestMessages(count: Int) {
+        repeat(count) {
+            if (chatHistory.isNotEmpty()) {
+                val removedMessage = chatHistory.removeAt(0) // Remove first element
+                chatAdapter.removeMessageById(removedMessage.messageId)
+            }
+        }
+        // Update message count after removal
+        totalMessageCount = chatHistory.size
+        updateMessageCountDisplay()
     }
 
     private fun setupLocalLlamaService() {
@@ -337,8 +445,8 @@ class DatabaseQueryFragment : Fragment() {
 
         // Update connection status based on model availability
         if (!modelFile.exists()) {
-            updateConnectionStatus(false, getString(R.string.llama_downloading))
-            Toast.makeText(context, getString(R.string.llama_download_toast), Toast.LENGTH_LONG).show()
+            updateConnectionStatus(false, "Descargando modelo...")
+            Toast.makeText(context, "Descargando modelo de IA...", Toast.LENGTH_LONG).show()
 
             modelDownloadRequest = OneTimeWorkRequestBuilder<ModelDownloadWorker>().build()
             WorkManager.getInstance(requireContext()).enqueue(modelDownloadRequest!!)
@@ -346,21 +454,21 @@ class DatabaseQueryFragment : Fragment() {
                 .observe(viewLifecycleOwner) { workInfo ->
                     when (workInfo.state) {
                         WorkInfo.State.SUCCEEDED -> {
-                            Toast.makeText(context, getString(R.string.llama_download_success_toast), Toast.LENGTH_LONG).show()
-                            updateConnectionStatus(true, getString(R.string.llama_downloaded))
+                            Toast.makeText(context, "Modelo descargado exitosamente", Toast.LENGTH_LONG).show()
+                            updateConnectionStatus(true, "Modelo listo")
                         }
                         WorkInfo.State.FAILED -> {
-                            Toast.makeText(context, getString(R.string.llama_download_failed_toast), Toast.LENGTH_LONG).show()
-                            updateConnectionStatus(false, getString(R.string.llama_download_error))
+                            Toast.makeText(context, "Error descargando modelo", Toast.LENGTH_LONG).show()
+                            updateConnectionStatus(false, "Error en descarga")
                         }
                         WorkInfo.State.RUNNING -> {
-                            updateConnectionStatus(false, getString(R.string.llama_downloading))
+                            updateConnectionStatus(false, "Descargando...")
                         }
                         else -> { }
                     }
                 }
         } else {
-            updateConnectionStatus(true, getString(R.string.llama_downloaded))
+            updateConnectionStatus(true, "Modelo listo")
         }
 
         localLlamaService.downloadModelIfNeeded()
@@ -370,14 +478,13 @@ class DatabaseQueryFragment : Fragment() {
         binding.sendButton.setOnClickListener {
             val userInput = binding.queryInput.text.toString().trim()
             if (userInput.isNotEmpty()) {
-                // Add user message to chat
-                val userMessage = ChatMessage(userInput, true)
-                chatAdapter.addMessage(userMessage)
-                binding.queryInput.text?.clear()
+                // Add user message to chat (this also updates internal history and persists)
+                addMessageToChat(userInput, true)
+                // Clear input safely
+                binding.queryInput.setText("")
 
                 // Show typing indicator
-                val typingMessage = ChatMessage("Escribiendo...", false)
-                chatAdapter.addMessage(typingMessage)
+                chatAdapter.addTypingIndicator()
                 binding.chatRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)
 
                 // Process the query in the background
@@ -387,44 +494,17 @@ class DatabaseQueryFragment : Fragment() {
     }
 
     private fun setupChartControls() {
+        // Chart controls are disabled for now to avoid chart library dependency issues
         binding.zoomInButton.setOnClickListener {
-            currentChart?.let {
-                when (it) {
-                    is BarChart -> {
-                        it.zoomIn()
-                    }
-                    is PieChart -> {
-                        it.zoomIn()
-                    }
-                }
-            }
+            Toast.makeText(requireContext(), "Función de zoom disponible próximamente", Toast.LENGTH_SHORT).show()
         }
 
         binding.zoomOutButton.setOnClickListener {
-            currentChart?.let {
-                when (it) {
-                    is BarChart -> {
-                        it.zoomOut()
-                    }
-                    is PieChart -> {
-                        it.zoomOut()
-                    }
-                }
-            }
+            Toast.makeText(requireContext(), "Función de zoom disponible próximamente", Toast.LENGTH_SHORT).show()
         }
 
         binding.resetChartButton.setOnClickListener {
-            currentChart?.let {
-                when (it) {
-                    is BarChart -> {
-                        it.fitScreen()
-                        it.invalidate()
-                    }
-                    is PieChart -> {
-                        it.spin(500, 0f, 0f, Easing.EaseInOutQuad)
-                    }
-                }
-            }
+            Toast.makeText(requireContext(), "Función de reinicio disponible próximamente", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -526,7 +606,7 @@ class DatabaseQueryFragment : Fragment() {
             // Add query context for conversation continuity
             currentConversationContext.add(query)
             if (currentConversationContext.size > MAX_CONTEXT_MESSAGES) {
-                currentConversationContext.removeFirst()
+                currentConversationContext.removeAt(0) // Remove first element using removeAt(0)
             }
 
             Log.d("DatabaseQueryFragment", "Updated Conversation Context: $currentConversationContext")
@@ -605,19 +685,19 @@ class DatabaseQueryFragment : Fragment() {
             }
             "GRAPH_REQUEST:PERSONAS_USERS" -> {
                 // Placeholder - Implement this chart if needed
-                resultTextView.text = getString(R.string.graph_not_implemented)
+                resultTextView.text = "Gráfico de personas no implementado aún"
                 binding.scrollView.visibility = View.VISIBLE
                 false
             }
             "GRAPH_REQUEST:INTERACTIVE" -> {
                 // Placeholder - Implement interactive chart if needed
-                resultTextView.text = getString(R.string.interactive_graph_not_implemented)
+                resultTextView.text = "Gráfico interactivo no implementado aún"
                 binding.scrollView.visibility = View.VISIBLE
                 false
             }
             else -> {
                 // Handle unrecognized graph requests (though DatabaseQueryService might handle this)
-                resultTextView.text = getString(R.string.unrecognized_graph_type, graphRequest)
+                resultTextView.text = "Tipo de gráfico no reconocido: $graphRequest"
                 binding.chartContainer.visibility = View.GONE // Hide container if no chart
                 binding.scrollView.visibility = View.VISIBLE
                 false
@@ -627,10 +707,10 @@ class DatabaseQueryFragment : Fragment() {
         if (chartGenerated) {
             // Update text view to indicate success
             val successMessage = when(graphRequest) {
-                "GRAPH_REQUEST:USER_VIDEOS" -> getString(R.string.user_video_chart_success)
-                "GRAPH_REQUEST:TOPIC_CONTENT" -> getString(R.string.topic_content_chart_success)
-                "GRAPH_REQUEST:COURSE_TOPICS" -> getString(R.string.course_topics_chart_success)
-                else -> getString(R.string.chart_generated)
+                "GRAPH_REQUEST:USER_VIDEOS" -> "Gráfico de usuarios con videos generado exitosamente"
+                "GRAPH_REQUEST:TOPIC_CONTENT" -> "Gráfico de contenido por tema generado exitosamente"
+                "GRAPH_REQUEST:COURSE_TOPICS" -> "Gráfico de temas por curso generado exitosamente"
+                else -> "Gráfico generado exitosamente"
             }
             resultTextView.text = successMessage
         } else {
@@ -641,318 +721,195 @@ class DatabaseQueryFragment : Fragment() {
     }
 
     // The chart generation methods remain mostly unchanged
-    private suspend fun generateUserVideoChart() = withContext(Dispatchers.Main) {
-        // Limpiar el contenedor de gráficos
-        binding.chartContainer.removeAllViews()
-        binding.chartContainer.visibility = View.VISIBLE
-
-        // Crear un nuevo gráfico de barras
-        val barChart = BarChart(requireContext())
-        binding.chartContainer.addView(barChart)
-        currentChart = barChart
-
-        // Configurar el gráfico
-        barChart.description.isEnabled = false
-        barChart.setDrawGridBackground(false)
-        barChart.setDrawBarShadow(false)
-        barChart.setDrawValueAboveBar(true)
-        barChart.setPinchZoom(false)
-        barChart.setDrawGridBackground(false)
-
-        // Apply theme colors to chart
-        barChart.setBackgroundColor(Color.parseColor("#2A3245"))
-        barChart.axisLeft.textColor = Color.WHITE
-        barChart.xAxis.textColor = Color.WHITE
-        barChart.legend.textColor = Color.WHITE
-
-        val xAxis = barChart.xAxis
-        xAxis.position = XAxis.XAxisPosition.BOTTOM
-        xAxis.granularity = 1f
-        xAxis.setCenterAxisLabels(true)
-
-        barChart.axisLeft.setDrawGridLines(false)
-        barChart.axisRight.isEnabled = false
-        barChart.legend.isEnabled = true
-
-        // Obtener datos para el gráfico
-        withContext(Dispatchers.IO) {
-            val videos = database.videoDao().getAllVideos()
-            val userVideoCounts = videos.groupBy { it.username }
-                .mapValues { it.value.size }
-                .toList()
-                .sortedByDescending { it.second }
-                .take(10) // Limitar a 10 usuarios para mejor visualización
-
-            val entries = ArrayList<BarEntry>()
-            val labels = ArrayList<String>()
-
-            userVideoCounts.forEachIndexed { index, (username, count) ->
-                entries.add(BarEntry(index.toFloat(), count.toFloat()))
-                labels.add(username)
+    private suspend fun generateUserVideoChart(): Boolean = withContext(Dispatchers.Main) {
+        try {
+            binding.chartContainer.removeAllViews()
+            binding.chartContainer.visibility = View.VISIBLE
+            
+            // Create a simple text view showing chart data instead of actual chart
+            val textView = TextView(requireContext()).apply {
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#2A3245"))
+                setPadding(16, 16, 16, 16)
             }
+            
+            withContext(Dispatchers.IO) {
+                val videos = database.videoDao().getAllVideos()
+                val userVideoCounts = videos.groupBy { it.username }
+                    .mapValues { it.value.size }
+                    .toList()
+                    .sortedByDescending { it.second }
+                    .take(10)
 
-            withContext(Dispatchers.Main) {
-                val dataSet = BarDataSet(entries, "Videos por Usuario")
-                dataSet.colors = ColorTemplate.MATERIAL_COLORS.toList()
-                dataSet.valueTextColor = Color.WHITE
-
-                val barData = BarData(dataSet)
-                barData.setValueTextSize(10f)
-                barData.setValueTextColor(Color.WHITE)
-
-                barChart.data = barData
-                xAxis.valueFormatter = IndexAxisValueFormatter(labels)
-                xAxis.labelCount = labels.size
-
-                // Add animation
-                barChart.animateY(1000, Easing.EaseInOutQuad)
-                barChart.invalidate()
-            }
-        }
-    }
-
-    private suspend fun generateTopicContentChart() = withContext(Dispatchers.Main) {
-        // Limpiar el contenedor de gráficos
-        binding.chartContainer.removeAllViews()
-        binding.chartContainer.visibility = View.VISIBLE
-
-        // Crear un nuevo gráfico de pastel
-        val pieChart = PieChart(requireContext())
-        binding.chartContainer.addView(pieChart)
-        currentChart = pieChart
-
-        pieChart.setBackgroundColor(Color.parseColor("#2A3245"))
-        pieChart.description.isEnabled = false
-        pieChart.setUsePercentValues(true)
-        pieChart.setDrawHoleEnabled(true)
-        pieChart.setHoleColor(Color.parseColor("#2A3245"))
-        pieChart.setTransparentCircleAlpha(110)
-        pieChart.holeRadius = 58f
-        pieChart.transparentCircleRadius = 61f
-        pieChart.setDrawCenterText(true)
-        pieChart.centerText = "Contenido por Tema"
-        pieChart.setCenterTextColor(Color.WHITE)
-        pieChart.legend.textColor = Color.WHITE
-        pieChart.isRotationEnabled = true
-
-        // Obtener datos para el gráfico
-        withContext(Dispatchers.IO) {
-            val topics = database.topicDao().getAllTopics()
-            val contentItems = database.contentItemDao().getAllContentItems()
-
-            val entries = ArrayList<PieEntry>()
-            val colors = ArrayList<Int>()
-
-            // Fix: Use for loop instead of forEach to avoid type mismatch
-            for (topic in topics) {
-                val count = contentItems.count { it.topicId == topic.id }
-                if (count > 0) {
-                    entries.add(PieEntry(count.toFloat(), topic.name))
-                    colors.add(ColorTemplate.MATERIAL_COLORS[entries.size % ColorTemplate.MATERIAL_COLORS.size])
+                withContext(Dispatchers.Main) {
+                    val chartText = buildString {
+                        append("📊 Videos por Usuario:\n\n")
+                        userVideoCounts.forEach { (username, count) ->
+                            append("👤 $username: $count videos\n")
+                        }
+                    }
+                    textView.text = chartText
+                    binding.chartContainer.addView(textView)
                 }
             }
-
-            withContext(Dispatchers.Main) {
-                val dataSet = PieDataSet(entries, "Temas")
-                dataSet.colors = colors
-                dataSet.sliceSpace = 3f
-
-                val pieData = PieData(dataSet)
-                pieData.setValueTextSize(11f)
-                pieData.setValueTextColor(Color.WHITE)
-
-                pieChart.data = pieData
-                pieChart.invalidate()
-            }
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 
-    private suspend fun generateVideoTopicChart() = withContext(Dispatchers.Main) {
-        // Limpiar el contenedor de gráficos
-        binding.chartContainer.removeAllViews()
-        binding.chartContainer.visibility = View.VISIBLE
-
-        // Crear un nuevo gráfico de barras
-        val barChart = BarChart(requireContext())
-        binding.chartContainer.addView(barChart)
-        currentChart = barChart
-
-        barChart.setBackgroundColor(Color.parseColor("#2A3245"))
-        barChart.axisLeft.textColor = Color.WHITE
-        barChart.xAxis.textColor = Color.WHITE
-        barChart.legend.textColor = Color.WHITE
-
-        // Configure xAxis
-        val xAxis = barChart.xAxis
-        xAxis.position = XAxis.XAxisPosition.BOTTOM
-        xAxis.granularity = 1f
-        xAxis.setCenterAxisLabels(true)
-
-        // Obtener datos para el gráfico
-        withContext(Dispatchers.IO) {
-            val videos = database.videoDao().getAllVideos()
-            val videoTopicCounts = ArrayList<Pair<String, Int>>()
-
-            // Use forEach instead of for loop
-            videos.forEach { video ->
-                val videoTitle = video.title ?: "Video ${video.id}"
-                val topicCount = database.topicDao().getTopicsByCourse(video.id).size
-                videoTopicCounts.add(Pair(videoTitle, topicCount))
+    private suspend fun generateTopicContentChart(): Boolean = withContext(Dispatchers.Main) {
+        try {
+            binding.chartContainer.removeAllViews()
+            binding.chartContainer.visibility = View.VISIBLE
+            
+            val textView = TextView(requireContext()).apply {
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#2A3245"))
+                setPadding(16, 16, 16, 16)
             }
+            
+            withContext(Dispatchers.IO) {
+                val topics = database.topicDao().getAllTopics()
+                val contentItems = database.contentItemDao().getAllContentItems()
 
-            // Ordenar y limitar para mejor visualización
-            val sortedData = videoTopicCounts.sortedByDescending { it.second }.take(10)
-
-            val entries = ArrayList<BarEntry>()
-            val labels = ArrayList<String>()
-
-            // Use forEachIndexed instead of for loop with range
-            sortedData.forEachIndexed { i, pair ->
-                val title = pair.first
-                val count = pair.second
-                entries.add(BarEntry(i.toFloat(), count.toFloat()))
-                // Truncar títulos largos
-                labels.add(if (title.length > 15) title.substring(0, 12) + "..." else title)
+                withContext(Dispatchers.Main) {
+                    val chartText = buildString {
+                        append("📊 Contenido por Tema:\n\n")
+                        for (topic in topics) {
+                            val count = contentItems.count { it.topicId == topic.id }
+                            if (count > 0) {
+                                append("📚 ${topic.name}: $count elementos\n")
+                            }
+                        }
+                    }
+                    textView.text = chartText
+                    binding.chartContainer.addView(textView)
+                }
             }
-
-            withContext(Dispatchers.Main) {
-                val dataSet = BarDataSet(entries, "Temas por Video")
-                dataSet.colors = ColorTemplate.COLORFUL_COLORS.toList()
-
-                val barData = BarData(dataSet)
-                barData.setValueTextSize(10f)
-
-                barChart.data = barData
-                xAxis.valueFormatter = IndexAxisValueFormatter(labels) // Using the local xAxis variable
-                xAxis.labelCount = labels.size // Using the local xAxis variable
-
-                barChart.invalidate()
-            }
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 
-    private suspend fun generateTaskTopicChart() = withContext(Dispatchers.Main) {
-        binding.chartContainer.removeAllViews()
-        binding.chartContainer.visibility = View.VISIBLE
-
-        val barChart = BarChart(requireContext())
-        binding.chartContainer.addView(barChart)
-        currentChart = barChart
-
-        barChart.description.isEnabled = false
-        barChart.setDrawGridBackground(false)
-        barChart.setDrawBarShadow(false)
-        barChart.setDrawValueAboveBar(true)
-        barChart.setPinchZoom(false)
-        barChart.setDrawGridBackground(false)
-        barChart.setBackgroundColor(Color.parseColor("#2A3245"))
-        barChart.axisLeft.textColor = Color.WHITE
-        barChart.xAxis.textColor = Color.WHITE
-        barChart.legend.textColor = Color.WHITE
-
-        val xAxis = barChart.xAxis
-        xAxis.position = XAxis.XAxisPosition.BOTTOM
-        xAxis.granularity = 1f
-        xAxis.setCenterAxisLabels(true)
-        barChart.axisLeft.setDrawGridLines(false)
-        barChart.axisRight.isEnabled = false
-        barChart.legend.isEnabled = true
-
-        withContext(Dispatchers.IO) {
-            val topics = database.topicDao().getAllTopics()
-            val tasks = database.taskDao().getAllTasks()
-            val topicTaskCounts = topics.map { topic ->
-                topic.name to tasks.count { it.topicId == topic.id }
-            }.filter { it.second > 0 }
-                .sortedByDescending { it.second }
-                .take(10)
-
-            val entries = ArrayList<BarEntry>()
-            val labels = ArrayList<String>()
-
-            topicTaskCounts.forEachIndexed { index, (topicName, count) ->
-                entries.add(BarEntry(index.toFloat(), count.toFloat()))
-                labels.add(if (topicName.length > 15) topicName.substring(0, 12) + "..." else topicName)
+    private suspend fun generateVideoTopicChart(): Boolean = withContext(Dispatchers.Main) {
+        try {
+            binding.chartContainer.removeAllViews()
+            binding.chartContainer.visibility = View.VISIBLE
+            
+            val textView = TextView(requireContext()).apply {
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#2A3245"))
+                setPadding(16, 16, 16, 16)
             }
+            
+            withContext(Dispatchers.IO) {
+                val videos = database.videoDao().getAllVideos()
+                val videoTopicCounts = ArrayList<Pair<String, Int>>()
 
-            withContext(Dispatchers.Main) {
-                val dataSet = BarDataSet(entries, "Tareas por Tema")
-                dataSet.colors = ColorTemplate.COLORFUL_COLORS.toList()
-                dataSet.valueTextColor = Color.WHITE
+                videos.forEach { video ->
+                    val videoTitle = video.title ?: "Video ${video.id}"
+                    val topicCount = database.topicDao().getTopicsByCourse(video.id).size
+                    videoTopicCounts.add(Pair(videoTitle, topicCount))
+                }
 
-                val barData = BarData(dataSet)
-                barData.setValueTextSize(10f)
-                barData.setValueTextColor(Color.WHITE)
+                val sortedData = videoTopicCounts.sortedByDescending { it.second }.take(10)
 
-                barChart.data = barData
-                xAxis.valueFormatter = IndexAxisValueFormatter(labels)
-                xAxis.labelCount = labels.size
-
-                barChart.animateY(1000, Easing.EaseInOutQuad)
-                barChart.invalidate()
+                withContext(Dispatchers.Main) {
+                    val chartText = buildString {
+                        append("📊 Temas por Video:\n\n")
+                        sortedData.forEach { (title, count) ->
+                            val displayTitle = if (title.length > 30) title.substring(0, 27) + "..." else title
+                            append("🎥 $displayTitle: $count temas\n")
+                        }
+                    }
+                    textView.text = chartText
+                    binding.chartContainer.addView(textView)
+                }
             }
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 
-    private suspend fun generateSubscriptionChart() = withContext(Dispatchers.Main) {
-        binding.chartContainer.removeAllViews()
-        binding.chartContainer.visibility = View.VISIBLE
-
-        val barChart = BarChart(requireContext())
-        binding.chartContainer.addView(barChart)
-        currentChart = barChart
-
-        barChart.description.isEnabled = false
-        barChart.setDrawGridBackground(false)
-        barChart.setDrawBarShadow(false)
-        barChart.setDrawValueAboveBar(true)
-        barChart.setPinchZoom(false)
-        barChart.setDrawGridBackground(false)
-        barChart.setBackgroundColor(Color.parseColor("#2A3245"))
-        barChart.axisLeft.textColor = Color.WHITE
-        barChart.xAxis.textColor = Color.WHITE
-        barChart.legend.textColor = Color.WHITE
-
-        val xAxis = barChart.xAxis
-        xAxis.position = XAxis.XAxisPosition.BOTTOM
-        xAxis.granularity = 1f
-        xAxis.setCenterAxisLabels(true)
-        barChart.axisLeft.setDrawGridLines(false)
-        barChart.axisRight.isEnabled = false
-        barChart.legend.isEnabled = true
-
-        withContext(Dispatchers.IO) {
-            val subscriptions = database.subscriptionDao().getAllSubscriptions()
-            val creatorCounts = subscriptions.groupBy { it.creatorUsername }
-                .mapValues { it.value.size }
-                .toList()
-                .sortedByDescending { it.second }
-                .take(10)
-
-            val entries = ArrayList<BarEntry>()
-            val labels = ArrayList<String>()
-
-            creatorCounts.forEachIndexed { index, (creator, count) ->
-                entries.add(BarEntry(index.toFloat(), count.toFloat()))
-                labels.add(creator)
+    private suspend fun generateTaskTopicChart(): Boolean = withContext(Dispatchers.Main) {
+        try {
+            binding.chartContainer.removeAllViews()
+            binding.chartContainer.visibility = View.VISIBLE
+            
+            val textView = TextView(requireContext()).apply {
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#2A3245"))
+                setPadding(16, 16, 16, 16)
             }
+            
+            withContext(Dispatchers.IO) {
+                val topics = database.topicDao().getAllTopics()
+                val tasks = database.taskDao().getAllTasks()
+                val topicTaskCounts = topics.map { topic ->
+                    topic.name to tasks.count { it.topicId == topic.id }
+                }.filter { it.second > 0 }
+                    .sortedByDescending { it.second }
+                    .take(10)
 
-            withContext(Dispatchers.Main) {
-                val dataSet = BarDataSet(entries, "Suscripciones por Creador")
-                dataSet.colors = ColorTemplate.MATERIAL_COLORS.toList()
-                dataSet.valueTextColor = Color.WHITE
-
-                val barData = BarData(dataSet)
-                barData.setValueTextSize(10f)
-                barData.setValueTextColor(Color.WHITE)
-
-                barChart.data = barData
-                xAxis.valueFormatter = IndexAxisValueFormatter(labels)
-                xAxis.labelCount = labels.size
-
-                barChart.animateY(1000, Easing.EaseInOutQuad)
-                barChart.invalidate()
+                withContext(Dispatchers.Main) {
+                    val chartText = buildString {
+                        append("📊 Tareas por Tema:\n\n")
+                        topicTaskCounts.forEach { (topicName, count) ->
+                            val displayName = if (topicName.length > 30) topicName.substring(0, 27) + "..." else topicName
+                            append("📝 $displayName: $count tareas\n")
+                        }
+                    }
+                    textView.text = chartText
+                    binding.chartContainer.addView(textView)
+                }
             }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private suspend fun generateSubscriptionChart(): Boolean = withContext(Dispatchers.Main) {
+        try {
+            binding.chartContainer.removeAllViews()
+            binding.chartContainer.visibility = View.VISIBLE
+            
+            val textView = TextView(requireContext()).apply {
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#2A3245"))
+                setPadding(16, 16, 16, 16)
+            }
+            
+            withContext(Dispatchers.IO) {
+                val subscriptions = database.subscriptionDao().getAllSubscriptions()
+                val creatorCounts = subscriptions.groupBy { it.creatorUsername }
+                    .mapValues { it.value.size }
+                    .toList()
+                    .sortedByDescending { it.second }
+                    .take(10)
+
+                withContext(Dispatchers.Main) {
+                    val chartText = buildString {
+                        append("📊 Suscripciones por Creador:\n\n")
+                        creatorCounts.forEach { (creator, count) ->
+                            append("👑 $creator: $count suscripciones\n")
+                        }
+                    }
+                    textView.text = chartText
+                    binding.chartContainer.addView(textView)
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -965,20 +922,14 @@ class DatabaseQueryFragment : Fragment() {
     }
 
     private fun processUserQuery(userInput: String) {
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val response = mcpService.processQuery(userInput)
                 // Remove typing indicator
-                chatAdapter.getMessages().lastOrNull()?.let {
-                    if (it.text == "Escribiendo..." && !it.isUser) {
-                        chatAdapter.clear()
-                        chatAdapter.getMessages().forEach { msg ->
-                            chatAdapter.addMessage(msg)
-                        }
-                    }
-                }
+                chatAdapter.removeTypingIndicator()
                 addMessageToChat(response, false)
             } catch (e: Exception) {
+                chatAdapter.removeTypingIndicator()
                 addMessageToChat("Error al procesar la consulta: ${e.message}", false)
             }
         }
@@ -992,6 +943,7 @@ class DatabaseQueryFragment : Fragment() {
         
         binding.chipHelp.setOnClickListener {
             addHelpMessage()
+            showValidRoles()
         }
         
         binding.chipExamples.setOnClickListener {
@@ -1018,60 +970,257 @@ class DatabaseQueryFragment : Fragment() {
         }
     }
 
+    private fun initializeSession() {
+        val username = sessionManager.getUsername() ?: "anonymous"
+        
+        // Generate user-specific session ID
+    currentSessionId = chatPrefs.getString(SESSION_ID_KEY, null) ?: "${username}_${UUID.randomUUID()}"
+        totalMessageCount = chatPrefs.getInt(MESSAGE_COUNT_KEY, 0)
+        
+        // Save session ID if it's new
+        chatPrefs.edit()
+            .putString(SESSION_ID_KEY, currentSessionId)
+            .putInt(MESSAGE_COUNT_KEY, totalMessageCount)
+            .apply()
+        
+        // Restore chat history for current user
+    restoreChatHistory()
+    }
+
     private fun restoreChatHistory() {
         try {
-            val savedMessages = chatPrefs.getString(CHAT_HISTORY_KEY, null)
+            val key = "${CHAT_HISTORY_KEY}_$currentSessionId"
+            val savedMessages = chatPrefs.getString(key, null) ?: chatPrefs.getString(CHAT_HISTORY_KEY, null)
             if (!savedMessages.isNullOrEmpty()) {
                 val messageList = savedMessages.split("|||").mapNotNull { messageStr ->
-                    val parts = messageStr.split(":::")
-                    if (parts.size >= 3) {
-                        ChatMessage(
-                            text = parts[0],
-                            isUser = parts[1].toBoolean(),
-                            timestamp = parts[2].toLongOrNull() ?: System.currentTimeMillis()
-                        )
-                    } else null
-                }
+                    ChatMessage.fromStorageString(messageStr)
+                }.filter { it != null && it.isValid() }
+                
+                // Clear both adapter and internal history before restoring
+                chatAdapter.clear()
+                chatHistory.clear()
+                
+                // Restore to both adapter and internal history
                 chatAdapter.restoreMessages(messageList)
                 chatHistory.addAll(messageList)
+                totalMessageCount = messageList.size
                 
-                // Scroll to bottom if there are messages
+                // Update UI based on restored messages
                 if (messageList.isNotEmpty()) {
-                    binding.chatRecyclerView.scrollToPosition(messageList.size - 1)
                     binding.centerBrainIcon.visibility = View.GONE
+                    binding.chatHistoryHeader.visibility = View.VISIBLE
+                    updateMessageCountDisplay()
+                    
+                    // Scroll to bottom
+                    view?.post {
+                        scrollToBottom(smooth = false)
+                    }
+                    
+                    // Log restoration for debugging
+                    Log.d("DatabaseQueryFragment", "Restored ${messageList.size} messages for user: ${sessionManager.getUsername()}")
+                    messageList.forEach { message ->
+                        Log.d("DatabaseQueryFragment", "Restored message - User: ${message.isUser}, Text: ${message.text.take(50)}...")
+                    }
+                } else {
+                    Log.d("DatabaseQueryFragment", "No messages to restore for user: ${sessionManager.getUsername()}")
                 }
+            } else {
+                Log.d("DatabaseQueryFragment", "No saved messages found for user: ${sessionManager.getUsername()}")
             }
         } catch (e: Exception) {
-            Log.e("DatabaseQueryFragment", "Error restoring chat history", e)
+            Log.e("DatabaseQueryFragment", "Error restoring chat history for user: ${sessionManager.getUsername()}", e)
+            // Create new session on restore failure
+            createNewSession()
         }
+    }
+    
+    private fun createNewSession() {
+        val username = sessionManager.getUsername() ?: "anonymous"
+        currentSessionId = "${username}_${UUID.randomUUID()}"
+        totalMessageCount = 0
+        
+        // Clear both adapter and internal history
+        chatHistory.clear()
+        chatAdapter.clear()
+        
+        chatPrefs.edit()
+            .putString(SESSION_ID_KEY, currentSessionId)
+            .putInt(MESSAGE_COUNT_KEY, 0)
+            .remove(CHAT_HISTORY_KEY)
+            .apply()
+            
+        binding.centerBrainIcon.visibility = View.VISIBLE
+        binding.chatHistoryHeader.visibility = View.GONE
+        updateMessageCountDisplay()
+        
+        Log.d("DatabaseQueryFragment", "Created new session for user: $username")
     }
 
     private fun saveChatHistory() {
         try {
-            val messages = chatAdapter.getMessages()
-            val messageStrings = messages.map { message ->
-                "${message.text}:::${message.isUser}:::${message.timestamp}"
-            }
+            val messages = chatHistory.takeLast(maxMessagesPerSession) // Limit saved messages
+            val messageStrings = messages.map { it.toStorageString() }
+            val key = "${CHAT_HISTORY_KEY}_$currentSessionId"
             chatPrefs.edit()
-                .putString(CHAT_HISTORY_KEY, messageStrings.joinToString("|||"))
+                .putString(key, messageStrings.joinToString("|||"))
+                .putString(SESSION_ID_KEY, currentSessionId)
+                .putInt(MESSAGE_COUNT_KEY, totalMessageCount)
                 .apply()
+                
+            Log.d("DatabaseQueryFragment", "Saved ${messages.size} messages for user: ${sessionManager.getUsername()}")
         } catch (e: Exception) {
-            Log.e("DatabaseQueryFragment", "Error saving chat history", e)
+            Log.e("DatabaseQueryFragment", "Error saving chat history for user: ${sessionManager.getUsername()}", e)
         }
+    }
+    
+    // Implementation of UserChangeListener interface
+    override fun onUserChanged(previousUser: String?, newUser: String?) {
+        Log.d("DatabaseQueryFragment", "User changed from '$previousUser' to '$newUser'")
+        
+        // Save current chat for previous user
+        if (previousUser != null && chatHistory.isNotEmpty()) {
+            saveChatHistory()
+        }
+        
+        // Clear current chat display and internal history
+        chatHistory.clear()
+        chatAdapter.clear()
+        totalMessageCount = 0
+        
+        // Update current user
+        currentUser = newUser
+        
+        // Update user indicator in UI
+        updateUserIndicator()
+        
+        // Initialize new session for new user
+        view?.post {
+            initializeSession()
+            
+            // Add welcome message if no history exists for new user
+            if (chatAdapter.getMessages().isEmpty()) {
+                addWelcomeMessage()
+            }
+        }
+    }
+    
+    override fun onUserLoggedOut(previousUser: String?) {
+        Log.d("DatabaseQueryFragment", "User '$previousUser' logged out")
+        
+        // Save current chat for logged out user
+        if (previousUser != null && chatHistory.isNotEmpty()) {
+            saveChatHistory()
+        }
+        
+        // Clear all chat data
+        chatHistory.clear()
+        chatAdapter.clear()
+        totalMessageCount = 0
+        currentUser = null
+        
+        // Update user indicator
+        updateUserIndicator()
+        
+        // Reset UI
+        binding.centerBrainIcon.visibility = View.VISIBLE
+        binding.chatHistoryHeader.visibility = View.GONE
+        updateMessageCountDisplay()
     }
 
     private fun clearChatHistory() {
-        chatAdapter.clear()
-        chatHistory.clear()
-        currentConversationContext.clear()
-        chatPrefs.edit().remove(CHAT_HISTORY_KEY).apply()
-        binding.centerBrainIcon.visibility = View.VISIBLE
+        createNewSession()
         addWelcomeMessage()
+    }
+    
+    private fun showClearHistoryDialog() {
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle("Limpiar historial")
+            .setMessage("¿Estás seguro de que quieres eliminar todo el historial de chat? Esta acción no se puede deshacer.")
+            .setPositiveButton("Sí, limpiar") { _, _ ->
+                clearChatHistory()
+                Toast.makeText(requireContext(), "Historial limpiado", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+    
+    private fun showChatHistoryDialog() {
+        // Show dialog with chat statistics and options
+        val messageCount = totalMessageCount
+        val sessionTime = chatPrefs.getLong("session_start_time", System.currentTimeMillis())
+        val sessionDuration = (System.currentTimeMillis() - sessionTime) / (1000 * 60) // minutes
+        
+        val message = """
+            📊 Estadísticas de la conversación:
+            
+            • Mensajes totales: $messageCount
+            • Duración de sesión: ${sessionDuration}min
+            • ID de sesión: ${currentSessionId.take(8)}...
+            
+            ¿Qué deseas hacer?
+        """.trimIndent()
+        
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle("Historial de Chat")
+            .setMessage(message)
+            .setPositiveButton("Exportar") { _, _ ->
+                exportChatHistory()
+            }
+            .setNeutralButton("Nueva sesión") { _, _ ->
+                startNewSession()
+            }
+            .setNegativeButton("Cerrar", null)
+            .show()
+    }
+    
+    private fun startNewSession() {
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle("Nueva sesión")
+            .setMessage("¿Quieres empezar una nueva sesión? La conversación actual se guardará.")
+            .setPositiveButton("Sí") { _, _ ->
+                saveChatHistory() // Save current session
+                createNewSession()
+                addWelcomeMessage()
+                Toast.makeText(requireContext(), "Nueva sesión iniciada", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+    
+    private fun exportChatHistory() {
+        // Simple export functionality
+        val messages = chatHistory
+        val exportText = buildString {
+            appendLine("=== Exportación de Chat MCP ===")
+            appendLine("Sesión: $currentSessionId")
+            appendLine("Fecha: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}")
+            appendLine("Total mensajes: ${messages.size}")
+            appendLine()
+            
+            messages.forEach { message ->
+                val sender = if (message.isUser) "Usuario" else "Sistema MCP"
+                val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(message.timestamp))
+                appendLine("[$time] $sender: ${message.text}")
+                appendLine()
+            }
+        }
+        
+        // Create sharing intent
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_TEXT, exportText)
+            putExtra(android.content.Intent.EXTRA_SUBJECT, "Chat MCP - Sesión $currentSessionId")
+        }
+        
+        startActivity(android.content.Intent.createChooser(intent, "Exportar chat"))
     }
 
     private fun addWelcomeMessage() {
+        val username = sessionManager.getUsername() ?: "Usuario"
         val welcomeText = """
-            ¡Hola! 👋 Soy el Sistema MCP.
+            ¡Hola $username! 👋 Soy el Sistema MCP.
+            
+            🔐 **Chat Personal**: Esta conversación es privada y se guarda específicamente para tu cuenta.
             
             Puedo ayudarte a consultar la base de datos usando lenguaje natural. 
             
@@ -1080,6 +1229,8 @@ class DatabaseQueryFragment : Fragment() {
             • "Muestra los videos más populares"
             • "¿Qué temas tienen más contenido?"
             • "Crear un gráfico de suscripciones"
+            
+            📝 **Nota**: Todos tus mensajes se guardan automáticamente y se restauran cuando regreses.
             
             ¿En qué puedo ayudarte hoy?
         """.trimIndent()
@@ -1108,6 +1259,9 @@ class DatabaseQueryFragment : Fragment() {
         """.trimIndent()
         
         addMessageToChat(helpText, false)
+    // Inform about valid roles
+    val roles = com.example.tareamov.service.MSPClient.VALID_ROLES.joinToString(", ")
+    addMessageToChat("Roles válidos en el sistema: $roles", false)
     }
 
     private fun addExampleQueries() {
@@ -1174,8 +1328,152 @@ class DatabaseQueryFragment : Fragment() {
         // adapter.submitList(parseResults(result))
     }
 
+    private fun handleEditUserMessage(message: ChatMessage) {
+        val builder = androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        builder.setTitle("Editar Mensaje")
+        
+        // Create EditText with current message
+        val editText = android.widget.EditText(requireContext()).apply {
+            setText(message.text)
+            setSelection(text.length) // Place cursor at end
+            setPadding(32, 24, 32, 24)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            setBackgroundResource(android.R.color.transparent)
+            textSize = 16f
+        }
+        
+        // Create container with padding and black background
+        val container = android.widget.FrameLayout(requireContext()).apply {
+            addView(editText)
+            setPadding(48, 32, 48, 32)
+            setBackgroundColor(Color.BLACK)
+        }
+        
+        builder.setView(container)
+        
+        // Style the dialog
+        val dialog = builder.create().apply {
+            window?.setBackgroundDrawableResource(android.R.color.black)
+            setOnShowListener {
+                // Style buttons
+                getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.apply {
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.parseColor("#4CAF50"))
+                    setPadding(32, 16, 32, 16)
+                }
+                getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.apply {
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.parseColor("#f44336"))
+                    setPadding(32, 16, 32, 16)
+                }
+            }
+        }
+        
+        dialog.setButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE, "Enviar") { _, _ ->
+            val newText = editText.text.toString().trim()
+            if (newText.isNotEmpty() && newText != message.text) {
+                handleMessageEdit(message, newText)
+            }
+        }
+        
+        dialog.setButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE, "Cancelar") { _, _ ->
+            dialog.dismiss()
+        }
+        
+        dialog.show()
+    }
+    
+    private fun handleMessageEdit(originalMessage: ChatMessage, newText: String) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Find the message in both chat history and adapter
+                val historyIndex = chatHistory.indexOfFirst { it.messageId == originalMessage.messageId }
+                
+                if (historyIndex != -1) {
+                    // Update the message text in chat history
+                    val updatedMessage = chatHistory[historyIndex].copy(text = newText)
+                    chatHistory[historyIndex] = updatedMessage
+                    
+                    // Update the message in the adapter
+                    chatAdapter.updateMessage(originalMessage.messageId, newText)
+                    
+                    // Remove ALL messages after the edited message (both user and bot responses)
+                    val messagesToRemove = chatHistory.drop(historyIndex + 1)
+                    messagesToRemove.forEach { messageToRemove ->
+                        chatAdapter.removeMessageById(messageToRemove.messageId)
+                        totalMessageCount--
+                    }
+                    // Remove from chat history
+                    while (chatHistory.size > historyIndex + 1) {
+                        chatHistory.removeAt(historyIndex + 1)
+                    }
+                    
+                    // Show typing indicator for new response
+                    chatAdapter.addTypingIndicator()
+                    scrollToBottom(smooth = true)
+                    
+                    try {
+                        val result = withContext(Dispatchers.IO) {
+                            databaseQueryService.processQuery(newText)
+                        }
+                        
+                        // Remove typing indicator
+                        chatAdapter.removeTypingIndicator()
+                        
+                        // Add new bot response
+                        addMessageToChat(result, false)
+                        
+                    } catch (e: Exception) {
+                        // Remove typing indicator on error
+                        chatAdapter.removeTypingIndicator()
+                        
+                        addMessageToChat("Error al procesar la consulta editada: ${e.message}", false)
+                    }
+                    
+                    // Save updated chat history
+                    saveChatHistory()
+                    
+                    Log.d("DatabaseQueryFragment", "Successfully edited message: ${originalMessage.messageId}")
+                }
+                
+            } catch (e: Exception) {
+                Log.e("DatabaseQueryFragment", "Error editing message", e)
+                Toast.makeText(requireContext(), "Error al editar mensaje: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     override fun onDestroyView() {
+        // Save chat history before destroying view
+        saveChatHistory()
+        
+        // Remove any pending callbacks
+        view?.removeCallbacks(autoSaveRunnable)
+        
+        // Unregister from user change notifications
+        SessionManager.removeUserChangeListener(this)
+        
         super.onDestroyView()
         _binding = null
+    }
+    
+    override fun onPause() {
+        super.onPause()
+        // Save chat when app goes to background to preserve user messages
+        saveChatHistory()
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        // Check if user changed while app was in background
+        val newUser = sessionManager.getUsername()
+        if (currentUser != newUser) {
+            Log.d("DatabaseQueryFragment", "User changed during background: '$currentUser' -> '$newUser'")
+            onUserChanged(currentUser, newUser)
+        } else {
+            // Update user indicator even if user didn't change
+            updateUserIndicator()
+        }
     }
 }

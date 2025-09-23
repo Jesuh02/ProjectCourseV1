@@ -51,20 +51,26 @@ class OllamaService : Service() {
 
     private suspend fun tryStartOllama() {
         try {
-            // Try your current IP address first (from ipconfig)
-            if (mspClient.isServerRunning("http://192.168.1.158:11435")) {
-                Log.d(TAG, "✅ Ollama is running at 192.168.1.158:11435")
+            // Try your current IP address first (from most recent ipconfig)
+            if (mspClient.isServerRunning("http://10.218.57.181:11435")) {
+                Log.d(TAG, "✅ Ollama is running at 10.218.57.181:11435")
                 
                 // Broadcast a notification that Ollama is running
                 val broadcastIntent = Intent("com.example.tareamov.OLLAMA_STATUS")
                 broadcastIntent.putExtra("status", "running")
-                broadcastIntent.putExtra("message", "Ollama está ejecutándose en 192.168.1.158:11435")
+                broadcastIntent.putExtra("message", "Ollama está ejecutándose en 10.218.57.181:11435")
                 sendBroadcast(broadcastIntent)
                 return
             }
             
-            // Try other addresses
+            // Try other addresses (including Windows Wi‑Fi / WSL addresses reported by the user)
             val otherAddresses = listOf(
+                // Wi‑Fi and gateway addresses from Windows ipconfig
+                "http://10.218.57.181:11435" to "10.218.57.181:11435",
+                "http://10.218.57.109:11435" to "10.218.57.109:11435",
+                // WSL / Hyper‑V virtual adapter
+                "http://172.17.112.1:11435" to "172.17.112.1:11435",
+                // Local loopback alternatives
                 "http://localhost:11435" to "localhost:11435",
                 "http://127.0.0.1:11435" to "127.0.0.1:11435",
                 "http://0.0.0.0:11435" to "0.0.0.0:11435"

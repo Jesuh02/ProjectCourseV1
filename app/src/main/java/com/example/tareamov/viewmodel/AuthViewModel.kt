@@ -54,8 +54,19 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 if (usuarioWithRole != null) {
                     Log.d("AuthViewModel", "User found in database: ${usuarioWithRole.usuario}")
 
-                    // Simple plain text password comparison
-                    val passwordMatches = usuarioWithRole.contrasena == password
+                    // Verify bcrypt hashed password so user enters plain password
+                    val verifyResult = try {
+                        at.favre.lib.crypto.bcrypt.BCrypt.verifyer().verify(password.toCharArray(), usuarioWithRole.contrasena)
+                    } catch (e: Exception) {
+                        // If verify throws, fall back to plain comparison for legacy or malformed values
+                        Log.w("AuthViewModel", "BCrypt verify failed, falling back to plain comparison: ${e.message}")
+                        null
+                    }
+
+                    val passwordMatches = when {
+                        verifyResult != null -> verifyResult.verified
+                        else -> usuarioWithRole.contrasena == password
+                    }
 
                     Log.d("AuthViewModel", "Password match: $passwordMatches")
 

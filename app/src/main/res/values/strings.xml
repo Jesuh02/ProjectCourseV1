@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">TareaMov</string>
+    <string name="app_name">CourseV</string>
 
     <!-- Explore Fragment -->
     <string name="search_hint">Buscar cursos, instructores...</string>

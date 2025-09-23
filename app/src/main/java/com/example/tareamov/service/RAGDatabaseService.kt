@@ -163,8 +163,69 @@ class RAGDatabaseService(private val context: Context) {
         }
         
         if (isRequestingAllTables) {
-            Log.d(tag, "Detected request for all tables, providing complete schema")
-            return@withContext """
+            Log.d(tag, "Detected request for all tables, building dynamic schema response")
+            try {
+                // Use the existing DatabaseQueryService to obtain a fresh JSON snapshot
+                val dbService = DatabaseQueryService(context)
+                val jsonStr = dbService.generateDatabaseJson()
+                val json = JSONObject(jsonStr)
+
+                val sb = StringBuilder()
+                sb.appendLine("📊 BASE DE DATOS TAREAMOV - ESQUEMA COMPLETO (dinámico)")
+                sb.appendLine()
+
+                // Collect table names (exclude metadata keys)
+                val tableNames = json.keys().asSequence().filter { it != "schema" && it != "statistics" }.toList()
+                sb.appendLine("La base de datos contiene las siguientes tablas (actual): ${tableNames.size} tablas:\n")
+
+                val stats = json.optJSONObject("statistics")
+                val schemaObj = json.optJSONObject("schema")
+
+                for ((index, table) in tableNames.withIndex()) {
+                    val array = json.optJSONArray(table)
+                    val count = array?.length() ?: 0
+                    sb.appendLine("${index + 1}. ${table.uppercase()} ($count registros)")
+
+                    // Schema info if available
+                    val schemaText = schemaObj?.optString(table) ?: schemaObj?.optString(table.lowercase())
+                    if (!schemaText.isNullOrBlank()) {
+                        sb.appendLine("   - Esquema: $schemaText")
+                    }
+
+                    // Add up to 2 sample records (shortened)
+                    if (count > 0) {
+                        sb.appendLine("   - Ejemplos:")
+                        val sampleSize = kotlin.math.min(2, count)
+                        for (i in 0 until sampleSize) {
+                            val row = array!!.getJSONObject(i)
+                            val keys = row.keys().asSequence().toList()
+                            val sampleFields = keys.take(5).joinToString(", ") { k -> "$k: ${row.optString(k).take(40)}" }
+                            sb.appendLine("     - { $sampleFields }")
+                        }
+                    } else {
+                        sb.appendLine("   - Tabla vacía")
+                    }
+
+                    sb.appendLine()
+                }
+
+                // Add statistics summary if present
+                if (stats != null) {
+                    sb.appendLine("📈 Estadísticas:")
+                    stats.keys().forEach { key ->
+                        sb.appendLine("- $key: ${stats.optInt(key)}")
+                    }
+                }
+
+                sb.appendLine()
+                sb.appendLine("✅ Puedes preguntar por cualquiera de estas tablas o solicitar detalles específicos.")
+
+                return@withContext sb.toString().trim()
+            } catch (e: Exception) {
+                Log.e(tag, "Error building dynamic schema for all-tables request", e)
+                // Fallback to original static schema if something goes wrong
+                Log.d(tag, "Falling back to static schema response")
+                return@withContext """
 📊 BASE DE DATOS TAREAMOV - ESQUEMA COMPLETO
 
 La base de datos contiene exactamente **14 TABLAS**:
@@ -214,7 +275,8 @@ La base de datos contiene exactamente **14 TABLAS**:
 ✅ **TOTAL: 14 TABLAS DISPONIBLES**
 
 Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
-            """.trimIndent()
+                """.trimIndent()
+            }
         }
         
         try {

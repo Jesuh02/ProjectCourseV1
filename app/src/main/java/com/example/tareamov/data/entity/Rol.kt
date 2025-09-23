@@ -12,16 +12,16 @@ data class Rol(
     val default: Boolean = false
 ) {
     companion object {
-        const val NOMBRE_ESTUDIANTE = "estudiante"
+        const val NOMBRE_USUARIO = "usuario"
         const val NOMBRE_ADMIN = "admin"
-        const val NIVEL_ESTUDIANTE = 1.0f
+        const val NIVEL_USUARIO = 1.0f
         const val NIVEL_ADMIN = 2.0f
         
-        // Método para crear rol estudiante por defecto
-        fun createEstudianteRole(): Rol {
+        // Método para crear rol usuario por defecto
+        fun createUsuarioRole(): Rol {
             return Rol(
-                nombre = NOMBRE_ESTUDIANTE,
-                nivel = NIVEL_ESTUDIANTE,
+                nombre = NOMBRE_USUARIO,
+                nivel = NIVEL_USUARIO,
                 default = true
             )
         }
@@ -33,6 +33,16 @@ data class Rol(
                 nivel = NIVEL_ADMIN,
                 default = false
             )
+        }
+        
+        // Validación de roles permitidos - SOLO usuario y admin
+        fun isValidRole(roleName: String): Boolean {
+            return roleName == NOMBRE_USUARIO || roleName == NOMBRE_ADMIN
+        }
+        
+        // Lista de todos los roles válidos
+        fun getAllValidRoles(): List<String> {
+            return listOf(NOMBRE_USUARIO, NOMBRE_ADMIN)
         }
     }
 }

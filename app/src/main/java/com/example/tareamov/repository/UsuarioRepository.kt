@@ -15,13 +15,25 @@ class UsuarioRepository(
     }
 
     suspend fun insert(usuario: Usuario): Long {
-        // Save password as plain text
-        return usuarioDao.insertUsuario(usuario)
+        // Ensure password is bcrypt-hashed before saving
+        val passwordToStore = if (usuario.contrasena.startsWith("$2a$") || usuario.contrasena.startsWith("$2b$") || usuario.contrasena.startsWith("$2y$")) {
+            usuario.contrasena
+        } else {
+            at.favre.lib.crypto.bcrypt.BCrypt.withDefaults().hashToString(12, usuario.contrasena.toCharArray())
+        }
+        val usuarioToSave = usuario.copy(contrasena = passwordToStore)
+        return usuarioDao.insertUsuario(usuarioToSave)
     }
 
     suspend fun update(usuario: Usuario) {
-        // Update password as plain text
-        usuarioDao.updateUsuario(usuario)
+        // Ensure password is hashed if it looks like plain text
+        val passwordToStore = if (usuario.contrasena.startsWith("$2a$") || usuario.contrasena.startsWith("$2b$") || usuario.contrasena.startsWith("$2y$")) {
+            usuario.contrasena
+        } else {
+            at.favre.lib.crypto.bcrypt.BCrypt.withDefaults().hashToString(12, usuario.contrasena.toCharArray())
+        }
+        val usuarioToSave = usuario.copy(contrasena = passwordToStore)
+        usuarioDao.updateUsuario(usuarioToSave)
     }
 
     suspend fun delete(usuario: Usuario) {
@@ -146,7 +158,12 @@ class UsuarioRepository(
     suspend fun updatePassword(userId: Long, password: String): Boolean {
         val usuario = getUsuarioById(userId)
         return if (usuario != null) {
-            val updatedUsuario = usuario.copy(contrasena = password)
+            val passwordToStore = if (password.startsWith("$2a$") || password.startsWith("$2b$") || password.startsWith("$2y$")) {
+                password
+            } else {
+                at.favre.lib.crypto.bcrypt.BCrypt.withDefaults().hashToString(12, password.toCharArray())
+            }
+            val updatedUsuario = usuario.copy(contrasena = passwordToStore)
             usuarioDao.updateUsuario(updatedUsuario)
             true
         } else {

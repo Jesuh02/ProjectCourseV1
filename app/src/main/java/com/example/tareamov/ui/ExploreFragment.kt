@@ -240,6 +240,7 @@ class ExploreFragment : Fragment() {
             localFilePath = course.localFilePath,
             timestamp = course.timestamp,
             isPaid = course.isPremium,
+            remoteId = course.id,
             thumbnailUri = course.thumbnailUri,
             price = if (course.price > 0.0) course.price else null
         )
@@ -386,7 +387,11 @@ class ExploreFragment : Fragment() {
                         if (courseToRemove != null) {
                             allCoursesList.remove(courseToRemove)
                             coursesList.remove(courseToRemove)
-                            coursesAdapter.updateCourses(coursesList)
+                            if (::coursesAdapter.isInitialized) {
+                                coursesAdapter.updateCourses(coursesList)
+                            } else {
+                                Log.w("ExploreFragment", "coursesAdapter not initialized when removing course")
+                            }
                         }
 
                         // Show success message
@@ -823,7 +828,11 @@ class ExploreFragment : Fragment() {
         }
         coursesList.clear()
         coursesList.addAll(filtered)
-        coursesAdapter.updateCourses(coursesList)
+        if (::coursesAdapter.isInitialized) {
+            coursesAdapter.updateCourses(coursesList)
+        } else {
+            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+        }
         updateCourseStats()
     }
 
@@ -866,7 +875,11 @@ class ExploreFragment : Fragment() {
         val premiumCourses = allCoursesList.filter { it.isPaid == true }
         coursesList.clear()
         coursesList.addAll(premiumCourses)
-        coursesAdapter.updateCourses(coursesList)
+        if (::coursesAdapter.isInitialized) {
+            coursesAdapter.updateCourses(coursesList)
+        } else {
+            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+        }
         updateCourseStats()
         Log.d("ExploreFragment", "Filtered to show premium courses: ${premiumCourses.size} courses")
     }
@@ -876,7 +889,11 @@ class ExploreFragment : Fragment() {
         val freeCourses = allCoursesList.filter { it.isPaid != true }
         coursesList.clear()
         coursesList.addAll(freeCourses)
-        coursesAdapter.updateCourses(coursesList)
+        if (::coursesAdapter.isInitialized) {
+            coursesAdapter.updateCourses(coursesList)
+        } else {
+            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+        }
         updateCourseStats()
         Log.d("ExploreFragment", "Filtered to show free courses: ${freeCourses.size} courses")
     }
@@ -931,7 +948,11 @@ class ExploreFragment : Fragment() {
         val myCoursesOnly = getUserOwnedCourses()
         coursesList.clear()
         coursesList.addAll(myCoursesOnly)
-        coursesAdapter.updateCourses(coursesList)
+        if (::coursesAdapter.isInitialized) {
+            coursesAdapter.updateCourses(coursesList)
+        } else {
+            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+        }
         updateCourseStats()
         Log.d("ExploreFragment", "Filtered to show only user's courses: ${myCoursesOnly.size} courses")
     }
@@ -941,7 +962,11 @@ class ExploreFragment : Fragment() {
         val otherCourses = getOtherUsersCourses()
         coursesList.clear()
         coursesList.addAll(otherCourses)
-        coursesAdapter.updateCourses(coursesList)
+        if (::coursesAdapter.isInitialized) {
+            coursesAdapter.updateCourses(coursesList)
+        } else {
+            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+        }
         updateCourseStats()
         Log.d("ExploreFragment", "Filtered to show only other users' courses: ${otherCourses.size} courses")
     }
@@ -950,7 +975,11 @@ class ExploreFragment : Fragment() {
     private fun showAllCourses() {
         coursesList.clear()
         coursesList.addAll(allCoursesList)
-        coursesAdapter.updateCourses(coursesList)
+        if (::coursesAdapter.isInitialized) {
+            coursesAdapter.updateCourses(coursesList)
+        } else {
+            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+        }
         updateCourseStats()
         Log.d("ExploreFragment", "Showing all courses: ${allCoursesList.size} courses")
     }    override fun onResume() {
@@ -966,13 +995,21 @@ class ExploreFragment : Fragment() {
     override fun onPause() {
         super.onPause()
         // Stop any video playback when fragment is paused
-        coursesAdapter.stopAllVideos()
+        if (::coursesAdapter.isInitialized) {
+            coursesAdapter.stopAllVideos()
+        } else {
+            Log.w("ExploreFragment", "coursesAdapter not initialized onPause")
+        }
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
         // Clean up any resources
-        coursesAdapter.stopAllVideos()
+        if (::coursesAdapter.isInitialized) {
+            coursesAdapter.stopAllVideos()
+        } else {
+            Log.w("ExploreFragment", "coursesAdapter not initialized onDestroyView")
+        }
     }
     // Debug function to show detailed stats info - remove in production
     private fun showDebugStatsInfo() {

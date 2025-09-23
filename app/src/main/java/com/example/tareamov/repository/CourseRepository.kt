@@ -118,8 +118,10 @@ class CourseRepository(private val context: Context) {
             )
             courseDao!!.insertCourse(courseWithDate)
         } else {
-            val videoData = convertCourseToVideoData(course)
-            videoDao.insertVideo(videoData)
+            // IMPORTANT: Do NOT create a VideoData entry when saving a Course.
+            // Creating courses must not write to the videos table. Log and return -1.
+            Log.w("CourseRepository", "CourseDao unavailable: refusing to save Course as VideoData to enforce separation (course != video)")
+            -1L
         }
     }
 
@@ -128,8 +130,7 @@ class CourseRepository(private val context: Context) {
             val updatedCourse = course.copy(lastModifiedDate = getCurrentTimestamp())
             courseDao!!.updateCourse(updatedCourse)
         } else {
-            val videoData = convertCourseToVideoData(course)
-            videoDao.updateVideo(videoData)
+            Log.w("CourseRepository", "CourseDao unavailable: cannot update Course; no fallback to VideoData to enforce separation")
         }
     }
 
@@ -137,7 +138,7 @@ class CourseRepository(private val context: Context) {
         if (courseDao != null) {
             courseDao!!.deleteCourse(course)
         } else {
-            videoDao.deleteVideo(course.id)
+            Log.w("CourseRepository", "CourseDao unavailable: cannot delete Course; no fallback to VideoData")
         }
     }
 
@@ -145,7 +146,7 @@ class CourseRepository(private val context: Context) {
         if (courseDao != null) {
             courseDao!!.deleteCourseById(courseId)
         } else {
-            videoDao.deleteVideo(courseId)
+            Log.w("CourseRepository", "CourseDao unavailable: cannot delete Course by id; no fallback to VideoData")
         }
     }
 

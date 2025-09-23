@@ -275,33 +275,9 @@ class CourseDetailFragment : Fragment() {
         // Load course details
         courseViewModel.getCourseById(courseId)
 
-        // Set up subscribe button click listener
+        // Set up subscribe button click listener (use centralized handler that also syncs to Supabase)
         subscribeButton.setOnClickListener {
-            if (sessionManager.isLoggedIn()) {
-                // User is logged in, proceed with subscription
-                lifecycleScope.launch {
-                    val db = AppDatabase.getDatabase(requireContext())
-                    val username = sessionManager.getUsername() ?: return@launch
-                    val course = courseViewModel.course.value ?: return@launch
-
-                    val subscription = Subscription(
-                        subscriberUsername = username,
-                        creatorUsername = course.username,
-                        subscriptionDate = System.currentTimeMillis()
-                    )
-
-                    withContext(Dispatchers.IO) {
-                        db.subscriptionDao().insertSubscription(subscription)
-                    }
-
-                    Toast.makeText(requireContext(), "Te has suscrito al curso exitosamente", Toast.LENGTH_SHORT).show()
-                    findNavController().navigateUp()
-                }
-            } else {
-                // User is not logged in, show message and navigate to login
-                Toast.makeText(requireContext(), "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
-                findNavController().navigate(R.id.loginFragment)
-            }
+            handleSubscription()
         }
         
         // Setup bottom navigation
@@ -694,6 +670,35 @@ class CourseDetailFragment : Fragment() {
 
                     withContext(Dispatchers.IO) {
                         subscriptionDao.insertSubscription(subscription)
+                    }
+                    // Try to sync the subscription to Supabase (best-effort)
+                    try {
+                        if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                            Log.w("CourseDetailFragment", "SupabaseClient not configured; skipping remote subscription sync.")
+                        } else {
+                            val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                            val mapped = mapOf(
+                                "subscriber_username" to subscription.subscriberUsername,
+                                "creator_username" to subscription.creatorUsername,
+                                "subscription_date" to subscription.subscriptionDate
+                            )
+
+                            // Try direct upsert even if tableExists() previously returned false. Let the repository report the HTTP error body.
+                            val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("subscriptions", mapped) }
+                            if (!ok) {
+                                Log.w("CourseDetailFragment", "Supabase upsert returned false for subscription ${subscription.subscriberUsername}_${subscription.creatorUsername}")
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "No se pudo sincronizar la suscripción en remoto", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Log.i("CourseDetailFragment", "Supabase upsert succeeded for subscription ${subscription.subscriberUsername}_${subscription.creatorUsername}")
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "Suscripción sincronizada en Supabase", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "Failed to sync subscription to Supabase: ${e.message}")
                     }
                     isSubscribed = true
 

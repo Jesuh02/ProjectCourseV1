@@ -26,6 +26,7 @@ import com.example.tareamov.data.entity.TaskSubmission
 import com.example.tareamov.data.entity.FileContext
 import com.example.tareamov.service.FileAnalysisService
 import com.example.tareamov.service.MCPService
+import com.example.tareamov.service.SupabaseClient
 import com.example.tareamov.util.CalificationManager
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -355,7 +356,7 @@ class TaskSubmissionsFragment : Fragment() {
                 // Calculate progress
                 val totalStudents = students.size
                 val submittedCount = submissions.size
-                val gradedCount = submissions.count { it.grade != null }
+                val gradedCount = submissions.count { it.grade != null && it.grade > 0 } // Solo contar como calificado si la nota es mayor a 0
 
                 // Update UI
                 if (totalStudents > 0) {
@@ -395,7 +396,7 @@ class TaskSubmissionsFragment : Fragment() {
                     val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
                     val dateString = dateFormat.format(submission.submissionDate)
 
-                    val gradeText = if (submission.grade != null) {
+                    val gradeText = if (submission.grade != null && submission.grade > 0) {
                         "Calificación: ${submission.grade}/10"
                     } else {
                         "Pendiente de calificación"
@@ -406,8 +407,8 @@ class TaskSubmissionsFragment : Fragment() {
 
                     // Update progress for student
                     progressBar.max = 100
-                    progressBar.progress = if (submission.grade != null) 100 else 50
-                    progressTextView.text = if (submission.grade != null)
+                    progressBar.progress = if (submission.grade != null && submission.grade > 0) 100 else 50
+                    progressTextView.text = if (submission.grade != null && submission.grade > 0)
                         "Tarea completada y calificada"
                     else
                         "Tarea entregada, pendiente de calificación"
@@ -493,6 +494,22 @@ class TaskSubmissionsFragment : Fragment() {
                 if (isCourseCreator) {
                     loadTaskProgress()
                 }
+                // Try to push the grade and feedback to Supabase immediately (use object overload)
+                try {
+                    val pushed = withContext(Dispatchers.IO) {
+                        SupabaseClient.updateTaskSubmissionRemote(updatedSubmission)
+                    }
+                    if (pushed) {
+                        Log.i("TaskSubmissionsFragment", "Updated submission ${updatedSubmission.id} pushed to Supabase.")
+                        Toast.makeText(context, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Log.w("TaskSubmissionsFragment", "Failed to push updated submission ${updatedSubmission.id} to Supabase. Will retry in sync.")
+                        Toast.makeText(context, "Calificación guardada localmente; se reintentará subirla más tarde.", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "Exception pushing updated submission to Supabase", e)
+                    Toast.makeText(context, "Error enviando calificación al servidor; se reintentará.", Toast.LENGTH_SHORT).show()
+                }
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "Error updating grade", e)
                 Toast.makeText(context, "Error al guardar calificación: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -520,15 +537,31 @@ class TaskSubmissionsFragment : Fragment() {
             fileUri = uri.toString(),
             fileName = fileName,
             submissionDate = System.currentTimeMillis(),
-            grade = null,
+            grade = 0.0f, // Nota por defecto 0 en lugar de null
             feedback = null
         )
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 val db = AppDatabase.getDatabase(requireContext())
-                withContext(Dispatchers.IO) {
+                val localId = withContext(Dispatchers.IO) {
                     db.taskSubmissionDao().insertSubmission(submission)
+                }
+
+                // Try sending immediately to Supabase and log the returned remote id
+                try {
+                    val submissionWithLocalId = submission.copy(id = localId)
+                    val remoteId = withContext(Dispatchers.IO) {
+                        SupabaseClient.insertTaskSubmission(submissionWithLocalId)
+                    }
+                    if (remoteId != null) {
+                        Log.i("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned remote id=$remoteId for local id=$localId")
+                        Toast.makeText(context, "Tarea subida a servidor (id=$remoteId)", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Log.w("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned null for local id=$localId")
+                    }
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "Error sending submission to Supabase", e)
                 }
 
                 Toast.makeText(context, "Tarea enviada correctamente", Toast.LENGTH_SHORT).show()
@@ -546,7 +579,7 @@ class TaskSubmissionsFragment : Fragment() {
 
                 // Update progress after submission
                 progressBar.max = 100
-                progressBar.progress = 50
+                progressBar.progress = 50 // 50% porque está entregado pero no calificado (nota = 0)
                 progressTextView.text = "Tarea entregada, pendiente de calificación"
 
                 // Disable submit button
@@ -840,6 +873,20 @@ class TaskSubmissionsFragment : Fragment() {
             val database = AppDatabase.getDatabase(requireContext())
             val savedId = database.fileContextDao().insertFileContext(fileContext)
             Log.d("TaskSubmissionsFragment", "📝 FileContext guardado con ID: $savedId")
+
+            // Intentar enviar el FileContext a Supabase en background
+            try {
+                val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                // Ensure we send the same object with id set to savedId for FK mapping
+                val toSend = fileContext.copy(id = savedId)
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val ok = supabaseRepo.upsert("file_contexts", toSend)
+                    if (ok) Log.i("TaskSubmissionsFragment", "FileContext $savedId upserted to Supabase.")
+                    else Log.w("TaskSubmissionsFragment", "Failed to upsert FileContext $savedId to Supabase.")
+                }
+            } catch (e: Exception) {
+                Log.w("TaskSubmissionsFragment", "Exception sending FileContext to Supabase: ${e.message}")
+            }
             
             // El resto del código debe ejecutarse en el hilo principal para UI
             withContext(Dispatchers.Main) {
@@ -1005,8 +1052,8 @@ class TaskSubmissionsFragment : Fragment() {
 
                 fileNameTextView.text = submission.fileName
                 
-                // Manejar calificación IA - solo mostrar si hay calificación real del usuario
-                if (submission.grade != null) {
+                // Manejar calificación IA - solo mostrar si hay calificación real del usuario (mayor a 0)
+                if (submission.grade != null && submission.grade > 0) {
                     val aiGrade = (submission.grade * 10).toInt() // Convertir de 0-10 a 0-100
                     
                     // Mostrar elementos de calificación
@@ -1028,7 +1075,7 @@ class TaskSubmissionsFragment : Fragment() {
                     }
                     qualityLabelTextView.text = qualityLabel
                 } else {
-                    // No hay calificación - mostrar "No calificado"
+                    // No hay calificación real (grade = 0 o null) - mostrar "No calificado"
                     aiGradeTextView.visibility = View.GONE
                     gradeScaleTextView.visibility = View.GONE
                     gradeProgressBar.visibility = View.GONE
@@ -1085,7 +1132,9 @@ class TaskSubmissionsFragment : Fragment() {
                         }
 
                         try {
-                            val grade = gradeText.toFloat()
+                            // Normalizar el formato decimal (cambiar coma por punto si es necesario)
+                            val normalizedGradeText = gradeText.replace(",", ".")
+                            val grade = normalizedGradeText.toFloat()
                             if (grade < 0 || grade > 10) {
                                 Toast.makeText(context, "La calificación debe estar entre 0 y 10", Toast.LENGTH_SHORT).show()
                                 return@setOnClickListener
@@ -1094,14 +1143,15 @@ class TaskSubmissionsFragment : Fragment() {
                             val feedback = feedbackEditText.text.toString()
                             onGradeSubmitted(submission, grade, feedback)
                         } catch (e: NumberFormatException) {
-                            Toast.makeText(context, "Formato de calificación inválido", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "❌ No se pudo convertir la calificación '$gradeText' a número decimal", Toast.LENGTH_SHORT).show()
+                            Log.e("TaskSubmissionsFragment", "❌ No se pudo convertir grade a Float: $gradeText", e)
                         }
                     }
                 } else {
                     gradeSection.visibility = View.GONE
 
-                    // For students, show their grade if available
-                    if (submission.grade != null) {
+                    // For students, show their grade if available and greater than 0
+                    if (submission.grade != null && submission.grade > 0) {
                         gradeDisplayTextView.visibility = View.VISIBLE
                         gradeDisplayTextView.text = "Calificación: ${submission.grade}/10"
 
@@ -1113,7 +1163,8 @@ class TaskSubmissionsFragment : Fragment() {
                             feedbackDisplayTextView.visibility = View.GONE
                         }
                     } else {
-                        gradeDisplayTextView.visibility = View.GONE
+                        gradeDisplayTextView.visibility = View.VISIBLE
+                        gradeDisplayTextView.text = "Pendiente de calificación"
                         feedbackDisplayTextView.visibility = View.GONE
                     }
                 }
