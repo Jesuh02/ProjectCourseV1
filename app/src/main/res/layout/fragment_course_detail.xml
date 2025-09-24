@@ -144,24 +144,29 @@
                 <Button
                     android:id="@+id/subscribeButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="36dp"
+                    android:layout_height="40dp"
                     android:text="Suscribirse"
                     android:textColor="#FFFFFF"
-                    android:background="@drawable/subscribe_button_background"
-                    android:paddingStart="20dp"
-                    android:paddingEnd="20dp"
-                    android:layout_marginStart="8dp" />
+                    android:background="@drawable/rounded_subscribe_button"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:layout_marginStart="8dp"
+                    android:minHeight="40dp"
+                    android:includeFontPadding="false"
+                    android:gravity="center" />
 
                 <!-- Add the PSE payment button here -->
-                <ImageButton
+                <ImageView
                     android:id="@+id/psePaymentButton"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
                     android:src="@drawable/ic_pse"
-                    android:background="?attr/selectableItemBackgroundBorderless"
                     android:contentDescription="Pagar con PSE"
                     android:layout_marginStart="8dp"
-                    android:tint="@null" />
+                    android:adjustViewBounds="true"
+                    android:scaleType="centerInside"
+                    android:background="@drawable/rounded_icon_background"
+                    android:tint="@color/white" />
             </LinearLayout>
 
             <!-- Add this after the creator info container and before the tabs -->

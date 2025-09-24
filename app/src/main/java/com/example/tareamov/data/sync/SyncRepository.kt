@@ -381,14 +381,54 @@ class SyncRepository(
     suspend fun fetchCourseById(id: Long): Course? {
         return try {
             if (!supabaseClient.isConfigured()) return null
-            val list = withContext(Dispatchers.IO) { supabaseClient.fetchCourses() }
-            Log.d("SyncRepository", "fetchCourseById: fetched ${list.size} courses from Supabase to search for id=$id")
-            val found = list.firstOrNull { it.id == id }
+            val found = withContext(Dispatchers.IO) { supabaseClient.fetchCourseById(id) }
             if (found != null) Log.d("SyncRepository", "fetchCourseById: found course id=${found.id} title=${found.title}")
             found
         } catch (e: Exception) {
             Log.w("SyncRepository", "fetchCourseById failed for id=$id", e)
             null
+        }
+    }
+
+    // New wrappers that use SupabaseClient server-side filters when available
+    suspend fun fetchTopicsByCourseFromSupabase(courseId: Long): List<Topic> {
+        return try {
+            if (!supabaseClient.isConfigured()) return emptyList()
+            withContext(Dispatchers.IO) { supabaseClient.fetchTopicsByCourse(courseId) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchTopicsByCourseFromSupabase failed for courseId=$courseId", e)
+            emptyList()
+        }
+    }
+
+    suspend fun fetchTasksByTopicIdsFromSupabase(topicIds: List<Long>): List<Task> {
+        return try {
+            if (!supabaseClient.isConfigured() || topicIds.isEmpty()) return emptyList()
+            withContext(Dispatchers.IO) { supabaseClient.fetchTasksByTopicIds(topicIds) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchTasksByTopicIdsFromSupabase failed for topicIds=$topicIds", e)
+            emptyList()
+        }
+    }
+
+    // Fetch single task by id from Supabase
+    suspend fun fetchTaskByIdFromSupabase(id: Long): Task? {
+        return try {
+            if (!supabaseClient.isConfigured()) return null
+            withContext(Dispatchers.IO) { supabaseClient.fetchTaskById(id) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchTaskByIdFromSupabase failed for id=$id", e)
+            null
+        }
+    }
+
+    suspend fun fetchContentItemsByTopicIdsFromSupabase(topicIds: List<Long>): List<ContentItem> {
+        return try {
+            if (!supabaseClient.isConfigured() || topicIds.isEmpty()) return emptyList()
+            withContext(Dispatchers.IO) { supabaseClient.fetchContentItemsByTopicIds(topicIds) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchContentItemsByTopicIdsFromSupabase failed for topicIds=$topicIds", e)
+            emptyList()
         }
     }
 
@@ -428,6 +468,13 @@ class SyncRepository(
     suspend fun insertSubscriptionRemote(sub: Subscription): Boolean {
         return try {
             if (!supabaseClient.isConfigured()) return false
+            // First check if the subscription already exists remotely
+            val exists = withContext(Dispatchers.IO) { supabaseClient.isSubscribedRemote(sub.subscriberUsername, sub.creatorUsername) }
+            if (exists) {
+                Log.d("SyncRepository", "insertSubscriptionRemote: subscription already exists remotely for ${sub.subscriberUsername} -> ${sub.creatorUsername}")
+                return true
+            }
+            // Not exists -> try insert
             withContext(Dispatchers.IO) { supabaseClient.insertSubscriptionToSupabase(sub) }
         } catch (e: Exception) {
             Log.w("SyncRepository", "insertSubscriptionRemote failed", e)
@@ -448,9 +495,71 @@ class SyncRepository(
     // Insert a Task into Supabase and return remote id (or null)
     suspend fun insertTaskRemote(task: com.example.tareamov.data.entity.Task): Long? {
         return try {
-            withContext(Dispatchers.IO) { supabaseClient.insertTask(task) }
+            if (!supabaseClient.isConfigured()) return null
+            // First check if a matching task already exists remotely (idempotency).
+            try {
+                val candidates = withContext(Dispatchers.IO) { supabaseClient.fetchTasksByTopicIds(listOf(task.topicId)) }
+                val found = candidates.firstOrNull { (it.name ?: "") == (task.name ?: "") }
+                if (found != null) return found.id
+            } catch (e: Exception) {
+                Log.w("SyncRepository", "Could not check existing remote tasks before insert", e)
+            }
+
+            // Try direct insert
+            val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertTask(task) }
+            if (remoteId != null) return remoteId
+
+            // If insert failed, it may be due to missing parent topic on remote. Attempt upsert via SupabaseRepository which uses app_documents or direct upsert.
+            try {
+                val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", task) }
+                if (ok) {
+                    // After upsert, try to fetch by a heuristic: tasks with same title under the topic
+                    val candidates = withContext(Dispatchers.IO) { supabaseClient.fetchTasksByTopicIds(listOf(task.topicId)) }
+                    val found = candidates.firstOrNull { (it.name ?: "") == (task.name ?: "") }
+                    if (found != null) return found.id
+                }
+            } catch (e: Exception) {
+                Log.w("SyncRepository", "Fallback upsert for task failed", e)
+            }
+
+            // Final fallback: try to ensure parent topic exists remotely then retry insert
+            try {
+                val topic = withContext(Dispatchers.IO) { topicDao.getTopicById(task.topicId) }
+                if (topic != null) {
+                    val pushedTopic = withContext(Dispatchers.IO) { supabaseClient.insertTopic(topic) }
+                    if (pushedTopic != null) {
+                        // retry insert now that parent exists
+                        return withContext(Dispatchers.IO) { supabaseClient.insertTask(task) }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("SyncRepository", "Retry after pushing parent topic failed", e)
+            }
+
+            null
         } catch (e: Exception) {
             Log.w("SyncRepository", "insertTaskRemote failed", e)
+            null
+        }
+    }
+
+    // Update a Task remotely via SupabaseClient
+    suspend fun updateTaskRemote(task: com.example.tareamov.data.entity.Task): Boolean {
+        return try {
+            if (!supabaseClient.isConfigured()) return false
+            withContext(Dispatchers.IO) { supabaseClient.updateTask(task) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "updateTaskRemote failed", e)
+            false
+        }
+    }
+    
+    // Insert a ContentItem into Supabase and return remote id (or null)
+    suspend fun insertContentItemRemote(contentItem: com.example.tareamov.data.entity.ContentItem): Long? {
+        return try {
+            withContext(Dispatchers.IO) { supabaseClient.insertContentItem(contentItem) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "Failed to insert content item to Supabase", e)
             null
         }
     }
@@ -953,13 +1062,13 @@ class SyncRepository(
                 }
 
                 // TaskSubmissions
+                // IMPORTANT: Task submissions are treated as remote-authoritative and should NOT be
+                // inserted into the local SQLite/Room database to avoid FK constraint issues and
+                // duplication. Keep the local DB read-only for submissions or migrate other code to
+                // always read from Supabase instead.
                 val submissions = com.example.tareamov.service.SupabaseClient.fetchTaskSubmissions()
-                submissions.forEach { ss ->
-                    try {
-                        taskSubmissionDao.insertSubmission(ss)
-                    } catch (e: Exception) {
-                        Log.w("SyncRepository", "Failed to insert task submission ${ss.id}", e)
-                    }
+                if (submissions.isNotEmpty()) {
+                    Log.i("SyncRepository", "Fetched ${submissions.size} task_submissions from Supabase — skipping local insert (remote-authoritative)")
                 }
 
                 // Chat messages

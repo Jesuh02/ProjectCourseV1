@@ -83,11 +83,11 @@ class LoginFragment : Fragment() {
     
         // Set up click listener for the register button
         registerButton.setOnClickListener {
-            // Before navigating to register, check Supabase for existing username if configured.
-            // We'll prompt the user for the desired username via the usernameEditText field.
+            // If the user didn't type a desired username, navigate directly to RegisterFragment.
+            // If they did type a username, keep the existing remote/local availability checks.
             val desiredUsername = usernameEditText.text.toString().trim()
             if (desiredUsername.isEmpty()) {
-                Toast.makeText(requireContext(), "Por favor ingrese el usuario que desea registrar en el campo usuario antes de continuar", Toast.LENGTH_SHORT).show()
+                findNavController().navigate(R.id.registerFragment)
                 return@setOnClickListener
             }
 

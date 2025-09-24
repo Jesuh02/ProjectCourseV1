@@ -42,25 +42,9 @@ class CourseTopicFragment : Fragment() {
             return courseId
         }
 
-        // If courseId doesn't exist locally, try to get the first available course
-        val firstCourseId = videoDao.getFirstVideoId()
-        if (firstCourseId != null) {
-            return firstCourseId
-        }
-
-        // If no courses exist, create a default one
-        val defaultCourse = com.example.tareamov.data.entity.VideoData(
-            id = 0, // Will be auto-generated
-            username = "default_user",
-            description = "Curso predeterminado",
-            title = "Curso predeterminado",
-            videoUriString = null,
-            timestamp = System.currentTimeMillis(),
-            localFilePath = null
-        )
-
-        // Insert the default course and return its ID
-        return videoDao.insertVideo(defaultCourse)
+        // If not found locally, return -1L so callers can decide fallback behavior
+        Log.w("CourseTopicFragment", "Course id $courseId not found locally")
+        return -1L
     }
 
     private suspend fun ensurePlaceholderVideoExists(videoDao: com.example.tareamov.data.dao.VideoDao, validCourseId: Long, courseName: String) {
@@ -74,7 +58,7 @@ class CourseTopicFragment : Fragment() {
                 val placeholder = com.example.tareamov.data.entity.VideoData(
                     id = validCourseId,
                     username = "remote_owner",
-                    description = "Placeholder for remote course",
+                    description = "", // neutral description instead of verbose placeholder text
                     title = placeholderTitle,
                     videoUriString = null,
                     timestamp = System.currentTimeMillis(),
@@ -250,38 +234,75 @@ class CourseTopicFragment : Fragment() {
 
                 Log.d("CourseTopicFragment", "Using validated courseId: $validCourseId")
 
-                // Ensure the referenced course exists locally (to satisfy FK). If not, create a placeholder.
-                ensurePlaceholderVideoExists(videoDao, validCourseId, courseName)
+                // Prefer creating the Topic remotely and avoid creating local Topic/Video rows
+                // that can cause foreign key violations. Attempt to create the topic in Supabase
+                // and use the returned remote id for navigation to the task editor.
+                var remoteTopicId: Long? = null
+                try {
+                    remoteTopicId = withContext(Dispatchers.IO) {
+                        val sr = (activity as? com.example.tareamov.MainActivity)?.syncRepository
+                            ?: com.example.tareamov.data.sync.SyncRepository(
+                                appDatabase.usuarioDao(), appDatabase.personaDao(), appDatabase.topicDao(),
+                                appDatabase.contentItemDao(), appDatabase.taskDao(), appDatabase.subscriptionDao(),
+                                appDatabase.taskSubmissionDao(), appDatabase.videoDao(), appDatabase.courseDao(),
+                                appDatabase.rolDao(), appDatabase.recursoDao(), appDatabase.rolRecursoDao(),
+                                appDatabase.chatMessageDao(), appDatabase.fileContextDao()
+                            )
 
-                // Create Topic entity with the valid courseId
-                val topic = com.example.tareamov.data.entity.Topic(
-                    id = 0, // Ensure this is 0 for new topics
-                    courseId = validCourseId,
-                    name = topicName,
-                    description = topicDescription,
-                    orderIndex = topicNumber
-                )
+                        val topicToPush = com.example.tareamov.data.entity.Topic(
+                            id = 0,
+                            courseId = validCourseId,
+                            name = topicName,
+                            description = topicDescription,
+                            orderIndex = topicNumber
+                        )
 
-                // Remove the nested function that was causing the error
-                // The ensureValidCourseId function is now at the class level
-
-                // Insert topic and get its ID
-                val topicId = withContext(Dispatchers.IO) {
-                    val newTopicId = topicDao.insertTopic(topic)
-                    Log.d("CourseTopicFragment", "Topic saved with ID: $newTopicId")
-                    newTopicId
+                        sr.insertTopicRemote(topicToPush)
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseTopicFragment", "Failed to create topic remotely; falling back to local", e)
                 }
 
-                // Now navigate to create a task with the new topicId
-                val bundle = Bundle().apply {
-                    putLong("topicId", topicId)
-                    putLong("courseId", validCourseId) // Use the validated courseId
-                    putString("courseName", courseName)
-                    putInt("topicNumber", topicNumber)
-                    putLong("taskId", -1L) // Nueva tarea
-                }
+                // If remote creation succeeded, navigate using the remote id. Otherwise
+                // fall back to creating a local topic (best-effort) and use that id.
+                if (remoteTopicId != null) {
+                    // Notify previous fragment that a topic was created so it can refresh
+                    val prev = findNavController().previousBackStackEntry
+                    prev?.savedStateHandle?.set("topic_created", remoteTopicId)
 
-                findNavController().navigate(R.id.action_courseTopicFragment_to_courseTaskFragment, bundle)
+                    val bundle = Bundle().apply {
+                        putLong("topicId", remoteTopicId)
+                        putLong("courseId", validCourseId)
+                        putString("courseName", courseName)
+                        putInt("topicNumber", topicNumber)
+                        putLong("taskId", -1L)
+                    }
+                    findNavController().navigate(R.id.action_courseTopicFragment_to_courseTaskFragment, bundle)
+                } else {
+                    // Fallback: create local topic to preserve UX but may cause FK issues
+                    val localTopicId = withContext(Dispatchers.IO) {
+                        val topic = com.example.tareamov.data.entity.Topic(
+                            courseId = validCourseId,
+                            name = topicName,
+                            description = topicDescription,
+                            orderIndex = topicNumber
+                        )
+                        topicDao.insertTopic(topic)
+                    }
+
+                    // Notify previous fragment that a topic was created locally so it can refresh
+                    val prev = findNavController().previousBackStackEntry
+                    prev?.savedStateHandle?.set("topic_created", localTopicId)
+
+                    val bundle = Bundle().apply {
+                        putLong("topicId", localTopicId)
+                        putLong("courseId", validCourseId)
+                        putString("courseName", courseName)
+                        putInt("topicNumber", topicNumber)
+                        putLong("taskId", -1L)
+                    }
+                    findNavController().navigate(R.id.action_courseTopicFragment_to_courseTaskFragment, bundle)
+                }
 
             } catch (e: Exception) {
                 Log.e("CourseTopicFragment", "Error al guardar el tema para crear tarea", e)
@@ -614,11 +635,20 @@ class CourseTopicFragment : Fragment() {
                     android.util.Log.w("CourseTopicFragment", "Failed to push topic to Supabase", e)
                 }
 
-                // Navigate to CourseDetailFragment with the courseId
-                val bundle = Bundle().apply {
-                    putLong("courseId", validCourseId)
+                // Return to existing CourseDetailFragment on the back stack so it resumes and reloads data
+                // If the CourseDetailFragment is not on the back stack, navigate with the courseId bundle as fallback
+                try {
+                    val nav = findNavController()
+                    val popped = nav.popBackStack(R.id.courseDetailFragment, false)
+                    if (!popped) {
+                        val bundle = Bundle().apply { putLong("courseId", validCourseId) }
+                        nav.navigate(R.id.courseDetailFragment, bundle)
+                    }
+                } catch (navEx: Exception) {
+                    // Fallback to simple navigate if popBackStack fails
+                    val bundle = Bundle().apply { putLong("courseId", validCourseId) }
+                    findNavController().navigate(R.id.action_courseTopicFragment_to_courseDetailFragment, bundle)
                 }
-                findNavController().navigate(R.id.action_courseTopicFragment_to_courseDetailFragment, bundle)
 
             } catch (e: Exception) {
                 Log.e("CourseTopicFragment", "Error al guardar el tema", e)

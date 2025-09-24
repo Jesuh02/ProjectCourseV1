@@ -53,6 +53,8 @@ class CourseDetailFragment : Fragment() {
 
     private var courseId: Long = -1
     private var courseName: String = "" // Ensure this is populated correctly
+    // Resolved course id after checking Supabase (may differ from local courseId)
+    private var resolvedCourseId: Long = -1
     private lateinit var topicsContainer: LinearLayout
     private var isCurrentUserCreator: Boolean = false
     private var currentUsername: String? = null
@@ -119,6 +121,8 @@ class CourseDetailFragment : Fragment() {
         if (courseId != -1L) {
             Log.d("CourseDetailFragment", "onResume: Reloading course details for courseId: $courseId")
             loadCourseDetails()
+            // Also refresh topics from Supabase to reflect recent remote creations
+            refreshTopicsFromSupabase()
         }
     }
 
@@ -489,6 +493,19 @@ class CourseDetailFragment : Fragment() {
         
         // Setup bottom navigation
         setupBottomNavigation(view)
+
+        // Observe back stack savedStateHandle for topic creation notifications
+        val navBackEntry = findNavController().currentBackStackEntry
+        navBackEntry?.savedStateHandle?.getLiveData<Long>("topic_created")?.observe(viewLifecycleOwner) { topicId ->
+            try {
+                Log.d("CourseDetailFragment", "Detected topic_created=$topicId, refreshing topics")
+                refreshTopicsFromSupabase()
+                // Clear the flag so subsequent returns don't re-trigger unless set again
+                navBackEntry.savedStateHandle.remove<Long>("topic_created")
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Error handling topic_created event", e)
+            }
+        }
     }
       private fun setupBottomNavigation(view: View) {
         // Initialize the bottom navigation binding
@@ -542,9 +559,11 @@ class CourseDetailFragment : Fragment() {
 
 
     private fun navigateToSelectTopic(nameOfCourse: String) { // Accept course name as parameter
-        Log.d("CourseDetailFragment", "Navigating to SelectTopicFragment for courseId: $courseId, courseName: $nameOfCourse")
+        // Prefer resolvedCourseId (may have been remapped to Supabase id); fallback to original courseId
+        val sendCourseId = if (resolvedCourseId > 0) resolvedCourseId else courseId
+        Log.d("CourseDetailFragment", "Navigating to SelectTopicFragment for courseId: $sendCourseId, courseName: $nameOfCourse")
         val bundle = Bundle().apply {
-            putLong("courseId", courseId)
+            putLong("courseId", sendCourseId)
             putString("courseName", nameOfCourse) // Pass the confirmed course name
         }
         // Ensure the action ID matches the one defined in nav_graph.xml
@@ -579,11 +598,37 @@ class CourseDetailFragment : Fragment() {
             try { // Start of the main try block
                 // Try to fetch the Course from Supabase first (via MainActivity.syncRepository)
                 var remoteCourse: com.example.tareamov.data.entity.Course? = null
+                // Use an effectiveCourseId for subsequent topic/task lookups; may be remapped if we find
+                // a matching course by title on Supabase when the numeric id is not present there.
+                var effectiveCourseId: Long = courseId
                 try {
                     val act = requireActivity()
                     if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        // First try exact id lookup
                         remoteCourse = withContext(Dispatchers.IO) { act.syncRepository.fetchCourseById(courseId) }
                         Log.d("CourseDetailFragment", "fetchCourseById returned: ${remoteCourse?.id}")
+
+                        // If no course found by id, try to resolve by the passed courseName (common case when
+                        // local DB uses different ids). This handles maps where Supabase courses range 1..43
+                        // but the local DB has created records with different ids (e.g., 70).
+                        if (remoteCourse == null && courseName.isNotBlank()) {
+                            try {
+                                val courses = withContext(Dispatchers.IO) { act.syncRepository.fetchCoursesFromSupabase() }
+                                val match = courses.firstOrNull { c ->
+                                    val remoteTitle = (c.title ?: "").trim()
+                                    remoteTitle.equals(courseName.trim(), ignoreCase = true)
+                                }
+                                if (match != null) {
+                                    remoteCourse = match
+                                    effectiveCourseId = match.id
+                                    Log.d("CourseDetailFragment", "Resolved course by title -> remote id=${match.id} title=${match.title}")
+                                } else {
+                                    Log.d("CourseDetailFragment", "No Supabase course matched title='$courseName'")
+                                }
+                            } catch (t: Exception) {
+                                Log.w("CourseDetailFragment", "Title-based Supabase lookup failed", t)
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w("CourseDetailFragment", "Remote fetch failed", e)
@@ -647,7 +692,7 @@ class CourseDetailFragment : Fragment() {
 
                         creatorInfoContainer.visibility = View.VISIBLE
                         initializeAndLoadCourseProgress(
-                            courseId = courseId,
+                            courseId = effectiveCourseId,
                             username = currentUsername,
                             isCurrentUserCreator = isCurrentUserCreator
                         )
@@ -704,89 +749,101 @@ class CourseDetailFragment : Fragment() {
                     }
                 }
 
-                // Get topics for this course directly (topics are stored locally)
-                val topics = withContext(Dispatchers.IO) {
-                    topicDao.getTopicsByCourse(courseId)
+                // Attempt to fetch only topics from Supabase when configured (tabs act as filters over topics)
+                var topics: List<Topic> = emptyList()
+
+                if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    try {
+                        // Use effectiveCourseId (may have been remapped by title lookup)
+                        val lookupId = effectiveCourseId
+                        topics = withContext(Dispatchers.IO) { syncRepository.fetchTopicsByCourseFromSupabase(lookupId) }
+                        Log.d("CourseDetailFragment", "Loaded remote topics=${topics.size} for courseId=$lookupId via SyncRepository")
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "Remote topics fetch failed, falling back to local DAO", e)
+                        topics = withContext(Dispatchers.IO) { topicDao.getTopicsByCourse(courseId) }
+                    }
+                } else {
+                    topics = withContext(Dispatchers.IO) { topicDao.getTopicsByCourse(courseId) }
                 }
 
                 Log.d("CourseDetailFragment", "Found ${topics.size} topics for courseId: $courseId")
 
                 if (topics.isEmpty()) {
-                    // Handle case with no topics
                     Log.d("CourseDetailFragment", "No topics found for course ID: $courseId")
+                    // When Supabase is configured we still show the container (empty) so newly created remote
+                    // topics become visible without requiring local Room inserts. Show a friendly message.
                     noTopicsTextView?.text = "Este curso aún no tiene temas." // Set specific message
                     noTopicsTextView?.visibility = View.VISIBLE
-                    topicsContainer.visibility = View.GONE
-                    // Ensure the "no tasks" message is hidden if there are no topics at all
-                    noTasksTextView?.visibility = View.GONE
-                } else { // Start of the else block (when topics exist)
-                    // Don't set visibility for noTopicsTextView or topicsContainer yet
-
-                    // Get all content items and tasks for these topics
-                    val topicIds = topics.map { it.id }
-                    val contentItems = withContext(Dispatchers.IO) {
-                        contentItemDao.getContentItemsByTopicIds(topicIds)
-                    }
-                    val tasks = withContext(Dispatchers.IO) { // Fetch tasks
-                        taskDao.getTasksByTopicIds(topicIds)
-                    }
-
-                    // Create maps for efficient lookup
-                    val contentItemsMap = contentItems.groupBy { it.topicId }
-                    val tasksMap = tasks.groupBy { it.topicId } // Group tasks by topicId
-
-                    // Clear previous views if any
                     topicsContainer.removeAllViews()
-                    // Reset visibility of messages initially
+                    topicsContainer.visibility = View.VISIBLE
+                    noTasksTextView?.visibility = View.GONE
+                } else {
+                    // Clear previous views and reset messages
+                    topicsContainer.removeAllViews()
                     noTopicsTextView?.visibility = View.GONE
                     noTasksTextView?.visibility = View.GONE
 
-                    // Now iterate and add views using the fetched data
+                    // Debug: log topic list before rendering
+                    Log.d("CourseDetailFragment", "Debug: topics.size=${topics.size}, currentTab=$currentTab")
+
+                    // Iterate and add topic views. For tab filters we fetch only topics,
+                    // but when the user selected the "tareas" tab we must also fetch
+                    // tasks for those topics from Supabase (or fallback to local DAO).
                     val sortedTopics = topics.sortedBy { it.orderIndex }
-                    var itemsAdded = false // Flag to track if any relevant items were added
 
-                    for (topic in sortedTopics) {
-                        val topicContentItems = contentItemsMap[topic.id]?.filter { it.taskId == null } ?: emptyList() // Filter content for topic only
-                        val topicTasks = tasksMap[topic.id] ?: emptyList() // Get tasks for this topic
-
-                        // Conditionally add views based on the current tab
-                        if (currentTab == "documentos") {
-                            // Only add topic view if it has content items when 'documentos' tab is selected
-                            if (topicContentItems.isNotEmpty()) {
-                                addTopicView(topic, topicContentItems, emptyList()) // Pass empty task list
-                                itemsAdded = true
+                    // Prepare tasks grouped by topicId when viewing tasks
+                    var tasksByTopic: Map<Long, List<Task>> = emptyMap()
+                    if (currentTab == "tareas") {
+                        try {
+                            val topicIds = sortedTopics.map { it.id }
+                            if (topicIds.isNotEmpty()) {
+                                if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                    val fetched = withContext(Dispatchers.IO) { syncRepository.fetchTasksByTopicIdsFromSupabase(topicIds) }
+                                    tasksByTopic = (fetched ?: emptyList()).groupBy { it.topicId }
+                                } else {
+                                    val localTasks = withContext(Dispatchers.IO) { taskDao.getTasksByTopicIds(sortedTopics.map { it.id }) }
+                                    tasksByTopic = localTasks.groupBy { it.topicId }
+                                }
                             }
-                        } else { // currentTab == "tareas"
-                            // Only add topic view if it has tasks when 'tareas' tab is selected
-                            if (topicTasks.isNotEmpty()) {
-                                addTopicView(topic, emptyList(), topicTasks) // Pass empty content list
-                                itemsAdded = true
+                        } catch (e: Exception) {
+                            Log.w("CourseDetailFragment", "Failed to fetch tasks for topics; falling back to per-topic DAO", e)
+                            // Best-effort fallback: fetch per-topic from DAO
+                            val map = mutableMapOf<Long, List<Task>>()
+                            for (t in sortedTopics) {
+                                try {
+                                    val list = withContext(Dispatchers.IO) { taskDao.getTasksByTopicId(t.id) }
+                                    map[t.id] = list
+                                } catch (_: Exception) { map[t.id] = emptyList() }
                             }
+                            tasksByTopic = map
                         }
-                    } // Closes for loop
+                    }
 
-                    // Handle cases where filtering results in no items OR items were added
-                    if (!itemsAdded) {
-                        topicsContainer.visibility = View.GONE // Hide the container
+                    // If viewing tasks, filter out topics that have no tasks
+                    val topicsToRender = if (currentTab == "tareas") {
+                        sortedTopics.filter { t -> (tasksByTopic[t.id] ?: emptyList()).isNotEmpty() }
+                    } else {
+                        sortedTopics
+                    }
+
+                    for (topic in topicsToRender) {
+                        val tasksForTopic = tasksByTopic[topic.id] ?: emptyList()
+                        // content items are intentionally not fetched here for performance
+                        addTopicView(topic, emptyList(), tasksForTopic)
+                    }
+
+                    // Ensure container visible even if empty; show a top-level message per tab
+                    topicsContainer.visibility = View.VISIBLE
+                    if (sortedTopics.isEmpty()) {
                         if (currentTab == "documentos") {
                             noTopicsTextView?.text = "No hay documentos en este curso."
                             noTopicsTextView?.visibility = View.VISIBLE
-                            noTasksTextView?.visibility = View.GONE // Hide other message
-                        } else { // currentTab == "tareas"
+                        } else {
                             noTasksTextView?.text = "No hay tareas en este curso."
-                            noTasksTextView?.visibility = View.VISIBLE // Show no tasks message
-                            noTopicsTextView?.visibility = View.GONE // Hide other message
+                            noTasksTextView?.visibility = View.VISIBLE
                         }
-                    } else {
-                        // If items were added, make sure the container is visible
-                        topicsContainer.visibility = View.VISIBLE
-                        // And hide both 'no items' messages
-                        noTopicsTextView?.visibility = View.GONE
-                        noTasksTextView?.visibility = View.GONE
                     }
-                    // Removed the misplaced catch block and extra braces that were here.
-                    // The 'else' block correctly ends below.
-                } // <<<< This brace correctly closes the 'else' block
+                }
             } catch (e: Exception) { // This is the correct catch block for the main try
                 Log.e("CourseDetailFragment", "Error loading course details", e)
                 Toast.makeText(context, "Error al cargar detalles del curso", Toast.LENGTH_SHORT).show()
@@ -893,6 +950,8 @@ class CourseDetailFragment : Fragment() {
                 } else {
                     Log.e("CourseDetailFragment", "Persona not found for user: $creatorUsername")
                     withContext(Dispatchers.Main) { creatorInfoContainer.visibility = View.GONE }
+                    // Resolved id remains the local id in fallback case
+                    resolvedCourseId = courseId
                 }
             } else {
                 Log.e("CourseDetailFragment", "Usuario not found locally: $creatorUsername")
@@ -1155,7 +1214,25 @@ class CourseDetailFragment : Fragment() {
         val taskIndicator = taskView.findViewById<View>(R.id.taskIndicator)
         taskIndicator?.setBackgroundColor(resources.getColor(android.R.color.holo_green_light))
 
+    // Show local name if available; otherwise fetch from Supabase by id
+    if (!task.name.isNullOrBlank()) {
         taskNameTextView.text = task.name
+    } else {
+        taskNameTextView.text = "(Sin título)"
+        // Try to fetch remote title asynchronously
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val remote = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    syncRepository.fetchTaskByIdFromSupabase(task.id)
+                }
+                if (remote != null && !remote.name.isNullOrBlank()) {
+                    taskNameTextView.text = remote.name
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("CourseDetailFragment", "Failed to fetch remote task title", e)
+            }
+        }
+    }
         if (!task.description.isNullOrBlank()) {
             taskDescriptionTextView.text = task.description
             taskDescriptionTextView.visibility = View.VISIBLE
@@ -1204,6 +1281,60 @@ class CourseDetailFragment : Fragment() {
         }
 
         container.addView(taskView)
+    }
+
+    // Refresh topics and re-render UI from Supabase for the current course
+    private fun refreshTopicsFromSupabase() {
+        if (courseId == -1L) return
+
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val act = requireActivity()
+                val lookupId = if (resolvedCourseId > 0) resolvedCourseId else courseId
+                val topics: List<Topic> = if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    withContext(Dispatchers.IO) { act.syncRepository.fetchTopicsByCourseFromSupabase(lookupId) } ?: emptyList()
+                } else {
+                    withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).topicDao().getTopicsByCourse(lookupId) }
+                }
+
+                topicsContainer.removeAllViews()
+
+                val sortedTopics = topics.sortedBy { it.orderIndex }
+
+                // If the tasks tab is selected, fetch tasks for these topics from Supabase (or local DAO)
+                var tasksByTopic: Map<Long, List<Task>> = emptyMap()
+                if (currentTab == "tareas") {
+                    try {
+                        val topicIds = sortedTopics.map { it.id }
+                        if (topicIds.isNotEmpty()) {
+                            if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                val fetched = withContext(Dispatchers.IO) { act.syncRepository.fetchTasksByTopicIdsFromSupabase(topicIds) }
+                                tasksByTopic = (fetched ?: emptyList()).groupBy { it.topicId }
+                            } else {
+                                val localTasks = withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).taskDao().getTasksByTopicIds(topicIds) }
+                                tasksByTopic = localTasks.groupBy { it.topicId }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "refreshTopics: failed fetching tasks for topics", e)
+                    }
+                }
+
+                // If viewing tasks, filter out topics without tasks
+                val topicsToRender = if (currentTab == "tareas") {
+                    sortedTopics.filter { t -> (tasksByTopic[t.id] ?: emptyList()).isNotEmpty() }
+                } else {
+                    sortedTopics
+                }
+
+                for (topic in topicsToRender) {
+                    val tasks = tasksByTopic[topic.id] ?: emptyList()
+                    addTopicView(topic, emptyList(), tasks)
+                }
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "refreshTopicsFromSupabase failed", e)
+            }
+        }
     }
 
     // Add this helper method to check student submission status
