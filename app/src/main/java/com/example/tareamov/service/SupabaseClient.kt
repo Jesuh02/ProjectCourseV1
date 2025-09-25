@@ -308,6 +308,88 @@ object SupabaseClient {
         }
     }
 
+    // Update a course by id (PATCH). Returns true on success.
+    suspend fun updateCourseById(id: Long, course: com.example.tareamov.data.entity.Course): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val map = mapOf(
+                "title" to course.title,
+                "description" to course.description,
+                "creator_username" to course.creatorUsername,
+                "thumbnail_uri" to course.thumbnailUri,
+                "video_uri" to course.videoUri,
+                "local_file_path" to course.localFilePath,
+                "duration" to course.duration,
+                "category" to course.category,
+                "price" to course.price,
+                "is_premium" to course.isPremium,
+                "is_published" to course.isPublished,
+                "creation_date" to course.creationDate,
+                "last_modified_date" to course.lastModifiedDate,
+                "enrollment_count" to course.enrollmentCount,
+                "rating" to course.rating,
+                "tags" to course.tags,
+                "timestamp" to course.timestamp
+            )
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            // Use proper Kotlin string interpolation so the numeric id is embedded in the URL
+            val url = "$baseUrl/rest/v1/courses?id=eq.${id}"
+
+            val request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val bodyStr = respBody ?: ""
+                    Log.w("SupabaseClient", "updateCourseById failed: ${resp.code} ${resp.message} body=$bodyStr")
+                    return@withContext false
+                }
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "updateCourseById exception", e)
+            return@withContext false
+        }
+    }
+
+    // Delete a course by id
+    suspend fun deleteCourseById(id: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Embed the numeric id value directly into the request URL
+            val url = "$baseUrl/rest/v1/courses?id=eq.${id}"
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val bodyStr = respBody ?: ""
+                    Log.w("SupabaseClient", "deleteCourseById failed: ${resp.code} ${resp.message} body=$bodyStr")
+                    return@withContext false
+                }
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "deleteCourseById exception", e)
+            return@withContext false
+        }
+    }
+
     suspend fun insertTopic(topic: com.example.tareamov.data.entity.Topic): Long? = withContext(Dispatchers.IO) {
         try {
             val map = mapOf(

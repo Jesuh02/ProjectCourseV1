@@ -57,8 +57,13 @@ fun Fragment.initializeAndLoadCourseProgress(
     val view = this.view ?: return
     val progressContainer = view.findViewById<LinearLayout>(R.id.courseProgressContainer) ?: return
     val progressBar = view.findViewById<ProgressBar>(R.id.courseProgressBar) ?: return
-    val progressPercentTextView = view.findViewById<TextView>(R.id.progressPercentTextView) ?: return
-    val progressStatusTextView = view.findViewById<TextView>(R.id.progressStatusTextView) ?: return
+    // Support two layout variants: component_student_progress.xml and course_progress_view.xml
+    val progressPercentTextView = view.findViewById<TextView>(R.id.progressPercentTextView)
+        ?: view.findViewById<TextView>(R.id.courseProgressTextView)
+        ?: run { android.util.Log.w("CourseDetailExt", "No progress percent TextView found in layout"); return }
+    val progressStatusTextView = view.findViewById<TextView>(R.id.progressStatusTextView)
+        ?: view.findViewById<TextView>(R.id.courseStatusTextView)
+        ?: run { android.util.Log.w("CourseDetailExt", "No progress status TextView found in layout"); return }
     val certificateButtonContainer = view.findViewById<FrameLayout>(R.id.certificateButtonContainer)
     val certificateButton = view.findViewById<Button>(R.id.certificateButton)
 

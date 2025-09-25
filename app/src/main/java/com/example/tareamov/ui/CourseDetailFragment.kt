@@ -691,6 +691,7 @@ class CourseDetailFragment : Fragment() {
                         )
 
                         creatorInfoContainer.visibility = View.VISIBLE
+                        Log.d("CourseDetailFragment", "Initializing student progress: courseId=$effectiveCourseId username=$currentUsername isCreator=$isCurrentUserCreator")
                         initializeAndLoadCourseProgress(
                             courseId = effectiveCourseId,
                             username = currentUsername,
@@ -739,6 +740,7 @@ class CourseDetailFragment : Fragment() {
                         creatorInfoContainer.visibility = View.VISIBLE
 
                         // Initialize and load course progress for non-creator users
+                        Log.d("CourseDetailFragment", "Initializing student progress (local fallback): courseId=$courseId username=$currentUsername isCreator=$isCurrentUserCreator")
                         initializeAndLoadCourseProgress(
                             courseId = courseId,
                             username = currentUsername,
@@ -1345,9 +1347,21 @@ class CourseDetailFragment : Fragment() {
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val submission = withContext(Dispatchers.IO) {
-                    db.taskSubmissionDao().getUserSubmissionForTask(taskId, username)
+                // Always fetch submission from Supabase (task_submissions are remote-authoritative)
+                var submission: com.example.tareamov.data.entity.TaskSubmission? = null
+                try {
+                    val act = requireActivity()
+                    if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        submission = withContext(Dispatchers.IO) { act.syncRepository.fetchUserSubmissionForTaskFromSupabase(taskId, username) }
+                        Log.d("CourseDetailFragment", "Supabase fetch for taskId=$taskId username=$username -> submission=${submission}")
+                    } else {
+                        // If Supabase not configured or MainActivity not available, attempt the local DAO as a last resort
+                        val db = AppDatabase.getDatabase(requireContext())
+                        submission = withContext(Dispatchers.IO) { db.taskSubmissionDao().getUserSubmissionForTask(taskId, username) }
+                        Log.d("CourseDetailFragment", "Local fallback fetch for taskId=$taskId username=$username -> submission=${submission}")
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseDetailFragment", "Error fetching submission for taskId=$taskId username=$username", e)
                 }
 
                 if (submission != null) {

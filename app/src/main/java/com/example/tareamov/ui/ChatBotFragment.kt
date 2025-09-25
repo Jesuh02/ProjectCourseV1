@@ -65,7 +65,7 @@ class ChatBotFragment : Fragment() {
         val submissionId = fileContext?.submissionId ?: UUID.randomUUID().mostSignificantBits
         val fileContent = fileContext?.fileContent ?: ""
         val contentSummary = fileContext?.contentSummary ?: ""
-        val ollamaUrl = OLLAMA_URL
+        val ollamaUrl = getOllamaUrl()
         try {
             val analizarRequest = com.example.tareamov.network.AnalizarEntregaRequest(
                 submissionId = submissionId,
@@ -99,10 +99,31 @@ class ChatBotFragment : Fragment() {
     private lateinit var aiAnalysisService: AIAnalysisService
     private lateinit var fileAnalysisService: FileAnalysisService
 
-    // Retrofit para el microservicio
-    // IP y puerto explícitos del microservicio (actualizado con nueva configuración de red)
-    private val MICROSERVICIO_BASE_URL = "http://10.218.57.181:3001/"
-    private val OLLAMA_URL = "http://10.218.57.181:11435"
+    // Runtime host selection: choose correct host for emulator vs physical device
+    private fun isRunningOnEmulator(): Boolean {
+        val fingerprint = android.os.Build.FINGERPRINT ?: ""
+        val model = android.os.Build.MODEL ?: ""
+        return (fingerprint.contains("generic") || fingerprint.contains("unknown")
+                || model.contains("Emulator") || model.contains("Android SDK built for"))
+    }
+
+    private fun getMicroserviceBaseUrl(): String {
+        return if (isRunningOnEmulator()) {
+            // Emulator default mapping to host machine
+            "http://10.0.2.2:3001/"
+        } else {
+            // Use your host LAN IP when testing from a physical device on same Wi-Fi
+            "http://192.168.1.158:3001/"
+        }
+    }
+
+    private fun getOllamaUrl(): String {
+        return if (isRunningOnEmulator()) {
+            "http://10.0.2.2:11435"
+        } else {
+            "http://192.168.1.158:11435"
+        }
+    }
     // Aumentar los timeouts para evitar que el chat cierre la espera antes de que el modelo responda
     private val microservicioApi: MicroservicioApi by lazy {
         val okHttpClient = okhttp3.OkHttpClient.Builder()
@@ -111,7 +132,7 @@ class ChatBotFragment : Fragment() {
             .writeTimeout(20, java.util.concurrent.TimeUnit.MINUTES)    // Aumentado a 20 minutos
             .build()
         val retrofit = Retrofit.Builder()
-            .baseUrl(MICROSERVICIO_BASE_URL)
+            .baseUrl(getMicroserviceBaseUrl())
             .addConverterFactory(GsonConverterFactory.create())
             .client(okHttpClient)
             .build()
@@ -175,7 +196,7 @@ class ChatBotFragment : Fragment() {
         val fileContent = fileContext?.fileContent ?: ""
         val preguntaLower = userMessage.lowercase()
         val esPreguntaNota = preguntaLower.contains("nota") || preguntaLower.contains("calificación") || preguntaLower.contains("feedback") || preguntaLower.contains("tarea")
-        val ollamaUrl = OLLAMA_URL
+        val ollamaUrl = getOllamaUrl()
         return try {
             if (!esPreguntaNota) {
                 // Solo llama3 responde
@@ -355,8 +376,29 @@ class ChatBotFragment : Fragment() {
      */
     private fun loadFileContextById(submissionId: Long, hasError: Boolean) {
         lifecycleScope.launch {
+            // Try local DB first
             currentFileContext = withContext(Dispatchers.IO) {
                 database.fileContextDao().getFileContextBySubmission(submissionId)
+            }
+
+            // If local file context missing, attempt to fetch from Supabase (remote) and use it
+            if (currentFileContext == null) {
+                try {
+                    val supabaseClient = com.example.tareamov.service.SupabaseClient
+                    if (supabaseClient.isConfigured()) {
+                        Log.d("ChatBotFragment", "currentFileContext missing locally, attempting Supabase fetch for submissionId=$submissionId")
+                        val remoteFcs = withContext(Dispatchers.IO) { supabaseClient.fetchFileContexts() }
+                        val remoteFc = remoteFcs.firstOrNull { it.submissionId == submissionId }
+                        if (remoteFc != null) {
+                            Log.i("ChatBotFragment", "Found remote FileContext for submissionId=$submissionId via Supabase")
+                            currentFileContext = remoteFc
+                        } else {
+                            Log.w("ChatBotFragment", "No remote FileContext found in Supabase for submissionId=$submissionId")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("ChatBotFragment", "Exception fetching FileContext from Supabase for submissionId=$submissionId: ${e.message}")
+                }
             }
             
             // Cargar información de la tarea, tema y curso
@@ -558,14 +600,24 @@ class ChatBotFragment : Fragment() {
             var effectiveTaskDescription = currentFileContext?.contentSummary ?: ""
             var effectiveFileContent = currentFileContext?.fileContent ?: ""
             
-            // FALLBACK: Si taskDescription está vacío, obtener el último contentSummary de la base de datos
+            // FALLBACK: Si taskDescription está vacío, intentar obtener el último contentSummary desde Supabase
             if (effectiveTaskDescription.isEmpty()) {
-                Log.d("ChatBotFragment", "🔄 taskDescription vacío, intentando fallback con último contentSummary")
+                Log.d("ChatBotFragment", "🔄 taskDescription vacío, intentando fallback con último contentSummary desde Supabase")
                 effectiveTaskDescription = withContext(Dispatchers.IO) {
                     try {
-                        val latestContentSummary = database.fileContextDao().getLatestContentSummary()
-                        Log.d("ChatBotFragment", "📋 Último contentSummary obtenido: '$latestContentSummary'")
-                        latestContentSummary ?: ""
+                        // Preferir SupabaseClient when configured
+                        val supabaseClient = com.example.tareamov.service.SupabaseClient
+                        if (supabaseClient.isConfigured()) {
+                            val remoteFileContexts = supabaseClient.fetchFileContexts()
+                            val latest = remoteFileContexts.maxByOrNull { it.submissionId ?: 0L }
+                            val summary = latest?.contentSummary
+                            Log.d("ChatBotFragment", "📋 Último contentSummary (supabase) obtenido: '$summary'")
+                            summary ?: ""
+                        } else {
+                            val latestContentSummary = database.fileContextDao().getLatestContentSummary()
+                            Log.d("ChatBotFragment", "📋 Último contentSummary (local) obtenido: '$latestContentSummary'")
+                            latestContentSummary ?: ""
+                        }
                     } catch (e: Exception) {
                         Log.e("ChatBotFragment", "❌ Error obteniendo último contentSummary: ${e.message}")
                         ""
@@ -596,9 +648,28 @@ class ChatBotFragment : Fragment() {
                         if (!username.isNullOrEmpty()) {
                             withContext(Dispatchers.IO) {
                                 try {
-                                    val submission = database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, username)
+                                    // Preferir Supabase for submissions and file contexts
+                                    val supabaseClient = com.example.tareamov.service.SupabaseClient
+                                    var submission: com.example.tareamov.data.entity.TaskSubmission? = null
+                                    if (supabaseClient.isConfigured()) {
+                                        val remoteSubs = supabaseClient.fetchTaskSubmissions()
+                                        submission = remoteSubs.firstOrNull { it.taskId == referencedTask.taskId && it.studentUsername.equals(username, ignoreCase = true) }
+                                    }
+                                    if (submission == null) {
+                                        submission = database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, username)
+                                    }
+
                                     if (submission != null) {
-                                        val fc = database.fileContextDao().getFileContextBySubmission(submission.id)
+                                        // Try to get file context from Supabase first
+                                        var fc: com.example.tareamov.data.entity.FileContext? = null
+                                        if (supabaseClient.isConfigured()) {
+                                            val remoteFcs = supabaseClient.fetchFileContexts()
+                                            fc = remoteFcs.firstOrNull { it.submissionId == submission.id }
+                                        }
+                                        if (fc == null) {
+                                            fc = database.fileContextDao().getFileContextBySubmission(submission.id)
+                                        }
+
                                         if (fc != null) {
                                             effectiveTaskDescription = fc.contentSummary ?: (referencedTask.taskDescription ?: "")
                                             effectiveFileContent = fc.fileContent
@@ -644,15 +715,16 @@ class ChatBotFragment : Fragment() {
                     try {
                         val body = com.example.tareamov.network.MicroservicioPromptRequest(
                             prompt = messageText,
-                            ollamaUrl = OLLAMA_URL,
-                            taskDescription = if (effectiveTaskDescription.isNotEmpty()) effectiveTaskDescription else null,
-                            fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else null
+                            ollamaUrl = getOllamaUrl(),
+                            // Always send strings (empty when absent) to avoid undefined on the microservice
+                            taskDescription = if (effectiveTaskDescription.isNotEmpty()) effectiveTaskDescription else "",
+                            fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else ""
                         )   
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📤 ENVIANDO AL MICROSERVICIO:")
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "prompt: '$messageText'")
-                        Log.d("ChatBotFragment", "ollamaUrl: '$OLLAMA_URL'")
+                        Log.d("ChatBotFragment", "ollamaUrl: '${getOllamaUrl()}'")
                         Log.d("ChatBotFragment", "taskDescription (descripción): '$effectiveTaskDescription'")
                         Log.d("ChatBotFragment", "fileContent (archivo): ${effectiveFileContent.length} caracteres")
                         Log.d("ChatBotFragment", "==============================================")
@@ -686,7 +758,7 @@ class ChatBotFragment : Fragment() {
                         "El modelo está tardando más de lo esperado. Intenta nuevamente en unos minutos."
                     } catch (e: java.net.ConnectException) {
                         Log.e("ChatBotFragment", "❌ ConnectException: ${e.message}")
-                        "No se puede conectar con el microservicio. Verifica que esté ejecutándose en $MICROSERVICIO_BASE_URL"
+                        "No se puede conectar con el microservicio. Verifica que esté ejecutándose en ${getMicroserviceBaseUrl()}"
                     } catch (e: Exception) {
                         Log.e("ChatBotFragment", "❌ Exception: ${e.message}")
                         Log.e("ChatBotFragment", "❌ Exception Type: ${e::class.java.simpleName}")
@@ -800,7 +872,7 @@ class ChatBotFragment : Fragment() {
                             .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                             .build()
                         val request = okhttp3.Request.Builder()
-                            .url(MICROSERVICIO_BASE_URL)
+                            .url(getMicroserviceBaseUrl())
                             .build()
                         val response = okHttpClient.newCall(request).execute()
                         val body = response.body?.string()
@@ -817,7 +889,7 @@ class ChatBotFragment : Fragment() {
                     val errorMessage = ChatMessage(
                         message = "⚠️ **Advertencia de Conectividad**\n\n" +
                                 "❌ No se puede conectar con el microservicio de IA\n" +
-                                "🌐 URL: $MICROSERVICIO_BASE_URL\n" +
+                                "🌐 URL: ${getMicroserviceBaseUrl()}\n" +
                                 "💡 Verifica que el microservicio esté ejecutándose\n\n" +
                                 "El chat funcionará en modo básico.",
                         isFromUser = false,
@@ -1141,28 +1213,83 @@ class ChatBotFragment : Fragment() {
                         
                         if (gradeFloat != null) {
                             withContext(Dispatchers.IO) {
-                                // Obtener la entrega por ID
-                                val taskSubmission = database.taskSubmissionDao().getSubmissionById(targetSubmissionId)
+                                // Obtener la entrega por ID desde la base local
+                                var taskSubmission = database.taskSubmissionDao().getSubmissionById(targetSubmissionId)
+
+                                // Si no existe localmente, intentar obtener desde Supabase (remote-authoritative)
+                                if (taskSubmission == null) {
+                                    try {
+                                        Log.d("ChatBotFragment", "TaskSubmission $targetSubmissionId no encontrada localmente, intentando Supabase...")
+                                        // Preferir usar SyncRepository helper which delegates to SupabaseClient
+                                        val remote = com.example.tareamov.data.sync.SyncRepository
+                                        // Try to fetch by ID from SupabaseClient directly
+                                        val supabaseClient = com.example.tareamov.service.SupabaseClient
+                                        if (supabaseClient.isConfigured()) {
+                                            val fetched = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissions().firstOrNull { it.id == targetSubmissionId } }
+                                            if (fetched != null) {
+                                                taskSubmission = fetched
+                                                Log.i("ChatBotFragment", "TaskSubmission $targetSubmissionId encontrada en Supabase")
+                                                // Optional: insert into local DB to cache it
+                                                try {
+                                                    // Insert may fail if id conflicts; use updateSubmission if needed
+                                                    database.taskSubmissionDao().insertSubmission(fetched)
+                                                    Log.d("ChatBotFragment", "Cached remote TaskSubmission $targetSubmissionId into local Room")
+                                                } catch (e: Exception) {
+                                                    Log.w("ChatBotFragment", "No se pudo cachear TaskSubmission $targetSubmissionId localmente: ${e.message}")
+                                                }
+                                            } else {
+                                                Log.w("ChatBotFragment", "TaskSubmission $targetSubmissionId no encontrada en Supabase")
+                                            }
+                                        } else {
+                                            Log.w("ChatBotFragment", "Supabase no está configurado, no se puede buscar remoto para TaskSubmission $targetSubmissionId")
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e("ChatBotFragment", "Error buscando TaskSubmission en Supabase: ${e.message}")
+                                    }
+                                }
+
                                 if (taskSubmission != null) {
                                     // Actualizar con la nueva calificación y feedback
                                     val updatedSubmission = taskSubmission.copy(
                                         grade = gradeFloat,
                                         feedback = feedback
                                     )
-                                    database.taskSubmissionDao().updateSubmission(updatedSubmission)
-                                    
+
+                                    // Update local DB: if original came from local, update; otherwise try insert/update
+                                    try {
+                                        database.taskSubmissionDao().updateSubmission(updatedSubmission)
+                                    } catch (e: Exception) {
+                                        try {
+                                            database.taskSubmissionDao().insertSubmission(updatedSubmission)
+                                        } catch (ex: Exception) {
+                                            Log.w("ChatBotFragment", "No se pudo actualizar/insertar TaskSubmission localmente: ${ex.message}")
+                                        }
+                                    }
+
                                     // Obtener información de la tarea para logging
                                     val task = database.taskDao().getTaskById(taskSubmission.taskId)
                                     val taskName = task?.name ?: "Tarea desconocida"
-                                    
-                                    Log.d("ChatBotFragment", "✅ TaskSubmission actualizada exitosamente:")
+
+                                    Log.d("ChatBotFragment", "✅ TaskSubmission actualizada (local/remote seguirá):")
                                     Log.d("ChatBotFragment", "   - ID: $targetSubmissionId")
                                     Log.d("ChatBotFragment", "   - Tarea: $taskName")
                                     Log.d("ChatBotFragment", "   - Estudiante: ${taskSubmission.studentUsername}")
                                     Log.d("ChatBotFragment", "   - Grade: $gradeFloat")
                                     Log.d("ChatBotFragment", "   - Feedback: $feedback")
+
+                                    // Intentar enviar la actualización a Supabase (remoto)
+                                    try {
+                                        val okRemote = com.example.tareamov.data.sync.SyncRepository.updateTaskSubmissionToSupabase(updatedSubmission)
+                                        if (okRemote) {
+                                            Log.i("ChatBotFragment", "✅ TaskSubmission $targetSubmissionId actualizado en Supabase")
+                                        } else {
+                                            Log.w("ChatBotFragment", "⚠️ No se pudo actualizar TaskSubmission $targetSubmissionId en Supabase")
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e("ChatBotFragment", "Exception actualizando TaskSubmission en Supabase: ${e.message}")
+                                    }
                                 } else {
-                                    Log.w("ChatBotFragment", "❌ No se encontró TaskSubmission con ID: $targetSubmissionId")
+                                    Log.w("ChatBotFragment", "❌ No se encontró TaskSubmission con ID: $targetSubmissionId (local y remoto)")
                                 }
                             }
                         } else {
@@ -1824,7 +1951,47 @@ class ChatBotFragment : Fragment() {
                     )
                     chatAdapter.updateTaskInfo(taskInfoForAdapter)
                 } else {
-                    Log.w("ChatBotFragment", "No se pudo cargar la información de la tarea para submissionId: $submissionId")
+                        // If we couldn't load task info from local DB, attempt Supabase as fallback
+                        try {
+                            val supabaseClient = com.example.tareamov.service.SupabaseClient
+                            if (supabaseClient.isConfigured()) {
+                                Log.d("ChatBotFragment", "Attempting to load task info from Supabase for submissionId=$submissionId")
+                                val remoteSubmission = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissions().firstOrNull { it.id == submissionId } }
+                                if (remoteSubmission != null) {
+                                    val remoteTask = withContext(Dispatchers.IO) { supabaseClient.fetchTaskById(remoteSubmission.taskId) }
+                                    val remoteTopic = if (remoteTask?.topicId != null) withContext(Dispatchers.IO) { supabaseClient.fetchTopics().firstOrNull { it.id == remoteTask.topicId } } else null
+                                    val remoteCourse = if (remoteTopic?.courseId != null) withContext(Dispatchers.IO) { supabaseClient.fetchCourseById(remoteTopic.courseId) } else null
+
+                                    if (remoteTask != null && remoteTopic != null && remoteCourse != null) {
+                                        taskName = remoteTask.name ?: ""
+                                        taskDescription = remoteTask.description ?: "Sin descripción"
+                                        topicName = remoteTopic.name ?: ""
+                                        courseTitle = remoteCourse.title ?: ""
+                                        deliveryDate = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault()).format(remoteSubmission.submissionDate)
+                                        courseId = remoteTopic.courseId
+
+                                        Log.i("ChatBotFragment", "Loaded task info from Supabase for submissionId=$submissionId: $taskName - $topicName - $courseTitle")
+
+                                        val taskInfoForAdapter = ChatMessageAdapter.TaskInfo(
+                                            taskName = taskName,
+                                            taskDescription = taskDescription,
+                                            topicName = topicName,
+                                            courseTitle = courseTitle,
+                                            deliveryDate = deliveryDate
+                                        )
+                                        chatAdapter.updateTaskInfo(taskInfoForAdapter)
+                                    } else {
+                                        Log.w("ChatBotFragment", "Supabase returned incomplete task/topic/course data for submissionId=$submissionId")
+                                    }
+                                } else {
+                                    Log.w("ChatBotFragment", "No se pudo cargar la información de la tarea para submissionId: $submissionId")
+                                }
+                            } else {
+                                Log.w("ChatBotFragment", "No se pudo cargar la información de la tarea para submissionId: $submissionId")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ChatBotFragment", "Error cargando información de la tarea desde Supabase", e)
+                        }
                 }
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error cargando información de la tarea", e)

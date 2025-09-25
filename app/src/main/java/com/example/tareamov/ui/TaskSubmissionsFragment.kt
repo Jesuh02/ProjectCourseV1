@@ -446,6 +446,14 @@ class TaskSubmissionsFragment : Fragment() {
                     try {
                         val all = SupabaseClient.fetchTaskSubmissions().filter { it.taskId == taskId }
                         android.util.Log.d("TaskSubmissionsFragment", "fetchTaskSubmissions returned ${all.size} total items; filtered by taskId=$taskId -> ${all.count { it.taskId == taskId }}")
+                        // Log a small JSON sample of returned submissions for debugging
+                        try {
+                            val gson = com.google.gson.Gson()
+                            val sample = all.take(5)
+                            android.util.Log.d("TaskSubmissionsFragment", "Sample submissions JSON: ${gson.toJson(sample)}")
+                        } catch (e: Exception) {
+                            android.util.Log.w("TaskSubmissionsFragment", "Failed to serialize sample submissions to JSON", e)
+                        }
                         if (isCourseCreator) all
                         else {
                             val username = sessionManager.getUsername()

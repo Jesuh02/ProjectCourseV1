@@ -161,6 +161,54 @@ class SyncRepository(
             }
             try {
                 val supabaseClient = com.example.tareamov.service.SupabaseClient
+
+                // Strategy:
+                // 1) If course.id is present, verify remote row exists with that id -> PATCH it.
+                // 2) If not found, try to locate a remote row by (creatorUsername + title) and PATCH that.
+                // 3) If no candidate found, perform INSERT as before.
+
+                if (course.id != null && course.id > 0) {
+                    Log.d("SyncRepository", "Attempting update by id=${course.id} for course='${course.title}'")
+                    try {
+                        val remoteCandidate = withContext(Dispatchers.IO) { supabaseClient.fetchCourseById(course.id) }
+                        if (remoteCandidate != null) {
+                            Log.d("SyncRepository", "Remote candidate found id=${remoteCandidate.id} title='${remoteCandidate.title}'")
+                            val updated = withContext(Dispatchers.IO) { supabaseClient.updateCourseById(course.id, course) }
+                            if (updated) {
+                                Log.i("SyncRepository", "Course '${course.title}' updated on Supabase (id=${course.id}).")
+                                return@launch
+                            } else {
+                                Log.w("SyncRepository", "Attempted update by id=${course.id} but it failed; will try other strategies.")
+                            }
+                        } else {
+                            Log.d("SyncRepository", "No remote course found with id=${course.id}; will try matching by creator/title.")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Error checking remote course by id=${course.id}", e)
+                    }
+                }
+
+                // Try to find a remote match by creatorUsername + title as a heuristic
+                try {
+                    val creator = course.creatorUsername ?: ""
+                    if (creator.isNotEmpty() && !course.title.isNullOrEmpty()) {
+                        val candidates = withContext(Dispatchers.IO) { supabaseClient.fetchCoursesByCreator(creator) }
+                        val match = candidates.firstOrNull { (it.title ?: "").trim() == course.title?.trim() }
+                        if (match != null) {
+                            val updated = withContext(Dispatchers.IO) { supabaseClient.updateCourseById(match.id, course) }
+                            if (updated) {
+                                Log.i("SyncRepository", "Course '${course.title}' matched and updated on Supabase (id=${match.id}).")
+                                return@launch
+                            } else {
+                                Log.w("SyncRepository", "Matched remote course id=${match.id} but update failed; falling back to insert/upsert.")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("SyncRepository", "Error attempting creator/title match for course '${course.title}'", e)
+                }
+
+                // Fallback: insert (or SupabaseRepository.upsert if insert does not return id)
                 val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertCourse(course) }
                 if (remoteId != null) {
                     Log.i("SyncRepository", "Course '${course.title}' upserted to Supabase (id=$remoteId).")
@@ -171,6 +219,22 @@ class SyncRepository(
                 }
             } catch (e: Exception) {
                 Log.e("SyncRepository", "Exception during upsertCourseToSupabase", e)
+            }
+        }
+    }
+
+    // Public helper: delete a course remotely by id (fire-and-forget). Logs result.
+    fun deleteCourseRemoteById(courseId: Long) {
+        syncScope.launch {
+            try {
+                if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    Log.w("SyncRepository", "SupabaseClient not configured. Skipping deleteCourseRemoteById for id=$courseId")
+                    return@launch
+                }
+                val ok = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.deleteCourseById(courseId) }
+                if (ok) Log.i("SyncRepository", "Course id=$courseId deleted remotely") else Log.w("SyncRepository", "Failed to delete course id=$courseId remotely")
+            } catch (e: Exception) {
+                Log.e("SyncRepository", "Exception during deleteCourseRemoteById for id=$courseId", e)
             }
         }
     }
@@ -1098,6 +1162,53 @@ class SyncRepository(
         }
     }
 
+    // --- Supabase fallback helpers for task submissions ---
+    // Fetch a single user's submission for a specific task from Supabase (remote-authoritative)
+    suspend fun fetchUserSubmissionForTaskFromSupabase(taskId: Long, username: String): TaskSubmission? {
+        return try {
+            if (!supabaseClient.isConfigured()) return null
+            val all = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissions() }
+            all.firstOrNull { it.taskId == taskId && it.studentUsername.equals(username, ignoreCase = true) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchUserSubmissionForTaskFromSupabase failed for taskId=$taskId username=$username", e)
+            null
+        }
+    }
+
+    // Fetch all submissions for a student within a given course from Supabase
+    suspend fun fetchStudentSubmissionsForCourseFromSupabase(username: String, courseId: Long): List<TaskSubmission> {
+        return try {
+            if (!supabaseClient.isConfigured()) return emptyList()
+            val all = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissions() }
+            // Determine taskIds belonging to the course using Supabase (remote-authoritative)
+            val remoteTopicIds = try {
+                withContext(Dispatchers.IO) {
+                    supabaseClient.fetchTopicsByCourse(courseId).map { it.id }
+                }
+            } catch (e: Exception) {
+                Log.w("SyncRepository", "Failed to fetch topics from Supabase for courseId=$courseId", e)
+                emptyList<Long>()
+            }
+
+            val remoteTaskIds = if (remoteTopicIds.isNotEmpty()) {
+                try {
+                    withContext(Dispatchers.IO) { supabaseClient.fetchTasksByTopicIds(remoteTopicIds).map { it.id }.toSet() }
+                } catch (e: Exception) {
+                    Log.w("SyncRepository", "Failed to fetch tasks from Supabase for topicIds=$remoteTopicIds", e)
+                    emptySet<Long>()
+                }
+            } else emptySet()
+
+            Log.d("SyncRepository", "fetchStudentSubmissionsForCourseFromSupabase: fetched allSubs=${all.size}, remoteTopics=${remoteTopicIds.size}, remoteTasks=${remoteTaskIds.size}")
+            val filtered = all.filter { it.studentUsername.equals(username, ignoreCase = true) && remoteTaskIds.contains(it.taskId) }
+            Log.d("SyncRepository", "fetchStudentSubmissionsForCourseFromSupabase: filteredSubs=${filtered.size}")
+            filtered
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchStudentSubmissionsForCourseFromSupabase failed for username=$username courseId=$courseId", e)
+            emptyList()
+        }
+    }
+
     // --- Sincronización de Firebase a Room para todas las entidades ---
     fun startAllSync() {
         Log.i("SyncRepository", "Iniciando sincronización en tiempo real con Firebase...")
@@ -1222,5 +1333,20 @@ class SyncRepository(
         taskSubmissionListener?.remove()
         // Purchase listener removed
         Log.i("SyncRepository", "All listeners stopped, purchase listener removed.")
+    }
+
+    companion object {
+        // Lightweight wrapper so UI code can update a TaskSubmission remotely without
+        // instantiating the full SyncRepository. Delegates to SupabaseClient.
+        suspend fun updateTaskSubmissionToSupabase(submission: TaskSubmission): Boolean {
+            return try {
+                withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.updateTaskSubmissionRemote(submission)
+                }
+            } catch (e: Exception) {
+                Log.e("SyncRepository", "updateTaskSubmissionToSupabase failed: ${e.message}")
+                false
+            }
+        }
     }
 }

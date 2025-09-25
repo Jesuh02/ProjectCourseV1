@@ -371,7 +371,7 @@
     </LinearLayout>
 
     <!-- Bottom Navigation using the component -->
-    <include 
+    <include
         android:id="@+id/bottomNavigation"
         layout="@layout/component_bottom_navigation"
         android:layout_width="0dp"

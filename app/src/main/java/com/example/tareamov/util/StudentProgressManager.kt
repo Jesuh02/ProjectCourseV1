@@ -36,10 +36,31 @@ class StudentProgressManager(private val context: Context) {
         val certificateButton = progressContainer.findViewById<Button?>(R.id.certificateButton)
 
         CoroutineScope(Dispatchers.Main).launch {
+            Log.d("StudentProgressManager", "loadStudentProgress called: courseId=$courseId username=$username SupabaseConfigured=${com.example.tareamov.service.SupabaseClient.isConfigured()}")
             try {
                 val db = AppDatabase.getDatabase(context)
 
+                // Prefer Supabase for topics/tasks (remote-authoritative), fall back to local DAOs
                 val tasks = withContext(Dispatchers.IO) {
+                    try {
+                        val actActivity = (context as? android.app.Activity)
+                        if (actActivity is com.example.tareamov.MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                            // Fetch topics from Supabase then tasks for those topics
+                            val topics = actActivity.syncRepository.fetchTopicsByCourseFromSupabase(courseId)
+                            Log.d("StudentProgressManager", "Supabase topics fetched for course=$courseId count=${topics?.size ?: 0}")
+                            val topicIds = topics?.map { it.id } ?: emptyList()
+                            if (topicIds.isNotEmpty()) {
+                                val fetchedTasks = actActivity.syncRepository.fetchTasksByTopicIdsFromSupabase(topicIds)
+                                Log.d("StudentProgressManager", "Supabase tasks fetched for topicCount=${topicIds.size} tasks=${fetchedTasks?.size ?: 0}")
+                                return@withContext (fetchedTasks ?: emptyList())
+                            }
+                            // No topics or tasks found remotely -> fall through to local
+                        }
+                    } catch (e: Exception) {
+                        Log.w("StudentProgressManager", "Supabase fetch for tasks failed, falling back to local", e)
+                    }
+
+                    // Local DAO fallback
                     val topics = db.topicDao().getTopicsByCourse(courseId)
                     val allTasks = mutableListOf<Task>()
                     for (topic in topics) {
@@ -53,8 +74,35 @@ class StudentProgressManager(private val context: Context) {
                     return@launch
                 }
 
+                // Always prefer Supabase for submissions (remote-authoritative)
                 val submissions = withContext(Dispatchers.IO) {
-                    db.taskSubmissionDao().getStudentSubmissionsForCourse(username, courseId)
+                    try {
+                        val actActivity = (context as? android.app.Activity)
+                        if (actActivity is com.example.tareamov.MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                            val remoteSubs = actActivity.syncRepository.fetchStudentSubmissionsForCourseFromSupabase(username, courseId)
+                            Log.d("StudentProgressManager", "Supabase submissions fetched for user=$username course=$courseId count=${remoteSubs.size}")
+                            // Log a sample of returned submissions (first 5 ids)
+                            val sampleIds = remoteSubs.take(5).map { it.id }
+                            Log.d("StudentProgressManager", "Sample remote submission ids: $sampleIds")
+                            if (remoteSubs.isNotEmpty()) return@withContext remoteSubs
+                        }
+                    } catch (e: Exception) {
+                        Log.w("StudentProgressManager", "Error fetching submissions from Supabase for $username course=$courseId", e)
+                    }
+
+                    // Local fallback if Supabase not available or empty
+                    val localSubs = db.taskSubmissionDao().getStudentSubmissionsForCourse(username, courseId)
+                    Log.d("StudentProgressManager", "Local submissions count for user=$username course=$courseId=${localSubs?.size ?: 0}")
+                    localSubs
+                }
+
+                // Log a JSON sample of submissions for debugging
+                try {
+                    val gson = com.google.gson.Gson()
+                    val sample = submissions.take(5)
+                    Log.d("StudentProgressManager", "Submissions sample JSON: ${gson.toJson(sample)}")
+                } catch (e: Exception) {
+                    Log.w("StudentProgressManager", "Failed to serialize submissions sample to JSON", e)
                 }
 
                 // Calculate progress percentage and weighted grade directly
@@ -153,28 +201,12 @@ class StudentProgressManager(private val context: Context) {
 
     // Calculate the weighted average grade based on completed tasks
     private fun calculateWeightedAverageGrade(tasks: List<Task>, submissions: List<TaskSubmission>): Float {
-        if (submissions.isEmpty()) return 0f
-
-        var totalGrade = 0f
-        var gradedSubmissionsCount = 0
-
-        // Group submissions by task ID to handle multiple submissions for the same task
-        val submissionsByTask = submissions.groupBy { it.taskId }
-
-        for ((taskId, taskSubmissions) in submissionsByTask) {
-            // Get the submission with the highest grade for each task
-            val bestSubmission = taskSubmissions.maxByOrNull { it.grade ?: 0f }
-
-            bestSubmission?.grade?.let { grade ->
-                totalGrade += grade
-                gradedSubmissionsCount++
-            }
-        }
-
-        return if (gradedSubmissionsCount > 0) {
-            totalGrade / gradedSubmissionsCount
-        } else {
-            0f
-        }
+        // Per requirement: average = sum of grades in the course / number of grades in the course
+        val grades = submissions.mapNotNull { it.grade }
+        if (grades.isEmpty()) return 0f
+        val sum = grades.sum()
+        val avg = sum / grades.size
+        Log.d("StudentProgressManager", "Calculated average grade from ${grades.size} grades: $avg (sum=$sum)")
+        return avg
     }
 }

@@ -12,6 +12,8 @@ import java.io.OutputStreamWriter
 import java.net.ConnectException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.Socket
+import java.net.InetSocketAddress
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -61,60 +63,50 @@ class MSPClient(private val context: Context) {
             Log.d(tag, "Using emulator URL: $emulatorUrl")
             return emulatorUrl
         }
-        
-        // Always try the current IP first (from ipconfig)
-        if (isServerRunning("http://10.218.57.181:11435")) {
-            Log.d(tag, "Connected to Ollama at current IP URL: http://10.218.57.181:11435")
-            return "http://10.218.57.181:11435"
-        }
-        
-        // Try each other URL in order of priority
-        for (url in possibleBaseUrls.drop(1)) { // Skip the first one as we already tried it
-            if (isServerRunning(url)) {
-                Log.d(tag, "Connected to Ollama at URL: $url")
-                return url
+
+        // Prefer known LAN IPs first (from possibleBaseUrls)
+        for (url in possibleBaseUrls) {
+            try {
+                if (isPortOpen(url, 3000)) { // 3s timeout for socket check
+                    Log.d(tag, "Connected to Ollama at URL (port open): $url")
+                    return url
+                }
+            } catch (e: Exception) {
+                Log.d(tag, "Port check failed for $url: ${e.message}")
             }
         }
-        
-        // If none respond, use the current IP as fallback for future attempts
-        Log.w(tag, "No Ollama server found, using current IP as fallback")
-        return "http://10.218.57.181:11435"
+
+        // Fallback to the first candidate even if unreachable (will be retried later)
+        Log.w(tag, "No Ollama server detected on candidates, returning first candidate as fallback: ${possibleBaseUrls.first()}" )
+        return possibleBaseUrls.first()
     }
 
-    // Improved server running check with better connection handling
+    // Check whether TCP port at the host:port is accepting connections
+    private fun isPortOpen(urlString: String, timeoutMs: Int = 3000): Boolean {
+        return try {
+            val u = URL(urlString)
+            val host = u.host
+            val port = if (u.port != -1) u.port else u.defaultPort
+            val socket = Socket()
+            socket.connect(InetSocketAddress(host, port), timeoutMs)
+            socket.close()
+            Log.d(tag, "Socket connect succeeded to $host:$port")
+            true
+        } catch (e: Exception) {
+            Log.d(tag, "Socket connect failed for $urlString: ${e.message}")
+            false
+        }
+    }
+
+    // Preserve previous public API for callers that expect isServerRunning
     fun isServerRunning(urlToCheck: String? = null): Boolean {
         val url = urlToCheck ?: getBaseUrl()
-        Log.d(tag, "Checking server status at: $url/api/tags")
-        var connection: HttpURLConnection? = null
-        
         return try {
-            val urlObj = URL("$url/api/tags")
-            connection = urlObj.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 5000  // Increased timeout for more reliable checking
-            connection.readTimeout = 5000     // Increased timeout for more reliable checking
-            connection.connect()
-            
-            val responseCode = connection.responseCode
-            Log.d(tag, "Server check response code: $responseCode for $url")
-            val isOk = responseCode == HttpURLConnection.HTTP_OK
-            
-            if (isOk) {
-                Log.i(tag, "Successfully connected to Ollama server at $url")
-            } else {
-                Log.w(tag, "Server at $url returned non-OK response: $responseCode")
-            }
-            
-            isOk
+            // Try socket connect first
+            isPortOpen(url, 3000)
         } catch (e: Exception) {
-            Log.e(tag, "Failed to connect to Ollama server at $url: ${e.message}")
+            Log.d(tag, "isServerRunning: exception checking $url: ${e.message}")
             false
-        } finally {
-            try {
-                connection?.disconnect()
-            } catch (e: Exception) {
-                Log.e(tag, "Error disconnecting from $url", e)
-            }
         }
     }
 

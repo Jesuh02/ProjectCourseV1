@@ -50,6 +50,7 @@ class StudentProgressFragment : Fragment() {
                 val db = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
                 val course = withContext(Dispatchers.IO) { db.videoDao().getVideoById(courseId) }
                 if (course?.username != username) {
+                    Log.d("StudentProgressFragment", "Loading student progress for username=$username courseId=$courseId")
                     progressManager.loadStudentProgress(
                         courseId,
                         username,

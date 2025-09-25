@@ -4,22 +4,25 @@
     
     <item
         android:id="@+id/menu_edit_course"
-        android:title="Editar curso"
+        android:title="✏️  Editar curso"
         android:icon="@drawable/ic_edit"
-        android:iconTint="#A259FF"
-        app:iconTint="#A259FF" />
+        android:iconTint="@android:color/white"
+        app:showAsAction="always"
+        android:checkable="false" />
     
     <item
         android:id="@+id/menu_change_thumbnail"
-        android:title="Cambiar miniatura"
+        android:title="🖼️  Cambiar miniatura"
         android:icon="@drawable/ic_image"
-        android:iconTint="#03DAC6"
-        app:iconTint="#03DAC6" />
+        android:iconTint="@android:color/white"
+        app:showAsAction="always"
+        android:checkable="false" />
     
     <item
         android:id="@+id/menu_delete_course"
-        android:title="Eliminar curso"
+        android:title="🗑️  Eliminar curso"
         android:icon="@drawable/ic_delete"
-        android:iconTint="#CF6679"
-        app:iconTint="#CF6679" />
+        android:iconTint="@android:color/white"
+        app:showAsAction="always"
+        android:checkable="false" />
 </menu>
