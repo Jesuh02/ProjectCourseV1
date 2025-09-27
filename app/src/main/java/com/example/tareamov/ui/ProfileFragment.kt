@@ -134,7 +134,37 @@ class ProfileFragment : Fragment() {
     private fun loadUserData() {
         lifecycleScope.launch {
             try {
-                // Get current user ID from SharedPreferences
+                // Prefer SessionManager for active user identification
+                val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                val activeUsername = session.getUsername()
+
+                // If we have a username from the active session, try Supabase first
+                if (!activeUsername.isNullOrEmpty() && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    try {
+                        val remoteUsuario = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.fetchUsuarioByUsername(activeUsername)
+                        }
+                        if (remoteUsuario != null) {
+                            // Try fetching Persona remotely as well (by persona_id) if available
+                            val remotePersona = withContext(Dispatchers.IO) {
+                                try {
+                                    val personaId = remoteUsuario.persona_id ?: -1L
+                                    if (personaId > 0) {
+                                        com.example.tareamov.service.SupabaseClient.fetchPersonas().firstOrNull { p -> p.id == personaId }
+                                    } else null
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                            updateUI(remoteUsuario, remotePersona)
+                            return@launch
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("ProfileFragment", "Supabase lookup failed, falling back to local DB", e)
+                    }
+                }
+
+                // Fallback: use local SharedPreferences-stored user id or Room DB lookup
                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                 val currentUserId = sharedPrefs.getLong("current_user_id", -1L)
 
@@ -147,9 +177,8 @@ class ProfileFragment : Fragment() {
                     if (usuario != null) {
                         // Fetch Persona by usuario.persona_id
                         val persona = withContext(Dispatchers.IO) {
-                            db.personaDao().getPersonaById(usuario.persona_id)
+                            usuario.persona_id?.let { id -> db.personaDao().getPersonaById(id) }
                         }
-                        // Show username from Usuario and avatar from Persona
                         updateUI(usuario, persona)
                     } else {
                         updateUI(null, null)
@@ -257,7 +286,7 @@ class ProfileFragment : Fragment() {
     }
 
     private fun setupAdminButton(bottomNavBinding: ComponentBottomNavigationBinding) {
-        // Mostrar el botón de admin solo si el usuario es admin
+         // Mostrar el botón de admin solo si el usuario es admin
         val adminSlot = bottomNavBinding.adminSlot
         val goToAdminButton = bottomNavBinding.goToAdminButton
 
@@ -276,6 +305,7 @@ class ProfileFragment : Fragment() {
             findNavController().navigate(R.id.action_profileFragment_to_homeFragment)
         }
     }
+
     // Add this method to ProfileFragment class
     override fun onResume() {
         super.onResume()

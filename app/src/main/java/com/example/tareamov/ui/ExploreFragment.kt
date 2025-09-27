@@ -175,13 +175,16 @@ class ExploreFragment : Fragment() {
             // Observe courses directly from Course table
             courseRepository.getAllCoursesFlow().collect { courses ->
                 Log.d("ExploreFragment", "Observed ${courses.size} courses from Course table")
+                // Keep Course table list sorted newest -> oldest
+                val sortedCourses = courses.sortedByDescending { it.timestamp }
                 allCoursesFromTableList.clear()
-                allCoursesFromTableList.addAll(courses)
+                allCoursesFromTableList.addAll(sortedCourses)
 
-                // Convert Course entities to VideoData for adapter compatibility
-                val videoDataList = courses.map { convertCourseToVideoData(it) }
+                // Convert Course entities to VideoData for adapter compatibility and keep sorted
+                val videoDataList = sortedCourses.map { convertCourseToVideoData(it) }
+                val sortedVideoData = videoDataList.sortedByDescending { it.timestamp }
                 allCoursesList.clear()
-                allCoursesList.addAll(videoDataList)
+                allCoursesList.addAll(sortedVideoData)
 
                 // Generate thumbnails preventively for courses without them
                 generatePreventiveThumbnails(videoDataList)
@@ -231,16 +234,19 @@ class ExploreFragment : Fragment() {
 
     // Convert Course to VideoData for adapter compatibility
     private fun convertCourseToVideoData(course: Course): VideoData {
+        val usernameSafe = course.creatorUsername ?: ""
+        if (course.creatorUsername == null) {
+            Log.w("ExploreFragment", "convertCourseToVideoData: course.id=${course.id} has null creatorUsername, using empty username")
+        }
         return VideoData(
             id = course.id,
-            username = course.creatorUsername,
+            username = usernameSafe,
             description = course.description,
             title = course.title,
             videoUriString = course.videoUri ?: "",
             localFilePath = course.localFilePath,
             timestamp = course.timestamp,
             isPaid = course.isPremium,
-            remoteId = course.id,
             thumbnailUri = course.thumbnailUri,
             price = if (course.price > 0.0) course.price else null
         )
@@ -398,6 +404,14 @@ class ExploreFragment : Fragment() {
                         Toast.makeText(requireContext(), "Curso eliminado exitosamente", Toast.LENGTH_SHORT).show()
                         Log.d("ExploreFragment", "Course deleted successfully: $courseId")
 
+                        // Trigger remote delete (non-blocking)
+                        try {
+                            val syncRepo = getSyncRepository()
+                            syncRepo.deleteCourseRemoteById(courseId)
+                        } catch (e: Exception) {
+                            Log.w("ExploreFragment", "Failed to trigger remote delete for course id=$courseId", e)
+                        }
+
                         // Reload courses to ensure consistency
                         loadCourses()
                     }
@@ -494,8 +508,45 @@ class ExploreFragment : Fragment() {
                 }
 
                 Log.d("ExploreFragment", "Course updated: $newTitle")
-                // Reload courses to show updated data
-                loadCourses()
+                // Immediately update in-memory lists and adapter so UI reflects the change without reload
+                try {
+                    // Update allCoursesList entries
+                    val idxAll = allCoursesList.indexOfFirst { it.id == updatedCourse.id }
+                    if (idxAll >= 0) {
+                        allCoursesList[idxAll] = convertCourseToVideoData(courseRepository.convertVideoDataToCoursePublic(updatedCourse))
+                    }
+
+                    // Update coursesList (filtered list currently shown)
+                    val idxFiltered = coursesList.indexOfFirst { it.id == updatedCourse.id }
+                    if (idxFiltered >= 0) {
+                        coursesList[idxFiltered] = updatedCourse
+                    }
+
+                    // Notify adapter of the immediate change
+                    if (::coursesAdapter.isInitialized) {
+                        coursesAdapter.updateCourses(coursesList)
+                    }
+                } catch (e: Exception) {
+                    Log.w("ExploreFragment", "Failed to apply immediate UI update after editing course", e)
+                }
+
+                // Show a short progress indicator while we sync remotely (non-blocking)
+                val progressToast = Toast.makeText(requireContext(), "Sincronizando cambios...", Toast.LENGTH_SHORT)
+                progressToast.show()
+
+                // After local update, attempt to upsert to Supabase (non-blocking)
+                try {
+                    val syncRepo = getSyncRepository()
+                    // Convert VideoData to Course and upsert remotely
+                    val courseEntity = courseRepository.convertVideoDataToCoursePublic(updatedCourse)
+                    Log.d("ExploreFragment", "Triggering upsertCourseToSupabase for courseEntity.id=${courseEntity.id} title='${courseEntity.title}'")
+                    syncRepo.upsertCourseToSupabase(courseEntity)
+                } catch (e: Exception) {
+                    Log.w("ExploreFragment", "Failed to trigger remote upsert for course update", e)
+                } finally {
+                    // Dismiss the transient toast by showing a quick confirmation toast
+                    Toast.makeText(requireContext(), "Cambio guardado", Toast.LENGTH_SHORT).show()
+                }
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error updating course details", e)
             }
@@ -639,11 +690,41 @@ class ExploreFragment : Fragment() {
                         updateCourseInTable(updatedCourse)
                     }
 
-                    Log.d("ExploreFragment", "Thumbnail updated for course: ${course.title}")
-                    Toast.makeText(requireContext(), "Miniatura actualizada", Toast.LENGTH_SHORT).show()
+                    // Immediately update UI lists and adapter so the new thumbnail is visible
+                    try {
+                        val converted = courseRepository.convertVideoDataToCoursePublic(updatedCourse)
+                        val vd = convertCourseToVideoData(converted)
 
-                    // Reload courses to show updated thumbnail
-                    loadCourses()
+                        val idxAll = allCoursesList.indexOfFirst { it.id == updatedCourse.id }
+                        if (idxAll >= 0) allCoursesList[idxAll] = vd
+
+                        val idxFiltered = coursesList.indexOfFirst { it.id == updatedCourse.id }
+                        if (idxFiltered >= 0) coursesList[idxFiltered] = updatedCourse
+
+                        if (::coursesAdapter.isInitialized) {
+                            coursesAdapter.updateCourses(coursesList)
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ExploreFragment", "Failed immediate UI update after thumbnail change", e)
+                    }
+
+                    // Show progress toast while syncing remotely
+                    Toast.makeText(requireContext(), "Actualizando miniatura...", Toast.LENGTH_SHORT).show()
+
+                    // Trigger remote upsert (non-blocking)
+                    try {
+                        val syncRepo = getSyncRepository()
+                        val courseEntity = courseRepository.convertVideoDataToCoursePublic(updatedCourse)
+                        Log.d("ExploreFragment", "Triggering upsertCourseToSupabase for thumbnail change courseEntity.id=${courseEntity.id} title='${courseEntity.title}'")
+                        syncRepo.upsertCourseToSupabase(courseEntity)
+                    } catch (e: Exception) {
+                        Log.w("ExploreFragment", "Failed to trigger remote upsert for thumbnail change", e)
+                    }
+
+                    // Show confirmation
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "Miniatura actualizada", Toast.LENGTH_SHORT).show()
+                    }
 
                 } catch (e: Exception) {
                     Log.e("ExploreFragment", "Error updating thumbnail", e)
@@ -758,29 +839,73 @@ class ExploreFragment : Fragment() {
     private fun loadCourses() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                // First, ensure VideoData is migrated to Course table
-                withContext(Dispatchers.IO) {
-                    courseRepository.populateCoursesFromVideoData()
-                    // Also sync any new or updated VideoData
-                    courseRepository.syncVideoDataToCoursesTable()
+                // Prefer fetching courses from Supabase (all users). Fallback to local Course table if unavailable.
+                val db = AppDatabase.getDatabase(requireContext())
+                val syncRepo = com.example.tareamov.data.sync.SyncRepository(
+                    db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
+                    db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
+                    db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
+                )
+
+                val coursesFromRemote = withContext(Dispatchers.IO) {
+                    try {
+                        syncRepo.fetchCoursesFromSupabase()
+                    } catch (e: Exception) {
+                        emptyList<Course>()
+                    }
                 }
 
-                // Load courses directly from Course table
-                val coursesFromDb = withContext(Dispatchers.IO) {
-                    courseRepository.getAllCourses()
+                val coursesToUse = if (coursesFromRemote.isNotEmpty()) {
+                    Log.d("ExploreFragment", "Loaded ${coursesFromRemote.size} courses from Supabase")
+                    coursesFromRemote
+                } else {
+                    // Fallback to local Course table
+                    withContext(Dispatchers.IO) {
+                        // ensure migration from VideoData if needed
+                        try { courseRepository.populateCoursesFromVideoData(); courseRepository.syncVideoDataToCoursesTable() } catch (_: Exception) {}
+                        courseRepository.getAllCourses()
+                    }
                 }
 
-                // Update both Course and VideoData lists
+                // Populate UI lists from coursesToUse
                 allCoursesFromTableList.clear()
-                allCoursesFromTableList.addAll(coursesFromDb)
+                val sortedCourses = coursesToUse.sortedByDescending { it.timestamp }
+                allCoursesFromTableList.addAll(sortedCourses)
 
-                val videoDataList = coursesFromDb.map { convertCourseToVideoData(it) }
+                val videoDataList = sortedCourses.map { course ->
+                    try {
+                        convertCourseToVideoData(course)
+                    } catch (e: Exception) {
+                        Log.w("ExploreFragment", "Failed to convert course id=${course.id} to VideoData", e)
+                        // Create a safe fallback VideoData to avoid crashing the UI
+                        VideoData(
+                            id = course.id,
+                            username = course.creatorUsername ?: "",
+                            title = course.title ?: "",
+                            description = course.description ?: "",
+                            videoUriString = course.videoUri ?: "",
+                            localFilePath = course.localFilePath,
+                            timestamp = course.timestamp,
+                            isPaid = course.isPremium,
+                            thumbnailUri = course.thumbnailUri,
+                            price = if (course.price > 0.0) course.price else null
+                        )
+                    }
+                }
+
+                val sortedVideoData = videoDataList.sortedByDescending { it.timestamp }
                 allCoursesList.clear()
-                allCoursesList.addAll(videoDataList)
+                allCoursesList.addAll(sortedVideoData)
+
+                // Ensure adapter is updated directly in addition to filtering
+                Log.d("ExploreFragment", "Direct adapter update with ${sortedVideoData.size} items (ensuring UI refresh)")
+                if (::coursesAdapter.isInitialized) {
+                    coursesAdapter.updateCourses(sortedVideoData)
+                } else {
+                    Log.w("ExploreFragment", "coursesAdapter not initialized when trying direct update")
+                }
 
                 filterCourses("")
-
-                Log.d("ExploreFragment", "Loaded ${coursesFromDb.size} courses from Course table")
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error loading courses from Course table", e)
 
@@ -799,11 +924,14 @@ class ExploreFragment : Fragment() {
                         }
                     }
 
+                    // Keep converted courses sorted newest -> oldest
+                    val sortedConverted = convertedCourses.sortedByDescending { it.timestamp }
                     allCoursesFromTableList.clear()
-                    allCoursesFromTableList.addAll(convertedCourses)
+                    allCoursesFromTableList.addAll(sortedConverted)
 
+                    val sortedFallbackVideos = fallbackVideos.sortedByDescending { it.timestamp }
                     allCoursesList.clear()
-                    allCoursesList.addAll(fallbackVideos)
+                    allCoursesList.addAll(sortedFallbackVideos)
 
                     filterCourses("")
 
@@ -813,6 +941,16 @@ class ExploreFragment : Fragment() {
                 }
             }
         }
+    }
+
+    // Helper to obtain a SyncRepository instance (uses current AppDatabase)
+    private fun getSyncRepository(): com.example.tareamov.data.sync.SyncRepository {
+        val db = AppDatabase.getDatabase(requireContext())
+        return com.example.tareamov.data.sync.SyncRepository(
+            db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
+            db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
+            db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
+        )
     }
 
     // Filter courses by name or category
@@ -828,7 +966,9 @@ class ExploreFragment : Fragment() {
         }
         coursesList.clear()
         coursesList.addAll(filtered)
+        Log.d("ExploreFragment", "filterCourses -> query='$query' filteredSize=${filtered.size} allCourses=${allCoursesList.size} coursesList=${coursesList.size}")
         if (::coursesAdapter.isInitialized) {
+            Log.d("ExploreFragment", "filterCourses -> updating adapter with ${coursesList.size} items")
             coursesAdapter.updateCourses(coursesList)
         } else {
             Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")

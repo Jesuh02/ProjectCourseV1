@@ -24,7 +24,6 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.UriPermissionManager
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.viewmodel.CourseCreationViewModel
-import com.example.tareamov.data.repository.SupabaseRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -39,6 +38,26 @@ class CourseTaskFragment : Fragment() {
     private var taskId: Long = -1L // -1 indicates a new task
     private var existingTask: Task? = null
     private var isTemporary: Boolean = false // Add this variable
+
+    // Repository for remote checks (optional Supabase fallback)
+    private val syncRepository by lazy {
+        com.example.tareamov.data.sync.SyncRepository(
+            AppDatabase.getDatabase(requireContext()).usuarioDao(),
+            AppDatabase.getDatabase(requireContext()).personaDao(),
+            AppDatabase.getDatabase(requireContext()).topicDao(),
+            AppDatabase.getDatabase(requireContext()).contentItemDao(),
+            AppDatabase.getDatabase(requireContext()).taskDao(),
+            AppDatabase.getDatabase(requireContext()).subscriptionDao(),
+            AppDatabase.getDatabase(requireContext()).taskSubmissionDao(),
+            AppDatabase.getDatabase(requireContext()).videoDao(),
+            AppDatabase.getDatabase(requireContext()).courseDao(),
+            AppDatabase.getDatabase(requireContext()).rolDao(),
+            AppDatabase.getDatabase(requireContext()).recursoDao(),
+            AppDatabase.getDatabase(requireContext()).rolRecursoDao(),
+            AppDatabase.getDatabase(requireContext()).chatMessageDao(),
+            AppDatabase.getDatabase(requireContext()).fileContextDao()
+        )
+    }
 
     private lateinit var taskNameEditText: EditText
     private lateinit var taskDescriptionEditText: EditText
@@ -55,7 +74,6 @@ class CourseTaskFragment : Fragment() {
     private lateinit var sessionManager: SessionManager
     private var isCourseCreator: Boolean = false
     private var courseCreatorUsername: String? = null
-    private val supabaseRepo = SupabaseRepository()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -201,22 +219,94 @@ class CourseTaskFragment : Fragment() {
     }
 
     private fun loadTaskDetails() {
-        val taskDao = AppDatabase.getDatabase(requireContext()).taskDao()
-        val contentItemDao = AppDatabase.getDatabase(requireContext()).contentItemDao()
+    val taskDao = AppDatabase.getDatabase(requireContext()).taskDao()
+    val contentItemDao = AppDatabase.getDatabase(requireContext()).contentItemDao()
+    val topicDao = AppDatabase.getDatabase(requireContext()).topicDao()
 
         CoroutineScope(Dispatchers.Main).launch {
             existingTask = withContext(Dispatchers.IO) { taskDao.getTaskById(taskId) }
-            if (existingTask == null) {
-                Log.e("CourseTaskFragment", "Error: Task with ID $taskId not found.")
-                Toast.makeText(context, "Error al cargar la tarea", Toast.LENGTH_SHORT).show()
-                findNavController().navigateUp()
-                return@launch
+                if (existingTask == null) {
+                Log.w("CourseTaskFragment", "Local task with ID $taskId not found, attempting Supabase fallback.")
+                // Try remote fetch via SyncRepository wrapper for single task
+                try {
+                    val syncRepo = com.example.tareamov.data.sync.SyncRepository(
+                        AppDatabase.getDatabase(requireContext()).usuarioDao(),
+                        AppDatabase.getDatabase(requireContext()).personaDao(),
+                        AppDatabase.getDatabase(requireContext()).topicDao(),
+                        AppDatabase.getDatabase(requireContext()).contentItemDao(),
+                        AppDatabase.getDatabase(requireContext()).taskDao(),
+                        AppDatabase.getDatabase(requireContext()).subscriptionDao(),
+                        AppDatabase.getDatabase(requireContext()).taskSubmissionDao(),
+                        AppDatabase.getDatabase(requireContext()).videoDao(),
+                        AppDatabase.getDatabase(requireContext()).courseDao(),
+                        AppDatabase.getDatabase(requireContext()).rolDao(),
+                        AppDatabase.getDatabase(requireContext()).recursoDao(),
+                        AppDatabase.getDatabase(requireContext()).rolRecursoDao(),
+                        AppDatabase.getDatabase(requireContext()).chatMessageDao(),
+                        AppDatabase.getDatabase(requireContext()).fileContextDao()
+                    )
+                    if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        val remote = withContext(Dispatchers.IO) { syncRepo.fetchTaskByIdFromSupabase(taskId) }
+                        if (remote != null) {
+                            // Map the remote topicId to a local topic id. If the local topic
+                            // doesn't exist, create a placeholder local Topic tied to the
+                            // local courseId argument so Room foreign keys remain valid.
+                            var mappedTopicId = remote.topicId
+                            try {
+                                val argCourseId = arguments?.getLong("courseId", -1L) ?: -1L
+                                val localTopic = withContext(Dispatchers.IO) { topicDao.getTopicById(remote.topicId) }
+                                if (localTopic != null) {
+                                    mappedTopicId = localTopic.id
+                                } else if (argCourseId > 0) {
+                                    // Try to find a topic with the same orderIndex under the local course
+                                    val byOrder = withContext(Dispatchers.IO) { topicDao.getTopicByCourseIdAndOrderIndex(argCourseId, remote.orderIndex ?: 0) }
+                                    if (byOrder != null) {
+                                        mappedTopicId = byOrder.id
+                                    } else {
+                                        // Create a new local Topic tied to the local course id
+                                        val newTopic = com.example.tareamov.data.entity.Topic(
+                                            courseId = argCourseId,
+                                            name = "Tema (migrado)",
+                                            description = "",
+                                            orderIndex = remote.orderIndex ?: 0
+                                        )
+                                        mappedTopicId = withContext(Dispatchers.IO) { topicDao.insertTopic(newTopic) }
+                                        Log.i("CourseTaskFragment", "Created placeholder local topic id=$mappedTopicId for remote topic ${remote.topicId}")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w("CourseTaskFragment", "Failed to map remote topic id to local", e)
+                                mappedTopicId = remote.topicId
+                            }
+
+                            existingTask = Task(
+                                id = remote.id,
+                                topicId = mappedTopicId,
+                                name = remote.name ?: "",
+                                description = remote.description ?: null,
+                                orderIndex = remote.orderIndex ?: 0
+                            )
+                            val tmpTask = existingTask
+                            Log.i("CourseTaskFragment", "Loaded task $taskId from Supabase fallback. Mapped topicId=${tmpTask?.topicId}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseTaskFragment", "Supabase fallback for task failed", e)
+                }
+
+                if (existingTask == null) {
+                    Log.e("CourseTaskFragment", "Error: Task with ID $taskId not found.")
+                    Toast.makeText(context, "Error al cargar la tarea", Toast.LENGTH_SHORT).show()
+                    findNavController().navigateUp()
+                    return@launch
+                }
             }
 
             // Populate UI with existing task data
-            taskNameEditText.setText(existingTask!!.name)
-            taskDescriptionEditText.setText(existingTask!!.description ?: "")
-            topicId = existingTask!!.topicId // Ensure topicId is set from the loaded task
+            val task = existingTask!! // capture to local val to avoid smart-cast after suspend
+            taskNameEditText.setText(task.name)
+            taskDescriptionEditText.setText(task.description ?: "")
+            topicId = task.topicId // Ensure topicId is set from the loaded task
 
             // Load associated content items
             val contentItems = withContext(Dispatchers.IO) { contentItemDao.getContentItemsByTaskId(taskId) }
@@ -247,59 +337,81 @@ class CourseTaskFragment : Fragment() {
         // }
 
         val taskDao = AppDatabase.getDatabase(requireContext()).taskDao()
-        val topicDao = AppDatabase.getDatabase(requireContext()).topicDao()
-        val contentItemDao = AppDatabase.getDatabase(requireContext()).contentItemDao()
+    val topicDao = AppDatabase.getDatabase(requireContext()).topicDao()
+    val contentItemDao = AppDatabase.getDatabase(requireContext()).contentItemDao()
+    val videoDao = AppDatabase.getDatabase(requireContext()).videoDao()
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                var savedTopicId = topicId
-                // If topicId is not set, create a new topic
-                if (savedTopicId == -1L) {
-                    // Check if there's already a topic for this course with the given number
-                    val existingTopic = withContext(Dispatchers.IO) {
-                        topicDao.getTopicByCourseIdAndOrderIndex(courseId, topicNumber)
-                    }
+                // Resolve authoritative course id from Supabase first
+                val appDatabase = AppDatabase.getDatabase(requireContext())
+                val syncRepo = (activity as? com.example.tareamov.MainActivity)?.syncRepository
+                    ?: com.example.tareamov.data.sync.SyncRepository(
+                        appDatabase.usuarioDao(), appDatabase.personaDao(), appDatabase.topicDao(),
+                        appDatabase.contentItemDao(), appDatabase.taskDao(), appDatabase.subscriptionDao(),
+                        appDatabase.taskSubmissionDao(), appDatabase.videoDao(), appDatabase.courseDao(),
+                        appDatabase.rolDao(), appDatabase.recursoDao(), appDatabase.rolRecursoDao(),
+                        appDatabase.chatMessageDao(), appDatabase.fileContextDao()
+                    )
 
-                    if (existingTopic != null) {
-                        savedTopicId = existingTopic.id
-                        Log.d("CourseTaskFragment", "Using existing topic with ID: $savedTopicId")
-                    } else {
-                        // Create a new topic if none exists
-                        val newTopic = com.example.tareamov.data.entity.Topic(
-                            courseId = courseId,
-                            name = "Tema $topicNumber",
-                            description = "",
-                            orderIndex = topicNumber
-                        )
-                        savedTopicId = withContext(Dispatchers.IO) { topicDao.insertTopic(newTopic) }
-                        Log.d("CourseTaskFragment", "Created new topic with ID: $savedTopicId")
+                val resolvedCourseId = withContext(Dispatchers.IO) {
+                    try {
+                        if (courseId > 0) {
+                            val remote = syncRepo.fetchCourseById(courseId)
+                            if (remote != null) return@withContext remote.id
+                        }
+                        if (courseName.isNotBlank()) {
+                            val all = syncRepo.fetchCoursesFromSupabase()
+                            val byName = all.firstOrNull { it.title?.trim()?.equals(courseName.trim(), ignoreCase = true) == true }
+                            if (byName != null) return@withContext byName.id
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseTaskFragment", "Error resolving remote course id", e)
+                    }
+                    // fallback to passed courseId or -1 handled below
+                    courseId
+                }
+
+                // Instead of inserting into local Room (which causes FK issues when parents
+                // are missing), make Supabase the authoritative source for creating/updating
+                // tasks and content items. We'll call syncRepo to perform remote inserts/updates
+                // and avoid creating placeholder VideoData/Topic rows locally.
+                var savedTopicId = topicId
+                var savedTaskId: Long = taskId
+
+                // Build the Task DTO to send to Supabase. For new tasks, id may be 0 or -1.
+                val remoteTask = Task(
+                    id = if (taskId > 0) taskId else 0,
+                    topicId = topicId,
+                    name = taskName,
+                    description = taskDescription.ifBlank { null },
+                    orderIndex = 0
+                )
+
+                // Push to Supabase (insert or update)
+                val pushedTaskId = withContext(Dispatchers.IO) {
+                    try {
+                        if (taskId > 0) {
+                            val ok = syncRepo.updateTaskRemote(remoteTask)
+                            if (ok) remoteTask.id else null
+                        } else {
+                            syncRepo.insertTaskRemote(remoteTask)
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseTaskFragment", "Remote task push failed", e)
+                        null
                     }
                 }
 
-                var savedTaskId = taskId
-                if (existingTask == null) { // Creating a new task
-                    val taskCount = withContext(Dispatchers.IO) { taskDao.getTaskCountByTopicId(savedTopicId) }
-                    val newTask = Task(
-                        topicId = savedTopicId,
-                        name = taskName,
-                        description = taskDescription.ifBlank { null },
-                        orderIndex = taskCount // Append to the end
-                    )
-                    savedTaskId = withContext(Dispatchers.IO) { taskDao.insertTask(newTask) }
-                    Log.d("CourseTaskFragment", "New task created with ID: $savedTaskId")
-                } else { // Updating existing task
-                    val updatedTask = existingTask!!.copy(
-                        name = taskName,
-                        description = taskDescription.ifBlank { null }
-                    )
-                    withContext(Dispatchers.IO) { taskDao.updateTask(updatedTask) }
-                    Log.d("CourseTaskFragment", "Task updated with ID: $savedTaskId")
-                    withContext(Dispatchers.IO) {
-                        val contentItems = contentItemDao.getContentItemsByTaskId(savedTaskId)
-                        for (item in contentItems) {
-                            contentItemDao.deleteContentItem(item.id)
-                        }
-                    }
+                if (pushedTaskId != null) {
+                    savedTaskId = pushedTaskId
+                    // If the remote returned a task id and topicId may represent a remote topic id
+                    // keep using the topicId argument (it's expected to be a Supabase id).
+                    savedTopicId = topicId
+                    Log.i("CourseTaskFragment", "Task saved remotely with id=$savedTaskId topic=$savedTopicId")
+                } else {
+                    // Remote push failed; abort to avoid local FK operations that previously failed.
+                    throw IllegalStateException("Failed to save task to Supabase")
                 }
 
                 // In the saveTask method, when creating content items:
@@ -334,39 +446,54 @@ class CourseTaskFragment : Fragment() {
                     Log.d("CourseTaskFragment", "Saved ${contentItemsToSave.size} content items for task ID: $savedTaskId")
                 }
 
-                // Best-effort: send task and content items to Supabase if configured
-                try {
-                    if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                        withContext(Dispatchers.IO) {
-                            // Send task
-                            val taskToSend = com.example.tareamov.data.entity.Task(
-                                id = savedTaskId,
-                                topicId = savedTopicId,
-                                name = taskName,
-                                description = taskDescription.ifBlank { null },
-                                orderIndex = 0
-                            )
-                            val okTask = supabaseRepo.upsert("tasks", taskToSend)
-                            if (!okTask) Log.w("CourseTaskFragment", "Failed to upsert task $savedTaskId to Supabase")
-
-                            // Send content items
-                            contentItemsToSave.forEach { ci ->
-                                val ok = supabaseRepo.upsert("content_items", ci)
-                                if (!ok) Log.w("CourseTaskFragment", "Failed to upsert content item for task $savedTaskId to Supabase")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("CourseTaskFragment", "Supabase sync failed", e)
-                }
-
                 Toast.makeText(context, "Tarea guardada exitosamente", Toast.LENGTH_SHORT).show()
 
-                // Navigate to CourseDetailFragment instead of going back
+                // Navigate to CourseDetailFragment with the authoritative course id
                 val bundle = Bundle().apply {
-                    putLong("courseId", courseId)
+                    putLong("courseId", if (resolvedCourseId > 0) resolvedCourseId else courseId)
                 }
-                findNavController().navigate(R.id.action_courseTaskFragment_to_courseDetailFragment, bundle)
+                // Fire-and-forget: push associated content items to Supabase (task was already pushed above)
+                val contentItemsToPush = contentItemsToSave // already built above
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        for (ci in contentItemsToPush) {
+                            try {
+                                val mapped = ci.copy(topicId = savedTopicId, taskId = savedTaskId)
+                                Log.d("CourseTaskFragment", "Pushing content item to Supabase: ${'$'}{mapped}")
+                                val remoteCiId = syncRepo.insertContentItemRemote(mapped)
+                                if (remoteCiId != null) {
+                                    Log.i("CourseTaskFragment", "Pushed content item remote id=${'$'}remoteCiId for task=${'$'}savedTaskId")
+                                } else {
+                                    Log.w("CourseTaskFragment", "Failed to push content item for task=${'$'}savedTaskId")
+                                }
+                            } catch (e: Exception) {
+                                Log.w("CourseTaskFragment", "Error pushing content item for task=${'$'}savedTaskId", e)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseTaskFragment", "Error pushing content items to Supabase", e)
+                    }
+                }
+
+                // Safely navigate back to CourseDetailFragment. The action may not exist
+                // if the current destination changed while we were saving (coroutines),
+                // so check current destination first to avoid IllegalArgumentException.
+                try {
+                    val nav = findNavController()
+                    // Try to pop back stack to CourseDetailFragment first (preserves its instance/state)
+                    val popped = nav.popBackStack(R.id.courseDetailFragment, false)
+                    if (!popped) {
+                        // Not on backstack, navigate with bundle as fallback
+                        nav.navigate(R.id.courseDetailFragment, bundle)
+                    }
+                } catch (navEx: Exception) {
+                    Log.w("CourseTaskFragment", "Navigation to CourseDetailFragment failed, falling back", navEx)
+                    try {
+                        findNavController().navigate(R.id.action_courseTaskFragment_to_courseDetailFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("CourseTaskFragment", "Fallback navigation also failed", e)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error saving task", e)
                 Toast.makeText(context, "Error al guardar la tarea", Toast.LENGTH_SHORT).show()

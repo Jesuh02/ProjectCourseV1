@@ -22,6 +22,11 @@ import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import com.example.tareamov.R
 import com.example.tareamov.util.SessionManager
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.FileDescriptor
+import android.content.res.AssetFileDescriptor
 
 class SplashFragment : Fragment() {
     
@@ -32,6 +37,11 @@ class SplashFragment : Fragment() {
     private lateinit var codeElements: List<TextView>
     private lateinit var binaryElements: List<TextView>
     private var mediaPlayer: MediaPlayer? = null
+    private var mediaPlayerPrepared = false
+    private var syncCompleted = false
+    private var animationFinished = false
+    // Expected asset filename (put the provided file under app/src/main/assets)
+    private val assetAudioFile = "y2mate--Teclado-del-ordenador-mecanografía-Efecto-de-Sonido-Computer-keyboard-typing_360.mp4"
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -50,18 +60,67 @@ class SplashFragment : Fragment() {
         initializeViews(view)
         initializeKeyboardSound()
         startSpectacularAnimation()
-        
-        // Navigate after animation sequence
+
+        // Start Supabase sync in background. We'll wait for both the animation
+        // timeout and the sync to finish before navigating forward.
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val ma = activity as? com.example.tareamov.MainActivity
+                ma?.syncRepository?.let { repo ->
+                    // syncSupabaseToLocal may perform network/DB work; run off UI thread
+                    try {
+                        repo.syncSupabaseToLocal()
+                    } catch (t: Throwable) {
+                        t.printStackTrace()
+                    }
+                }
+            } catch (t: Throwable) {
+                t.printStackTrace()
+            } finally {
+                // Mark sync completed on main thread and attempt navigation
+                lifecycleScope.launch(Dispatchers.Main) {
+                    syncCompleted = true
+                    maybeNavigate()
+                }
+            }
+        }
+
+        // Mark animation finished after timeout and attempt navigation
         Handler(Looper.getMainLooper()).postDelayed({
-            navigateToNextScreen()
+            animationFinished = true
+            maybeNavigate()
         }, splashTimeOut)
     }
 
     private fun initializeKeyboardSound() {
         try {
-            mediaPlayer = MediaPlayer.create(requireContext(), R.raw.keyboard_typing_sound)
-            mediaPlayer?.isLooping = false
-            mediaPlayer?.setVolume(0.3f, 0.3f) // Set volume to 30%
+            // Prefer loading the provided mp4 from assets (place file in app/src/main/assets)
+            try {
+                val afd: AssetFileDescriptor = requireContext().assets.openFd(assetAudioFile)
+                mediaPlayer = MediaPlayer()
+                mediaPlayer?.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                afd.close()
+                mediaPlayer?.isLooping = true
+                mediaPlayer?.setOnPreparedListener {
+                    mediaPlayerPrepared = true
+                    it.setVolume(0.3f, 0.3f)
+                    it.start()
+                }
+                mediaPlayer?.prepareAsync()
+            } catch (assetEx: Exception) {
+                // Fallback to raw resource if asset not available
+                assetEx.printStackTrace()
+                try {
+                    mediaPlayer = MediaPlayer.create(requireContext(), R.raw.keyboard_typing_sound)
+                    mediaPlayer?.isLooping = true
+                    mediaPlayerPrepared = true
+                    mediaPlayer?.setVolume(0.3f, 0.3f)
+                    mediaPlayer?.start()
+                } catch (e: Exception) {
+                    Log.e("SplashFragment", "Error initializing keyboard sound fallback: ${e.message}")
+                    mediaPlayer = null
+                }
+            }
         } catch (e: Exception) {
             Log.e("SplashFragment", "Error initializing keyboard sound: ${e.message}")
             mediaPlayer = null
@@ -72,7 +131,10 @@ class SplashFragment : Fragment() {
         try {
             mediaPlayer?.let { player ->
                 if (!player.isPlaying) {
-                    player.seekTo(0)
+                    try {
+                        player.seekTo(0)
+                    } catch (_: Exception) {
+                    }
                     player.start()
                 }
             }
@@ -124,6 +186,9 @@ class SplashFragment : Fragment() {
 
         // Step 1: Start binary rain effect (0ms)
         startBinaryRainEffect()
+
+    // Ensure audio is playing when the animation starts
+    playKeyboardSound()
 
         // Step 2: Animate logo entrance with burst effect (400ms)
         Handler(Looper.getMainLooper()).postDelayed({
@@ -430,9 +495,29 @@ class SplashFragment : Fragment() {
         }
     }
 
+    // Attempt navigation only when both animation and sync are completed.
+    private fun maybeNavigate() {
+        if (animationFinished && syncCompleted) {
+            // stop audio
+            try {
+                mediaPlayer?.stop()
+            } catch (e: Exception) {
+                // ignore
+            }
+            mediaPlayer?.release()
+            mediaPlayer = null
+            navigateToNextScreen()
+        }
+    }
+
     private fun navigateToNextScreen() {
         if (isAdded && !isDetached && !isRemoving) {
             try {
+                // Ensure audio is stopped before navigating
+                try { mediaPlayer?.stop() } catch (_: Exception) {}
+                try { mediaPlayer?.release() } catch (_: Exception) {}
+                mediaPlayer = null
+
                 val sessionManager = SessionManager.getInstance(requireContext())
                 if (sessionManager.isLoggedIn()) {
                     Log.d("SplashFragment", "Session found, navigating to videoHomeFragment")

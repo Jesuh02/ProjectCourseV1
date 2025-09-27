@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.google.gson.annotations.SerializedName
 
 @Entity(
     tableName = "content_items",
@@ -28,8 +29,8 @@ data class ContentItem(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val topicId: Long = 0,
     val taskId: Long? = null,
-    val name: String? = null,
-    val uriString: String = "",
+    @SerializedName("title") val name: String? = null,
+    @SerializedName("body") val uriString: String = "",
     val contentType: String = "",
     val orderIndex: Int? = 0
 ) {

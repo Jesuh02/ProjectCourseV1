@@ -53,6 +53,8 @@ class CourseDetailFragment : Fragment() {
 
     private var courseId: Long = -1
     private var courseName: String = "" // Ensure this is populated correctly
+    // Resolved course id after checking Supabase (may differ from local courseId)
+    private var resolvedCourseId: Long = -1
     private lateinit var topicsContainer: LinearLayout
     private var isCurrentUserCreator: Boolean = false
     private var currentUsername: String? = null
@@ -80,6 +82,23 @@ class CourseDetailFragment : Fragment() {
     private lateinit var courseTitleTextView: TextView
     private lateinit var courseDescriptionTextView: TextView
     private lateinit var editCourseButton: ImageButton
+    // Repository for remote checks
+    private val syncRepository by lazy { com.example.tareamov.data.sync.SyncRepository(
+        AppDatabase.getDatabase(requireContext()).usuarioDao(),
+        AppDatabase.getDatabase(requireContext()).personaDao(),
+        AppDatabase.getDatabase(requireContext()).topicDao(),
+        AppDatabase.getDatabase(requireContext()).contentItemDao(),
+        AppDatabase.getDatabase(requireContext()).taskDao(),
+        AppDatabase.getDatabase(requireContext()).subscriptionDao(),
+        AppDatabase.getDatabase(requireContext()).taskSubmissionDao(),
+        AppDatabase.getDatabase(requireContext()).videoDao(),
+        AppDatabase.getDatabase(requireContext()).courseDao(),
+        AppDatabase.getDatabase(requireContext()).rolDao(),
+        AppDatabase.getDatabase(requireContext()).recursoDao(),
+        AppDatabase.getDatabase(requireContext()).rolRecursoDao(),
+        AppDatabase.getDatabase(requireContext()).chatMessageDao(),
+        AppDatabase.getDatabase(requireContext()).fileContextDao()
+    ) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -102,6 +121,8 @@ class CourseDetailFragment : Fragment() {
         if (courseId != -1L) {
             Log.d("CourseDetailFragment", "onResume: Reloading course details for courseId: $courseId")
             loadCourseDetails()
+            // Also refresh topics from Supabase to reflect recent remote creations
+            refreshTopicsFromSupabase()
         }
     }
 
@@ -217,6 +238,10 @@ class CourseDetailFragment : Fragment() {
         courseDescriptionTextView = view.findViewById(R.id.courseDescriptionTextView)
         editCourseButton = view.findViewById(R.id.editCourseButton)
 
+    // Initially hide edit controls until we verify creator ownership remotely
+    editCourseButton.visibility = View.GONE
+    courseTitleTextView.isClickable = false
+
         val courseTitle = view.findViewById<TextView>(R.id.courseTitleTextView)
         val courseDescription = view.findViewById<TextView>(R.id.courseDescriptionTextView)
         val subscribeButton = view.findViewById<Button>(R.id.subscribeButton)
@@ -229,12 +254,42 @@ class CourseDetailFragment : Fragment() {
                 courseTitleTextView = view.findViewById(R.id.courseTitleTextView)
                 courseDescriptionTextView = view.findViewById(R.id.courseDescriptionTextView)
                 editCourseButton = view.findViewById(R.id.editCourseButton)
-                // Show edit button only if current user is the creator
-                if (sessionManager.getUsername() == it.username) {
-                    editCourseButton.visibility = View.VISIBLE
-                } else {
-                    editCourseButton.visibility = View.GONE
+                // Decide edit button visibility using Supabase when possible
+                val localUsername = sessionManager.getUsername()
+                editCourseButton.visibility = View.GONE
+                if (localUsername != null) {
+                    lifecycleScope.launch {
+                        var showEdit = false
+                        try {
+                            val act = requireActivity()
+                            if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                val remoteCourse = withContext(Dispatchers.IO) { act.syncRepository.fetchCourseById(courseId) }
+                                if (remoteCourse != null) {
+                                    showEdit = (remoteCourse.creatorUsername ?: "") == localUsername
+                                } else {
+                                    // fallback to local course data if remote missing
+                                    showEdit = (localUsername == it.creatorUsername)
+                                }
+                            } else {
+                                // Supabase not configured, fallback to local check
+                                showEdit = (localUsername == it.creatorUsername)
+                            }
+                        } catch (e: Exception) {
+                            Log.w("CourseDetailFragment", "Error checking remote creator", e)
+                            showEdit = (localUsername == it.creatorUsername)
+                        }
+                        editCourseButton.visibility = if (showEdit) View.VISIBLE else View.GONE
+                    }
                 }
+            }
+        }
+
+        // If a courseName was passed via arguments, prefer it for the displayed title
+        if (courseName.isNotBlank()) {
+            try {
+                courseTitleTextView.text = courseName
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Could not set courseTitleTextView from argument: ${e.message}")
             }
         }
 
@@ -256,16 +311,59 @@ class CourseDetailFragment : Fragment() {
                 .setPositiveButton("Guardar") { _, _ ->
                     val newTitle = titleEdit.text.toString().trim()
                     val newDesc = descEdit.text.toString().trim()
-                    // Update in DB and UI
+                    // Update Course and related VideoData, then sync to Supabase
                     lifecycleScope.launch {
-                        val db = AppDatabase.getDatabase(context)
-                        val course = courseViewModel.course.value
-                        if (course != null) {
-                            val updatedCourse = course.copy(title = newTitle, description = newDesc)
-                            withContext(Dispatchers.IO) {
-                                db.videoDao().updateVideo(updatedCourse)
+                        try {
+                            val repo = com.example.tareamov.repository.CourseRepository(requireContext())
+                            val db = AppDatabase.getDatabase(requireContext())
+                            val course = courseViewModel.course.value
+                            if (course != null) {
+                                val updatedCourse = course.copy(title = newTitle, description = newDesc)
+                                withContext(Dispatchers.IO) {
+                                    // Update Course table (if available)
+                                    try {
+                                        repo.updateCourse(updatedCourse)
+                                    } catch (e: Exception) {
+                                        // Fallback: update CourseDao directly if repo failed
+                                        try {
+                                            db.courseDao()?.updateCourse(updatedCourse)
+                                        } catch (ignored: Exception) { }
+                                    }
+
+                                    // Update VideoData entry if it exists
+                                    try {
+                                        val videoDao = db.videoDao()
+                                        val video = videoDao.getVideoById(course.id)
+                                        if (video != null) {
+                                            val updatedVideo = video.copy(title = newTitle, description = newDesc)
+                                            videoDao.updateVideo(updatedVideo)
+                                        }
+                                    } catch (ignored: Exception) { }
+                                }
+
+                                // Request Supabase upsert for the updated course
+                                try {
+                                    val act = requireActivity()
+                                    if (act is com.example.tareamov.MainActivity) {
+                                        // Ensure values match Course fields and handle nullables
+                                        val courseToUpsert = updatedCourse.copy(
+                                            // Keep existing course fields; ensure price and flags are valid
+                                            price = updatedCourse.price ?: 0.0,
+                                            isPremium = updatedCourse.isPremium
+                                        )
+                                        withContext(Dispatchers.IO) {
+                                            act.syncRepository.upsertCourseToSupabase(courseToUpsert)
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w("CourseDetailFragment", "Failed to upsert updated course to Supabase: ${e.message}", e)
+                                }
+
+                                // Refresh UI
+                                courseViewModel.getCourseById(courseId)
                             }
-                            courseViewModel.getCourseById(courseId) // Refresh
+                        } catch (e: Exception) {
+                            Log.e("CourseDetailFragment", "Error updating course and videos", e)
                         }
                     }
                 }
@@ -275,13 +373,139 @@ class CourseDetailFragment : Fragment() {
         // Load course details
         courseViewModel.getCourseById(courseId)
 
-        // Set up subscribe button click listener (use centralized handler that also syncs to Supabase)
+        // Set up subscribe button click listener
         subscribeButton.setOnClickListener {
-            handleSubscription()
+        lifecycleScope.launch {
+            try {
+                val remoteCourse = syncRepository.fetchCourseById(courseId)
+                val remoteCreator = remoteCourse?.creatorUsername?.trim()
+                val currentUser = sessionManager.getUsername()?.trim()
+                val isOwner = !remoteCreator.isNullOrBlank() && !currentUser.isNullOrBlank() && remoteCreator.equals(currentUser, ignoreCase = true)
+
+                withContext(Dispatchers.Main) {
+                    if (isOwner) {
+                        editCourseButton.visibility = View.VISIBLE
+                        courseTitleTextView.isClickable = true
+                    } else {
+                        editCourseButton.visibility = View.GONE
+                        courseTitleTextView.isClickable = false
+                    }
+                }
+            } catch (e: Exception) {
+                // On error, fall back to local check: show edit only if session username equals local course creator
+                try {
+                    val localCourse = AppDatabase.getDatabase(requireContext()).courseDao().getCourseById(courseId)
+                    val localCreator = localCourse?.creatorUsername?.trim()
+                    val currentUser = sessionManager.getUsername()?.trim()
+                    val isOwnerLocal = !localCreator.isNullOrBlank() && !currentUser.isNullOrBlank() && localCreator.equals(currentUser, ignoreCase = true)
+                    withContext(Dispatchers.Main) {
+                        if (isOwnerLocal) {
+                            editCourseButton.visibility = View.VISIBLE
+                            courseTitleTextView.isClickable = true
+                        } else {
+                            editCourseButton.visibility = View.GONE
+                            courseTitleTextView.isClickable = false
+                        }
+                    }
+                } catch (ex: Exception) {
+                    // If even local check fails, keep edit hidden
+                    withContext(Dispatchers.Main) {
+                        editCourseButton.visibility = View.GONE
+                        courseTitleTextView.isClickable = false
+                    }
+                }
+            }
+        }
+            if (!sessionManager.isLoggedIn()) {
+                Toast.makeText(requireContext(), "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
+                findNavController().navigate(R.id.loginFragment)
+                return@setOnClickListener
+            }
+
+            lifecycleScope.launch {
+                val username = sessionManager.getUsername() ?: return@launch
+                val creator = courseCreatorUsername ?: return@launch
+
+                // Check remote subscription state first
+                var remoteSubscribed = false
+                try {
+                    val act = requireActivity()
+                    if (act is MainActivity) {
+                        remoteSubscribed = withContext(Dispatchers.IO) { act.syncRepository.isSubscribedRemote(username, creator) }
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseDetailFragment", "Remote isSubscribed check failed", e)
+                }
+
+                if (!remoteSubscribed) {
+                    // Subscribe remotely
+                    val sub = Subscription(subscriberUsername = username, creatorUsername = creator, subscriptionDate = System.currentTimeMillis())
+                    var ok = false
+                    try {
+                        val act = requireActivity()
+                        if (act is MainActivity) {
+                            ok = withContext(Dispatchers.IO) { act.syncRepository.insertSubscriptionRemote(sub) }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "Remote subscribe failed", e)
+                    }
+
+                    if (ok) {
+                        // Persist locally as well
+                        withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().insertSubscription(sub) }
+                        isSubscribed = true
+                        // Increase UI count by 1
+                        val currentCount = try { Integer.parseInt(subscriberCountTextView.text.toString().filter { it.isDigit() }) } catch (t: Exception) { -1 }
+                        // We will re-fetch accurate count below; update UI state
+                        updateSubscribeButtonState(true)
+                        Toast.makeText(requireContext(), "Te has suscrito al curso exitosamente", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(requireContext(), "No se pudo suscribir (error de red)", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    // Already subscribed remotely -> unsubscribe
+                    var ok = false
+                    try {
+                        val act = requireActivity()
+                        if (act is MainActivity) {
+                            ok = withContext(Dispatchers.IO) { act.syncRepository.deleteSubscriptionRemote(username, creator) }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "Remote unsubscribe failed", e)
+                    }
+
+                    if (ok) {
+                        // Remove local record
+                        withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().deleteSubscription(username, creator) }
+                        isSubscribed = false
+                        updateSubscribeButtonState(false)
+                        Toast.makeText(requireContext(), "Se ha desuscrito del curso", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(requireContext(), "No se pudo desuscribir (error de red)", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                // Refresh subscriber count from local DAO (or optionally from Supabase)
+                val newCount = withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().getSubscriptionCountForCreator(creator) }
+                subscriberCountTextView.text = formatSubscriberCount(newCount)
+            }
         }
         
         // Setup bottom navigation
         setupBottomNavigation(view)
+
+        // Observe back stack savedStateHandle for topic creation notifications
+        val navBackEntry = findNavController().currentBackStackEntry
+        navBackEntry?.savedStateHandle?.getLiveData<Long>("topic_created")?.observe(viewLifecycleOwner) { topicId ->
+            try {
+                Log.d("CourseDetailFragment", "Detected topic_created=$topicId, refreshing topics")
+                refreshTopicsFromSupabase()
+                // Clear the flag so subsequent returns don't re-trigger unless set again
+                navBackEntry.savedStateHandle.remove<Long>("topic_created")
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Error handling topic_created event", e)
+            }
+        }
     }
       private fun setupBottomNavigation(view: View) {
         // Initialize the bottom navigation binding
@@ -335,9 +559,11 @@ class CourseDetailFragment : Fragment() {
 
 
     private fun navigateToSelectTopic(nameOfCourse: String) { // Accept course name as parameter
-        Log.d("CourseDetailFragment", "Navigating to SelectTopicFragment for courseId: $courseId, courseName: $nameOfCourse")
+        // Prefer resolvedCourseId (may have been remapped to Supabase id); fallback to original courseId
+        val sendCourseId = if (resolvedCourseId > 0) resolvedCourseId else courseId
+        Log.d("CourseDetailFragment", "Navigating to SelectTopicFragment for courseId: $sendCourseId, courseName: $nameOfCourse")
         val bundle = Bundle().apply {
-            putLong("courseId", courseId)
+            putLong("courseId", sendCourseId)
             putString("courseName", nameOfCourse) // Pass the confirmed course name
         }
         // Ensure the action ID matches the one defined in nav_graph.xml
@@ -370,139 +596,256 @@ class CourseDetailFragment : Fragment() {
 
         CoroutineScope(Dispatchers.Main).launch {
             try { // Start of the main try block
-                // First, get the course details to display the title
-                val course = withContext(Dispatchers.IO) {
-                    videoDao.getVideoById(courseId)
+                // Try to fetch the Course from Supabase first (via MainActivity.syncRepository)
+                var remoteCourse: com.example.tareamov.data.entity.Course? = null
+                // Use an effectiveCourseId for subsequent topic/task lookups; may be remapped if we find
+                // a matching course by title on Supabase when the numeric id is not present there.
+                var effectiveCourseId: Long = courseId
+                try {
+                    val act = requireActivity()
+                    if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        // First try exact id lookup
+                        remoteCourse = withContext(Dispatchers.IO) { act.syncRepository.fetchCourseById(courseId) }
+                        Log.d("CourseDetailFragment", "fetchCourseById returned: ${remoteCourse?.id}")
+
+                        // If no course found by id, try to resolve by the passed courseName (common case when
+                        // local DB uses different ids). This handles maps where Supabase courses range 1..43
+                        // but the local DB has created records with different ids (e.g., 70).
+                        if (remoteCourse == null && courseName.isNotBlank()) {
+                            try {
+                                val courses = withContext(Dispatchers.IO) { act.syncRepository.fetchCoursesFromSupabase() }
+                                val match = courses.firstOrNull { c ->
+                                    val remoteTitle = (c.title ?: "").trim()
+                                    remoteTitle.equals(courseName.trim(), ignoreCase = true)
+                                }
+                                if (match != null) {
+                                    remoteCourse = match
+                                    effectiveCourseId = match.id
+                                    Log.d("CourseDetailFragment", "Resolved course by title -> remote id=${match.id} title=${match.title}")
+                                } else {
+                                    Log.d("CourseDetailFragment", "No Supabase course matched title='$courseName'")
+                                }
+                            } catch (t: Exception) {
+                                Log.w("CourseDetailFragment", "Title-based Supabase lookup failed", t)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseDetailFragment", "Remote fetch failed", e)
                 }
 
-                // Set the course title
-                courseTitleTextView?.text = course?.title ?: "Curso sin título"
-                courseName = course?.title ?: "Curso sin título"
+                if (remoteCourse != null) {
+                    // Populate UI from remote Course
+                    val title = remoteCourse.title ?: "Curso sin título"
+                    courseTitleTextView?.text = title
+                    courseName = title
 
-                // Get course creator username and check if current user is the creator
-                courseCreatorUsername = course?.username
-                isCurrentUserCreator = courseCreatorUsername == currentUsername
+                    // Map creator username and flags
+                    courseCreatorUsername = remoteCourse.creatorUsername
+                    isCurrentUserCreator = courseCreatorUsername == currentUsername
+                    courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
 
-                // Control visibility of the bottom action bar based on creator status
-                courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
-
-                // Load creator info if the current user is not the creator
-                if (!isCurrentUserCreator && courseCreatorUsername != null) {
-                    // Get subscription count using SubscriptionDao
-                    val subscriptionCount = withContext(Dispatchers.IO) {
-                        subscriptionDao.getSubscriptionCountForCreator(courseCreatorUsername!!)
+                    // Show payment container if course is premium and viewer is not the creator
+                    val paymentContainer = view?.findViewById<FrameLayout>(R.id.paymentButtonContainer)
+                    if (remoteCourse.isPremium == true && !isCurrentUserCreator) {
+                        paymentContainer?.visibility = View.VISIBLE
+                    } else {
+                        paymentContainer?.visibility = View.GONE
                     }
 
-                    // Check if current user is subscribed using SubscriptionDao
-                    val isSubscribed = withContext(Dispatchers.IO) {
-                        currentUsername?.let { username ->
-                            subscriptionDao.isSubscribed(username, courseCreatorUsername!!)
-                        } ?: false
+                    // Load creator info if the current user is not the creator
+                    if (!isCurrentUserCreator && !courseCreatorUsername.isNullOrEmpty()) {
+                        // Prefer remote subscription state when available
+                        var subscriptionCount = withContext(Dispatchers.IO) {
+                            subscriptionDao.getSubscriptionCountForCreator(courseCreatorUsername!!)
+                        }
+                        var isSubscribedLocal = withContext(Dispatchers.IO) {
+                            currentUsername?.let { username -> subscriptionDao.isSubscribed(username, courseCreatorUsername!!) } ?: false
+                        }
+                        var isSubscribedRemote = false
+                        try {
+                            val act = requireActivity()
+                            if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured() && currentUsername != null) {
+                                isSubscribedRemote = withContext(Dispatchers.IO) { act.syncRepository.isSubscribedRemote(currentUsername!!, courseCreatorUsername!!) }
+                                // If remote is true but local count doesn't include this subscriber, adjust
+                                if (isSubscribedRemote && !isSubscribedLocal) {
+                                    // persist locally
+                                    withContext(Dispatchers.IO) {
+                                        subscriptionDao.insertSubscription(Subscription(subscriberUsername = currentUsername!!, creatorUsername = courseCreatorUsername!!, subscriptionDate = System.currentTimeMillis()))
+                                    }
+                                    isSubscribedLocal = true
+                                    subscriptionCount += 1
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("CourseDetailFragment", "Remote subscription check failed", e)
+                        }
+                        val isSubscribed = isSubscribedLocal
+
+                        loadCreatorInfo(
+                            creatorUsername = courseCreatorUsername!!,
+                            personaDao = personaDao,
+                            usuarioDao = usuarioDao,
+                            subscriptionCount = subscriptionCount,
+                            isSubscribed = isSubscribed
+                        )
+
+                        creatorInfoContainer.visibility = View.VISIBLE
+                        Log.d("CourseDetailFragment", "Initializing student progress: courseId=$effectiveCourseId username=$currentUsername isCreator=$isCurrentUserCreator")
+                        initializeAndLoadCourseProgress(
+                            courseId = effectiveCourseId,
+                            username = currentUsername,
+                            isCurrentUserCreator = isCurrentUserCreator
+                        )
+                    } else {
+                        creatorInfoContainer.visibility = View.GONE
                     }
-
-                    loadCreatorInfo(
-                        creatorUsername = courseCreatorUsername!!,
-                        personaDao = personaDao,
-                        usuarioDao = usuarioDao,
-                        subscriptionCount = subscriptionCount,
-                        isSubscribed = isSubscribed
-                    )
-
-                    creatorInfoContainer.visibility = View.VISIBLE
-
-                    // Initialize and load course progress for non-creator users
-                    initializeAndLoadCourseProgress(
-                        courseId = courseId,
-                        username = currentUsername,
-                        isCurrentUserCreator = isCurrentUserCreator
-                    )
                 } else {
-                    creatorInfoContainer.visibility = View.GONE
+                    // Fallback: load local video/course info
+                    val course = withContext(Dispatchers.IO) { videoDao.getVideoById(courseId) }
+
+                    // Set the course title
+                    courseTitleTextView?.text = course?.title ?: "Curso sin título"
+                    courseName = course?.title ?: "Curso sin título"
+
+                    // Map creator username from local video record
+                    courseCreatorUsername = course?.username
+                    isCurrentUserCreator = courseCreatorUsername == currentUsername
+
+                    // Control visibility of the bottom action bar based on creator status
+                    courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+
+                    // Load creator info if the current user is not the creator
+                    if (!isCurrentUserCreator && courseCreatorUsername != null) {
+                        // Get subscription count using SubscriptionDao
+                        val subscriptionCount = withContext(Dispatchers.IO) {
+                            subscriptionDao.getSubscriptionCountForCreator(courseCreatorUsername!!)
+                        }
+
+                        // Check if current user is subscribed using SubscriptionDao
+                        val isSubscribed = withContext(Dispatchers.IO) {
+                            currentUsername?.let { username ->
+                                subscriptionDao.isSubscribed(username, courseCreatorUsername!!)
+                            } ?: false
+                        }
+
+                        loadCreatorInfo(
+                            creatorUsername = courseCreatorUsername!!,
+                            personaDao = personaDao,
+                            usuarioDao = usuarioDao,
+                            subscriptionCount = subscriptionCount,
+                            isSubscribed = isSubscribed
+                        )
+
+                        creatorInfoContainer.visibility = View.VISIBLE
+
+                        // Initialize and load course progress for non-creator users
+                        Log.d("CourseDetailFragment", "Initializing student progress (local fallback): courseId=$courseId username=$currentUsername isCreator=$isCurrentUserCreator")
+                        initializeAndLoadCourseProgress(
+                            courseId = courseId,
+                            username = currentUsername,
+                            isCurrentUserCreator = isCurrentUserCreator
+                        )
+                    } else {
+                        creatorInfoContainer.visibility = View.GONE
+                    }
                 }
 
-                // Get topics for this course directly
-                val topics = withContext(Dispatchers.IO) {
-                    topicDao.getTopicsByCourse(courseId)
+                // Attempt to fetch only topics from Supabase when configured (tabs act as filters over topics)
+                var topics: List<Topic> = emptyList()
+
+                if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    try {
+                        // Use effectiveCourseId (may have been remapped by title lookup)
+                        val lookupId = effectiveCourseId
+                        topics = withContext(Dispatchers.IO) { syncRepository.fetchTopicsByCourseFromSupabase(lookupId) }
+                        Log.d("CourseDetailFragment", "Loaded remote topics=${topics.size} for courseId=$lookupId via SyncRepository")
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "Remote topics fetch failed, falling back to local DAO", e)
+                        topics = withContext(Dispatchers.IO) { topicDao.getTopicsByCourse(courseId) }
+                    }
+                } else {
+                    topics = withContext(Dispatchers.IO) { topicDao.getTopicsByCourse(courseId) }
                 }
 
                 Log.d("CourseDetailFragment", "Found ${topics.size} topics for courseId: $courseId")
 
                 if (topics.isEmpty()) {
-                    // Handle case with no topics
                     Log.d("CourseDetailFragment", "No topics found for course ID: $courseId")
+                    // When Supabase is configured we still show the container (empty) so newly created remote
+                    // topics become visible without requiring local Room inserts. Show a friendly message.
                     noTopicsTextView?.text = "Este curso aún no tiene temas." // Set specific message
                     noTopicsTextView?.visibility = View.VISIBLE
-                    topicsContainer.visibility = View.GONE
-                    // Ensure the "no tasks" message is hidden if there are no topics at all
-                    noTasksTextView?.visibility = View.GONE
-                } else { // Start of the else block (when topics exist)
-                    // Don't set visibility for noTopicsTextView or topicsContainer yet
-
-                    // Get all content items and tasks for these topics
-                    val topicIds = topics.map { it.id }
-                    val contentItems = withContext(Dispatchers.IO) {
-                        contentItemDao.getContentItemsByTopicIds(topicIds)
-                    }
-                    val tasks = withContext(Dispatchers.IO) { // Fetch tasks
-                        taskDao.getTasksByTopicIds(topicIds)
-                    }
-
-                    // Create maps for efficient lookup
-                    val contentItemsMap = contentItems.groupBy { it.topicId }
-                    val tasksMap = tasks.groupBy { it.topicId } // Group tasks by topicId
-
-                    // Clear previous views if any
                     topicsContainer.removeAllViews()
-                    // Reset visibility of messages initially
+                    topicsContainer.visibility = View.VISIBLE
+                    noTasksTextView?.visibility = View.GONE
+                } else {
+                    // Clear previous views and reset messages
+                    topicsContainer.removeAllViews()
                     noTopicsTextView?.visibility = View.GONE
                     noTasksTextView?.visibility = View.GONE
 
-                    // Now iterate and add views using the fetched data
+                    // Debug: log topic list before rendering
+                    Log.d("CourseDetailFragment", "Debug: topics.size=${topics.size}, currentTab=$currentTab")
+
+                    // Iterate and add topic views. For tab filters we fetch only topics,
+                    // but when the user selected the "tareas" tab we must also fetch
+                    // tasks for those topics from Supabase (or fallback to local DAO).
                     val sortedTopics = topics.sortedBy { it.orderIndex }
-                    var itemsAdded = false // Flag to track if any relevant items were added
 
-                    for (topic in sortedTopics) {
-                        val topicContentItems = contentItemsMap[topic.id]?.filter { it.taskId == null } ?: emptyList() // Filter content for topic only
-                        val topicTasks = tasksMap[topic.id] ?: emptyList() // Get tasks for this topic
-
-                        // Conditionally add views based on the current tab
-                        if (currentTab == "documentos") {
-                            // Only add topic view if it has content items when 'documentos' tab is selected
-                            if (topicContentItems.isNotEmpty()) {
-                                addTopicView(topic, topicContentItems, emptyList()) // Pass empty task list
-                                itemsAdded = true
+                    // Prepare tasks grouped by topicId when viewing tasks
+                    var tasksByTopic: Map<Long, List<Task>> = emptyMap()
+                    if (currentTab == "tareas") {
+                        try {
+                            val topicIds = sortedTopics.map { it.id }
+                            if (topicIds.isNotEmpty()) {
+                                if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                    val fetched = withContext(Dispatchers.IO) { syncRepository.fetchTasksByTopicIdsFromSupabase(topicIds) }
+                                    tasksByTopic = (fetched ?: emptyList()).groupBy { it.topicId }
+                                } else {
+                                    val localTasks = withContext(Dispatchers.IO) { taskDao.getTasksByTopicIds(sortedTopics.map { it.id }) }
+                                    tasksByTopic = localTasks.groupBy { it.topicId }
+                                }
                             }
-                        } else { // currentTab == "tareas"
-                            // Only add topic view if it has tasks when 'tareas' tab is selected
-                            if (topicTasks.isNotEmpty()) {
-                                addTopicView(topic, emptyList(), topicTasks) // Pass empty content list
-                                itemsAdded = true
+                        } catch (e: Exception) {
+                            Log.w("CourseDetailFragment", "Failed to fetch tasks for topics; falling back to per-topic DAO", e)
+                            // Best-effort fallback: fetch per-topic from DAO
+                            val map = mutableMapOf<Long, List<Task>>()
+                            for (t in sortedTopics) {
+                                try {
+                                    val list = withContext(Dispatchers.IO) { taskDao.getTasksByTopicId(t.id) }
+                                    map[t.id] = list
+                                } catch (_: Exception) { map[t.id] = emptyList() }
                             }
+                            tasksByTopic = map
                         }
-                    } // Closes for loop
+                    }
 
-                    // Handle cases where filtering results in no items OR items were added
-                    if (!itemsAdded) {
-                        topicsContainer.visibility = View.GONE // Hide the container
+                    // If viewing tasks, filter out topics that have no tasks
+                    val topicsToRender = if (currentTab == "tareas") {
+                        sortedTopics.filter { t -> (tasksByTopic[t.id] ?: emptyList()).isNotEmpty() }
+                    } else {
+                        sortedTopics
+                    }
+
+                    for (topic in topicsToRender) {
+                        val tasksForTopic = tasksByTopic[topic.id] ?: emptyList()
+                        // content items are intentionally not fetched here for performance
+                        addTopicView(topic, emptyList(), tasksForTopic)
+                    }
+
+                    // Ensure container visible even if empty; show a top-level message per tab
+                    topicsContainer.visibility = View.VISIBLE
+                    if (sortedTopics.isEmpty()) {
                         if (currentTab == "documentos") {
                             noTopicsTextView?.text = "No hay documentos en este curso."
                             noTopicsTextView?.visibility = View.VISIBLE
-                            noTasksTextView?.visibility = View.GONE // Hide other message
-                        } else { // currentTab == "tareas"
+                        } else {
                             noTasksTextView?.text = "No hay tareas en este curso."
-                            noTasksTextView?.visibility = View.VISIBLE // Show no tasks message
-                            noTopicsTextView?.visibility = View.GONE // Hide other message
+                            noTasksTextView?.visibility = View.VISIBLE
                         }
-                    } else {
-                        // If items were added, make sure the container is visible
-                        topicsContainer.visibility = View.VISIBLE
-                        // And hide both 'no items' messages
-                        noTopicsTextView?.visibility = View.GONE
-                        noTasksTextView?.visibility = View.GONE
                     }
-                    // Removed the misplaced catch block and extra braces that were here.
-                    // The 'else' block correctly ends below.
-                } // <<<< This brace correctly closes the 'else' block
+                }
             } catch (e: Exception) { // This is the correct catch block for the main try
                 Log.e("CourseDetailFragment", "Error loading course details", e)
                 Toast.makeText(context, "Error al cargar detalles del curso", Toast.LENGTH_SHORT).show()
@@ -523,24 +866,67 @@ class CourseDetailFragment : Fragment() {
         isSubscribed: Boolean
     ) {
         try {
-            // Get the creator's user information
+            // Prefer Supabase: try to fetch usuario and persona via SyncRepository/SupabaseClient
+            var personaFromRemote: Persona? = null
+            var usuarioFromRemote: com.example.tareamov.data.dao.UsuarioWithRole? = null
+
+            try {
+                val act = requireActivity()
+                if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    usuarioFromRemote = withContext(Dispatchers.IO) { act.syncRepository.fetchUsuarioWithRoleFromSupabase(creatorUsername) }
+                    if (usuarioFromRemote != null) {
+                        val personas = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.fetchPersonas() }
+                        personaFromRemote = personas.firstOrNull { p -> p.id == usuarioFromRemote.persona_id }
+                        Log.d("CourseDetailFragment", "Remote usuario found for $creatorUsername persona_id=${usuarioFromRemote.persona_id}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Supabase remote creator fetch failed", e)
+            }
+
+            if (personaFromRemote != null || usuarioFromRemote != null) {
+                // Build UI using remote data (persona preferred for avatar)
+                withContext(Dispatchers.Main) {
+                    creatorUsernameTextView.text = creatorUsername
+
+                    if (personaFromRemote?.avatar.isNullOrEmpty()) {
+                        creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                    } else {
+                        try {
+                            Glide.with(requireContext())
+                                .load(Uri.parse(personaFromRemote!!.avatar))
+                                .placeholder(R.drawable.default_avatar)
+                                .error(R.drawable.default_avatar)
+                                .into(creatorAvatarImageView)
+                        } catch (e: Exception) {
+                            Log.e("CourseDetailFragment", "Error loading remote avatar", e)
+                            creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                        }
+                    }
+
+                    subscriberCountTextView.text = formatSubscriberCount(subscriptionCount)
+                    this@CourseDetailFragment.isSubscribed = isSubscribed
+                    updateSubscribeButtonState(isSubscribed)
+
+                    subscribeButton.visibility = if (currentUsername == creatorUsername) View.GONE else View.VISIBLE
+                    creatorInfoContainer.visibility = View.VISIBLE
+                }
+                return
+            }
+
+            // Fallback to local DAOs if remote lookup failed
             val usuario = withContext(Dispatchers.IO) {
                 usuarioDao.getUsuarioByUsername(creatorUsername)
             }
 
             if (usuario != null) {
-                // Get the creator's persona information
                 val persona = withContext(Dispatchers.IO) {
                     personaDao.getPersonaById(usuario.personaId)
                 }
 
-                // Update UI with creator info
                 if (persona != null) {
                     withContext(Dispatchers.Main) {
-                        // Set creator username
                         creatorUsernameTextView.text = creatorUsername
-
-                        // Load avatar image
                         if (!persona.avatar.isNullOrEmpty()) {
                             try {
                                 Glide.with(requireContext())
@@ -556,34 +942,22 @@ class CourseDetailFragment : Fragment() {
                             creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
                         }
 
-                        // Set subscriber count
                         subscriberCountTextView.text = formatSubscriberCount(subscriptionCount)
-
-                        // Update subscribe button state based on current subscription status
                         this@CourseDetailFragment.isSubscribed = isSubscribed
                         updateSubscribeButtonState(isSubscribed)
-                        
-                        // Show/hide subscribe button based on whether user is viewing their own course
-                        if (currentUsername == creatorUsername) {
-                            subscribeButton.visibility = View.GONE
-                        } else {
-                            subscribeButton.visibility = View.VISIBLE
-                        }
 
-                        // Show creator info container
+                        subscribeButton.visibility = if (currentUsername == creatorUsername) View.GONE else View.VISIBLE
                         creatorInfoContainer.visibility = View.VISIBLE
                     }
                 } else {
                     Log.e("CourseDetailFragment", "Persona not found for user: $creatorUsername")
-                    withContext(Dispatchers.Main) {
-                        creatorInfoContainer.visibility = View.GONE
-                    }
+                    withContext(Dispatchers.Main) { creatorInfoContainer.visibility = View.GONE }
+                    // Resolved id remains the local id in fallback case
+                    resolvedCourseId = courseId
                 }
             } else {
-                Log.e("CourseDetailFragment", "Usuario not found: $creatorUsername")
-                withContext(Dispatchers.Main) {
-                    creatorInfoContainer.visibility = View.GONE
-                }
+                Log.e("CourseDetailFragment", "Usuario not found locally: $creatorUsername")
+                withContext(Dispatchers.Main) { creatorInfoContainer.visibility = View.GONE }
             }
         } catch (e: Exception) {
             Log.e("CourseDetailFragment", "Error loading creator info", e)
@@ -670,35 +1044,6 @@ class CourseDetailFragment : Fragment() {
 
                     withContext(Dispatchers.IO) {
                         subscriptionDao.insertSubscription(subscription)
-                    }
-                    // Try to sync the subscription to Supabase (best-effort)
-                    try {
-                        if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                            Log.w("CourseDetailFragment", "SupabaseClient not configured; skipping remote subscription sync.")
-                        } else {
-                            val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                            val mapped = mapOf(
-                                "subscriber_username" to subscription.subscriberUsername,
-                                "creator_username" to subscription.creatorUsername,
-                                "subscription_date" to subscription.subscriptionDate
-                            )
-
-                            // Try direct upsert even if tableExists() previously returned false. Let the repository report the HTTP error body.
-                            val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("subscriptions", mapped) }
-                            if (!ok) {
-                                Log.w("CourseDetailFragment", "Supabase upsert returned false for subscription ${subscription.subscriberUsername}_${subscription.creatorUsername}")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "No se pudo sincronizar la suscripción en remoto", Toast.LENGTH_SHORT).show()
-                                }
-                            } else {
-                                Log.i("CourseDetailFragment", "Supabase upsert succeeded for subscription ${subscription.subscriberUsername}_${subscription.creatorUsername}")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "Suscripción sincronizada en Supabase", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w("CourseDetailFragment", "Failed to sync subscription to Supabase: ${e.message}")
                     }
                     isSubscribed = true
 
@@ -871,7 +1216,25 @@ class CourseDetailFragment : Fragment() {
         val taskIndicator = taskView.findViewById<View>(R.id.taskIndicator)
         taskIndicator?.setBackgroundColor(resources.getColor(android.R.color.holo_green_light))
 
+    // Show local name if available; otherwise fetch from Supabase by id
+    if (!task.name.isNullOrBlank()) {
         taskNameTextView.text = task.name
+    } else {
+        taskNameTextView.text = "(Sin título)"
+        // Try to fetch remote title asynchronously
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val remote = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    syncRepository.fetchTaskByIdFromSupabase(task.id)
+                }
+                if (remote != null && !remote.name.isNullOrBlank()) {
+                    taskNameTextView.text = remote.name
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("CourseDetailFragment", "Failed to fetch remote task title", e)
+            }
+        }
+    }
         if (!task.description.isNullOrBlank()) {
             taskDescriptionTextView.text = task.description
             taskDescriptionTextView.visibility = View.VISIBLE
@@ -922,6 +1285,60 @@ class CourseDetailFragment : Fragment() {
         container.addView(taskView)
     }
 
+    // Refresh topics and re-render UI from Supabase for the current course
+    private fun refreshTopicsFromSupabase() {
+        if (courseId == -1L) return
+
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val act = requireActivity()
+                val lookupId = if (resolvedCourseId > 0) resolvedCourseId else courseId
+                val topics: List<Topic> = if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    withContext(Dispatchers.IO) { act.syncRepository.fetchTopicsByCourseFromSupabase(lookupId) } ?: emptyList()
+                } else {
+                    withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).topicDao().getTopicsByCourse(lookupId) }
+                }
+
+                topicsContainer.removeAllViews()
+
+                val sortedTopics = topics.sortedBy { it.orderIndex }
+
+                // If the tasks tab is selected, fetch tasks for these topics from Supabase (or local DAO)
+                var tasksByTopic: Map<Long, List<Task>> = emptyMap()
+                if (currentTab == "tareas") {
+                    try {
+                        val topicIds = sortedTopics.map { it.id }
+                        if (topicIds.isNotEmpty()) {
+                            if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                val fetched = withContext(Dispatchers.IO) { act.syncRepository.fetchTasksByTopicIdsFromSupabase(topicIds) }
+                                tasksByTopic = (fetched ?: emptyList()).groupBy { it.topicId }
+                            } else {
+                                val localTasks = withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).taskDao().getTasksByTopicIds(topicIds) }
+                                tasksByTopic = localTasks.groupBy { it.topicId }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "refreshTopics: failed fetching tasks for topics", e)
+                    }
+                }
+
+                // If viewing tasks, filter out topics without tasks
+                val topicsToRender = if (currentTab == "tareas") {
+                    sortedTopics.filter { t -> (tasksByTopic[t.id] ?: emptyList()).isNotEmpty() }
+                } else {
+                    sortedTopics
+                }
+
+                for (topic in topicsToRender) {
+                    val tasks = tasksByTopic[topic.id] ?: emptyList()
+                    addTopicView(topic, emptyList(), tasks)
+                }
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "refreshTopicsFromSupabase failed", e)
+            }
+        }
+    }
+
     // Add this helper method to check student submission status
     private fun checkStudentSubmission(taskId: Long, gradeStatusTextView: TextView?) {
         if (gradeStatusTextView == null) return
@@ -930,9 +1347,21 @@ class CourseDetailFragment : Fragment() {
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val submission = withContext(Dispatchers.IO) {
-                    db.taskSubmissionDao().getUserSubmissionForTask(taskId, username)
+                // Always fetch submission from Supabase (task_submissions are remote-authoritative)
+                var submission: com.example.tareamov.data.entity.TaskSubmission? = null
+                try {
+                    val act = requireActivity()
+                    if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        submission = withContext(Dispatchers.IO) { act.syncRepository.fetchUserSubmissionForTaskFromSupabase(taskId, username) }
+                        Log.d("CourseDetailFragment", "Supabase fetch for taskId=$taskId username=$username -> submission=${submission}")
+                    } else {
+                        // If Supabase not configured or MainActivity not available, attempt the local DAO as a last resort
+                        val db = AppDatabase.getDatabase(requireContext())
+                        submission = withContext(Dispatchers.IO) { db.taskSubmissionDao().getUserSubmissionForTask(taskId, username) }
+                        Log.d("CourseDetailFragment", "Local fallback fetch for taskId=$taskId username=$username -> submission=${submission}")
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseDetailFragment", "Error fetching submission for taskId=$taskId username=$username", e)
                 }
 
                 if (submission != null) {
@@ -1244,14 +1673,13 @@ class CourseDetailFragment : Fragment() {
             // Hide the entire slot before drawing to prevent any gap for non-admin users
             adminSlot.visibility = View.GONE
             return
-        }
-
+            }
         // User is admin according to SessionManager: show button and wire listener
         goToAdminButton.visibility = View.VISIBLE
         goToAdminButton.setOnClickListener {
             Log.d("CourseDetailFragment", "Admin button clicked, navigating to HomeFragment")
             findNavController().navigate(R.id.action_courseDetailFragment_to_homeFragment)
-        }
+            }
     }
 
     private fun checkAdminStatus(callback: (Boolean) -> Unit) {

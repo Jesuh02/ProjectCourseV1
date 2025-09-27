@@ -288,7 +288,8 @@ class SupabaseRepository(
                 Log.w("SupabaseRepository", "supabaseUrl is blank, cannot check tableExists for $table")
                 return false
             }
-            val url = "${supabaseUrl.trimEnd('/')}/rest/v1/$table?select=1&limit=1"
+            // Use select=* to avoid PostgREST interpreting numeric select values as column names
+            val url = "${supabaseUrl.trimEnd('/')}/rest/v1/$table?select=*&limit=1"
             val request = Request.Builder()
                 .url(url)
                 .get()

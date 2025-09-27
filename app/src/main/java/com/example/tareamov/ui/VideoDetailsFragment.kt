@@ -96,18 +96,59 @@ class VideoDetailsFragment : Fragment() {
                     }
                     
                     if (existingVideo != null) {
-                            // Update the existing video with new details
-                            val updatedVideo = existingVideo.copy(
-                                title = title,
-                                description = description,
-                                isPaid = isPaidCourse
-                            )
-                              withContext(Dispatchers.IO) {
-                                // Update the video in the database
-                                val db = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
-                                db.videoDao().updateVideo(updatedVideo)
-                                Log.d("VideoDetailsFragment", "Database update completed for video ID: $videoId")
+                        // If title hasn't changed, allow update without duplicate check
+                        val titleChanged = !existingVideo.title.equals(title, ignoreCase = true)
+
+                        if (titleChanged) {
+                            // First try Supabase check via SyncRepository
+                            var duplicate = false
+                            try {
+                                val act = requireActivity()
+                                if (act is com.example.tareamov.MainActivity) {
+                                    duplicate = withContext(Dispatchers.IO) { act.syncRepository.isTitleExistsInSupabase(title) }
+                                } else {
+                                    // Fallback to direct SupabaseClient call
+                                    if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                        val vids = com.example.tareamov.service.SupabaseClient.fetchVideos()
+                                        duplicate = vids.any { it.title?.equals(title, ignoreCase = true) == true }
+                                        if (!duplicate) {
+                                            val courses = com.example.tareamov.service.SupabaseClient.fetchCourses()
+                                            duplicate = courses.any { it.title?.equals(title, ignoreCase = true) == true }
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w("VideoDetailsFragment", "Supabase title check failed, falling back to local DB", e)
                             }
+
+                            if (!duplicate) {
+                                // Fallback to local DB check
+                                try {
+                                    val local = withContext(Dispatchers.IO) { videoManager.getAllVideos() }
+                                    duplicate = local.any { it.title.equals(title, ignoreCase = true) }
+                                } catch (e: Exception) {
+                                    Log.w("VideoDetailsFragment", "Local title-check failed", e)
+                                }
+                            }
+
+                            if (duplicate) {
+                                Toast.makeText(context, "Ya existe un video/curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
+                                return@launch
+                            }
+                        }
+
+                        // Update the existing video with new details
+                        val updatedVideo = existingVideo.copy(
+                            title = title,
+                            description = description,
+                            isPaid = isPaidCourse
+                        )
+                        withContext(Dispatchers.IO) {
+                            // Update the video in the database
+                            val db = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
+                            db.videoDao().updateVideo(updatedVideo)
+                            Log.d("VideoDetailsFragment", "Database update completed for video ID: $videoId")
+                        }
                         
                         // Verify the update was successful
                         val verifiedVideo = withContext(Dispatchers.IO) {
@@ -117,6 +158,29 @@ class VideoDetailsFragment : Fragment() {
                         if (verifiedVideo != null && verifiedVideo.title == title) {
                             Log.d("VideoDetailsFragment", "Video update verification successful")
                             Toast.makeText(context, "Video actualizado correctamente", Toast.LENGTH_SHORT).show()
+                            // After a successful local update, attempt to upload metadata to Supabase
+                            try {
+                                val act = requireActivity()
+                                if (act is com.example.tareamov.MainActivity) {
+                                    val success = withContext(Dispatchers.IO) { act.syncRepository.uploadVideoToSupabaseSuspend(verifiedVideo) }
+                                    if (!success) {
+                                        Toast.makeText(context, "Advertencia: No se pudo subir metadatos a Supabase", Toast.LENGTH_SHORT).show()
+                                    }
+
+                                    // Also upsert a Course record mapped from the updated VideoData
+                                    try {
+                                        val repo = com.example.tareamov.repository.CourseRepository(requireContext())
+                                        val course = repo.convertVideoDataToCoursePublic(verifiedVideo)
+                                        withContext(Dispatchers.IO) {
+                                            act.syncRepository.upsertCourseToSupabase(course)
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.w("VideoDetailsFragment", "Failed to upsert updated video->course to Supabase", e)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w("VideoDetailsFragment", "Failed to upload updated metadata to Supabase", e)
+                            }
                         } else {
                             Log.e("VideoDetailsFragment", "Video update verification failed")
                             Toast.makeText(context, "Advertencia: La actualización puede no haberse guardado correctamente", Toast.LENGTH_LONG).show()
@@ -127,14 +191,47 @@ class VideoDetailsFragment : Fragment() {
                     }
                 } else {
                     // Fallback: create new video if no ID provided
-                        val videoData = VideoData(
-                            username = currentUsername,
-                            description = description,
-                            title = title,
-                            videoUriString = videoUri.toString(),
-                            isPaid = isPaidCourse,
-                            remoteId = null
-                        )
+                    // When creating new, ensure title is unique too
+                    var duplicateNew = false
+                    try {
+                        val act = requireActivity()
+                        if (act is com.example.tareamov.MainActivity) {
+                            duplicateNew = withContext(Dispatchers.IO) { act.syncRepository.isTitleExistsInSupabase(title) }
+                        } else {
+                            if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                val vids = com.example.tareamov.service.SupabaseClient.fetchVideos()
+                                duplicateNew = vids.any { it.title?.equals(title, ignoreCase = true) == true }
+                                if (!duplicateNew) {
+                                    val courses = com.example.tareamov.service.SupabaseClient.fetchCourses()
+                                    duplicateNew = courses.any { it.title?.equals(title, ignoreCase = true) == true }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("VideoDetailsFragment", "Supabase new-title check failed, falling back to local DB", e)
+                    }
+
+                    if (!duplicateNew) {
+                        try {
+                            val local = withContext(Dispatchers.IO) { videoManager.getAllVideos() }
+                            duplicateNew = local.any { it.title.equals(title, ignoreCase = true) }
+                        } catch (e: Exception) {
+                            Log.w("VideoDetailsFragment", "Local new-title-check failed", e)
+                        }
+                    }
+
+                    if (duplicateNew) {
+                        Toast.makeText(context, "Ya existe un video/curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
+                        return@launch
+                    }
+
+                    val videoData = VideoData(
+                        username = currentUsername,
+                        description = description,
+                        title = title,
+                        videoUriString = videoUri.toString(),
+                        isPaid = isPaidCourse
+                    )
                     
                     val savedVideo = withContext(Dispatchers.IO) {
                         videoManager.saveVideo(videoData)
@@ -142,6 +239,29 @@ class VideoDetailsFragment : Fragment() {
                     
                     Log.d("VideoDetailsFragment", "Created new video with ID: ${savedVideo.id}")
                     Toast.makeText(context, "Video guardado correctamente", Toast.LENGTH_SHORT).show()
+                    // After creating a new video locally, upload metadata to Supabase and upsert Course
+                    try {
+                        val act = requireActivity()
+                        if (act is com.example.tareamov.MainActivity) {
+                            val success = withContext(Dispatchers.IO) { act.syncRepository.uploadVideoToSupabaseSuspend(savedVideo) }
+                            if (!success) {
+                                Toast.makeText(context, "Advertencia: No se pudo subir metadatos a Supabase", Toast.LENGTH_SHORT).show()
+                            }
+
+                            // Also upsert a Course record mapped from the saved VideoData
+                            try {
+                                val repo = com.example.tareamov.repository.CourseRepository(requireContext())
+                                val course = repo.convertVideoDataToCoursePublic(savedVideo)
+                                withContext(Dispatchers.IO) {
+                                    act.syncRepository.upsertCourseToSupabase(course)
+                                }
+                            } catch (e: Exception) {
+                                Log.w("VideoDetailsFragment", "Failed to upsert created video->course to Supabase", e)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("VideoDetailsFragment", "Failed to upload new video metadata to Supabase", e)
+                    }
                 }
 
                 // Navigate back to VideoHomeFragment to show the updated video

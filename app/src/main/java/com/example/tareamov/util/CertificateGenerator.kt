@@ -52,15 +52,38 @@ object CertificateGenerator {
                     }
                 }
 
-                val creatorName = withContext(Dispatchers.IO) {
+                var creatorName = withContext(Dispatchers.IO) {
                     val user = db.usuarioDao().getUsuarioByUsername(creatorUsername)
                     if (user != null) {
                         val persona = db.personaDao().getPersonaById(user.personaId)
                         // Use the correct field names: nombres and apellidos
-                        "${persona?.nombres ?: ""} ${persona?.apellidos ?: ""}"
+                        "${persona?.nombres ?: ""} ${persona?.apellidos ?: ""}".trim()
                     } else {
                         creatorUsername
                     }
+                }
+
+                // Try to get a more authoritative/display name from Supabase (Persona attached to Usuario)
+                try {
+                    if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        val remoteUser = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.fetchUsuarioByUsername(creatorUsername)
+                        }
+                        if (remoteUser != null) {
+                            val personaId = try { remoteUser.persona_id } catch (e: Exception) { 0L }
+                            if (personaId > 0) {
+                                val persona = withContext(Dispatchers.IO) {
+                                    com.example.tareamov.service.SupabaseClient.fetchPersonas().firstOrNull { p -> p.id == personaId }
+                                }
+                                if (persona != null) {
+                                    val names = listOfNotNull(persona.nombres.takeIf { it.isNotBlank() }, persona.apellidos.takeIf { it.isNotBlank() })
+                                    if (names.isNotEmpty()) creatorName = names.joinToString(" ")
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to fetch creator real name from Supabase, falling back to local DB", e)
                 }
 
                 // Create PDF document
@@ -114,6 +137,7 @@ object CertificateGenerator {
                 ).show()
             }
         }
+        
     }    private fun drawCertificateBackground(canvas: Canvas) {
         val paint = Paint()
         // Solid dark purple background, similar to the image

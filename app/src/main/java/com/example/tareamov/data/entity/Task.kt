@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.google.gson.annotations.SerializedName
 
 @Entity(
     tableName = "tasks",
@@ -20,7 +21,7 @@ import androidx.room.PrimaryKey
 data class Task(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val topicId: Long = 0,
-    val name: String = "",
+    @SerializedName("title") val name: String = "",
     val description: String? = null,
     val orderIndex: Int = 0
 ) {

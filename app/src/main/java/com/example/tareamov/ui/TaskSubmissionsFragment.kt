@@ -21,7 +21,7 @@ import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
-import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.data.repository.SupabaseRepository
 import com.example.tareamov.data.entity.TaskSubmission
 import com.example.tareamov.data.entity.FileContext
 import com.example.tareamov.service.FileAnalysisService
@@ -217,9 +217,14 @@ class TaskSubmissionsFragment : Fragment() {
                     return@launch
                 }
 
-                val db = AppDatabase.getDatabase(requireContext())
                 val userSubmission = withContext(Dispatchers.IO) {
-                    db.taskSubmissionDao().getUserSubmissionForTask(taskId, currentUsername)
+                    // Fetch submissions from Supabase and find the user's submission for this task
+                    val all = try {
+                        SupabaseClient.fetchTaskSubmissions()
+                    } catch (e: Exception) {
+                        emptyList<com.example.tareamov.data.entity.TaskSubmission>()
+                    }
+                    all.firstOrNull { it.taskId == taskId && it.studentUsername.equals(currentUsername, ignoreCase = true) }
                 }
 
                 if (userSubmission != null) {
@@ -262,29 +267,25 @@ class TaskSubmissionsFragment : Fragment() {
     private fun loadTaskWithCourseInfo() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                
+                // Fetchtask, topic and course info from Supabase (remote-first)
                 val taskInfo = withContext(Dispatchers.IO) {
-                    // Obtener la tarea
-                    val task = db.taskDao().getTaskById(taskId)
-                    if (task != null) {
-                        // Obtener el tema
-                        val topic = db.topicDao().getTopicById(task.topicId)
-                        if (topic != null) {
-                            // Obtener el curso
-                            val course = db.videoDao().getVideoById(topic.courseId)
-                            if (course != null) {
-                                // Retornar un mapa con la información
-                                mapOf(
-                                    "taskName" to task.name,
-                                    "taskDescription" to (task.description ?: "Sin descripción"),
-                                    "topicName" to topic.name,
-                                    "courseTitle" to course.title,
-                                    "courseDescription" to course.description
-                                )
-                            } else null
+                    try {
+                        val task = SupabaseClient.fetchTaskById(taskId)
+                        if (task != null) {
+                            val topic = task.topicId?.let { tid -> SupabaseClient.fetchTopics().firstOrNull { it.id == tid } }
+                            val course = topic?.courseId?.let { cid -> SupabaseClient.fetchCourseById(cid) }
+                            mapOf(
+                                "taskName" to (task.name ?: ""),
+                                "taskDescription" to (task.description ?: "Sin descripción"),
+                                "topicName" to (topic?.name ?: ""),
+                                "courseTitle" to (course?.title ?: ""),
+                                "courseDescription" to (course?.description ?: "")
+                            )
                         } else null
-                    } else null
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error fetching task/topic/course from Supabase", e)
+                        null
+                    }
                 }
                 
                 if (taskInfo != null) {
@@ -312,45 +313,41 @@ class TaskSubmissionsFragment : Fragment() {
     private fun loadTaskProgress() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-
-                // Get total number of students in the course
+                // Determine courseId, subscribers and submissions via Supabase
                 val courseId = withContext(Dispatchers.IO) {
-                    // First get the task to find its topicId
-                    val task = db.taskDao().getTaskById(taskId)
-                    if (task != null) {
-                        // Then get the topic to find its courseId
-                        val topic = db.topicDao().getTopicById(task.topicId)
+                    try {
+                        val task = SupabaseClient.fetchTaskById(taskId)
+                        val topic = task?.topicId?.let { tid -> SupabaseClient.fetchTopics().firstOrNull { it.id == tid } }
                         topic?.courseId
-                    } else {
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error fetching task/topic from Supabase", e)
                         null
                     }
                 }
 
                 if (courseId == null) {
-                    Log.e("TaskSubmissionsFragment", "Could not determine course ID")
+                    Log.e("TaskSubmissionsFragment", "Could not determine course ID from Supabase")
                     return@launch
                 }
 
-                // Get all students subscribed to this course
                 val students = withContext(Dispatchers.IO) {
-                    // Use the courseCreatorUsername that was passed to the fragment
-                    if (courseCreatorUsername != null) {
-                        db.subscriptionDao().getSubscribersByCreator(courseCreatorUsername!!)
-                    } else {
-                        // If courseCreatorUsername wasn't passed, try to get it from the course
-                        val course = db.videoDao().getVideoById(courseId)
-                        if (course?.username != null) {
-                            db.subscriptionDao().getSubscribersByCreator(course.username)
-                        } else {
-                            emptyList()
-                        }
+                    try {
+                        val subs = SupabaseClient.fetchSubscriptions()
+                        val creator = courseCreatorUsername ?: SupabaseClient.fetchCourseById(courseId)?.creatorUsername
+                        subs.filter { it.creatorUsername.equals(creator, ignoreCase = true) }.map { it.subscriberUsername }
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error fetching subscriptions from Supabase", e)
+                        emptyList<String>()
                     }
                 }
 
-                // Get all submissions for this task
                 val submissions = withContext(Dispatchers.IO) {
-                    db.taskSubmissionDao().getSubmissionsByTask(taskId)
+                    try {
+                        SupabaseClient.fetchTaskSubmissions().filter { it.taskId == taskId }
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error fetching submissions from Supabase", e)
+                        emptyList<com.example.tareamov.data.entity.TaskSubmission>()
+                    }
                 }
 
                 // Calculate progress
@@ -382,9 +379,13 @@ class TaskSubmissionsFragment : Fragment() {
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
                 val submission = withContext(Dispatchers.IO) {
-                    db.taskSubmissionDao().getUserSubmissionForTask(taskId, username)
+                    try {
+                        SupabaseClient.fetchTaskSubmissions().firstOrNull { it.taskId == taskId && it.studentUsername.equals(username, ignoreCase = true) }
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error fetching user submission from Supabase", e)
+                        null
+                    }
                 }
 
                 if (submission != null) {
@@ -441,21 +442,26 @@ class TaskSubmissionsFragment : Fragment() {
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
                 val submissions = withContext(Dispatchers.IO) {
-                    // If course creator, show all submissions
-                    // If student, only show their own submission
-                    if (isCourseCreator) {
-                        db.taskSubmissionDao().getSubmissionsByTask(taskId)
-                    } else {
-                        val username = sessionManager.getUsername()
-                        if (username != null) {
-                            db.taskSubmissionDao().getUserSubmissionForTask(taskId, username)?.let {
-                                listOf(it)
-                            } ?: emptyList()
-                        } else {
-                            emptyList()
+                    try {
+                        val all = SupabaseClient.fetchTaskSubmissions().filter { it.taskId == taskId }
+                        android.util.Log.d("TaskSubmissionsFragment", "fetchTaskSubmissions returned ${all.size} total items; filtered by taskId=$taskId -> ${all.count { it.taskId == taskId }}")
+                        // Log a small JSON sample of returned submissions for debugging
+                        try {
+                            val gson = com.google.gson.Gson()
+                            val sample = all.take(5)
+                            android.util.Log.d("TaskSubmissionsFragment", "Sample submissions JSON: ${gson.toJson(sample)}")
+                        } catch (e: Exception) {
+                            android.util.Log.w("TaskSubmissionsFragment", "Failed to serialize sample submissions to JSON", e)
                         }
+                        if (isCourseCreator) all
+                        else {
+                            val username = sessionManager.getUsername()
+                            if (username != null) all.filter { it.studentUsername.equals(username, ignoreCase = true) } else emptyList()
+                        }
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error fetching submissions from Supabase", e)
+                        emptyList<com.example.tareamov.data.entity.TaskSubmission>()
                     }
                 }
 
@@ -480,36 +486,27 @@ class TaskSubmissionsFragment : Fragment() {
     private fun updateSubmissionGrade(submission: TaskSubmission, grade: Float, feedback: String) {
         lifecycleScope.launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
                 val updatedSubmission = submission.copy(grade = grade, feedback = feedback)
-
-                withContext(Dispatchers.IO) {
-                    db.taskSubmissionDao().updateSubmission(updatedSubmission)
-                }
-
-                Toast.makeText(context, "Calificación guardada", Toast.LENGTH_SHORT).show()
-                loadSubmissions()
-
-                // Refresh progress after grading
-                if (isCourseCreator) {
-                    loadTaskProgress()
-                }
-                // Try to push the grade and feedback to Supabase immediately (use object overload)
                 try {
                     val pushed = withContext(Dispatchers.IO) {
                         SupabaseClient.updateTaskSubmissionRemote(updatedSubmission)
                     }
                     if (pushed) {
-                        Log.i("TaskSubmissionsFragment", "Updated submission ${updatedSubmission.id} pushed to Supabase.")
+                        Log.i("TaskSubmissionsFragment", "Updated submission pushed to Supabase.")
                         Toast.makeText(context, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
                     } else {
-                        Log.w("TaskSubmissionsFragment", "Failed to push updated submission ${updatedSubmission.id} to Supabase. Will retry in sync.")
+                        Log.w("TaskSubmissionsFragment", "Failed to push updated submission to Supabase.")
                         Toast.makeText(context, "Calificación guardada localmente; se reintentará subirla más tarde.", Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
                     Log.e("TaskSubmissionsFragment", "Exception pushing updated submission to Supabase", e)
                     Toast.makeText(context, "Error enviando calificación al servidor; se reintentará.", Toast.LENGTH_SHORT).show()
                 }
+
+                // Update UI
+                Toast.makeText(context, "Calificación procesada", Toast.LENGTH_SHORT).show()
+                loadSubmissions()
+                if (isCourseCreator) loadTaskProgress()
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "Error updating grade", e)
                 Toast.makeText(context, "Error al guardar calificación: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -543,32 +540,53 @@ class TaskSubmissionsFragment : Fragment() {
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val localId = withContext(Dispatchers.IO) {
-                    db.taskSubmissionDao().insertSubmission(submission)
-                }
-
-                // Try sending immediately to Supabase and log the returned remote id
                 try {
-                    val submissionWithLocalId = submission.copy(id = localId)
+                    // Directly insert submission to Supabase
                     val remoteId = withContext(Dispatchers.IO) {
-                        SupabaseClient.insertTaskSubmission(submissionWithLocalId)
+                        SupabaseClient.insertTaskSubmission(submission)
                     }
                     if (remoteId != null) {
-                        Log.i("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned remote id=$remoteId for local id=$localId")
+                        Log.i("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned remote id=$remoteId")
                         Toast.makeText(context, "Tarea subida a servidor (id=$remoteId)", Toast.LENGTH_SHORT).show()
+
+                        // Poll Supabase for the newly created submission (the backend may be eventually consistent)
+                        val created = withContext(Dispatchers.IO) {
+                            var found: com.example.tareamov.data.entity.TaskSubmission? = null
+                            repeat(6) { attempt ->
+                                try {
+                                    val all = SupabaseClient.fetchTaskSubmissions()
+                                    found = all.firstOrNull { it.id == remoteId }
+                                    if (found != null) return@withContext found
+                                } catch (e: Exception) {
+                                    Log.w("TaskSubmissionsFragment", "Attempt ${'$'}{attempt + 1} fetch created submission failed: ${'$'}{e.message}")
+                                }
+                                kotlinx.coroutines.delay(500)
+                            }
+                            found
+                        }
+
+                        if (created != null) {
+                            // Refresh the submissions list from Supabase to ensure frontend data comes from server
+                            loadSubmissions()
+                        } else {
+                            // If not found after retries, still refresh as a best-effort
+                            Log.w("TaskSubmissionsFragment", "Created submission not found on Supabase after retries; refreshing list")
+                            loadSubmissions()
+                        }
                     } else {
-                        Log.w("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned null for local id=$localId")
+                        Log.w("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned null")
+                        Toast.makeText(context, "Tarea enviada (pendiente de confirmación en servidor)", Toast.LENGTH_SHORT).show()
+                        // Try to reload once in case it appears shortly
+                        loadSubmissions()
                     }
                 } catch (e: Exception) {
                     Log.e("TaskSubmissionsFragment", "Error sending submission to Supabase", e)
+                    Toast.makeText(context, "Error al enviar tarea al servidor: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
-
-                Toast.makeText(context, "Tarea enviada correctamente", Toast.LENGTH_SHORT).show()
                 selectedFileUri = null
                 view?.findViewById<TextView>(R.id.selectedFileNameTextView)?.text = "Ningún archivo seleccionado"
 
-                // Update submission status
+                // Update submission status (UI only)
                 val statusTextView = view?.findViewById<TextView>(R.id.mySubmissionStatusTextView)
                 if (statusTextView != null) {
                     val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
@@ -623,35 +641,32 @@ class TaskSubmissionsFragment : Fragment() {
                 val fileType = fileAnalysisService.getFileType(submission.fileName)
                 Log.d("TaskSubmissionsFragment", "📄 Tipo de archivo: $fileType")
                 Log.d("TaskSubmissionsFragment", "📝 Contenido extraído (${analysisResult.content.length} caracteres): ${analysisResult.content.take(100)}...")
-                // Obtener la descripción de la tarea desde la base de datos
-                val db = AppDatabase.getDatabase(requireContext())
+                // Obtener la descripción de la tarea desde Supabase (remote-first)
                 val taskDescription = withContext(Dispatchers.IO) {
-                    val task = db.taskDao().getTaskById(submission.taskId)
-                    Log.d("TaskSubmissionsFragment", "==============================================")
-                    Log.d("TaskSubmissionsFragment", "🔍 OBTENIENDO DESCRIPCIÓN DE TAREA:")
-                    Log.d("TaskSubmissionsFragment", "==============================================")
-                    Log.d("TaskSubmissionsFragment", "submission.taskId: ${submission.taskId}")
-                    Log.d("TaskSubmissionsFragment", "task encontrada?: ${task != null}")
-                    if (task != null) {
-                        Log.d("TaskSubmissionsFragment", "task.id: ${task.id}")
-                        Log.d("TaskSubmissionsFragment", "task.name: '${task.name}'")
-                        Log.d("TaskSubmissionsFragment", "task.description: '${task.description}'")
-                        Log.d("TaskSubmissionsFragment", "task.description length: ${task.description?.length ?: 0}")
-                        Log.d("TaskSubmissionsFragment", "¿task.description vacía?: ${task.description.isNullOrEmpty()}")
+                    try {
+                        val task = SupabaseClient.fetchTaskById(submission.taskId)
+                        Log.d("TaskSubmissionsFragment", "Fetched task from Supabase for submission ${submission.id}: ${task != null}")
+                        task?.description ?: ""
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error fetching task from Supabase for submission ${submission.id}", e)
+                        ""
                     }
-                    Log.d("TaskSubmissionsFragment", "==============================================")
-                    task?.description ?: ""
                 }
                 
-                // FALLBACK: Si taskDescription está vacío, usar el nombre de la tarea
+                // FALLBACK: Si taskDescription está vacío, usar el nombre de la tarea (fetched from Supabase)
                 val finalTaskDescription = if (taskDescription.isNotEmpty()) {
                     taskDescription
                 } else {
                     withContext(Dispatchers.IO) {
-                        val task = db.taskDao().getTaskById(submission.taskId)
-                        val fallbackDescription = "Tarea: ${task?.name ?: "Sin nombre"}"
-                        Log.d("TaskSubmissionsFragment", "🔄 Usando fallback para taskDescription: '$fallbackDescription'")
-                        fallbackDescription
+                        try {
+                            val task = SupabaseClient.fetchTaskById(submission.taskId)
+                            val fallbackDescription = "Tarea: ${task?.name ?: "Sin nombre"}"
+                            Log.d("TaskSubmissionsFragment", "Using fallback for taskDescription: '$fallbackDescription'")
+                            fallbackDescription
+                        } catch (e: Exception) {
+                            Log.e("TaskSubmissionsFragment", "Error fetching task for fallback description", e)
+                            "Tarea: Sin nombre"
+                        }
                     }
                 }
                 
@@ -786,10 +801,14 @@ class TaskSubmissionsFragment : Fragment() {
                 Log.d("TaskSubmissionsFragment", "📄 Tipo de archivo: $fileType")
                 Log.d("TaskSubmissionsFragment", "📝 Contenido extraído (${analysisResult.content.length} caracteres): ${analysisResult.content.take(100)}...")
                 
-                // Obtener la descripción de la tarea desde la base de datos
-                val db = AppDatabase.getDatabase(requireContext())
+                // Obtener la descripción de la tarea desde Supabase (remote-first)
                 val taskDescription = withContext(Dispatchers.IO) {
-                    db.taskDao().getTaskById(submission.taskId)?.description ?: ""
+                    try {
+                        SupabaseClient.fetchTaskById(submission.taskId)?.description ?: ""
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error fetching task description from Supabase", e)
+                        ""
+                    }
                 }
                 
                 val fileContext = FileContext(
@@ -869,20 +888,13 @@ class TaskSubmissionsFragment : Fragment() {
                 return
             }
             
-            // Guardar el contexto del archivo en la base de datos
-            val database = AppDatabase.getDatabase(requireContext())
-            val savedId = database.fileContextDao().insertFileContext(fileContext)
-            Log.d("TaskSubmissionsFragment", "📝 FileContext guardado con ID: $savedId")
-
-            // Intentar enviar el FileContext a Supabase en background
+            // Send FileContext directly to Supabase (do not persist locally)
             try {
                 val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                // Ensure we send the same object with id set to savedId for FK mapping
-                val toSend = fileContext.copy(id = savedId)
                 kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    val ok = supabaseRepo.upsert("file_contexts", toSend)
-                    if (ok) Log.i("TaskSubmissionsFragment", "FileContext $savedId upserted to Supabase.")
-                    else Log.w("TaskSubmissionsFragment", "Failed to upsert FileContext $savedId to Supabase.")
+                    val ok = supabaseRepo.upsert("file_contexts", fileContext)
+                    if (ok) Log.i("TaskSubmissionsFragment", "FileContext upserted to Supabase.")
+                    else Log.w("TaskSubmissionsFragment", "Failed to upsert FileContext to Supabase.")
                 }
             } catch (e: Exception) {
                 Log.w("TaskSubmissionsFragment", "Exception sending FileContext to Supabase: ${e.message}")
@@ -1173,15 +1185,27 @@ class TaskSubmissionsFragment : Fragment() {
             private fun loadUserAvatar(username: String) {
                 CoroutineScope(Dispatchers.Main).launch {
                     try {
-                        val db = AppDatabase.getDatabase(requireContext())
-                        val persona = withContext(Dispatchers.IO) {
-                            db.personaDao().getPersonaByUsername(username)
+                        val avatarUrl = withContext(Dispatchers.IO) {
+                            try {
+                                // Try find usuario -> persona -> avatar
+                                val usuarios = SupabaseClient.fetchUsuarios()
+                                val usuario = usuarios.firstOrNull { it.usuario?.equals(username, ignoreCase = true) == true }
+                                val personaId = usuario?.persona_id
+                                if (personaId != null) {
+                                    val personas = SupabaseClient.fetchPersonas()
+                                    val persona = personas.firstOrNull { it.id == personaId }
+                                    persona?.avatar
+                                } else null
+                            } catch (e: Exception) {
+                                Log.e("TaskSubmissionsFragment", "Error fetching avatar from Supabase", e)
+                                null
+                            }
                         }
 
-                        if (persona != null && !persona.avatar.isNullOrEmpty()) {
+                        if (!avatarUrl.isNullOrEmpty()) {
                             try {
                                 Glide.with(requireContext())
-                                    .load(Uri.parse(persona.avatar))
+                                    .load(Uri.parse(avatarUrl))
                                     .placeholder(R.drawable.default_avatar)
                                     .error(R.drawable.default_avatar)
                                     .into(avatarImageView)

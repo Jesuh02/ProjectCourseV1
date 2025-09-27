@@ -207,7 +207,7 @@
         tools:listitem="@layout/item_created_course" />
 
     <!-- Bottom Navigation reutilizable -->
-<include
+    <include
         android:id="@+id/bottomNavigation"
         layout="@layout/component_bottom_navigation"
         android:layout_width="0dp"

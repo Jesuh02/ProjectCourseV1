@@ -22,6 +22,7 @@ import com.example.tareamov.data.entity.Topic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.example.tareamov.data.sync.SyncRepository
 
 class SelectTopicFragment : Fragment() {
 
@@ -47,6 +48,7 @@ class SelectTopicFragment : Fragment() {
         }
         // Initialize ViewModel here - it's safer before view creation
         viewModel = ViewModelProvider(this)[SelectTopicViewModel::class.java]
+        // If Supabase is configured, we will prefer remote topics. SyncRepository will be created later with context when needed.
     }
 
     override fun onCreateView(
@@ -86,8 +88,39 @@ class SelectTopicFragment : Fragment() {
             }
         }
 
-        // Fetch topics using the ViewModel
-        viewModel.fetchTopicsForCourse(courseId)
+        // Fetch topics: prefer Supabase remote topics when configured, otherwise fall back to ViewModel/local DB
+        lifecycleScope.launch {
+            try {
+                val db = AppDatabase.getDatabase(requireContext())
+                val syncRepo = SyncRepository(
+                    db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
+                    db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
+                    db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
+                )
+
+                if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    // Try fetching topics remotely for the courseId
+                    val remoteTopics = withContext(Dispatchers.IO) { syncRepo.fetchTopicsByCourseFromSupabase(courseId) }
+                    if (!remoteTopics.isNullOrEmpty()) {
+                        Log.d("SelectTopicFragment", "Loaded ${remoteTopics.size} remote topics for course $courseId")
+                        topicSelectionAdapter.submitList(remoteTopics)
+                        topicsRecyclerView.visibility = View.VISIBLE
+                        noTopicsTextView.visibility = View.GONE
+                    } else {
+                        // Fallback to local DB via ViewModel
+                        Log.d("SelectTopicFragment", "No remote topics for course $courseId, falling back to local DB")
+                        viewModel.fetchTopicsForCourse(courseId)
+                    }
+                } else {
+                    // Supabase not configured: use local DB through ViewModel
+                    viewModel.fetchTopicsForCourse(courseId)
+                }
+            } catch (e: Exception) {
+                Log.e("SelectTopicFragment", "Error fetching remote topics", e)
+                // On error, fall back to local
+                viewModel.fetchTopicsForCourse(courseId)
+            }
+        }
 
         return view // Return the inflated view
     }

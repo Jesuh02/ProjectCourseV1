@@ -71,19 +71,11 @@ class CreatedCourseAdapter(
         val oldSize = courses.size
         courses = newCourses
 
-        // Use more efficient notification methods
-        if (oldSize == 0 && newCourses.isNotEmpty()) {
-            // First load - notify everything inserted
-            notifyItemRangeInserted(0, newCourses.size)
-        } else if (newCourses.isEmpty() && oldSize > 0) {
-            // All items removed
-            notifyItemRangeRemoved(0, oldSize)
-        } else {
-            // General update - could be optimized further with DiffUtil
-            notifyDataSetChanged()
-        }
+        // Simpler and more reliable: always refresh entire dataset to avoid
+        // subtle RecyclerView notification edge-cases that can hide items.
+        notifyDataSetChanged()
 
-        Log.d("CreatedCourseAdapter", "Courses updated: ${newCourses.size} items")
+        Log.d("CreatedCourseAdapter", "Courses updated: ${newCourses.size} items (oldSize=$oldSize)")
     }
 
     /**

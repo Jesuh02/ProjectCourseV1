@@ -6,6 +6,8 @@ import com.example.tareamov.data.repository.SupabaseRepository
 import com.example.tareamov.data.dao.UsuarioDao
 import com.example.tareamov.data.dao.PersonaDao
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.LiveData
 
@@ -14,6 +16,9 @@ class SupabaseViewModel(
     private val personaDao: PersonaDao
     ) : ViewModel() {
     private val repository = SupabaseRepository()
+
+    private val _course = MutableLiveData<com.example.tareamov.data.entity.Course?>()
+    val course: LiveData<com.example.tareamov.data.entity.Course?> = _course
 
     private val _loginResult = MutableLiveData<String?>()
     val loginResult: LiveData<String?> = _loginResult
@@ -31,6 +36,17 @@ class SupabaseViewModel(
                 _loginResult.postValue(token)
             } else {
                 _loginResult.postValue(null) // Usuario o email no encontrado
+            }
+        }
+    }
+
+    fun fetchCourseByIdFromSupabase(courseId: Long, syncRepository: com.example.tareamov.data.sync.SyncRepository) {
+        viewModelScope.launch {
+            try {
+                val fetched = withContext(kotlinx.coroutines.Dispatchers.IO) { syncRepository.fetchCourseById(courseId) }
+                _course.postValue(fetched)
+            } catch (e: Exception) {
+                _course.postValue(null)
             }
         }
     }

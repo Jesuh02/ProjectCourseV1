@@ -10,6 +10,9 @@ import com.example.tareamov.data.AppDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.DecimalFormat
+import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.data.sync.SyncRepository
+import com.google.gson.Gson
 
 class CourseProgressManager(private val context: Context) {
 
@@ -24,9 +27,36 @@ class CourseProgressManager(private val context: Context) {
         try {
             val db = AppDatabase.getDatabase(context)
 
-            // Get all topics for this course
-            val topics = withContext(Dispatchers.IO) {
-                db.topicDao().getTopicsByCourse(courseId)
+            // Prefer Supabase for topics/tasks/submissions if configured and SyncRepository is available
+            var topics = emptyList<com.example.tareamov.data.entity.Topic>()
+            var tasks = emptyList<com.example.tareamov.data.entity.Task>()
+            var submissions = emptyList<com.example.tareamov.data.entity.TaskSubmission>()
+
+            if (SupabaseClient.isConfigured()) {
+                try {
+                    val act = (context as? android.app.Activity)
+                    if (act is com.example.tareamov.MainActivity) {
+                        val repo = act.syncRepository
+                        topics = withContext(Dispatchers.IO) { repo.fetchTopicsByCourseFromSupabase(courseId) }
+                        val topicIds = topics.map { it.id }
+                        tasks = if (topicIds.isNotEmpty()) withContext(Dispatchers.IO) { repo.fetchTasksByTopicIdsFromSupabase(topicIds) } else emptyList()
+                        submissions = withContext(Dispatchers.IO) { repo.fetchStudentSubmissionsForCourseFromSupabase(username, courseId) }
+                        android.util.Log.d("CourseProgressManager", "Supabase: topics=${topics.size} tasks=${tasks.size} subs=${submissions.size}")
+                        try {
+                            val gson = Gson()
+                            android.util.Log.d("CourseProgressManager", "Submissions sample: ${gson.toJson(submissions.take(5))}")
+                        } catch (e: Exception) {
+                            android.util.Log.w("CourseProgressManager", "Failed to json-serialize submissions sample", e)
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("CourseProgressManager", "Supabase fetch failed, falling back to local DAOs", e)
+                }
+            }
+
+            // Fallback to local DB if Supabase did not yield results
+            if (topics.isEmpty()) {
+                topics = withContext(Dispatchers.IO) { db.topicDao().getTopicsByCourse(courseId) }
             }
 
             if (topics.isEmpty()) {
@@ -34,10 +64,9 @@ class CourseProgressManager(private val context: Context) {
                 return 0f
             }
 
-            // Get all tasks for these topics
-            val topicIds = topics.map { it.id }
-            val tasks = withContext(Dispatchers.IO) {
-                db.taskDao().getTasksByTopicIds(topicIds)
+            if (tasks.isEmpty()) {
+                val topicIds = topics.map { it.id }
+                tasks = withContext(Dispatchers.IO) { db.taskDao().getTasksByTopicIds(topicIds) }
             }
 
             if (tasks.isEmpty()) {
@@ -45,9 +74,9 @@ class CourseProgressManager(private val context: Context) {
                 return 0f
             }
 
-            // Get all submissions for this student in this course
-            val submissions = withContext(Dispatchers.IO) {
-                db.taskSubmissionDao().getStudentSubmissionsForCourse(username, courseId)
+            if (submissions.isEmpty()) {
+                submissions = withContext(Dispatchers.IO) { db.taskSubmissionDao().getStudentSubmissionsForCourse(username, courseId) }
+                android.util.Log.d("CourseProgressManager", "Local fallback submissions=${submissions.size}")
             }
 
             // Calculate progress

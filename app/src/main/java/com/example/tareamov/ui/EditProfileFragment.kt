@@ -103,31 +103,39 @@ class EditProfileFragment : Fragment() {
     private fun loadUserData() {
         lifecycleScope.launch {
             try {
-                // Get current user ID from SharedPreferences
-                val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                val currentUserId = sharedPrefs.getLong("current_user_id", -1L)
+                // Prefer SessionManager to find current user
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                val sessionUsername = sessionManager.getUsername()
+                val db = AppDatabase.getDatabase(requireContext())
 
-                if (currentUserId != -1L) {
-                    // Get user data from database
-                    val db = AppDatabase.getDatabase(requireContext())
+                if (!sessionUsername.isNullOrEmpty()) {
                     currentUser = withContext(Dispatchers.IO) {
-                        db.usuarioDao().getUsuarioById(currentUserId)
+                        db.usuarioDao().getUsuarioByUsername(sessionUsername)
+                    }
+                }
+
+                // Fallback to stored user id in prefs
+                if (currentUser == null) {
+                    val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                    val currentUserId = sharedPrefs.getLong("current_user_id", -1L)
+                    if (currentUserId != -1L) {
+                        currentUser = withContext(Dispatchers.IO) { db.usuarioDao().getUsuarioById(currentUserId) }
+                    }
+                }
+
+                if (currentUser != null) {
+                    // Get persona data
+                    currentPersona = withContext(Dispatchers.IO) {
+                        db.personaDao().getPersonaById(currentUser!!.persona_id)
                     }
 
-                    if (currentUser != null) {
-                        // Get persona data
-                        currentPersona = withContext(Dispatchers.IO) {
-                            db.personaDao().getPersonaById(currentUser!!.personaId)
-                        }
+                    // Update UI with current data
+                    usernameEditText.setText(currentUser?.usuario)
+                    displayNameEditText.setText(currentPersona?.nombres ?: currentUser?.usuario)
 
-                        // Update UI with current data
-                        usernameEditText.setText(currentUser?.usuario)
-                        displayNameEditText.setText(currentUser?.usuario) // Using same value for display name
-
-                        // Load avatar if available
-                        if (currentPersona != null && !currentPersona?.avatar.isNullOrEmpty()) {
-                            loadAvatar(currentPersona?.avatar)
-                        }
+                    // Load avatar if available
+                    if (currentPersona != null && !currentPersona?.avatar.isNullOrEmpty()) {
+                        loadAvatar(currentPersona?.avatar)
                     }
                 }
             } catch (e: Exception) {
@@ -234,6 +242,28 @@ class EditProfileFragment : Fragment() {
                             currentPersona!!.apellidos, // Keep existing apellidos
                             avatarPath
                         )
+                        // Also try to update remote Persona in Supabase
+                        try {
+                            if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                val remotePersona = com.example.tareamov.data.entity.Persona(
+                                    id = currentPersona!!.id,
+                                    identificacion = currentPersona!!.identificacion,
+                                    nombres = displayName,
+                                    apellidos = currentPersona!!.apellidos,
+                                    email = currentPersona!!.email,
+                                    telefono = currentPersona!!.telefono,
+                                    direccion = currentPersona!!.direccion,
+                                    fechaNacimiento = currentPersona!!.fechaNacimiento,
+                                    avatar = avatarPath,
+                                    esUsuario = currentPersona!!.esUsuario
+                                )
+                                val updated = com.example.tareamov.service.SupabaseClient.updatePersona(remotePersona)
+                                android.util.Log.d("EditProfileFragment", "Supabase updatePersona result: $updated")
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.w("EditProfileFragment", "Failed to update persona on Supabase", e)
+                        }
+                        Unit
                     }
                 }
 
@@ -244,10 +274,38 @@ class EditProfileFragment : Fragment() {
                             currentUser!!.id,
                             newUsername
                         )
+                        // Also try to update remote Usuario in Supabase
+                        try {
+                            if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                val remoteUsuario = com.example.tareamov.data.entity.Usuario(
+                                    id = currentUser!!.id,
+                                    usuario = newUsername,
+                                    contrasena = currentUser!!.contrasena,
+                                    persona_id = currentUser!!.persona_id,
+                                    rol_id = currentUser!!.rol_id
+                                )
+                                val updatedU = com.example.tareamov.service.SupabaseClient.updateUsuario(remoteUsuario)
+                                android.util.Log.d("EditProfileFragment", "Supabase updateUsuario result: $updatedU")
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.w("EditProfileFragment", "Failed to update usuario on Supabase", e)
+                        }
+                        Unit
                     }
                 }
 
-                // Update shared preferences to signal profile update
+                // Update session and shared preferences to signal profile update
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                // If username changed or avatar changed, update session stored values
+                val updatedAvatar = avatarPath ?: sessionManager.getUserAvatar()
+                sessionManager.createLoginSession(
+                    newUsername,
+                    sessionManager.getUserId(),
+                    sessionManager.getPersonaId(),
+                    sessionManager.getUserRole() ?: "user",
+                    updatedAvatar
+                )
+
                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                 sharedPrefs.edit().putBoolean("profile_updated", true).apply()
 

@@ -9,6 +9,35 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const MAX_TOKENS = 4096;
 
+// Helper: update task_submissions row in Supabase via REST (requires SUPABASE_URL and SUPABASE_KEY env vars)
+async function updateTaskSubmissionSupabase(submissionId, grade, feedback) {
+  try {
+    const supabaseUrl = process.env.SUPABASE_URL || '';
+    const supabaseKey = process.env.SUPABASE_KEY || '';
+    if (!supabaseUrl || !supabaseKey) {
+      console.log('⚠️ Supabase env not configured; skipping remote update');
+      return false;
+    }
+    const url = `${supabaseUrl.replace(/\/+$/, '')}/rest/v1/task_submissions?id=eq.${submissionId}`;
+    const payload = {};
+    if (grade !== null && typeof grade !== 'undefined') payload.grade = grade;
+    if (feedback !== null && typeof feedback !== 'undefined') payload.feedback = feedback;
+
+    const resp = await axios.patch(url, payload, {
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    console.log(`✅ Supabase updated task_submission ${submissionId}: status=${resp.status}`);
+    return resp.status >= 200 && resp.status < 300;
+  } catch (err) {
+    console.log('❌ Error updating Supabase task_submission:', err.message);
+    return false;
+  }
+}
+
 // Configurar bodyParser.json() ANTES de las rutas
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.json({ limit: '50mb' }));
@@ -336,6 +365,11 @@ CRÍTICO: Si detectas CUALQUIER incompatibilidad temática (ej: banco vs pelícu
           .on('end', () => resolve(texto))
           .on('error', err => reject(err));
       });
+      // Defensive fallback if model returns empty
+      if (!resultadoGemma || !resultadoGemma.trim()) {
+        console.log('⚠️ WARNING: modelo gemma3n devolvió respuesta VACÍA, aplicando fallback');
+        resultadoGemma = 'Lo siento, no he obtenido una respuesta del modelo en este momento. Por favor intenta nuevamente.';
+      }
       
       const tokensRespuestaGemma = encode(resultadoGemma).length;
       console.log('[MODELO gemma3n:latest] TOKENS DE RESPUESTA:', tokensRespuestaGemma);
@@ -393,6 +427,16 @@ CRÍTICO: Si detectas CUALQUIER incompatibilidad temática (ej: banco vs pelícu
       }
       
       nota = notaExtraida;
+      // If we have a submissionId, attempt to persist the computed grade to Supabase
+      try {
+        if (submissionId) {
+          console.log(`🔁 Intentando persistir nota ${nota} para submissionId=${submissionId} en Supabase`);
+          const ok = await updateTaskSubmissionSupabase(submissionId, nota, resultadoGemma);
+          if (!ok) console.log('⚠️ Persistencia en Supabase fallida o no confirmada');
+        }
+      } catch (err) {
+        console.log('❌ Error al persistir nota en Supabase:', err.message);
+      }
       resumen = resultadoGemma; // Guardar toda la respuesta incluyendo retroalimentación
       cumplimiento = nota === 0 ? '❌ No cumple con los requisitos (INCOMPATIBLE)' : (nota === 10 ? '✅ Cumplimiento total' : '⚠️ Cumplimiento parcial');
     } catch (err) {
@@ -520,6 +564,11 @@ La respuesta debe ser educativa, constructiva y MUY CLARA sobre por qué se asig
         .on('end', () => resolve(texto))
         .on('error', err => reject(err));
     });
+    // Defensive fallback if model returns empty
+    if (!respuestaFeedback || !respuestaFeedback.trim()) {
+      console.log('⚠️ WARNING: modelo llama3 (feedback) devolvió respuesta VACÍA, aplicando fallback');
+      respuestaFeedback = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
+    }
     
     const tokensRespuestaFeedback = encode(respuestaFeedback).length;
     console.log('[MODELO llama3:latest] TOKENS DE RESPUESTA:', tokensRespuestaFeedback);
@@ -592,9 +641,12 @@ app.post('/procesar-prompt', async (req, res) => {
         fileContent && fileContent.trim();
 
     // DETECCIÓN CRÍTICA DE INCOMPATIBILIDADES ESPECÍFICAS
-    const detectarIncompatibilidadCritica = (descripcion, contenido) => {
-        const descripcionLower = descripcion.toLowerCase();
-        const contenidoLower = contenido.toLowerCase();
+  const detectarIncompatibilidadCritica = (descripcion, contenido) => {
+    // Defensive: ensure we operate on strings to avoid "toLowerCase of undefined" errors
+    const descripcionStr = (typeof descripcion === 'string') ? descripcion : '';
+    const contenidoStr = (typeof contenido === 'string') ? contenido : '';
+    const descripcionLower = descripcionStr.toLowerCase();
+    const contenidoLower = contenidoStr.toLowerCase();
         
         // Caso específico: IA vs Matrículas/Académico
         if (descripcionLower.includes('inteligencia artificial') || descripcionLower.includes('ia ')) {
@@ -719,6 +771,11 @@ Responde considerando el contexto académico disponible si es relevante para la 
             .on('end', () => resolve(texto))
             .on('error', err => reject(err));
         });
+        // Defensive fallback if model returns empty
+        if (!respuestaFinal || !respuestaFinal.trim()) {
+          console.log('⚠️ WARNING: modelo llama3 devolvió respuesta VACÍA (fallback path), aplicando mensaje por defecto');
+          respuestaFinal = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
+        }
         
         const tokensRespuestaSimple = encode(respuestaFinal).length;
         console.log('[MODELO llama3:latest] TOKENS DE RESPUESTA:', tokensRespuestaSimple);
@@ -734,6 +791,18 @@ Responde considerando el contexto académico disponible si es relevante para la 
         console.log('🕐 HORA DE RESPUESTA:', endTime.toLocaleString('es-ES'));
         console.log('⏱️ DURACIÓN TOTAL:', Math.round(duration / 1000), 'segundos');
         console.log('==============================================');
+        // If possible, extract a numeric grade from the respuestaFinal and persist it
+        try {
+          const gradeMatch = respuestaFinal.match(/(\d+(?:\.\d+)?)\s*\/\s*10|nota\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
+          const gradeStr = gradeMatch ? (gradeMatch[1] || gradeMatch[2]) : null;
+          const gradeVal = gradeStr ? parseFloat(gradeStr.replace(',', '.')) : null;
+          if (gradeVal !== null && submissionId) {
+            console.log(`🔁 Persistiendo calificación detectada ${gradeVal} para submissionId=${submissionId}`);
+            await updateTaskSubmissionSupabase(submissionId, gradeVal, respuestaFinal);
+          }
+        } catch (err) {
+          console.log('⚠️ Error extrayendo/persistiendo calificación (silent):', err.message);
+        }
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.json({ respuesta_texto: respuestaFinal });
       } catch (err) {
@@ -780,6 +849,11 @@ Responde considerando el contexto académico disponible si es relevante para la 
             .on('end', () => resolve(texto))
             .on('error', err => reject(err));
         });
+        // Defensive fallback if model returns empty
+        if (!respuestaFinal || !respuestaFinal.trim()) {
+          console.log('⚠️ WARNING: modelo llama3 devolvió respuesta VACÍA (simple path), aplicando mensaje por defecto');
+          respuestaFinal = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
+        }
         
         const tokensRespuestaSimple = encode(respuestaFinal).length;
         console.log('[MODELO llama3:latest] TOKENS DE RESPUESTA (FALLBACK):', tokensRespuestaSimple);
@@ -793,6 +867,17 @@ Responde considerando el contexto académico disponible si es relevante para la 
         console.log('🕐 HORA DE RESPUESTA:', endTime.toLocaleString('es-ES'));
         console.log('⏱️ DURACIÓN TOTAL:', Math.round(duration / 1000), 'segundos');
         console.log('==============================================');
+        try {
+          const gradeMatch = respuestaFinal.match(/(\d+(?:\.\d+)?)\s*\/\s*10|nota\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
+          const gradeStr = gradeMatch ? (gradeMatch[1] || gradeMatch[2]) : null;
+          const gradeVal = gradeStr ? parseFloat(gradeStr.replace(',', '.')) : null;
+          if (gradeVal !== null && submissionId) {
+            console.log(`🔁 Persistiendo calificación detectada ${gradeVal} para submissionId=${submissionId} (fallback)`);
+            await updateTaskSubmissionSupabase(submissionId, gradeVal, respuestaFinal);
+          }
+        } catch (err) {
+          console.log('⚠️ Error extrayendo/persistiendo calificación (fallback):', err.message);
+        }
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.json({ respuesta_texto: respuestaFinal });
       } catch (err) {
@@ -850,6 +935,17 @@ Responde considerando el contexto académico disponible si es relevante para la 
         console.log('🕐 HORA DE RESPUESTA:', endTime.toLocaleString('es-ES'));
         console.log('⏱️ DURACIÓN TOTAL:', Math.round(duration / 1000), 'segundos');
         console.log('==============================================');
+        try {
+          const gradeMatch = respuestaFinal.match(/(\d+(?:\.\d+)?)\s*\/\s*10|nota\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
+          const gradeStr = gradeMatch ? (gradeMatch[1] || gradeMatch[2]) : null;
+          const gradeVal = gradeStr ? parseFloat(gradeStr.replace(',', '.')) : null;
+          if (gradeVal !== null && submissionId) {
+            console.log(`🔁 Persistiendo calificación detectada ${gradeVal} para submissionId=${submissionId} (sin archivo)`);
+            await updateTaskSubmissionSupabase(submissionId, gradeVal, respuestaFinal);
+          }
+        } catch (err) {
+          console.log('⚠️ Error extrayendo/persistiendo calificación (sin archivo):', err.message);
+        }
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.json({ respuesta_texto: respuestaFinal });
       } catch (err) {
@@ -1176,6 +1272,7 @@ IMPORTANTE: Si la evaluación previa NO detectó la incompatibilidad, CORREGIR y
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Microservicio de distribución de contexto escuchando en puerto ${PORT}`);
+// Listen on all interfaces so the service is reachable from other devices on the LAN
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Microservicio de distribución de contexto escuchando en puerto ${PORT} en 0.0.0.0`);
 });

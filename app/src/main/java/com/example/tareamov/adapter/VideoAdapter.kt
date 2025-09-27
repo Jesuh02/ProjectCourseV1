@@ -106,6 +106,11 @@ class VideoAdapter(
                 onUsernameClick?.invoke(videoData)
             }
 
+            // Also make the title clickable to navigate to the course details
+            titleText.setOnClickListener {
+                onUsernameClick?.invoke(videoData)
+            }
+
             // --- AVATAR LOADING LOGIC ---
             currentJob?.cancel()
             profileButton.setImageResource(R.drawable.ic_profile)
@@ -172,7 +177,7 @@ class VideoAdapter(
                     showErrorPlaceholder()
                 }
             } else {
-                Log.e("VideoAdapter", "No valid video URI available")
+                Log.e("VideoAdapter", "No valid video URI available. videoUriString='${videoData.videoUriString}', localFilePath='${videoData.localFilePath}'")
                 showErrorPlaceholder()
             }
         }        /**
