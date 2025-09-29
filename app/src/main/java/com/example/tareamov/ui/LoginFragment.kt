@@ -175,41 +175,27 @@ class LoginFragment : Fragment() {
                 android.util.Log.d("LoginFragment", "Login attempt for user=$username password_mask=${maskSecret(password)}")
 
                 try {
-                    val supabaseClient = com.example.tareamov.service.SupabaseClient
-                    if (supabaseClient.isConfigured()) {
-                        val remoteUser = withContext(Dispatchers.IO) {
-                            try {
-                                supabaseClient.fetchUsuarioByUsername(username)
-                            } catch (e: Exception) {
-                                null
-                            }
-                        }
-                        android.util.Log.d("LoginFragment", "Login attempt for user=$username password_mask=${maskSecret(password)}")
-                    }
-                        // Check Supabase existence and log
-                        try {
-                            val db = AppDatabase.getDatabase(requireContext())
-                            val syncRepo = com.example.tareamov.data.sync.SyncRepository(
-                                db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
-                                db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-                                db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
-                            )
+                    val db = AppDatabase.getDatabase(requireContext())
+                    val syncRepo = com.example.tareamov.data.sync.SyncRepository(
+                        db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
+                        db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
+                        db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
+                    )
 
-                            foundOnSupabase = withContext(Dispatchers.IO) {
-                                try {
-                                    val exists = syncRepo.isUsuarioExistsInSupabase(username)
-                                    android.util.Log.d("LoginFragment", "Supabase existence check for user=$username -> $exists")
-                                    exists
-                                } catch (e: Exception) {
-                                    android.util.Log.w("LoginFragment", "Supabase existence check failed: ${e.message}")
-                                    false
-                                }
-                            }
+                    // Attempt to fetch remote user (this will try even if isConfigured() previously returned false)
+                    val remoteUserWithRole = withContext(Dispatchers.IO) {
+                        try {
+                            syncRepo.fetchUsuarioWithRoleFromSupabase(username)
                         } catch (e: Exception) {
-                            android.util.Log.w("LoginFragment", "Error preparing SyncRepository: ${e.message}")
-                            foundOnSupabase = false
+                            android.util.Log.w("LoginFragment", "Remote user fetch failed: ${e.message}")
+                            null
                         }
+                    }
+
+                    foundOnSupabase = remoteUserWithRole != null
+                    android.util.Log.d("LoginFragment", "Supabase existence check for user=$username -> $foundOnSupabase")
                 } catch (e: Exception) {
+                    android.util.Log.w("LoginFragment", "Error preparing SyncRepository: ${e.message}")
                     foundOnSupabase = false
                 }
 

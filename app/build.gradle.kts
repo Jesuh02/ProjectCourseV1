@@ -3,7 +3,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     id("com.google.devtools.ksp")
-    id("com.google.gms.google-services") // Google Services plugin for Firebase integration
 }
 
 
@@ -186,10 +185,7 @@ dependencies {
     // Add MPAndroidChart dependency
     implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
-
-    // Firebase Firestore and Analytics
-    implementation("com.google.firebase:firebase-firestore-ktx:24.11.0")
-    implementation("com.google.firebase:firebase-analytics-ktx:21.6.1")
+ 
 
     // Google Drive API and Google Play Services
     implementation("com.google.android.gms:play-services-drive:17.0.0")
@@ -207,4 +203,13 @@ dependencies {
     implementation("org.apache.poi:poi:5.2.5")
     implementation("org.apache.poi:poi-ooxml:5.2.5")
     implementation("org.apache.poi:poi-scratchpad:5.2.5")
+}
+
+// Apply Google Services plugin only when google-services.json exists in the app module.
+// This avoids build failures on machines/environments where the credentials file is intentionally absent.
+val googleServicesFile = project.file("google-services.json")
+if (googleServicesFile.exists()) {
+    apply(plugin = "com.google.gms.google-services")
+} else {
+    println("Skipping com.google.gms.google-services plugin because app/google-services.json was not found. If you need Firebase, add the file to app/ or configure local.properties.")
 }

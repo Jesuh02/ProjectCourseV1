@@ -14,7 +14,4 @@ data class Purchase(
     val courseId: Long = 0,
     val purchaseDate: Long = System.currentTimeMillis(),
     val price: Double? = null
-) {
-    // Constructor sin argumentos para Firestore
-    constructor() : this("", 0, System.currentTimeMillis(), null)
-}
+) 
