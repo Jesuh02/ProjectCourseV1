@@ -24,7 +24,4 @@ data class Task(
     @SerializedName("title") val name: String = "",
     val description: String? = null,
     val orderIndex: Int = 0
-) {
-    // Constructor sin argumentos para Firestore
-    constructor() : this(0, 0, "", null, 0)
-}
+)

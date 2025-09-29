@@ -1,0 +1,9 @@
+# supabase_key.sample.txt
+# Place your Supabase anon (or service) key in a file named 'supabase_key.txt' in this directory for local development.
+# WARNING: Do NOT commit the actual key. This is for local/dev convenience only.
+# Example content (replace with your real key):
+# supabase_key.txt contents: eyJhbGciOiJIUzI1NiIsInR...YOUR_KEY_HERE...w5c
+
+# Create a file named 'supabase_key.txt' (no .sample) with just the key string on the first line.
+# The app's MainActivity will attempt to read assets/supabase_key.txt at startup and inject it into SupabaseClient at runtime.
+# Preferred alternative: add SUPABASE_KEY=<your_key> to local.properties and rebuild.

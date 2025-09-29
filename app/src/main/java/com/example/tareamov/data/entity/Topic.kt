@@ -27,11 +27,4 @@ data class Topic(
     val name: String = "",
     val description: String = "",
     val orderIndex: Int = 0
-) {
-    // Constructor sin argumentos para Firestore
-    constructor() : this(0, 0, "", "", 0)
-
-    // Add this secondary constructor to handle default values
-    constructor(courseId: Long, name: String, description: String, orderIndex: Int) :
-            this(0, courseId, name, description, orderIndex)
-}
+) 

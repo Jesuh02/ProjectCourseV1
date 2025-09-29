@@ -16,7 +16,4 @@ data class Persona(
     val fechaNacimiento: String = "",
     val avatar: String? = null,
     val esUsuario: Boolean = false
-) {
-    // Constructor sin argumentos para Firestore
-    constructor() : this(0, "", "", "", "", "", "", "", null, false)
-}
+)

@@ -32,19 +32,57 @@ object SupabaseClient {
     private val gson = Gson()
     // Gson configured to map snake_case JSON (typical Postgres/Supabase) to camelCase Kotlin fields
     private val underscoredGson = GsonBuilder().setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create()
-    private val baseUrl = BuildConfig.SUPABASE_URL.trimEnd('/')
+    // Fallback public Supabase project URL (useful when developer hasn't populated local.properties).
+    // NOTE: keep this value in sync with your Supabase project if you want the app to reach a specific instance.
+    private const val DEFAULT_SUPABASE_URL = "https://vxuksizvwrkctrvpciyp.supabase.co"
+
+    // Raw values from BuildConfig (may be empty when local.properties isn't set on the developer machine)
+    private val rawBaseUrl = BuildConfig.SUPABASE_URL.trim()
+    // Use provided URL when available, otherwise fall back to DEFAULT_SUPABASE_URL
+    private val baseUrl = if (rawBaseUrl.isNotEmpty()) rawBaseUrl.trimEnd('/') else DEFAULT_SUPABASE_URL
     private val apiKey = BuildConfig.SUPABASE_KEY
+    // Optional: runtime-injected API key (useful when BuildConfig wasn't populated)
+    @Volatile
+    private var runtimeApiKey: String? = null
+
+    /**
+     * Call this at app startup if you want to inject the Supabase key at runtime
+     * (for example, read from secure storage, assets, or an environment variable).
+     */
+    fun setApiKeyAtRuntime(key: String?) {
+        runtimeApiKey = key?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    fun clearRuntimeApiKey() { runtimeApiKey = null }
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
+
+    private fun effectiveApiKey(): String {
+        val b = apiKey.trim()
+        if (b.isNotEmpty()) return b
+        val r = runtimeApiKey?.trim()
+        if (!r.isNullOrEmpty()) return r
+        // Try common JVM/Android fallbacks
+        val env = try { System.getenv("SUPABASE_KEY") } catch (_: Throwable) { null }
+        if (!env.isNullOrEmpty()) return env
+        val prop = try { System.getProperty("SUPABASE_KEY") } catch (_: Throwable) { null }
+        if (!prop.isNullOrEmpty()) return prop
+        return ""
+    }
 
     fun isConfigured(): Boolean {
         val url = baseUrl.trim()
-        val key = apiKey.trim()
-        val configured = url.isNotEmpty() && key.isNotEmpty()
+        val key = effectiveApiKey().trim()
+        val configured = key.isNotEmpty() && url.isNotEmpty()
         if (!configured) {
             try {
-                val maskedUrl = if (url.length <= 12) url else url.substring(0, 12) + "..."
-                val maskedKey = if (key.length <= 8) "(hidden)" else key.substring(0, 6) + "..." + key.takeLast(4)
-                android.util.Log.w("SupabaseClient", "Supabase not configured: SUPABASE_URL=$maskedUrl SUPABASE_KEY=$maskedKey HOST_IP=${BuildConfig.HOST_IP}. Check local.properties and rebuild.")
+                val usingDefault = rawBaseUrl.isEmpty()
+                val maskedUrl = if (url.length <= 24) url else url.substring(0, 24) + "..."
+                val maskedKey = if (key.isEmpty()) "(missing)" else if (key.length <= 8) "(hidden)" else key.substring(0, 6) + "..." + key.takeLast(4)
+                if (usingDefault) {
+                    android.util.Log.w("SupabaseClient", "Supabase URL not provided in BuildConfig; using default fallback URL. Effective SUPABASE_URL=$maskedUrl SUPABASE_KEY=$maskedKey HOST_IP=${BuildConfig.HOST_IP}. If this is unintended, set SUPABASE_URL in local.properties and rebuild.")
+                } else {
+                    android.util.Log.w("SupabaseClient", "Supabase not configured: SUPABASE_URL=$maskedUrl SUPABASE_KEY=$maskedKey HOST_IP=${BuildConfig.HOST_IP}. Check local.properties and rebuild.")
+                }
             } catch (t: Throwable) {
                 // ignore logging failures
             }
@@ -884,13 +922,20 @@ object SupabaseClient {
     // Generic GET helper
     private fun buildGetRequest(path: String): Request {
         val url = "$baseUrl/rest/v1/$path"
-        return Request.Builder()
+        val key = effectiveApiKey()
+        val builder = Request.Builder()
             .url(url)
             .get()
-            .addHeader("apikey", apiKey)
-            .addHeader("Authorization", "Bearer $apiKey")
             .addHeader("Accept", "application/json")
-            .build()
+
+        if (key.isNotEmpty()) {
+            builder.addHeader("apikey", key)
+            builder.addHeader("Authorization", "Bearer $key")
+        } else {
+            android.util.Log.w("SupabaseClient", "buildGetRequest: no Supabase API key available; request to $path will likely be rejected (401). Set SUPABASE_KEY in local.properties or call SupabaseClient.setApiKeyAtRuntime(key).")
+        }
+
+        return builder.build()
     }
 
     private suspend fun <T> fetchList(path: String, clazz: Class<Array<T>>): List<T> = withContext(Dispatchers.IO) {

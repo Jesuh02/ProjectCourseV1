@@ -33,7 +33,4 @@ data class ContentItem(
     @SerializedName("body") val uriString: String = "",
     val contentType: String = "",
     val orderIndex: Int? = 0
-) {
-    // Constructor sin argumentos para Firestore
-    constructor() : this(0, 0, null, null, "", "", 0)
-}
+) 

@@ -30,7 +30,4 @@ data class TaskSubmission(
     val fileName: String = "",
     val grade: Float? = null,
     val feedback: String? = null
-) {
-    // Constructor sin argumentos para Firestore
-    constructor() : this(0, 0, "", 0, "", "", null, null)
-}
+) 
