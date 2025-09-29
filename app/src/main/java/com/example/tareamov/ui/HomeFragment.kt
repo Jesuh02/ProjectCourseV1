@@ -90,7 +90,7 @@ class HomeFragment : Fragment(), PersonaAdapter.OnItemClickListener {
         rotateForward = AnimationUtils.loadAnimation(requireContext(), R.anim.rotate_forward)
         rotateBackward = AnimationUtils.loadAnimation(requireContext(), R.anim.rotate_backward)
 
-        // Get ViewModels from MainActivity
+        // Get ViewModels from MainActivity...
         personaViewModel = (requireActivity() as MainActivity).personaViewModel
         authViewModel = (requireActivity() as MainActivity).authViewModel
 
