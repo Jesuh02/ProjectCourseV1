@@ -185,6 +185,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     private var totalMessageCount = 0
     private var isScrolledToBottom = true
     private var currentUser: String? = null
+    // Keep the last Supabase GET URL for display with final results
+    private var lastSupabaseUrl: String? = null
     
     // User-specific SharedPreferences for better persistence
     private val chatPrefs by lazy {
@@ -237,6 +239,19 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
 
         // Initialize LocalLlamaService and trigger model download if needed
         setupLocalLlamaService()
+
+        // Register SupabaseClient request listener so we can surface the last query URL in the UI
+        com.example.tareamov.service.SupabaseClient.setRequestListener { url ->
+            // We're possibly on a background thread; post to main thread
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+                try {
+                    // Store the last Supabase GET URL so it can be appended when results are shown
+                    lastSupabaseUrl = url
+                } catch (t: Throwable) {
+                    Log.w("DatabaseQueryFragment", "Failed to update Supabase URL display", t)
+                }
+            }
+        }
 
         // Set up enhanced UI interactions
         setupEnhancedUI()
@@ -488,7 +503,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 binding.chatRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)
 
                 // Process the query in the background
-                processUserQuery(userInput)
+                // Use unified sendMessage flow to ensure RAG is executed once
+                sendMessage()
             }
         }
     }
@@ -596,6 +612,19 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
 
     /**
      * Process query using RAG-enhanced system
+     * 
+     * FLUJO COMPLETO:
+     * 1. Usuario escribe en lenguaje natural (ej: "dame el creator_username del id 11 de la tabla courses")
+     * 2. MCPService.processQuery() detecta shortcuts o delega a RAGDatabaseService
+     * 3. RAGDatabaseService:
+     *    - Analiza intención de la consulta
+     *    - Identifica tablas y columnas relevantes
+     *    - **CONSULTA SUPABASE DIRECTAMENTE** (SupabaseClient.fetchXXX())
+     *    - Obtiene JSON real ordenado por ID
+     *    - Filtra datos relevantes
+     *    - Genera respuesta con LLM
+     * 4. SupabaseClient notifica la URL usada via requestListener
+     * 5. Este fragment muestra respuesta + URL de Supabase
      */
     private suspend fun processRAGEnhancedQuery(query: String): String = withContext(Dispatchers.IO) {
         try {
@@ -1299,12 +1328,11 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             // Show typing indicator
             val typingIndicatorId = addMessageToChat("Escribiendo...", false)
 
-            // Launch a coroutine to process the query
+            // Launch a coroutine to process the query using the unified RAG flow
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
-                    // Process the query using DatabaseQueryService
                     val result = withContext(Dispatchers.IO) {
-                        databaseQueryService.processQuery(query)
+                        processRAGEnhancedQuery(query)
                     }
 
                     // Remove typing indicator and show result
@@ -1323,7 +1351,11 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     private fun displayQueryResults(result: String) {
         // Update your UI to show the query results
         // For example, if you have a TextView to display results:
-        binding.resultText?.text = result
+        var out = result
+        lastSupabaseUrl?.let { url ->
+            out += "\n\n[Última consulta Supabase]: ${url}"
+        }
+        binding.resultText?.text = out
         // Or if you're using a RecyclerView adapter:
         // adapter.submitList(parseResults(result))
     }
@@ -1453,6 +1485,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         
         // Unregister from user change notifications
         SessionManager.removeUserChangeListener(this)
+
+    // Unregister Supabase request listener to avoid leaking fragment
+    com.example.tareamov.service.SupabaseClient.setRequestListener(null)
         
         super.onDestroyView()
         _binding = null

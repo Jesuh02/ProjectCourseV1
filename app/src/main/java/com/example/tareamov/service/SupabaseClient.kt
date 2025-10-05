@@ -56,6 +56,20 @@ object SupabaseClient {
     fun clearRuntimeApiKey() { runtimeApiKey = null }
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
+    // Optional listener that will be notified with the full request URL when the client
+    // builds a GET request. The listener is invoked on the caller thread, so UI callers
+    // should marshal to the main thread when updating views.
+    @Volatile
+    private var requestListener: ((String) -> Unit)? = null
+
+    /**
+     * Register a listener to receive Supabase request URLs (mostly useful for debugging).
+     * Pass null to unregister.
+     */
+    fun setRequestListener(listener: ((String) -> Unit)?) {
+        requestListener = listener
+    }
+
     private fun effectiveApiKey(): String {
         val b = apiKey.trim()
         if (b.isNotEmpty()) return b
@@ -920,6 +934,19 @@ object SupabaseClient {
     }
 
     // Generic GET helper
+    /**
+     * Construye una petición GET a Supabase REST API
+     * 
+     * IMPORTANTE: Esta función notifica la URL completa al listener registrado,
+     * lo que permite que DatabaseQueryFragment muestre al usuario exactamente
+     * qué endpoint de Supabase se consultó.
+     * 
+     * Ejemplo de URL generada:
+     * https://[project].supabase.co/rest/v1/courses?id=eq.11&select=creator_username
+     * 
+     * @param path El path relativo (ej: "courses?id=eq.11&select=creator_username")
+     * @return Request configurado con headers de autenticación
+     */
     private fun buildGetRequest(path: String): Request {
         val url = "$baseUrl/rest/v1/$path"
         val key = effectiveApiKey()
@@ -933,6 +960,13 @@ object SupabaseClient {
             builder.addHeader("Authorization", "Bearer $key")
         } else {
             android.util.Log.w("SupabaseClient", "buildGetRequest: no Supabase API key available; request to $path will likely be rejected (401). Set SUPABASE_KEY in local.properties or call SupabaseClient.setApiKeyAtRuntime(key).")
+        }
+
+        // Notify listener (for debug/UI) with the full URL being requested
+        try {
+            requestListener?.invoke(url)
+        } catch (t: Throwable) {
+            android.util.Log.w("SupabaseClient", "requestListener threw", t)
         }
 
         return builder.build()
@@ -1115,6 +1149,38 @@ object SupabaseClient {
         }
     }
     suspend fun fetchTopics(): List<Topic> = fetchList("topics", Array<Topic>::class.java)
+    
+    /**
+     * Fetch a single Topic by exact name using server-side filter. Returns null if not found.
+     */
+    suspend fun fetchTopicByName(name: String): Topic? = withContext(Dispatchers.IO) {
+        try {
+            val encoded = java.net.URLEncoder.encode(name, "UTF-8")
+            val url = "$baseUrl/rest/v1/topics?name=eq.$encoded&select=*"
+            requestListener?.invoke(url)
+
+            val req = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Accept", "application/json")
+                .build()
+
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) {
+                Log.w("SupabaseClient", "fetchTopicByName failed status=${resp.code}")
+                return@withContext null
+            }
+
+            val body = resp.body?.string() ?: return@withContext null
+            val arr = underscoredGson.fromJson(body, Array<Topic>::class.java)
+            return@withContext arr.firstOrNull()
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchTopicByName exception", e)
+            return@withContext null
+        }
+    }
     suspend fun fetchContentItems(): List<ContentItem> = fetchList("content_items", Array<ContentItem>::class.java)
     suspend fun fetchTasks(): List<Task> = fetchList("tasks", Array<Task>::class.java)
     // Fetch a single task by id using server-side filter
@@ -1260,6 +1326,34 @@ object SupabaseClient {
         } catch (e: Exception) {
             Log.w("SupabaseClient", "fetchCourseById exception", e)
             null
+        }
+    }
+    
+    // Fetch a single course by exact title (server-side filter). Returns null if not found.
+    suspend fun fetchCourseByTitle(title: String): Course? = withContext(Dispatchers.IO) {
+        try {
+            val table = "courses"
+            // Use eq for exact match. URL-encode value to be safe.
+            val escaped = java.net.URLEncoder.encode(title, "UTF-8")
+            val path = "$table?title=eq.$escaped&select=*"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchCourseByTitle failed status=${'$'}{resp.code}")
+                    return@withContext null
+                }
+                val body = resp.body?.string() ?: return@withContext null
+                try {
+                    val arr = underscoredGson.fromJson(body, Array<Course>::class.java)
+                    return@withContext arr.firstOrNull()
+                } catch (e: Exception) {
+                    Log.w("SupabaseClient", "fetchCourseByTitle parse failed", e)
+                    return@withContext null
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchCourseByTitle exception", e)
+            return@withContext null
         }
     }
     // Fetch topics for a specific course using server-side filter

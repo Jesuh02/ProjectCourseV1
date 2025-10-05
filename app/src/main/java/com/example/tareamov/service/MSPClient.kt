@@ -219,33 +219,65 @@ $prompt
     
         var currentBaseUrl = ""
         var response = ""
-        var success = false
+
+        // Build a short, prioritized candidate list to avoid long probing loops
+        val candidates = mutableListOf<String>()
+        if (isEmulator()) {
+            candidates.add(emulatorUrl)
+        }
+        // prefer localhost loopback early
+        candidates.add("http://127.0.0.1:11435")
+        candidates.add("http://localhost:11435")
+        // finally add the highest-priority configured candidate
+        candidates.add(possibleBaseUrls.first())
+
         var lastError: Exception? = null
-    
-        // Try each possible base URL until one works
-        for (baseUrl in possibleBaseUrls) {
+
+        // Quick port-check and attempt only reachable candidates (fast-fail)
+        val reachable = candidates.filter { candidate ->
+            try {
+                // small timeout socket check
+                val u = URL(candidate)
+                val host = u.host
+                val port = if (u.port != -1) u.port else u.defaultPort
+                val sock = Socket()
+                sock.connect(InetSocketAddress(host, port), 1500)
+                sock.close()
+                true
+            } catch (e: Exception) {
+                Log.d(tag, "Candidate not reachable quickly: $candidate -> ${e.message}")
+                false
+            }
+        }
+
+        if (reachable.isEmpty()) {
+            Log.w(tag, "No reachable LLM candidates found (fast-fail). Skipping heavy probing.")
+            return@withContext "Error: No se pudo conectar al servidor LLM (no hay servidores detectables en las rutas configuradas)."
+        }
+
+        for (baseUrl in reachable) {
             currentBaseUrl = baseUrl
             try {
                 Log.d(tag, "Trying to connect to $baseUrl...")
-                
+
                 // Construct the request URL
                 val url = URL("$baseUrl/api/generate")
                 val connection = url.openConnection() as HttpURLConnection
-    
-                // Set up the connection with increased timeouts
+
+                // Set up the connection with tighter timeouts for user flows
                 connection.requestMethod = "POST"
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.setRequestProperty("Accept", "application/json")
-                connection.connectTimeout = 15000  // 15 seconds
+                connection.connectTimeout = 5000  // 5 seconds
                 connection.readTimeout = 60000    // 60 seconds
                 connection.doOutput = true
-    
+
                 // Create the request body
                 val requestBody = JSONObject().apply {
                     put("model", modelName)
                     put("prompt", enhancedPrompt)
                     put("stream", false)
-    
+
                     // Add options for context handling
                     val options = JSONObject().apply {
                         put("include_history", includeHistory)
@@ -253,34 +285,32 @@ $prompt
                     }
                     put("options", options)
                 }
-    
+
                 try {
                     // Send the request
-                    val outputStream = OutputStreamWriter(connection.outputStream)
-                    outputStream.write(requestBody.toString())
-                    outputStream.flush()
-                    outputStream.close()
-        
+                    OutputStreamWriter(connection.outputStream).use { out ->
+                        out.write(requestBody.toString())
+                        out.flush()
+                    }
+
                     // Get the response
                     val responseCode = connection.responseCode
                     if (responseCode == HttpURLConnection.HTTP_OK) {
                         val reader = BufferedReader(InputStreamReader(connection.inputStream))
                         val responseJson = JSONObject(reader.readText())
-                        response = responseJson.getString("response")
-                        
+                        response = responseJson.optString("response", "")
+
                         Log.d(tag, "=== OLLAMA RESPONSE LOG ===")
                         Log.d(tag, "Server URL: $baseUrl")
                         Log.d(tag, "Response Code: $responseCode")
                         Log.d(tag, "Response Length: ${response.length} characters")
                         Log.d(tag, "Response Content: $response")
                         Log.d(tag, "=========================")
-                        
-                        success = true
+
                         connection.disconnect()
-                        break
+                        return@withContext response
                     } else {
                         Log.e(tag, "Error response from $baseUrl: $responseCode")
-                        // Try to read error message if available
                         try {
                             val errorReader = BufferedReader(InputStreamReader(connection.errorStream))
                             val errorResponse = errorReader.readText()
@@ -293,31 +323,18 @@ $prompt
                     Log.e(tag, "Error sending request to $baseUrl", e)
                     lastError = e
                 } finally {
-                    connection.disconnect()
+                    try { connection.disconnect() } catch (_: Exception) {}
                 }
-            } catch (e: ConnectException) {
-                Log.e(tag, "Failed to connect to $baseUrl", e)
-                lastError = e
             } catch (e: Exception) {
-                Log.e(tag, "Error sending prompt to $baseUrl", e)
+                Log.e(tag, "Failed to connect to $baseUrl", e)
                 lastError = e
             }
         }
-        
-        if (!success) {
-            Log.e(tag, "=== OLLAMA CONNECTION FAILED ===")
-            Log.e(tag, "All base URLs failed", lastError)
-            Log.e(tag, "Last error: ${lastError?.message}")
-            Log.e(tag, "==============================")
-            return@withContext "Error: No se pudo conectar al servidor LLM. ${lastError?.message ?: ""}"
-        }
-        
-        Log.d(tag, "=== OLLAMA PROCESSING COMPLETE ===")
-        Log.d(tag, "Final response delivered successfully")
-        Log.d(tag, "Final response length: ${response.length} characters")
-        Log.d(tag, "=================================")
-        
-        return@withContext response
+
+        Log.e(tag, "=== OLLAMA CONNECTION FAILED ===")
+        Log.e(tag, "Tried reachable candidates: ${reachable.joinToString()}")
+        Log.e(tag, "Last error: ${lastError?.message}")
+        return@withContext "Error: No se pudo conectar al servidor LLM. ${lastError?.message ?: "ningún detalle"}"
     }
 
     /**

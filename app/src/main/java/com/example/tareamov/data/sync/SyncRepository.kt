@@ -458,6 +458,23 @@ class SyncRepository(
         }
     }
 
+    // Fetch creator name/username for a course with exact title. Returns null if not found.
+    suspend fun fetchCreatorNameByCourseTitle(title: String): String? {
+        return try {
+            if (!supabaseClient.isConfigured()) return null
+            val course = withContext(Dispatchers.IO) { supabaseClient.fetchCourseByTitle(title) }
+            if (course == null) {
+                Log.d("SyncRepository", "fetchCreatorNameByCourseTitle: no course found with title='$title'")
+                return null
+            }
+            // The app's Course entity exposes creatorUsername. Use that as primary creator identifier.
+            return if (!course.creatorUsername.isNullOrBlank()) course.creatorUsername else null
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchCreatorNameByCourseTitle failed for title=$title", e)
+            null
+        }
+    }
+
     // New wrappers that use SupabaseClient server-side filters when available
     suspend fun fetchTopicsByCourseFromSupabase(courseId: Long): List<Topic> {
         return try {

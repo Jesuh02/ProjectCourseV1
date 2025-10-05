@@ -5,7 +5,6 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
-import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.config.RAGConfig
 import org.json.JSONObject
 import org.json.JSONArray
@@ -14,11 +13,32 @@ import kotlin.math.sqrt
 
 /**
  * RAG (Retrieval-Augmented Generation) service for efficient database querying
+ * 
+ * ARQUITECTURA DEL SISTEMA:
+ * ========================
+ * 1. Usuario escribe consulta en lenguaje natural en DatabaseQueryFragment
+ * 2. MCPService detecta shortcuts (field-by-id) o delega a RAGDatabaseService
+ * 3. RAGDatabaseService:
+ *    a) Analiza intención (LIST_ALL, SEARCH_SPECIFIC, COUNT_AGGREGATE, etc.)
+ *    b) Identifica tablas relevantes usando mapeo semántico
+ *    c) **CONSULTA DIRECTAMENTE A SUPABASE** via SupabaseClient
+ *    d) Obtiene JSON real de la base de datos (NO usa Room)
+ *    e) Ordena resultados por ID server-side cuando es posible
+ *    f) Filtra datos relevantes según la consulta
+ *    g) Genera respuesta con LLM usando MSPClient
+ * 4. DatabaseQueryFragment muestra:
+ *    - Respuesta formateada
+ *    - URL de Supabase usada (para debugging)
+ * 
+ * FLUJO DE DATOS:
+ * Usuario → lenguaje natural → RAG → Supabase REST API → JSON → filtrado → LLM → respuesta
+ * 
  * Implements concepts from LangChain for optimized information retrieval
  */
 class RAGDatabaseService(private val context: Context) {
     private val tag = "RAGDatabaseService"
-    private val database = AppDatabase.getDatabase(context)
+    // IMPORTANTE: Supabase es la ÚNICA fuente de datos para RAG queries (NO se usa Room)
+    private val supabase = SupabaseClient
     
     // Vector store simulation for semantic search
     private val documentChunks = mutableMapOf<String, List<DocumentChunk>>()
@@ -147,7 +167,11 @@ class RAGDatabaseService(private val context: Context) {
      * Main entry point for RAG-based query processing
      */
     suspend fun processRAGQuery(userQuery: String): String = withContext(Dispatchers.IO) {
-        Log.d(tag, "Processing RAG query: $userQuery")
+        Log.d(tag, "═══════════════════════════════════════════════")
+        Log.d(tag, "🔍 RAG QUERY START")
+        Log.d(tag, "Query: $userQuery")
+        Log.d(tag, "Supabase configured: ${supabase.isConfigured()}")
+        Log.d(tag, "═══════════════════════════════════════════════")
         
         // Special handling for "all tables" requests
         val isRequestingAllTables = userQuery.lowercase().let { query ->
@@ -280,12 +304,47 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
         }
         
         try {
+            // Quick deterministic shortcut: "tema llamado <name>" or "tema llamado: <name>" -> query Supabase directly
+            val temaLlamadoRegex = "tema llamado[:]?\\s*([\\w\\-]+)".toRegex(RegexOption.IGNORE_CASE)
+            temaLlamadoRegex.find(userQuery)?.let { match ->
+                val topicName = match.groupValues[1]
+                Log.d(tag, "🔎 Direct shortcut detected: tema llamado -> $topicName")
+                try {
+                    val topic = supabase.fetchTopicByName(topicName)
+                    if (topic != null) {
+                        Log.d(tag, "  ✓ Topic found: id=${topic.id} courseId=${topic.courseId} name=${topic.name}")
+                        val course = supabase.fetchCourseById(topic.courseId)
+                        val sb = StringBuilder()
+                        sb.appendLine("🔎 Resultado directo:")
+                        sb.appendLine("Tema: ${topic.name} (ID: ${topic.id})")
+                        if (course != null) {
+                            sb.appendLine("Pertenece al curso: ${course.title} (ID: ${course.id})")
+                            if (course.description.isNotBlank()) sb.appendLine("Descripción del curso: ${course.description}")
+                        } else {
+                            sb.appendLine("Pertenece al curso con ID: ${topic.courseId} (Información de curso no encontrada)")
+                        }
+                        return@withContext sb.toString()
+                    } else {
+                        Log.w(tag, "No se encontró topic con name=$topicName via Supabase")
+                        // fallthrough to regular RAG flow
+                    }
+                } catch (e: Exception) {
+                    Log.e(tag, "Error resolving topic shortcut", e)
+                }
+            }
+
             // 1. Analyze query intent and extract context
             val queryContext = analyzeQueryIntent(userQuery)
-            Log.d(tag, "Query context: $queryContext")
+            Log.d(tag, "📊 Query Context Detected:")
+            Log.d(tag, "  - Intent: ${queryContext.intent}")
+            Log.d(tag, "  - Target Tables: ${queryContext.targetTables}")
+            Log.d(tag, "  - Relevant Columns: ${queryContext.relevantColumns}")
+            Log.d(tag, "  - Filters: ${queryContext.filters}")
             
-            // 2. Retrieve relevant database content
+            // 2. Retrieve relevant database content FROM SUPABASE
+            Log.d(tag, "🌐 Fetching data from Supabase...")
             val relevantData = retrieveRelevantData(queryContext)
+            Log.d(tag, "✅ Data retrieved: ${relevantData.length} characters")
             
             // 3. Generate context-aware response
             val response = generateResponse(queryContext, relevantData, userQuery)
@@ -338,6 +397,28 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
      * Use semantic similarity with RAGConfig to identify relevant database tables
      */
     private fun identifyRelevantTablesWithConfig(query: String): List<String> {
+        // PRIORITY 1: Explicit table name detection using regex patterns
+        // When user says "tabla X", "de la tabla X", "datos de X", etc., they mean ONLY that table
+        val explicitTablePatterns = listOf(
+            Regex("""(?:tabla|table)\s+([a-z_]+)"""),
+            Regex("""(?:de|from)\s+(?:la\s+)?tabla\s+([a-z_]+)"""),
+            Regex("""datos\s+(?:de|from)\s+(?:la\s+)?(?:tabla\s+)?([a-z_]+)"""),
+            Regex("""(?:de|in|en)\s+([a-z_]+)\b""")
+        )
+        
+        for (pattern in explicitTablePatterns) {
+            val match = pattern.find(query.lowercase())
+            if (match != null) {
+                val explicitTable = match.groupValues[1]
+                // Verify it's a known table from our schema
+                if (schemaDefinitions.containsKey(explicitTable)) {
+                    Log.d(tag, "🎯 Explicit table detected: $explicitTable (ignoring semantic matching)")
+                    return listOf(explicitTable)
+                }
+            }
+        }
+        
+        // PRIORITY 2: Semantic similarity matching (only if no explicit table found)
         val relevantTables = mutableListOf<String>()
         
         RAGConfig.TABLE_SEMANTIC_MAPPING.forEach { (tableName, semanticTags) ->
@@ -503,8 +584,31 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
             }
             
             QueryIntent.RELATIONSHIP -> {
-                val relationshipData = getRelationshipData(context)
-                result.append(relationshipData)
+                // Quick pattern: if user asks who has uploaded the most videos, compute locally and return username
+                val qLower = context.semanticQuery.lowercase()
+                val asksTopUploader = listOf("mas ha subido", "más ha subido", "quien ha subido más", "quien ha subido mas", "usuario que mas", "usuario que más", "el usuario que más").any { qLower.contains(it) }
+                if (asksTopUploader && context.targetTables.contains("videos")) {
+                    try {
+                        val videos = supabase.fetchVideos()
+                        if (videos.isEmpty()) {
+                            result.append("No hay videos disponibles para analizar.")
+                        } else {
+                            val counts = videos.groupingBy { it.username ?: "(sin_usuario)" }.eachCount()
+                            val top = counts.maxByOrNull { it.value }
+                            if (top != null) {
+                                result.append("El usuario que más ha subido videos es '${top.key}' con ${top.value} videos.")
+                            } else {
+                                result.append("No se pudo determinar el usuario con más videos.")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(tag, "Error computing top uploader", e)
+                        result.append("Error al calcular el usuario con más videos: ${e.message}")
+                    }
+                } else {
+                    val relationshipData = getRelationshipData(context)
+                    result.append(relationshipData)
+                }
             }
             
             QueryIntent.RECENT_DATA -> {
@@ -533,67 +637,82 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
      */
     private suspend fun getTableData(tableName: String, limit: Int = RAGConfig.MAX_RETRIEVED_ITEMS): String = withContext(Dispatchers.IO) {
         try {
-            when (tableName) {
+            Log.d(tag, "📥 Fetching from Supabase table: $tableName (limit=$limit)")
+            val result = when (tableName) {
                 "personas" -> {
-                    val personas = database.personaDao().getAllPersonasList().take(limit)
+                    val personas = supabase.fetchPersonas().sortedBy { it.id }.take(limit)
+                    Log.d(tag, "  ✓ Fetched ${personas.size} personas from Supabase")
                     formatPersonasData(personas)
                 }
                 "usuarios" -> {
-                    val usuarios = database.usuarioDao().getAllUsuarios().take(limit)
+                    val usuarios = supabase.fetchUsuarios().sortedBy { it.id }.take(limit)
+                    Log.d(tag, "  ✓ Fetched ${usuarios.size} usuarios from Supabase")
                     formatUsuariosData(usuarios)
                 }
                 "videos" -> {
-                    val videos = database.videoDao().getAllVideos().take(limit)
+                    val videos = supabase.fetchVideos().sortedBy { it.id }.take(limit)
+                    Log.d(tag, "  ✓ Fetched ${videos.size} videos from Supabase")
                     formatVideosData(videos)
                 }
                 "topics" -> {
-                    val topics = database.topicDao().getAllTopics().take(limit)
+                    val topics = supabase.fetchTopics().sortedBy { it.id }.take(limit)
+                    Log.d(tag, "  ✓ Fetched ${topics.size} topics from Supabase")
                     formatTopicsData(topics)
                 }
                 "content_items" -> {
-                    val contentItems = database.contentItemDao().getAllContentItems().take(limit)
+                    val contentItems = supabase.fetchContentItems().sortedBy { it.id }.take(limit)
+                    Log.d(tag, "  ✓ Fetched ${contentItems.size} content_items from Supabase")
                     formatContentItemsData(contentItems)
                 }
                 "tasks" -> {
-                    val tasks = database.taskDao().getAllTasks().take(limit)
+                    val tasks = supabase.fetchTasks().sortedBy { it.id }.take(limit)
+                    Log.d(tag, "  ✓ Fetched ${tasks.size} tasks from Supabase")
                     formatTasksData(tasks)
                 }
                 "subscriptions" -> {
-                    val subscriptions = database.subscriptionDao().getAllSubscriptions().take(limit)
+                    // Subscription entity has no `id`; fetch from Supabase and sort by subscriptionDate
+                    val subscriptions = supabase.fetchSubscriptions().sortedBy { it.subscriptionDate }.take(limit)
                     formatSubscriptionsData(subscriptions)
                 }
                 "task_submissions" -> {
-                    val submissions = database.taskSubmissionDao().getAllTaskSubmissions().take(limit)
+                    val submissions = supabase.fetchTaskSubmissions().sortedBy { it.id }.take(limit)
                     formatTaskSubmissionsData(submissions)
                 }
                 "chat_messages" -> {
-                    val messages = database.chatMessageDao().getAllMessages().first()
-                    formatChatMessagesData(messages.take(limit))
+                    val messages = supabase.fetchChatMessages().sortedBy { it.id }.take(limit)
+                    formatChatMessagesData(messages)
                 }
                 "file_contexts" -> {
-                    val contexts = database.fileContextDao().getAllFileContexts().first()
-                    formatFileContextsData(contexts.take(limit))
+                    val contexts = supabase.fetchFileContexts().sortedBy { it.id }.take(limit)
+                    formatFileContextsData(contexts)
                 }
                 "courses" -> {
-                    val courses = database.courseDao().getAllCourses().take(limit)
+                    val courses = supabase.fetchCourses().sortedBy { it.id }.take(limit)
+                    Log.d(tag, "  ✓ Fetched ${courses.size} courses from Supabase (ordered by id)")
                     formatCoursesData(courses)
                 }
                 "roles" -> {
-                    val roles = database.rolDao().getAllRoles().take(limit)
+                    val roles = supabase.fetchRoles().sortedBy { it.id }.take(limit)
                     formatRolesData(roles)
                 }
                 "recursos" -> {
-                    val recursos = database.recursoDao().getAllRecursos().take(limit)
+                    val recursos = supabase.fetchRecursos().sortedBy { it.id }.take(limit)
                     formatRecursosData(recursos)
                 }
                 "rol_recursos" -> {
-                    val rolRecursos = database.rolRecursoDao().getAllRolRecursos()
+                    // RolRecurso has composite keys (rolId, recursoId). Fetch from Supabase and sort by those keys.
+                    val rolRecursos = supabase.fetchRolRecursos().sortedWith(compareBy({ it.rolId }, { it.recursoId }))
                     formatRolRecursosData(rolRecursos.take(limit))
                 }
-                else -> "Tabla no encontrada: $tableName. Tablas disponibles: personas, usuarios, videos, topics, content_items, tasks, subscriptions, task_submissions, chat_messages, file_contexts, courses, roles, recursos, rol_recursos"
+                else -> {
+                    Log.w(tag, "  ⚠️ Tabla desconocida: $tableName")
+                    "Tabla no encontrada: $tableName. Tablas disponibles: personas, usuarios, videos, topics, content_items, tasks, subscriptions, task_submissions, chat_messages, file_contexts, courses, roles, recursos, rol_recursos"
+                }
             }
+            Log.d(tag, "📤 Returning formatted data for $tableName")
+            return@withContext result
         } catch (e: Exception) {
-            Log.e(tag, "Error getting data from $tableName", e)
+            Log.e(tag, "❌ Error getting data from $tableName", e)
             "Error obteniendo datos de $tableName: ${e.message}"
         }
     }
@@ -604,20 +723,20 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
     private suspend fun getTableCount(tableName: String): Int = withContext(Dispatchers.IO) {
         try {
             when (tableName) {
-                "personas" -> database.personaDao().getAllPersonasList().size
-                "usuarios" -> database.usuarioDao().getAllUsuarios().size
-                "videos" -> database.videoDao().getAllVideos().size
-                "topics" -> database.topicDao().getAllTopics().size
-                "content_items" -> database.contentItemDao().getAllContentItems().size
-                "tasks" -> database.taskDao().getAllTasks().size
-                "subscriptions" -> database.subscriptionDao().getAllSubscriptions().size
-                "task_submissions" -> database.taskSubmissionDao().getAllTaskSubmissions().size
-                "chat_messages" -> database.chatMessageDao().getAllMessages().first().size
-                "file_contexts" -> database.fileContextDao().getAllFileContexts().first().size
-                "courses" -> database.courseDao().getAllCourses().size
-                "roles" -> database.rolDao().getAllRoles().size
-                "recursos" -> database.recursoDao().getAllRecursos().size
-                "rol_recursos" -> database.rolRecursoDao().getAllRolRecursos().size
+                "personas" -> supabase.fetchPersonas().size
+                "usuarios" -> supabase.fetchUsuarios().size
+                "videos" -> supabase.fetchVideos().size
+                "topics" -> supabase.fetchTopics().size
+                "content_items" -> supabase.fetchContentItems().size
+                "tasks" -> supabase.fetchTasks().size
+                "subscriptions" -> supabase.fetchSubscriptions().size
+                "task_submissions" -> supabase.fetchTaskSubmissions().size
+                "chat_messages" -> supabase.fetchChatMessages().size
+                "file_contexts" -> supabase.fetchFileContexts().size
+                "courses" -> supabase.fetchCourses().size
+                "roles" -> supabase.fetchRoles().size
+                "recursos" -> supabase.fetchRecursos().size
+                "rol_recursos" -> supabase.fetchRolRecursos().size
                 else -> 0
             }
         } catch (e: Exception) {
@@ -633,7 +752,7 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
         try {
             when (tableName) {
                 "usuarios" -> {
-                    val usuarios = database.usuarioDao().getAllUsuarios()
+                    val usuarios = supabase.fetchUsuarios()
                     val filtered = usuarios.filter { usuario ->
                         filters["usuario"]?.let { return@filter usuario.usuario.contains(it, ignoreCase = true) }
                         // General text search
@@ -644,14 +763,76 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
                     formatUsuariosData(filtered)
                 }
                 "videos" -> {
-                    val videos = database.videoDao().getAllVideos()
+                    val videos = supabase.fetchVideos()
                     val filtered = videos.filter { video ->
                         query.split(" ").any { term ->
-                            video.title.contains(term, ignoreCase = true) ||
-                            video.description.contains(term, ignoreCase = true)
+                            (video.title ?: "").contains(term, ignoreCase = true) ||
+                            (video.description ?: "").contains(term, ignoreCase = true)
                         }
                     }
                     formatVideosData(filtered)
+                }
+                "topics" -> {
+                    Log.d(tag, "🔍 Searching topics table for query: $query")
+                    val topics = supabase.fetchTopics().sortedBy { it.id }
+                    Log.d(tag, "  ✓ Fetched ${topics.size} topics from Supabase")
+                    
+                    // Extract search terms from query (e.g., "tema llamado 778" -> "778")
+                    val searchTerms = query.split(" ").filter { it.isNotBlank() }
+                    Log.d(tag, "  🔎 Search terms: $searchTerms")
+                    
+                    val filtered = topics.filter { topic ->
+                        searchTerms.any { term ->
+                            topic.name.contains(term, ignoreCase = true) ||
+                            (topic.description ?: "").contains(term, ignoreCase = true)
+                        }
+                    }
+                    Log.d(tag, "  📊 Filtered to ${filtered.size} matching topics")
+                    
+                    if (filtered.isEmpty()) {
+                        Log.w(tag, "  ⚠️ No topics found matching search terms")
+                        return@withContext "No se encontraron temas que coincidan con: ${searchTerms.joinToString(", ")}"
+                    }
+                    
+                    // For each matching topic, resolve the course information
+                    val result = StringBuilder()
+                    result.appendLine("📚 Temas encontrados (${filtered.size}):")
+                    result.appendLine()
+                    
+                    filtered.forEach { topic ->
+                        result.appendLine("🔹 Tema: ${topic.name}")
+                        if (topic.description.isNotBlank()) {
+                            result.appendLine("   Descripción: ${topic.description}")
+                        }
+                        result.appendLine("   ID del tema: ${topic.id}")
+                        result.appendLine("   Orden: ${topic.orderIndex}")
+                        
+                        // Resolve course information
+                        try {
+                            val course = supabase.fetchCourseById(topic.courseId)
+                            if (course != null) {
+                                Log.d(tag, "  ✓ Resolved course: id=${course.id}, title=${course.title}")
+                                result.appendLine("   ✅ Pertenece al curso:")
+                                result.appendLine("      - ID: ${course.id}")
+                                result.appendLine("      - Título: ${course.title}")
+                                if (course.description.isNotBlank()) {
+                                    result.appendLine("      - Descripción: ${course.description}")
+                                }
+                                if (course.price > 0) {
+                                    result.appendLine("      - Precio: $${course.price}")
+                                }
+                            } else {
+                                Log.w(tag, "  ⚠️ Course with id=${topic.courseId} not found")
+                                result.appendLine("   ⚠️ Curso no encontrado (ID: ${topic.courseId})")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(tag, "  ❌ Error fetching course ${topic.courseId}", e)
+                            result.appendLine("   ❌ Error al obtener información del curso: ${e.message}")
+                        }
+                        result.appendLine()
+                    }
+                    
+                    result.toString()
                 }
                 // Add more table-specific search logic as needed
                 else -> getTableData(tableName, 20) // Fallback to general data
@@ -668,26 +849,26 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
     private suspend fun getRelationshipData(context: QueryContext): String = withContext(Dispatchers.IO) {
         val result = StringBuilder()
         
-        try {
-            // Example: Videos by user
-            if (context.targetTables.contains("videos") && context.filters.containsKey("usuario")) {
-                val username = context.filters["usuario"]!!
-                val userVideos = database.videoDao().getAllVideos().filter { it.username == username }
-                result.append("Videos creados por $username:\n")
-                result.append(formatVideosData(userVideos))
-            }
-            
-            // Example: Tasks in topics
-            if (context.targetTables.contains("tasks") && context.targetTables.contains("topics")) {
-                val topics = database.topicDao().getAllTopics().take(10)
-                topics.forEach { topic ->
-                    val tasks = database.taskDao().getAllTasks().filter { it.topicId == topic.id }
-                    if (tasks.isNotEmpty()) {
-                        result.append("Tema: ${topic.name}\n")
-                        result.append("Tareas: ${tasks.joinToString(", ") { it.name }}\n\n")
+            try {
+                // Example: Videos by user (fetch from Supabase)
+                if (context.targetTables.contains("videos") && context.filters.containsKey("usuario")) {
+                    val username = context.filters["usuario"]!!
+                    val userVideos = supabase.fetchVideosByUsername(username)
+                    result.append("Videos creados por $username:\n")
+                    result.append(formatVideosData(userVideos))
+                }
+
+                // Example: Tasks in topics (fetch topics and tasks from Supabase)
+                if (context.targetTables.contains("tasks") && context.targetTables.contains("topics")) {
+                    val topics = supabase.fetchTopics().take(10)
+                    topics.forEach { topic ->
+                        val tasks = supabase.fetchTasks().filter { it.topicId == topic.id }
+                        if (tasks.isNotEmpty()) {
+                            result.append("Tema: ${topic.name}\n")
+                            result.append("Tareas: ${tasks.joinToString(", ") { it.name }}\n\n")
+                        }
                     }
                 }
-            }
             
         } catch (e: Exception) {
             Log.e(tag, "Error getting relationship data", e)
@@ -704,19 +885,19 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
         try {
             when (tableName) {
                 "usuarios" -> {
-                    val usuarios = database.usuarioDao().getAllUsuarios()
+                    val usuarios = supabase.fetchUsuarios()
                         .sortedByDescending { it.id }
                         .take(10)
                     formatUsuariosData(usuarios)
                 }
                 "videos" -> {
-                    val videos = database.videoDao().getAllVideos()
+                    val videos = supabase.fetchVideos()
                         .sortedByDescending { it.timestamp }
                         .take(10)
                     formatVideosData(videos)
                 }
                 "subscriptions" -> {
-                    val subscriptions = database.subscriptionDao().getAllSubscriptions()
+                    val subscriptions = supabase.fetchSubscriptions()
                         .sortedByDescending { it.subscriptionDate }
                         .take(10)
                     formatSubscriptionsData(subscriptions)
@@ -745,14 +926,14 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
             
             // Additional analytics
             if (tables.contains("videos") && tables.contains("usuarios")) {
-                val videos = database.videoDao().getAllVideos()
-                val usuarios = database.usuarioDao().getAllUsuarios()
+                val videos = supabase.fetchVideos()
+                val usuarios = supabase.fetchUsuarios()
                 val creatorStats = videos.groupBy { it.username }
                     .mapValues { it.value.size }
                     .toList()
                     .sortedByDescending { it.second }
                     .take(5)
-                
+
                 result.append("\nTop 5 creadores por número de videos:\n")
                 creatorStats.forEach { (username, count) ->
                     result.append("$username: $count videos\n")
@@ -773,22 +954,50 @@ Puedes hacer consultas sobre cualquiera de estas tablas o sus relaciones.
     private suspend fun generateResponse(context: QueryContext, relevantData: String, originalQuery: String): String {
         val mspClient = MSPClient(this.context)
         val localLlamaService = LocalLlamaService(this.context)
-        
+
+        // Deterministic short-circuit for simple retrievals: when we already have
+        // concrete data from Supabase for LIST_ALL or SEARCH_SPECIFIC intents,
+        // prefer returning the server-formatted response directly to avoid LLM
+        // hallucinations (e.g. "No hay registros...") overriding real data.
+        try {
+            val hasServerData = relevantData.isNotBlank() && relevantData.length > 10
+            if (hasServerData && (context.intent == QueryIntent.LIST_ALL || context.intent == QueryIntent.SEARCH_SPECIFIC)) {
+                Log.d(tag, "🔎 Deterministic path: returning direct formatted data for intent=${context.intent}")
+                return formatDirectResponse(context, relevantData, originalQuery)
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "Error evaluating deterministic shortcut: ${e.message}")
+        }
+
         // Create optimized prompt with retrieved context
         val prompt = buildOptimizedPrompt(context, relevantData, originalQuery)
-        
+
         return try {
-            // Try MSP client first
-            mspClient.sendPrompt(prompt)
-        } catch (e: Exception) {
-            Log.w(tag, "MSP failed, trying LocalLlama", e)
-            try {
-                localLlamaService.generateResponse(prompt)
-            } catch (e2: Exception) {
-                Log.e(tag, "Both LLM services failed", e2)
-                // Return the raw data as fallback
-                formatDirectResponse(context, relevantData, originalQuery)
+            // Try MSP client first. MSPClient may return an error-string instead of throwing.
+            val mspResult = try { mspClient.sendPrompt(prompt) } catch (e: Exception) {
+                Log.w(tag, "MSPClient threw an exception", e)
+                "Error: ${e.message}"
             }
+
+            // If MSP returned an explicit error message, consider it a failure and fallback
+            if (mspResult.isBlank() || mspResult.startsWith("Error:") || mspResult.contains("No se pudo conectar al servidor LLM")) {
+                Log.w(tag, "MSPClient returned error or empty response: ${mspResult.take(200)}")
+                try {
+                    val local = localLlamaService.generateResponse(prompt)
+                    if (local.isNotBlank()) return local
+                } catch (e2: Exception) {
+                    Log.e(tag, "LocalLlama also failed", e2)
+                }
+
+                // If both LLMs fail or provided no useful output, return the structured direct response
+                return formatDirectResponse(context, relevantData, originalQuery)
+            }
+
+            // Otherwise return successful MSP result
+            mspResult
+        } catch (e: Exception) {
+            Log.e(tag, "Unexpected error generating response", e)
+            formatDirectResponse(context, relevantData, originalQuery)
         }
     }
 
