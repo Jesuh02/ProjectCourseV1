@@ -48,6 +48,13 @@ class ExploreFragment : Fragment() {
     // New lists for Course entities
     private val coursesFromTableList = mutableListOf<Course>()
     private var allCoursesFromTableList = mutableListOf<Course>()
+    
+    // Paginación
+    private var currentPage = 0
+    private val pageSize = 10
+    private var totalCourses = 0
+    private var isLoadingCourses = false
+    private var hasTriggeredLoadAtPosition5 = false // Evita cargar múltiples veces al pasar curso 5
 
     // Variables for thumbnail change functionality
     private var currentCourseForThumbnailChange: VideoData? = null
@@ -102,8 +109,8 @@ class ExploreFragment : Fragment() {
         // Setup course observation
         setupCourseObservation()
 
-        // Cargar los cursos
-        loadCourses()
+    // Cargar los cursos (forzar fetch remoto al entrar en el fragment)
+    loadCourses(forceRemote = true)
 
         // Initialize stats with 0 values initially
         updateCourseStats()
@@ -241,7 +248,7 @@ class ExploreFragment : Fragment() {
         return VideoData(
             id = course.id,
             username = usernameSafe,
-            description = course.description,
+            description = course.description ?: "", // Asegurar que no sea null
             title = course.title,
             videoUriString = course.videoUri ?: "",
             localFilePath = course.localFilePath,
@@ -302,8 +309,33 @@ class ExploreFragment : Fragment() {
         )
         coursesRecyclerView.adapter = coursesAdapter
 
-        // Agregar ScrollListener para optimizar la reproducción
+        // Agregar ScrollListener para paginación
         coursesRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                super.onScrolled(recyclerView, dx, dy)
+                
+                val layoutManager = recyclerView.layoutManager as? LinearLayoutManager
+                if (layoutManager != null && dy > 0) { // Solo cuando se hace scroll hacia abajo
+                    val lastVisibleItemPosition = layoutManager.findLastVisibleItemPosition()
+
+                    // Cargar más cuando llegue al curso 5 (posición 4, porque empieza en 0)
+                    if (!isLoadingCourses && 
+                        coursesList.size < totalCourses &&
+                        lastVisibleItemPosition >= 4 &&
+                        !hasTriggeredLoadAtPosition5) {
+                        Log.d("ExploreFragment", "User scrolled to course 5 (position $lastVisibleItemPosition), loading more courses...")
+                        hasTriggeredLoadAtPosition5 = true
+                        loadMoreCourses()
+                    }
+                    
+                    // Después de cargar más, resetear el flag cuando pase la posición 10
+                    if (hasTriggeredLoadAtPosition5 && lastVisibleItemPosition >= 14) {
+                        hasTriggeredLoadAtPosition5 = false
+                        Log.d("ExploreFragment", "Reset load trigger for next batch")
+                    }
+                }
+            }
+            
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                 super.onScrollStateChanged(recyclerView, newState)
                 if (newState == RecyclerView.SCROLL_STATE_IDLE) {
@@ -831,116 +863,165 @@ class ExploreFragment : Fragment() {
             }
         }
     }    /**
-     * Load courses for ExploreFragment
-     * NOTE: This method loads from Course table (created with CourseCreationViewModel)
-     * Also includes migrated VideoData for backward compatibility
-     * Courses created here will NOT appear in VideoHomeFragment
+     * Load courses with pagination (10 at a time)
+     * OPTIMIZED: Uses Supabase pagination endpoint directly
      */
-    private fun loadCourses() {
+    private fun loadCourses(forceRemote: Boolean = false) {
+        if (isLoadingCourses) {
+            Log.d("ExploreFragment", "Already loading courses, skipping")
+            return
+        }
+
+        isLoadingCourses = true
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                // Prefer fetching courses from Supabase (all users). Fallback to local Course table if unavailable.
-                val db = AppDatabase.getDatabase(requireContext())
-                val syncRepo = com.example.tareamov.data.sync.SyncRepository(
-                    db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
-                    db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-                    db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
-                )
-
-                val coursesFromRemote = withContext(Dispatchers.IO) {
-                    try {
-                        syncRepo.fetchCoursesFromSupabase()
-                    } catch (e: Exception) {
-                        emptyList<Course>()
-                    }
+                Log.d("ExploreFragment", "loadCourses: Loading initial courses (page 0)")
+                
+                val (courses, total) = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.fetchCoursesSummary(
+                        limit = pageSize,
+                        offset = 0,
+                        orderBy = "timestamp",
+                        direction = "desc"
+                    )
                 }
 
-                val coursesToUse = if (coursesFromRemote.isNotEmpty()) {
-                    Log.d("ExploreFragment", "Loaded ${coursesFromRemote.size} courses from Supabase")
-                    coursesFromRemote
-                } else {
-                    // Fallback to local Course table
-                    withContext(Dispatchers.IO) {
-                        // ensure migration from VideoData if needed
-                        try { courseRepository.populateCoursesFromVideoData(); courseRepository.syncVideoDataToCoursesTable() } catch (_: Exception) {}
-                        courseRepository.getAllCourses()
-                    }
-                }
-
-                // Populate UI lists from coursesToUse
-                allCoursesFromTableList.clear()
-                val sortedCourses = coursesToUse.sortedByDescending { it.timestamp }
-                allCoursesFromTableList.addAll(sortedCourses)
-
-                val videoDataList = sortedCourses.map { course ->
-                    try {
-                        convertCourseToVideoData(course)
-                    } catch (e: Exception) {
-                        Log.w("ExploreFragment", "Failed to convert course id=${course.id} to VideoData", e)
-                        // Create a safe fallback VideoData to avoid crashing the UI
-                        VideoData(
-                            id = course.id,
-                            username = course.creatorUsername ?: "",
-                            title = course.title ?: "",
-                            description = course.description ?: "",
-                            videoUriString = course.videoUri ?: "",
-                            localFilePath = course.localFilePath,
-                            timestamp = course.timestamp,
-                            isPaid = course.isPremium,
-                            thumbnailUri = course.thumbnailUri,
-                            price = if (course.price > 0.0) course.price else null
-                        )
-                    }
-                }
-
-                val sortedVideoData = videoDataList.sortedByDescending { it.timestamp }
-                allCoursesList.clear()
-                allCoursesList.addAll(sortedVideoData)
-
-                // Ensure adapter is updated directly in addition to filtering
-                Log.d("ExploreFragment", "Direct adapter update with ${sortedVideoData.size} items (ensuring UI refresh)")
-                if (::coursesAdapter.isInitialized) {
-                    coursesAdapter.updateCourses(sortedVideoData)
-                } else {
-                    Log.w("ExploreFragment", "coursesAdapter not initialized when trying direct update")
-                }
-
-                filterCourses("")
-            } catch (e: Exception) {
-                Log.e("ExploreFragment", "Error loading courses from Course table", e)
-
-                // Fallback: Load VideoData directly and convert to Course
-                try {
-                    val fallbackVideos = withContext(Dispatchers.IO) {
-                        AppDatabase.getDatabase(requireContext()).videoDao().getAllVideos()
-                    }
-
-                    // Convert VideoData to Course and save to Course table
-                    val convertedCourses = withContext(Dispatchers.IO) {
-                        fallbackVideos.map { video ->
-                            val course = courseRepository.convertVideoDataToCoursePublic(video)
-                            courseRepository.saveCourse(course)
-                            course
-                        }
-                    }
-
-                    // Keep converted courses sorted newest -> oldest
-                    val sortedConverted = convertedCourses.sortedByDescending { it.timestamp }
+                totalCourses = total
+                currentPage = 0
+                hasTriggeredLoadAtPosition5 = false // Resetear flag al cargar inicial
+                
+                withContext(Dispatchers.Main) {
                     allCoursesFromTableList.clear()
-                    allCoursesFromTableList.addAll(sortedConverted)
-
-                    val sortedFallbackVideos = fallbackVideos.sortedByDescending { it.timestamp }
+                    allCoursesFromTableList.addAll(courses)
+                    
+                    val videoDataList = courses.map { convertCourseToVideoData(it) }
                     allCoursesList.clear()
-                    allCoursesList.addAll(sortedFallbackVideos)
-
-                    filterCourses("")
-
-                    Log.d("ExploreFragment", "Fallback: Converted and saved ${fallbackVideos.size} videos to Course table")
-                } catch (fallbackError: Exception) {
-                    Log.e("ExploreFragment", "Fallback loading also failed", fallbackError)
+                    allCoursesList.addAll(videoDataList)
+                    
+                    coursesList.clear()
+                    coursesList.addAll(videoDataList)
+                    
+                    if (::coursesAdapter.isInitialized) {
+                        coursesAdapter.updateCourses(coursesList)
+                    }
+                    
+                    updateCourseStats()
+                    Log.d("ExploreFragment", "Loaded ${courses.size} courses (total: $totalCourses)")
                 }
+
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error loading courses", e)
+                Toast.makeText(context, "Error cargando cursos: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isLoadingCourses = false
             }
         }
+    }
+    
+    /**
+     * Load more courses (next page)
+     */
+    private fun loadMoreCourses() {
+        if (isLoadingCourses) {
+            Log.d("ExploreFragment", "Already loading courses, skipping")
+            return
+        }
+
+        isLoadingCourses = true
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val nextPage = currentPage + 1
+                val offset = nextPage * pageSize
+                
+                Log.d("ExploreFragment", "loadMoreCourses: Loading page $nextPage (offset $offset)")
+
+                val (courses, _) = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.fetchCoursesSummary(
+                        limit = pageSize,
+                        offset = offset,
+                        orderBy = "timestamp",
+                        direction = "desc"
+                    )
+                }
+
+                if (courses.isNotEmpty()) {
+                    currentPage = nextPage
+                    
+                    withContext(Dispatchers.Main) {
+                        allCoursesFromTableList.addAll(courses)
+                        
+                        val videoDataList = courses.map { convertCourseToVideoData(it) }
+                        allCoursesList.addAll(videoDataList)
+                        
+                        val oldSize = coursesList.size
+                        coursesList.addAll(videoDataList)
+                        
+                        if (::coursesAdapter.isInitialized) {
+                            coursesAdapter.notifyItemRangeInserted(oldSize, videoDataList.size)
+                        }
+                        
+                        Log.d("ExploreFragment", "Loaded ${courses.size} more courses (total now: ${coursesList.size}/$totalCourses)")
+                    }
+                } else {
+                    Log.d("ExploreFragment", "No more courses to load")
+                }
+
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error loading more courses", e)
+            } finally {
+                isLoadingCourses = false
+            }
+        }
+    }
+
+    /**
+     * Helper function to display courses in the UI
+     * Shows all loaded courses and updates adapter
+     */
+    private fun displayCourses(courses: List<Course>) {
+        // Sort by timestamp DESC (most recent first)
+        val sortedCourses = courses.sortedByDescending { it.timestamp }
+        
+        allCoursesFromTableList.clear()
+        allCoursesFromTableList.addAll(sortedCourses)
+        
+        // Convert to VideoData for adapter
+        val videoDataList = sortedCourses.map { course ->
+            try {
+                convertCourseToVideoData(course)
+            } catch (e: Exception) {
+                Log.w("ExploreFragment", "displayCourses: Failed to convert course id=${course.id}: ${e.message}")
+                VideoData(
+                    id = course.id,
+                    username = course.creatorUsername ?: "",
+                    title = course.title ?: "Untitled Course",
+                    description = course.description ?: "",
+                    videoUriString = course.videoUri ?: "",
+                    localFilePath = course.localFilePath,
+                    timestamp = course.timestamp,
+                    isPaid = course.isPremium,
+                    thumbnailUri = course.thumbnailUri,
+                    price = if (course.price > 0.0) course.price else null
+                )
+            }
+        }
+        
+        // Store ALL courses for search
+        allCoursesList.clear()
+        allCoursesList.addAll(videoDataList)
+        
+        // Show ALL loaded courses (no limit)
+        coursesList.clear()
+        coursesList.addAll(videoDataList)
+        
+        // Update adapter
+        if (::coursesAdapter.isInitialized) {
+            coursesAdapter.updateCourses(videoDataList)
+            Log.d("ExploreFragment", "displayCourses: Updated adapter with ${videoDataList.size} courses (Total in Supabase: $totalCourses)")
+        }
+        
+        // Update stats
+        updateCourseStats()
     }
 
     // Helper to obtain a SyncRepository instance (uses current AppDatabase)
@@ -956,8 +1037,10 @@ class ExploreFragment : Fragment() {
     // Filter courses by name or category
     private fun filterCourses(query: String) {
         val filtered = if (query.isBlank()) {
-            allCoursesList
+            // When search is empty, show the most recent 10 courses
+            allCoursesList.sortedByDescending { it.timestamp }.take(10)
         } else {
+            // When searching, search in ALL courses (not just top 10)
             allCoursesList.filter { course ->
                 course.title.contains(query, ignoreCase = true) ||
                         course.description.contains(query, ignoreCase = true) ||
@@ -1045,18 +1128,17 @@ class ExploreFragment : Fragment() {
             val popularCoursesCount = v.findViewById<TextView>(R.id.popularCoursesCount)
             val newCoursesCount = v.findViewById<TextView>(R.id.newCoursesCount)
 
-            Log.d("ExploreFragment", "Updating course stats - Filtered courses: ${coursesList.size}, All courses: ${allCoursesList.size}")
+            Log.d("ExploreFragment", "Updating course stats - Loaded courses: ${coursesList.size}, Total in Supabase: $totalCourses")
 
-            // Show total available courses (not just filtered ones)
-            val totalCount = allCoursesList.size
-            totalCoursesCount?.text = totalCount.toString()
+            // Show TOTAL courses from Supabase (not just loaded ones)
+            totalCoursesCount?.text = totalCourses.toString()
             
-            // Count premium courses from all courses as "popular"
+            // Count premium courses from loaded courses as "popular"
             val premiumCount = allCoursesList.count { it.isPaid == true }
             popularCoursesCount?.text = premiumCount.toString()
             Log.d("ExploreFragment", "Premium courses count: $premiumCount")
             
-            // Count recent courses (last 7 days) from all courses as "new"
+            // Count recent courses (last 7 days) from loaded courses as "new"
             val currentTime = System.currentTimeMillis()
             val sevenDaysAgo = currentTime - (7 * 24 * 60 * 60 * 1000)
             val newCount = allCoursesList.count { 
@@ -1077,7 +1159,7 @@ class ExploreFragment : Fragment() {
                 }
             }
 
-            Log.d("ExploreFragment", "Stats updated - Total: $totalCount, Premium: $premiumCount, New: $newCount")
+            Log.d("ExploreFragment", "Stats updated - Total in Supabase: $totalCourses, Loaded: ${coursesList.size}, Premium: $premiumCount, New: $newCount")
         } ?: run {
             Log.w("ExploreFragment", "View is null, cannot update course stats")
         }
@@ -1124,8 +1206,8 @@ class ExploreFragment : Fragment() {
         Log.d("ExploreFragment", "Showing all courses: ${allCoursesList.size} courses")
     }    override fun onResume() {
         super.onResume()
-        // Reload courses when returning to this fragment
-        loadCourses()
+    // Reload courses when returning to this fragment (force remote refresh)
+    loadCourses(forceRemote = true)
         // Sync any changes from RecyclerView to Course table
         syncCoursesToTable()
         // Update stats when resuming

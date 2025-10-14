@@ -448,52 +448,12 @@ class CourseTaskFragment : Fragment() {
 
                 Toast.makeText(context, "Tarea guardada exitosamente", Toast.LENGTH_SHORT).show()
 
-                // Navigate to CourseDetailFragment with the authoritative course id
-                val bundle = Bundle().apply {
-                    putLong("courseId", if (resolvedCourseId > 0) resolvedCourseId else courseId)
-                }
-                // Fire-and-forget: push associated content items to Supabase (task was already pushed above)
-                val contentItemsToPush = contentItemsToSave // already built above
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        for (ci in contentItemsToPush) {
-                            try {
-                                val mapped = ci.copy(topicId = savedTopicId, taskId = savedTaskId)
-                                Log.d("CourseTaskFragment", "Pushing content item to Supabase: ${'$'}{mapped}")
-                                val remoteCiId = syncRepo.insertContentItemRemote(mapped)
-                                if (remoteCiId != null) {
-                                    Log.i("CourseTaskFragment", "Pushed content item remote id=${'$'}remoteCiId for task=${'$'}savedTaskId")
-                                } else {
-                                    Log.w("CourseTaskFragment", "Failed to push content item for task=${'$'}savedTaskId")
-                                }
-                            } catch (e: Exception) {
-                                Log.w("CourseTaskFragment", "Error pushing content item for task=${'$'}savedTaskId", e)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w("CourseTaskFragment", "Error pushing content items to Supabase", e)
-                    }
-                }
+                // Notify CourseDetailFragment to refresh from Supabase
+                findNavController().previousBackStackEntry?.savedStateHandle?.set("task_created", savedTaskId)
+                findNavController().previousBackStackEntry?.savedStateHandle?.set("refresh_from_supabase", true)
 
-                // Safely navigate back to CourseDetailFragment. The action may not exist
-                // if the current destination changed while we were saving (coroutines),
-                // so check current destination first to avoid IllegalArgumentException.
-                try {
-                    val nav = findNavController()
-                    // Try to pop back stack to CourseDetailFragment first (preserves its instance/state)
-                    val popped = nav.popBackStack(R.id.courseDetailFragment, false)
-                    if (!popped) {
-                        // Not on backstack, navigate with bundle as fallback
-                        nav.navigate(R.id.courseDetailFragment, bundle)
-                    }
-                } catch (navEx: Exception) {
-                    Log.w("CourseTaskFragment", "Navigation to CourseDetailFragment failed, falling back", navEx)
-                    try {
-                        findNavController().navigate(R.id.action_courseTaskFragment_to_courseDetailFragment, bundle)
-                    } catch (e: Exception) {
-                        Log.e("CourseTaskFragment", "Fallback navigation also failed", e)
-                    }
-                }
+                // Navigate back
+                findNavController().navigateUp()
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error saving task", e)
                 Toast.makeText(context, "Error al guardar la tarea", Toast.LENGTH_SHORT).show()

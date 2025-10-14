@@ -19,6 +19,7 @@ import com.example.tareamov.databinding.FragmentDatabaseQueryBinding
 import com.example.tareamov.service.DatabaseQueryService
 import com.example.tareamov.service.LocalLlamaService
 import com.example.tareamov.service.MCPService
+import com.example.tareamov.service.MSPClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -378,6 +379,44 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         binding.clearHistoryButton.setOnClickListener {
             showClearHistoryDialog()
         }
+        
+        // Connection status - make it clickable to test connection
+        binding.connectionStatus.setOnClickListener {
+            testLLMConnection()
+        }
+        binding.connectionIndicator.setOnClickListener {
+            testLLMConnection()
+        }
+    }
+    
+    private fun testLLMConnection() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Show testing message
+                val testMessageId = addMessageToChat("🔍 Probando conexión con servidor LLM...", false)
+                
+                withContext(Dispatchers.IO) {
+                    // Create MSPClient to test connection
+                    val mspClient = MSPClient(requireContext())
+                    val status = mspClient.getConnectionStatus()
+                    
+                    withContext(Dispatchers.Main) {
+                        // Remove test message
+                        chatAdapter.removeMessageById(testMessageId)
+                        
+                        // Show connection status
+                        addMessageToChat(status, false)
+                        
+                        // Update connection indicator
+                        val isConnected = status.contains("✓ SERVIDOR OLLAMA CONECTADO")
+                        updateConnectionStatus(isConnected, if (isConnected) "Conectado" else "Desconectado")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("DatabaseQueryFragment", "Error testing connection", e)
+                addMessageToChat("❌ Error al probar conexión: ${e.message}", false)
+            }
+        }
     }
     
     private fun scrollToBottom(smooth: Boolean = false) {
@@ -525,18 +564,32 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     }
 
     private fun checkServerStatus() {
-        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val isServerRunning = try {
-                // Try to check if server is running
-                val modelFile = requireContext().filesDir.resolve("llama3-8b-q4_0.gguf")
-                modelFile.exists()
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Create MSPClient to check Ollama connection
+                val mspClient = MSPClient(requireContext())
+                val testResults = mspClient.testAllConnections()
+                val hasConnection = testResults.any { it.value }
+                
+                updateConnectionStatus(hasConnection, if (hasConnection) "Conectado" else "Desconectado")
+                
+                if (hasConnection) {
+                    Log.d("DatabaseQueryFragment", "✓ LLM server is reachable")
+                } else {
+                    Log.w("DatabaseQueryFragment", "⚠️ LLM server is not reachable")
+                    // Optionally show a message to the user
+                    addMessageToChat("""
+                        ⚠️ No se detectó conexión con el servidor LLM.
+                        
+                        Puedes usar las funciones de consulta, pero las respuestas 
+                        no serán procesadas por IA.
+                        
+                        💡 Toca el indicador de conexión para probar la conectividad.
+                    """.trimIndent(), false)
+                }
             } catch (e: Exception) {
                 Log.e("DatabaseQueryFragment", "Error checking server status", e)
-                false
-            }
-
-            withContext(Dispatchers.Main) {
-                updateConnectionStatus(isServerRunning)
+                updateConnectionStatus(false, "Error")
             }
         }
     }

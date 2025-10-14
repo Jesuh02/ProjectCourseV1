@@ -33,20 +33,24 @@ class MSPClient(private val context: Context) {
     private val cacheTimeoutMs = 5 * 60 * 1000L // 5 minutes
     
     // Lista de IPs posibles (ordenadas por prioridad)
-    // Lista de IPs posibles (ordenadas por prioridad, incluyendo la IP de Wi-Fi y gateway de la última configuración)
+    // Lista de IPs posibles (ordenadas por prioridad - EMULADOR PRIMERO)
     private val possibleBaseUrls = listOf(
-        "http://10.218.57.181:11435",   // IP Wi-Fi actual (ipconfig más reciente)
-        "http://10.218.57.109:11435",   // Gateway predeterminado (ipconfig más reciente)
-        "http://172.17.112.1:11435",    // WSL IP from ipconfig
-        "http://192.168.1.224:11435",   // IP Wi-Fi anterior (ipconfig)
-        "http://192.168.1.254:11435",   // Gateway predeterminado anterior (ipconfig)
-        "http://192.168.1.17:11435",    // Anterior IP Wi-Fi
-        "http://192.168.1.158:11435",   // Previous IP from ipconfig
+        "http://10.0.2.2:11435",        // 🎯 EMULADOR -> HOST (MÁXIMA PRIORIDAD) - La única IP que funciona en emuladores
+        "http://192.168.1.16:11435",    // IP Wi-Fi ACTUAL (ipconfig - Oct 10, 2025) - Funciona en dispositivos físicos
+        "http://192.168.1.1:11435",     // Gateway predeterminado (ipconfig - Oct 10, 2025)
         "http://localhost:11435",       // Localhost - High priority
         "http://127.0.0.1:11435",       // Loopback - High priority
+        "http://192.168.1.10:11435",    // IP Wi-Fi anterior (Oct 6, 2025)
+        "http://10.218.57.181:11435",   // IP Wi-Fi anterior
+        "http://10.218.57.109:11435",   // Gateway predeterminado anterior
+        "http://172.17.112.1:11435",    // WSL IP from ipconfig
+        "http://192.168.1.224:11435",   // IP Wi-Fi anterior
+        "http://192.168.1.254:11435",   // Gateway predeterminado anterior
+        "http://192.168.1.17:11435",    // Anterior IP Wi-Fi
+        "http://192.168.1.158:11435",   // Previous IP from ipconfig
         "http://0.0.0.0:11435"          // Bind address from Ollama logs
     )
-    private val emulatorUrl = "http://10.0.2.2:11435"
+    private val emulatorUrl = "http://10.0.2.2:11435" // Kept for backward compatibility
     private val modelName = "llama3"
 
     // Enhanced OkHttpClient with better timeout handling for large payloads
@@ -107,6 +111,65 @@ class MSPClient(private val context: Context) {
         } catch (e: Exception) {
             Log.d(tag, "isServerRunning: exception checking $url: ${e.message}")
             false
+        }
+    }
+
+    /**
+     * Test all possible Ollama URLs and return diagnostic information
+     * Useful for debugging LLM connection issues
+     */
+    suspend fun testAllConnections(): Map<String, Boolean> = withContext(Dispatchers.IO) {
+        val results = mutableMapOf<String, Boolean>()
+        
+        Log.d(tag, "=== TESTING ALL OLLAMA CONNECTIONS ===")
+        
+        for (url in possibleBaseUrls) {
+            try {
+                val isReachable = isPortOpen(url, 2000)
+                results[url] = isReachable
+                Log.d(tag, "  $url: ${if (isReachable) "✓ REACHABLE" else "✗ UNREACHABLE"}")
+            } catch (e: Exception) {
+                results[url] = false
+                Log.e(tag, "  $url: ✗ ERROR - ${e.message}")
+            }
+        }
+        
+        Log.d(tag, "===================================")
+        return@withContext results
+    }
+
+    /**
+     * Get detailed connection status for debugging
+     */
+    suspend fun getConnectionStatus(): String = withContext(Dispatchers.IO) {
+        val results = testAllConnections()
+        val reachable = results.filter { it.value }
+        
+        if (reachable.isEmpty()) {
+            return@withContext """
+                ❌ NO SE PUDO CONECTAR AL SERVIDOR OLLAMA
+                
+                URLs probadas (${results.size}):
+                ${results.entries.joinToString("\n") { "  • ${it.key}: ${if (it.value) "✓" else "✗"}" }}
+                
+                Posibles soluciones:
+                1. Verifica que Ollama esté ejecutándose en tu PC
+                2. Ejecuta: ollama serve
+                3. Verifica que tu PC y dispositivo estén en la misma red
+                4. Verifica el firewall de Windows
+                5. Usa la IP correcta de tu adaptador Wi-Fi
+                
+                Para obtener tu IP: ipconfig (Windows) o ifconfig (Mac/Linux)
+            """.trimIndent()
+        } else {
+            return@withContext """
+                ✓ SERVIDOR OLLAMA CONECTADO
+                
+                URLs disponibles:
+                ${reachable.entries.joinToString("\n") { "  ✓ ${it.key}" }}
+                
+                El LLM debería funcionar correctamente.
+            """.trimIndent()
         }
     }
 
@@ -219,65 +282,33 @@ $prompt
     
         var currentBaseUrl = ""
         var response = ""
-
-        // Build a short, prioritized candidate list to avoid long probing loops
-        val candidates = mutableListOf<String>()
-        if (isEmulator()) {
-            candidates.add(emulatorUrl)
-        }
-        // prefer localhost loopback early
-        candidates.add("http://127.0.0.1:11435")
-        candidates.add("http://localhost:11435")
-        // finally add the highest-priority configured candidate
-        candidates.add(possibleBaseUrls.first())
-
+        var success = false
         var lastError: Exception? = null
-
-        // Quick port-check and attempt only reachable candidates (fast-fail)
-        val reachable = candidates.filter { candidate ->
-            try {
-                // small timeout socket check
-                val u = URL(candidate)
-                val host = u.host
-                val port = if (u.port != -1) u.port else u.defaultPort
-                val sock = Socket()
-                sock.connect(InetSocketAddress(host, port), 1500)
-                sock.close()
-                true
-            } catch (e: Exception) {
-                Log.d(tag, "Candidate not reachable quickly: $candidate -> ${e.message}")
-                false
-            }
-        }
-
-        if (reachable.isEmpty()) {
-            Log.w(tag, "No reachable LLM candidates found (fast-fail). Skipping heavy probing.")
-            return@withContext "Error: No se pudo conectar al servidor LLM (no hay servidores detectables en las rutas configuradas)."
-        }
-
-        for (baseUrl in reachable) {
+    
+        // Try each possible base URL until one works
+        for (baseUrl in possibleBaseUrls) {
             currentBaseUrl = baseUrl
             try {
                 Log.d(tag, "Trying to connect to $baseUrl...")
-
+                
                 // Construct the request URL
                 val url = URL("$baseUrl/api/generate")
                 val connection = url.openConnection() as HttpURLConnection
-
-                // Set up the connection with tighter timeouts for user flows
+    
+                // Set up the connection with increased timeouts
                 connection.requestMethod = "POST"
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.setRequestProperty("Accept", "application/json")
-                connection.connectTimeout = 5000  // 5 seconds
+                connection.connectTimeout = 15000  // 15 seconds
                 connection.readTimeout = 60000    // 60 seconds
                 connection.doOutput = true
-
+    
                 // Create the request body
                 val requestBody = JSONObject().apply {
                     put("model", modelName)
                     put("prompt", enhancedPrompt)
                     put("stream", false)
-
+    
                     // Add options for context handling
                     val options = JSONObject().apply {
                         put("include_history", includeHistory)
@@ -285,32 +316,34 @@ $prompt
                     }
                     put("options", options)
                 }
-
+    
                 try {
                     // Send the request
-                    OutputStreamWriter(connection.outputStream).use { out ->
-                        out.write(requestBody.toString())
-                        out.flush()
-                    }
-
+                    val outputStream = OutputStreamWriter(connection.outputStream)
+                    outputStream.write(requestBody.toString())
+                    outputStream.flush()
+                    outputStream.close()
+        
                     // Get the response
                     val responseCode = connection.responseCode
                     if (responseCode == HttpURLConnection.HTTP_OK) {
                         val reader = BufferedReader(InputStreamReader(connection.inputStream))
                         val responseJson = JSONObject(reader.readText())
-                        response = responseJson.optString("response", "")
-
+                        response = responseJson.getString("response")
+                        
                         Log.d(tag, "=== OLLAMA RESPONSE LOG ===")
                         Log.d(tag, "Server URL: $baseUrl")
                         Log.d(tag, "Response Code: $responseCode")
                         Log.d(tag, "Response Length: ${response.length} characters")
                         Log.d(tag, "Response Content: $response")
                         Log.d(tag, "=========================")
-
+                        
+                        success = true
                         connection.disconnect()
-                        return@withContext response
+                        break
                     } else {
                         Log.e(tag, "Error response from $baseUrl: $responseCode")
+                        // Try to read error message if available
                         try {
                             val errorReader = BufferedReader(InputStreamReader(connection.errorStream))
                             val errorResponse = errorReader.readText()
@@ -323,18 +356,56 @@ $prompt
                     Log.e(tag, "Error sending request to $baseUrl", e)
                     lastError = e
                 } finally {
-                    try { connection.disconnect() } catch (_: Exception) {}
+                    connection.disconnect()
                 }
-            } catch (e: Exception) {
+            } catch (e: ConnectException) {
                 Log.e(tag, "Failed to connect to $baseUrl", e)
+                lastError = e
+            } catch (e: Exception) {
+                Log.e(tag, "Error sending prompt to $baseUrl", e)
                 lastError = e
             }
         }
-
-        Log.e(tag, "=== OLLAMA CONNECTION FAILED ===")
-        Log.e(tag, "Tried reachable candidates: ${reachable.joinToString()}")
-        Log.e(tag, "Last error: ${lastError?.message}")
-        return@withContext "Error: No se pudo conectar al servidor LLM. ${lastError?.message ?: "ningún detalle"}"
+        
+        if (!success) {
+            Log.e(tag, "=== OLLAMA CONNECTION FAILED ===")
+            Log.e(tag, "All ${possibleBaseUrls.size} base URLs failed to connect")
+            Log.e(tag, "Last error: ${lastError?.javaClass?.simpleName} - ${lastError?.message}")
+            Log.e(tag, "Attempted URLs: ${possibleBaseUrls.joinToString(", ")}")
+            Log.e(tag, "==============================")
+            
+            // Return a detailed error message with actionable advice
+            val errorDetails = lastError?.let { 
+                when (it) {
+                    is ConnectException -> "No se pudo conectar (verifica que Ollama esté ejecutándose)"
+                    is java.net.SocketTimeoutException -> "Tiempo de espera agotado (el servidor está muy lento)"
+                    else -> it.message ?: "Error desconocido"
+                }
+            } ?: "No se pudo establecer conexión"
+            
+            return@withContext """
+                Error: No se pudo conectar al servidor LLM Ollama.
+                
+                Detalles: $errorDetails
+                
+                URLs intentadas (${possibleBaseUrls.size}):
+                ${possibleBaseUrls.take(3).joinToString("\n") { "  • $it" }}
+                ${if (possibleBaseUrls.size > 3) "  • ... y ${possibleBaseUrls.size - 3} más" else ""}
+                
+                Soluciones:
+                1. Verifica que Ollama esté ejecutándose: ollama serve
+                2. Confirma tu IP con: ipconfig (Windows)
+                3. Asegúrate de estar en la misma red Wi-Fi
+                4. Revisa el firewall de Windows
+            """.trimIndent()
+        }
+        
+        Log.d(tag, "=== OLLAMA PROCESSING COMPLETE ===")
+        Log.d(tag, "Final response delivered successfully")
+        Log.d(tag, "Final response length: ${response.length} characters")
+        Log.d(tag, "=================================")
+        
+        return@withContext response
     }
 
     /**

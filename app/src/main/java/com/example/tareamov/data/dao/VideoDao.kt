@@ -55,4 +55,8 @@ interface VideoDao {
     // Add this method to get the first video ID (useful for default references)
     @Query("SELECT id FROM videos ORDER BY id ASC LIMIT 1")
     suspend fun getFirstVideoId(): Long?
+
+    // Add this method to get the maximum video ID for consecutive ID generation
+    @Query("SELECT MAX(id) FROM videos")
+    suspend fun getMaxVideoId(): Long?
 }

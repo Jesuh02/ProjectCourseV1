@@ -20,13 +20,16 @@ class LocalLlamaService(private val context: Context) {
     private val modelFileName = "llama3-8b-q4_0.gguf"
 
     companion object {
-        // Fallback host addresses reported by the Windows ipconfig output (updated with latest)
+        // Fallback host addresses - EMULADOR PRIMERO (Oct 10, 2025)
         val FALLBACK_LLAMA_URLS = listOf(
-            "http://10.218.57.181:11435",  // Wi-Fi IP actual (ipconfig más reciente)
-            "http://10.218.57.109:11435",  // Gateway predeterminado (ipconfig más reciente)
-            "http://172.17.112.1:11435",   // WSL / Hyper-V virtual adapter
+            "http://10.0.2.2:11435",       // 🎯 EMULADOR -> HOST (MÁXIMA PRIORIDAD)
+            "http://192.168.1.16:11435",   // Wi-Fi IP ACTUAL (ipconfig - Oct 10, 2025)
+            "http://192.168.1.1:11435",    // Gateway predeterminado (ipconfig - Oct 10, 2025)
             "http://127.0.0.1:11435",      // Localhost
-            "http://localhost:11435"       // Localhost alternative
+            "http://localhost:11435",      // Localhost alternative
+            "http://10.218.57.181:11435",  // Wi-Fi IP anterior
+            "http://10.218.57.109:11435",  // Gateway predeterminado anterior
+            "http://172.17.112.1:11435"    // WSL / Hyper-V virtual adapter
         )
     }
 
@@ -109,12 +112,13 @@ class LocalLlamaService(private val context: Context) {
 
     /**
      * Generate a response using the local Llama model with RAG optimization
+     * Now attempts to connect to local Ollama instance before falling back to simulation
      */
     suspend fun generateResponse(prompt: String): String = withContext(Dispatchers.IO) {
         if (!isModelLoaded.get()) {
             val initialized = initializeModel()
             if (!initialized) {
-                return@withContext "Error: El modelo Llama 3 no está inicializado."
+                Log.w(TAG, "Llama model not initialized, attempting direct Ollama connection")
             }
         }
 
@@ -123,19 +127,76 @@ class LocalLlamaService(private val context: Context) {
             val maxPromptSize = 6 * 1024  // 6KB for local model
             val optimizedPrompt = optimizePromptForLocalModel(prompt, maxPromptSize)
             
-            // Create enhanced prompt with optimized context
-            val enhancedPrompt = createEnhancedPrompt(optimizedPrompt)
-
-            // Here would be the actual call to the Llama model
-            Log.d(TAG, "Generating response for optimized prompt: ${enhancedPrompt.take(100)}...")
-
+            Log.d(TAG, "Attempting to generate response with LocalLlama")
+            Log.d(TAG, "  Optimized prompt size: ${optimizedPrompt.length} chars")
+            
+            // Try to connect to local Ollama instance first
+            val ollamaResponse = tryLocalOllamaConnection(optimizedPrompt)
+            if (ollamaResponse != null && ollamaResponse.isNotBlank() && !ollamaResponse.startsWith("Error:")) {
+                Log.d(TAG, "✓ Got response from local Ollama instance")
+                return@withContext ollamaResponse
+            }
+            
+            Log.w(TAG, "Local Ollama not available, returning intelligent fallback response")
+            
             // Return a more intelligent simulated response based on prompt analysis
             return@withContext generateIntelligentResponse(optimizedPrompt)
             
         } catch (e: Exception) {
             Log.e(TAG, "Error generating response", e)
-            return@withContext "Error: ${e.message}"
+            return@withContext "Error: No se pudo generar respuesta. El servidor LLM no está disponible. Detalles: ${e.message}"
         }
+    }
+
+    /**
+     * Try to connect to a local Ollama instance
+     */
+    private suspend fun tryLocalOllamaConnection(prompt: String): String? = withContext(Dispatchers.IO) {
+        for (url in FALLBACK_LLAMA_URLS) {
+            try {
+                Log.d(TAG, "  Trying local Ollama at: $url")
+                
+                val apiUrl = java.net.URL("$url/api/generate")
+                val connection = apiUrl.openConnection() as java.net.HttpURLConnection
+                
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.connectTimeout = 5000  // 5 seconds
+                connection.readTimeout = 30000    // 30 seconds
+                connection.doOutput = true
+                
+                val requestBody = org.json.JSONObject().apply {
+                    put("model", "llama3")
+                    put("prompt", prompt)
+                    put("stream", false)
+                }
+                
+                val writer = java.io.OutputStreamWriter(connection.outputStream)
+                writer.write(requestBody.toString())
+                writer.flush()
+                writer.close()
+                
+                if (connection.responseCode == 200) {
+                    val reader = java.io.BufferedReader(java.io.InputStreamReader(connection.inputStream))
+                    val responseJson = org.json.JSONObject(reader.readText())
+                    val response = responseJson.optString("response", "")
+                    
+                    connection.disconnect()
+                    
+                    if (response.isNotBlank()) {
+                        Log.d(TAG, "✓ Successfully connected to local Ollama at $url")
+                        return@withContext response
+                    }
+                }
+                
+                connection.disconnect()
+            } catch (e: Exception) {
+                Log.d(TAG, "  Failed to connect to $url: ${e.message}")
+            }
+        }
+        
+        Log.w(TAG, "Could not connect to any local Ollama instance")
+        return@withContext null
     }
 
     /**

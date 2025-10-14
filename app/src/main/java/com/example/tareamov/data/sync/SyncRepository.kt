@@ -296,6 +296,17 @@ class SyncRepository(
         refreshTableIfRemoteChanged("videos")
     }
 
+    // Get the maximum video ID from Supabase
+    suspend fun getMaxVideoIdFromSupabase(): Long {
+        return try {
+            if (!supabaseClient.isConfigured()) return 0L
+            withContext(Dispatchers.IO) { supabaseClient.getMaxVideoIdFromSupabase() }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "getMaxVideoIdFromSupabase failed", e)
+            0L
+        }
+    }
+
     // Check if a video/course title exists in Supabase (case-insensitive)
     suspend fun isVideoTitleExistsInSupabase(title: String): Boolean {
         try {
@@ -344,26 +355,26 @@ class SyncRepository(
                     for (elem in jsonArr) {
                         try {
                             val obj = elem.asJsonObject
-                            val id = if (obj.has("id")) obj.get("id").asLong else 0L
+                            val id = if (obj.has("id") && !obj.get("id").isJsonNull) obj.get("id").asLong else 0L
                             val username = when {
-                                obj.has("username") -> obj.get("username").asString
-                                obj.has("creator_username") -> obj.get("creator_username").asString
-                                obj.has("user") -> obj.get("user").asString
+                                obj.has("username") && !obj.get("username").isJsonNull -> obj.get("username").asString
+                                obj.has("creator_username") && !obj.get("creator_username").isJsonNull -> obj.get("creator_username").asString
+                                obj.has("user") && !obj.get("user").isJsonNull -> obj.get("user").asString
                                 else -> "unknown"
                             }
-                            val description = if (obj.has("description")) obj.get("description").asString else ""
-                            val title = if (obj.has("title")) obj.get("title").asString else ""
+                            val description = if (obj.has("description") && !obj.get("description").isJsonNull) obj.get("description").asString else ""
+                            val title = if (obj.has("title") && !obj.get("title").isJsonNull) obj.get("title").asString else ""
                             val videoUriString = when {
-                                obj.has("video_uri_string") -> obj.get("video_uri_string").asString
-                                obj.has("video_uri") -> obj.get("video_uri").asString
-                                obj.has("video_url") -> obj.get("video_url").asString
+                                obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
+                                obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
+                                obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
                                 else -> null
                             }
-                            val localFilePath = if (obj.has("local_file_path")) obj.get("local_file_path").asString else null
-                            val thumbnailUri = if (obj.has("thumbnail_uri")) obj.get("thumbnail_uri").asString else if (obj.has("thumbnail")) obj.get("thumbnail").asString else null
-                            val timestamp = try { if (obj.has("timestamp")) obj.get("timestamp").asLong else if (obj.has("created_at")) java.time.Instant.parse(obj.get("created_at").asString).toEpochMilli() else System.currentTimeMillis() } catch (t: Exception) { System.currentTimeMillis() }
-                            val isPaid = if (obj.has("is_paid")) obj.get("is_paid").asBoolean else false
-                            val price = if (obj.has("price")) try { obj.get("price").asDouble } catch (t: Exception) { null } else null
+                            val localFilePath = if (obj.has("local_file_path") && !obj.get("local_file_path").isJsonNull) obj.get("local_file_path").asString else null
+                            val thumbnailUri = if (obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull) obj.get("thumbnail_uri").asString else if (obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull) obj.get("thumbnail").asString else null
+                            val timestamp = try { if (obj.has("timestamp") && !obj.get("timestamp").isJsonNull) obj.get("timestamp").asLong else if (obj.has("created_at") && !obj.get("created_at").isJsonNull) java.time.Instant.parse(obj.get("created_at").asString).toEpochMilli() else System.currentTimeMillis() } catch (t: Exception) { System.currentTimeMillis() }
+                            val isPaid = if (obj.has("is_paid") && !obj.get("is_paid").isJsonNull) obj.get("is_paid").asBoolean else false
+                            val price = if (obj.has("price") && !obj.get("price").isJsonNull) try { obj.get("price").asDouble } catch (t: Exception) { null } else null
 
                             val v = com.example.tareamov.data.entity.VideoData(
                                 id = id,
@@ -410,6 +421,46 @@ class SyncRepository(
         } catch (e: Exception) {
             Log.w("SyncRepository", "fetchCoursesFromSupabase failed", e)
             emptyList()
+        }
+    }
+    
+    // Fetch courses with pagination
+    suspend fun fetchCoursesPaginated(
+        limit: Int = 10,
+        offset: Int = 0,
+        orderBy: String = "enrollment_count",
+        direction: String = "desc"
+    ): Pair<List<Course>, Int> {
+        return try {
+            if (!supabaseClient.isConfigured()) {
+                Log.d("SyncRepository", "Supabase not configured - returning empty")
+                return Pair(emptyList(), 0)
+            }
+            withContext(Dispatchers.IO) {
+                supabaseClient.fetchCoursesSummary(limit, offset, orderBy, direction)
+            }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchCoursesPaginated failed", e)
+            Pair(emptyList(), 0)
+        }
+    }
+    
+    // Fetch videos with pagination
+    suspend fun fetchVideosPaginated(
+        limit: Int = 10,
+        offset: Int = 0
+    ): Pair<List<com.example.tareamov.data.entity.VideoData>, Int> {
+        return try {
+            if (!supabaseClient.isConfigured()) {
+                Log.d("SyncRepository", "Supabase not configured - returning empty")
+                return Pair(emptyList(), 0)
+            }
+            withContext(Dispatchers.IO) {
+                supabaseClient.fetchVideosPaginated(limit, offset)
+            }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchVideosPaginated failed", e)
+            Pair(emptyList(), 0)
         }
     }
 
@@ -570,9 +621,58 @@ class SyncRepository(
     // Insert a Topic into Supabase and return remote id (or null)
     suspend fun insertTopicRemote(topic: com.example.tareamov.data.entity.Topic): Long? {
         return try {
-            withContext(Dispatchers.IO) { supabaseClient.insertTopic(topic) }
+            // Ensure new topics start from ID 77
+            val adjustedTopic = if (topic.id == 0L) {
+                // Get the maximum existing topic ID
+                val maxId = withContext(Dispatchers.IO) { 
+                    try {
+                        val allTopics = supabaseClient.fetchTopics()
+                        allTopics.maxOfOrNull { it.id } ?: 0L
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Could not fetch max topic ID", e)
+                        0L
+                    }
+                }
+                // Use the greater of maxId+1 or 77 as the starting ID
+                val nextId = maxOf(maxId + 1, 77L)
+                topic.copy(id = nextId)
+            } else {
+                topic
+            }
+            withContext(Dispatchers.IO) { supabaseClient.insertTopic(adjustedTopic) }
         } catch (e: Exception) {
             Log.w("SyncRepository", "insertTopicRemote failed", e)
+            null
+        }
+    }
+
+    /**
+     * Insert a topic using the database trigger strategy: do not send course_id, instead
+     * include a courseTitle that the DB trigger can use to associate the topic to the
+     * correct Course row. This mirrors insertTopicRemote but calls SupabaseClient.insertTopicUsingTrigger.
+     */
+    suspend fun insertTopicRemoteUsingTrigger(topic: com.example.tareamov.data.entity.Topic, courseTitle: String?): Long? {
+        return try {
+            // Ensure new topics start from ID 77 (same behavior as insertTopicRemote)
+            val adjustedTopic = if (topic.id == 0L) {
+                val maxId = withContext(Dispatchers.IO) {
+                    try {
+                        val allTopics = supabaseClient.fetchTopics()
+                        allTopics.maxOfOrNull { it.id } ?: 0L
+                    } catch (e: Exception) {
+                        Log.w("SyncRepository", "Could not fetch max topic ID", e)
+                        0L
+                    }
+                }
+                val nextId = maxOf(maxId + 1, 77L)
+                topic.copy(id = nextId)
+            } else {
+                topic
+            }
+
+            withContext(Dispatchers.IO) { supabaseClient.insertTopicUsingTrigger(adjustedTopic, courseTitle) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "insertTopicRemoteUsingTrigger failed", e)
             null
         }
     }
@@ -708,27 +808,27 @@ class SyncRepository(
                 // placeholder or incomplete video records.
                 Log.i("SyncRepository", "Skipping automatic video upserts to Supabase. Use uploadVideoToSupabaseSuspend for explicit uploads.")
 
-                // Topics (parents for tasks) - if topic upsert fails due to missing course, try upserting the video parent then retry
+                // Topics (parents for tasks) - if topic upsert fails due to missing course, try upserting the course parent then retry
                 topicDao.getAllTopics().forEach { topic ->
                     var ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("topics", topic) }
                     if (!ok) {
-                        Log.w("SyncRepository", "Initial upsert failed for topic ${topic.id}; attempting to ensure parent video ${topic.courseId} exists and retry.")
-                        // Try to upsert parent video if available locally
+                        Log.w("SyncRepository", "Initial upsert failed for topic ${topic.id}; attempting to ensure parent course ${topic.courseId} exists and retry.")
+                        // Try to upsert parent course if available locally
                         try {
-                            val video = withContext(Dispatchers.IO) { videoDao.getVideoById(topic.courseId) }
-                            if (video != null) {
-                                val vOk = withContext(Dispatchers.IO) { supabaseRepo.upsert("videos", video) }
-                                if (vOk) {
-                                    Log.i("SyncRepository", "Parent video ${video.id} upserted, retrying topic ${topic.id}.")
+                            val course = withContext(Dispatchers.IO) { courseDao.getCourseById(topic.courseId) }
+                            if (course != null) {
+                                val cOk = withContext(Dispatchers.IO) { supabaseRepo.upsert("courses", course) }
+                                if (cOk) {
+                                    Log.i("SyncRepository", "Parent course ${course.id} upserted, retrying topic ${topic.id}.")
                                     ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("topics", topic) }
                                 } else {
-                                    Log.w("SyncRepository", "Failed to upsert parent video ${topic.courseId} while retrying topic ${topic.id}.")
+                                    Log.w("SyncRepository", "Failed to upsert parent course ${topic.courseId} while retrying topic ${topic.id}.")
                                 }
                             } else {
-                                Log.w("SyncRepository", "Local parent video ${topic.courseId} not found for topic ${topic.id}.")
+                                Log.w("SyncRepository", "Local parent course ${topic.courseId} not found for topic ${topic.id}.")
                             }
                         } catch (e: Exception) {
-                            Log.e("SyncRepository", "Exception while attempting to upsert parent video for topic ${topic.id}", e)
+                            Log.e("SyncRepository", "Exception while attempting to upsert parent course for topic ${topic.id}", e)
                         }
                     }
                     if (ok) Log.i("SyncRepository", "Topic ${topic.id} synced to Supabase.")
@@ -917,6 +1017,19 @@ class SyncRepository(
                 return false
             }
             val supabaseClient = com.example.tareamov.service.SupabaseClient
+            
+            // Try to update first (if video has an ID, it likely already exists in Supabase)
+            if (video.id > 0L) {
+                val updated = withContext(Dispatchers.IO) { supabaseClient.updateVideo(video) }
+                if (updated) {
+                    Log.i("SyncRepository", "uploadVideoToSupabaseSuspend: Successfully updated video id=${video.id}")
+                    return true
+                }
+                // If update failed, it might not exist yet, so try insert
+                Log.d("SyncRepository", "Update failed for video id=${video.id}, attempting insert")
+            }
+            
+            // Try insert (for new videos or if update failed)
             val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertVideo(video) }
             if (remoteId != null) {
                 Log.i("SyncRepository", "uploadVideoToSupabaseSuspend success remoteId=$remoteId for video id=${video.id}")

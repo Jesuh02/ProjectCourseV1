@@ -83,10 +83,14 @@ CREATE TABLE IF NOT EXISTS public.videos (
 CREATE INDEX IF NOT EXISTS idx_videos_username ON public.videos (username);
 CREATE INDEX IF NOT EXISTS idx_videos_title ON public.videos USING gin (to_tsvector('simple', title));
 
--- Table: public.topics (course topics linked to videos/courses)
+-- Table: public.topics (course topics linked to courses)
+-- Note: changed to reference public.courses(id) instead of public.videos(id).
 CREATE TABLE IF NOT EXISTS public.topics (
     id bigserial PRIMARY KEY,
-    course_id bigint REFERENCES public.videos(id) ON DELETE CASCADE,
+    -- store course_id pointing to courses.id
+    course_id bigint REFERENCES public.courses(id) ON DELETE CASCADE,
+    -- helper column that may be used by an insert/update trigger on the server
+    course_title text,
     name text NOT NULL,
     description text,
     order_index integer DEFAULT 0,
@@ -95,6 +99,70 @@ CREATE TABLE IF NOT EXISTS public.topics (
 
 CREATE INDEX IF NOT EXISTS idx_topics_course_id ON public.topics (course_id);
 CREATE INDEX IF NOT EXISTS idx_topics_name ON public.topics USING gin (to_tsvector('simple', name));
+
+-- Add a trigger function that will attempt to resolve a provided `course_title`
+-- into the corresponding `courses.id` and set `NEW.course_id` accordingly.
+-- This is idempotent: it creates or replaces the function and trigger.
+CREATE OR REPLACE FUNCTION public.topics_set_course_id_from_title()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    -- If course_id already provided, keep it. Otherwise, try to resolve by title.
+    IF (NEW.course_id IS NULL OR NEW.course_id = 0) AND NEW.course_title IS NOT NULL THEN
+        SELECT id INTO NEW.course_id FROM public.courses WHERE title = NEW.course_title LIMIT 1;
+    END IF;
+    -- Optionally, clear the helper column so it's not stored long-term (comment out to keep)
+    -- NEW.course_title := NULL;
+    RETURN NEW;
+END;
+$$;
+
+-- Drop existing trigger if exists, then create a new one
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'topics_set_course_id_trigger') THEN
+        PERFORM 1;
+    END IF;
+END$$;
+
+DROP TRIGGER IF EXISTS topics_set_course_id_trigger ON public.topics;
+CREATE TRIGGER topics_set_course_id_trigger
+BEFORE INSERT OR UPDATE ON public.topics
+FOR EACH ROW EXECUTE FUNCTION public.topics_set_course_id_from_title();
+
+-- If there was previously an accidental FK from content_items -> courses, drop it safely.
+-- We don't expect content_items to reference courses in this schema; ensure any stray FK/column is removed.
+-- These ALTER statements are idempotent: they will succeed only when the objects exist.
+DO $$
+BEGIN
+    -- If a column named course_id exists on content_items and has a foreign key constraint to courses, drop constraint then column.
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'content_items' AND column_name = 'course_id'
+    ) THEN
+        -- Try to drop foreign key constraint if present
+        BEGIN
+            EXECUTE (
+                SELECT 'ALTER TABLE public.content_items DROP CONSTRAINT ' || quote_ident(tc.constraint_name)
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                    AND tc.table_schema = 'public'
+                    AND tc.table_name = 'content_items'
+                    AND kcu.column_name = 'course_id'
+                LIMIT 1
+            );
+        EXCEPTION WHEN OTHERS THEN
+            -- ignore if constraint drop fails or doesn't exist
+            NULL;
+        END;
+        -- Drop the column if it still exists
+        BEGIN
+            EXECUTE 'ALTER TABLE public.content_items DROP COLUMN IF EXISTS course_id';
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END IF;
+END$$;
 
 -- Minimal content_items table (optional - Course may use later)
 CREATE TABLE IF NOT EXISTS public.content_items (

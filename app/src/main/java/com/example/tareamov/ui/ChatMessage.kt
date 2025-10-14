@@ -13,13 +13,15 @@ data class ChatMessage(
     val isTyping: Boolean = false,
     val messageId: String = UUID.randomUUID().toString(),
     val isError: Boolean = false,
-    val isGraphResponse: Boolean = false
+    val isGraphResponse: Boolean = false,
+    val usuario_id: Long? = null,  // ID del usuario que envió el mensaje (FK a usuarios)
+    val username: String? = null   // Username del usuario (para búsquedas rápidas)
 ) {
     /**
      * Convierte el mensaje a formato de cadena para persistencia
      */
     fun toStorageString(): String {
-        return "$text:::$isUser:::$timestamp:::$isTyping:::$messageId:::$isError:::$isGraphResponse"
+        return "$text:::$isUser:::$timestamp:::$isTyping:::$messageId:::$isError:::$isGraphResponse:::$usuario_id:::$username"
     }
     
     companion object {
@@ -30,7 +32,19 @@ data class ChatMessage(
             return try {
                 val parts = storageString.split(":::")
                 when {
-                    // Formato completo (v2)
+                    // Formato completo (v3 - con usuario)
+                    parts.size >= 9 -> ChatMessage(
+                        text = parts[0],
+                        isUser = parts[1].toBoolean(),
+                        timestamp = parts[2].toLongOrNull() ?: System.currentTimeMillis(),
+                        isTyping = parts[3].toBoolean(),
+                        messageId = parts[4],
+                        isError = parts[5].toBoolean(),
+                        isGraphResponse = parts[6].toBoolean(),
+                        usuario_id = parts[7].toLongOrNull(),
+                        username = parts[8].takeIf { it != "null" }
+                    )
+                    // Formato v2 (sin usuario)
                     parts.size >= 7 -> ChatMessage(
                         text = parts[0],
                         isUser = parts[1].toBoolean(),

@@ -93,6 +93,22 @@ class DatabaseQueryService(private val context: Context) {
         Log.i(tag, "Processing RAG-enhanced query: '$normalizedQuery'")
 
         try {
+            // QUICK SHORTCUT: If this is a casual greeting or very short chat, respond directly
+            // without invoking the RAG engine which can return noisy DB listings.
+            val greetingPattern = """^(hola+|holaa+|buenas|buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|qué\s+tal|q\.?t\.?|hey|hi|hello)\b""".toRegex(RegexOption.IGNORE_CASE)
+            if (normalizedQuery.length <= 12 && greetingPattern.containsMatchIn(normalizedQuery)) {
+                Log.d(tag, "Detected greeting input - using lightweight response path")
+                try {
+                    val local = localLlamaService.generateResponse(normalizedQuery)
+                    if (local.isNotBlank()) return@withContext local
+                } catch (e: Exception) {
+                    Log.w(tag, "LocalLlama greeting response failed: ${e.message}")
+                }
+
+                // Fallback canned reply
+                return@withContext "¡Hola! ¿En qué puedo ayudarte hoy? Puedes pedirme datos de la base como 'dame todos los videos' o consultas específicas como 'video con id=1'"
+            }
+
             // Check for graph requests first
             val graphRequest = checkForGraphRequest(normalizedQuery)
             if (graphRequest != null) {
@@ -189,7 +205,8 @@ class DatabaseQueryService(private val context: Context) {
         for (attempt in 1..3) {
             try {
                 Log.d(tag, "MSPClient attempt $attempt")
-                val response = mspClient.sendPrompt(finalPrompt, includeHistory = false, includeDatabaseContext = false)
+                // Include database context where possible so the LLM can use retrieved RAG data
+                val response = mspClient.sendPrompt(finalPrompt, includeHistory = false, includeDatabaseContext = true)
                 if (response.isNotBlank() && !response.contains("Error:", ignoreCase = true)) {
                     return response
                 }

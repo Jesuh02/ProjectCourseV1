@@ -298,6 +298,54 @@ object SupabaseClient {
         }
     }
 
+    // Update an existing VideoData by id. Returns true on success.
+    suspend fun updateVideo(video: com.example.tareamov.data.entity.VideoData): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (video.id == 0L) {
+                Log.w("SupabaseClient", "Cannot update video with id=0")
+                return@withContext false
+            }
+
+            val map = mapOf(
+                "username" to video.username,
+                "description" to video.description,
+                "title" to video.title,
+                "video_uri_string" to video.videoUriString,
+                "local_file_path" to video.localFilePath,
+                "timestamp" to video.timestamp,
+                "is_paid" to video.isPaid,
+                "thumbnail_uri" to video.thumbnailUri,
+                "price" to video.price
+            )
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/videos?id=eq.${video.id}"
+
+            val request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val bodyStr = resp.body?.string() ?: ""
+                    Log.e("SupabaseClient", "updateVideo failed: ${resp.code} ${resp.message} body=$bodyStr")
+                    return@withContext false
+                }
+                Log.d("SupabaseClient", "✓ Successfully updated video with id=${video.id}")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Exception updating video", e)
+            return@withContext false
+        }
+    }
+
     suspend fun insertCourse(course: com.example.tareamov.data.entity.Course): Long? = withContext(Dispatchers.IO) {
         try {
             val map = mapOf(
@@ -345,8 +393,9 @@ object SupabaseClient {
                 try {
                     val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
                     if (jsonArray.size() > 0) {
-                        val idElem = jsonArray[0].asJsonObject.get("id")
-                        return@withContext idElem?.asLong
+                        val courseIdLong = jsonArray[0].asJsonObject.get("id")?.asLong
+                        Log.d("SupabaseClient", "✓ Successfully inserted course with id=$courseIdLong")
+                        return@withContext courseIdLong
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -444,21 +493,34 @@ object SupabaseClient {
 
     suspend fun insertTopic(topic: com.example.tareamov.data.entity.Topic): Long? = withContext(Dispatchers.IO) {
         try {
-            val map = mapOf(
+            if (!isConfigured()) {
+                Log.w("SupabaseClient", "insertTopic: Supabase not configured")
+                return@withContext null
+            }
+            
+            val key = effectiveApiKey()
+            val map = mutableMapOf(
                 "course_id" to topic.courseId,
                 "name" to topic.name,
                 "description" to topic.description,
                 "order_index" to topic.orderIndex
             )
+            
+            // Include ID if it's explicitly set (for starting from ID 77+)
+            if (topic.id > 0) {
+                map["id"] = topic.id
+            }
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
             val url = "$baseUrl/rest/v1/topics"
 
+            Log.d("SupabaseClient", "insertTopic: Sending POST to $url with data: $map")
+
             val request = Request.Builder()
                 .url(url)
                 .post(body)
-                .addHeader("apikey", apiKey)
-                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Prefer", "return=representation")
@@ -468,17 +530,24 @@ object SupabaseClient {
                 val respBody = resp.body?.string()
                 if (!resp.isSuccessful) {
                     val bodyStr = respBody ?: ""
-                    Log.w("SupabaseClient", "insertTopic failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                    Log.w("SupabaseClient", "insertTopic failed: ${resp.code} ${resp.message} body=$bodyStr")
                     return@withContext null
                 }
 
-                if (respBody.isNullOrEmpty()) return@withContext null
+                if (respBody.isNullOrEmpty()) {
+                    Log.w("SupabaseClient", "insertTopic: Response body is empty")
+                    return@withContext null
+                }
+
+                Log.d("SupabaseClient", "insertTopic response: $respBody")
 
                 try {
                     val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
                     if (jsonArray.size() > 0) {
                         val idElem = jsonArray[0].asJsonObject.get("id")
-                        return@withContext idElem?.asLong
+                        val remoteId = idElem?.asLong
+                        Log.i("SupabaseClient", "insertTopic success: remote id=$remoteId")
+                        return@withContext remoteId
                     }
                 } catch (e: Exception) {
                     Log.e("SupabaseClient","insertTopic parse error", e)
@@ -492,9 +561,137 @@ object SupabaseClient {
         }
     }
 
+    /**
+     * Insert a topic but do NOT send the raw course_id field. This is intended for schemas
+     * where a database trigger will map an alternative incoming field (for example course_title)
+     * to the correct Course row. This avoids submitting course_id that could be validated
+     * against an incorrect FK (e.g. videos) and causing a 23503 foreign key violation.
+     */
+    suspend fun insertTopicUsingTrigger(topic: com.example.tareamov.data.entity.Topic, courseTitle: String?): Long? = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.w("SupabaseClient", "insertTopicUsingTrigger: Supabase not configured")
+                return@withContext null
+            }
+
+            val key = effectiveApiKey()
+            // Do NOT include course_id here. Include course_title so a DB trigger can correlate.
+            val map = mutableMapOf<String, Any?>(
+                "name" to topic.name,
+                "description" to topic.description,
+                "order_index" to topic.orderIndex
+            )
+
+            if (!courseTitle.isNullOrBlank()) {
+                // Use a name that the DB trigger expects. If your trigger expects a different
+                // key change it accordingly (e.g. "course_name").
+                map["course_title"] = courseTitle
+            }
+
+            if (topic.id > 0) {
+                map["id"] = topic.id
+            }
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/topics"
+
+            Log.d("SupabaseClient", "insertTopicUsingTrigger: Sending POST to $url with data: $map")
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val bodyStr = respBody ?: ""
+                    Log.w("SupabaseClient", "insertTopicUsingTrigger failed: ${resp.code} ${resp.message} body=$bodyStr")
+
+                    // If the server indicates the 'course_title' column isn't present we can
+                    // fallback to the 'app_documents' upsert wrapper if available. This avoids
+                    // requiring schema changes on Supabase. Use SupabaseRepository.upsert.
+                    try {
+                        if (resp.code == 400 && bodyStr.contains("Could not find the 'course_title' column", ignoreCase = true)) {
+                            Log.i("SupabaseClient", "insertTopicUsingTrigger: server doesn't accept course_title; trying SupabaseRepository.upsert fallback")
+                            try {
+                                val repo = com.example.tareamov.data.repository.SupabaseRepository(baseUrl, key)
+                                // Prepare a payload compatible with SupabaseRepository.upsert mapping
+                                val upsertMap = mapOf(
+                                    "id" to topic.id,
+                                    "courseId" to topic.courseId,
+                                    "name" to topic.name,
+                                    "description" to topic.description,
+                                    "orderIndex" to topic.orderIndex
+                                )
+                                val ok = repo.upsert("topics", upsertMap)
+                                if (ok) {
+                                    // Attempt to locate the topic by name+order_index as a heuristic
+                                    try {
+                                        val all = fetchTopics()
+                                        val found = all.firstOrNull { it.name == topic.name && it.orderIndex == topic.orderIndex }
+                                        if (found != null) {
+                                            Log.i("SupabaseClient", "insertTopicUsingTrigger fallback: found inserted topic id=${found.id}")
+                                            return@withContext found.id
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.w("SupabaseClient", "insertTopicUsingTrigger fallback: couldn't locate topic after upsert", e)
+                                    }
+                                    // upsert succeeded but can't resolve id; return the local id if present
+                                    if (topic.id > 0) return@withContext topic.id
+                                }
+                            } catch (e: Exception) {
+                                Log.w("SupabaseClient", "insertTopicUsingTrigger fallback upsert failed", e)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("SupabaseClient", "insertTopicUsingTrigger error while handling failure", e)
+                    }
+
+                    return@withContext null
+                }
+
+                if (respBody.isNullOrEmpty()) {
+                    Log.w("SupabaseClient", "insertTopicUsingTrigger: Response body is empty")
+                    return@withContext null
+                }
+
+                Log.d("SupabaseClient", "insertTopicUsingTrigger response: $respBody")
+
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        val idElem = jsonArray[0].asJsonObject.get("id")
+                        val remoteId = idElem?.asLong
+                        Log.i("SupabaseClient", "insertTopicUsingTrigger success: remote id=$remoteId")
+                        return@withContext remoteId
+                    }
+                } catch (e: Exception) {
+                    Log.e("SupabaseClient","insertTopicUsingTrigger parse error", e)
+                }
+
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient","insertTopicUsingTrigger error", e)
+            return@withContext null
+        }
+    }
+
     // Insert a Task (belongs to a Topic)
     suspend fun insertTask(task: com.example.tareamov.data.entity.Task): Long? = withContext(Dispatchers.IO) {
         try {
+            if (!isConfigured()) {
+                Log.w("SupabaseClient", "insertTask: Supabase not configured")
+                return@withContext null
+            }
+            
+            val key = effectiveApiKey()
             // Map local Task fields to Supabase table columns (tasks.title)
             val map = mapOf(
                 "topic_id" to task.topicId,
@@ -505,11 +702,13 @@ object SupabaseClient {
             val body = gson.toJson(map).toRequestBody(jsonMedia)
             val url = "$baseUrl/rest/v1/tasks"
 
+            Log.d("SupabaseClient", "insertTask: Sending POST to $url with data: $map")
+
             val request = Request.Builder()
                 .url(url)
                 .post(body)
-                .addHeader("apikey", apiKey)
-                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Prefer", "return=representation")
@@ -519,17 +718,24 @@ object SupabaseClient {
                 val respBody = resp.body?.string()
                 if (!resp.isSuccessful) {
                     val bodyStr = respBody ?: ""
-                    Log.w("SupabaseClient", "insertTask failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                    Log.w("SupabaseClient", "insertTask failed: ${resp.code} ${resp.message} body=$bodyStr")
                     return@withContext null
                 }
 
-                if (respBody.isNullOrEmpty()) return@withContext null
+                if (respBody.isNullOrEmpty()) {
+                    Log.w("SupabaseClient", "insertTask: Response body is empty")
+                    return@withContext null
+                }
+
+                Log.d("SupabaseClient", "insertTask response: $respBody")
 
                 try {
                     val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
                     if (jsonArray.size() > 0) {
                         val idElem = jsonArray[0].asJsonObject.get("id")
-                        return@withContext idElem?.asLong
+                        val remoteId = idElem?.asLong
+                        Log.i("SupabaseClient", "insertTask success: remote id=$remoteId")
+                        return@withContext remoteId
                     }
                 } catch (e: Exception) {
                     Log.e("SupabaseClient","insertTask parse error", e)
@@ -540,8 +746,8 @@ object SupabaseClient {
                     val encodedTitle = java.net.URLEncoder.encode(task.name ?: "", "UTF-8")
                     val queryUrl = "$baseUrl/rest/v1/tasks?topic_id=eq.${task.topicId}&title=eq.$encodedTitle&select=id"
                     val qreq = Request.Builder().url(queryUrl).get()
-                        .addHeader("apikey", apiKey)
-                        .addHeader("Authorization", "Bearer $apiKey")
+                        .addHeader("apikey", key)
+                        .addHeader("Authorization", "Bearer $key")
                         .addHeader("Accept", "application/json").build()
                     client.newCall(qreq).execute().use { qresp ->
                         val qb = qresp.body?.string()
@@ -569,6 +775,12 @@ object SupabaseClient {
     // Insert a ContentItem (belongs to a Task/Topic)
     suspend fun insertContentItem(contentItem: com.example.tareamov.data.entity.ContentItem): Long? = withContext(Dispatchers.IO) {
         try {
+            if (!isConfigured()) {
+                Log.w("SupabaseClient", "insertContentItem: Supabase not configured")
+                return@withContext null
+            }
+            
+            val key = effectiveApiKey()
             // Map local ContentItem fields to Supabase content_items columns (title/body)
             val map = mapOf(
                 "topic_id" to contentItem.topicId,
@@ -581,11 +793,13 @@ object SupabaseClient {
             val body = gson.toJson(map).toRequestBody(jsonMedia)
             val url = "$baseUrl/rest/v1/content_items"
 
+            Log.d("SupabaseClient", "insertContentItem: Sending POST to $url with data: $map")
+
             val request = Request.Builder()
                 .url(url)
                 .post(body)
-                .addHeader("apikey", apiKey)
-                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Prefer", "return=representation")
@@ -933,6 +1147,133 @@ object SupabaseClient {
         }
     }
 
+    /**
+     * Ejecuta una consulta SQL directa en Supabase usando el endpoint de RPC o SQL directo.
+     * 
+     * IMPORTANTE: Esta función permite al LLM ejecutar consultas SQL generadas dinámicamente
+     * basadas en el esquema de la base de datos.
+     * 
+     * Ejemplo de uso:
+     * ```kotlin
+     * val sql = "SELECT * FROM courses WHERE creator_username = 'usuario'"
+     * val result = executeRawSql(sql)
+     * ```
+     * 
+     * @param sql La consulta SQL a ejecutar (SELECT, JOIN, etc.)
+     * @return String con el resultado en formato JSON
+     */
+    suspend fun executeRawSql(sql: String): String = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.w("SupabaseClient", "executeRawSql: Supabase not configured")
+                return@withContext "[]"
+            }
+            
+            Log.d("SupabaseClient", "executeRawSql: Executing SQL query")
+            Log.d("SupabaseClient", "SQL: ${sql.take(200)}...")
+            
+            // Supabase PostgREST permite ejecutar SQL directamente mediante el endpoint /rpc/sql
+            // o mediante queries específicas. Por simplicidad, usaremos una función RPC.
+            // 
+            // ALTERNATIVA: Si tienes una función PL/pgSQL en Supabase llamada 'execute_sql',
+            // puedes usarla. De lo contrario, construimos queries REST equivalentes.
+            
+            // Para consultas simples, intentamos mapearlas a endpoints REST
+            // Para consultas complejas (JOINs), necesitamos usar /rpc
+            
+            val key = effectiveApiKey()
+            
+            // Intentar ejecutar como query directa si es una consulta SELECT simple
+            if (sql.trim().uppercase().startsWith("SELECT")) {
+                // Para queries complejas con JOIN, necesitamos usar PostgREST views o functions
+                // Por ahora, intentamos ejecutar usando el endpoint /rpc si está disponible
+                
+                val rpcBody = gson.toJson(mapOf("query" to sql))
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/v1/rpc/execute_sql")
+                    .post(rpcBody.toRequestBody(jsonMedia))
+                    .addHeader("apikey", key)
+                    .addHeader("Authorization", "Bearer $key")
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Prefer", "return=representation")
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                val body = response.body?.string() ?: "[]"
+                
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "executeRawSql RPC failed (${response.code}), trying direct query")
+                    // Si falla el RPC, intentar mapear a query REST directa
+                    return@withContext executeSimplifiedQuery(sql)
+                }
+                
+                Log.d("SupabaseClient", "executeRawSql: Query executed successfully")
+                notifyRequestListener("$baseUrl/rest/v1/rpc/execute_sql (SQL: ${sql.take(50)}...)")
+                return@withContext body
+            } else {
+                Log.w("SupabaseClient", "executeRawSql: Only SELECT queries are supported")
+                return@withContext "{\"error\": \"Only SELECT queries are supported\"}"
+            }
+            
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "executeRawSql failed", e)
+            return@withContext "{\"error\": \"${e.message}\"}"
+        }
+    }
+    
+    /**
+     * Intenta ejecutar una query simplificada mapeándola a REST API de PostgREST.
+     * Útil cuando no hay función RPC disponible.
+     */
+    private suspend fun executeSimplifiedQuery(sql: String): String {
+        try {
+            // Parseo muy básico para extraer tabla y condiciones
+            // Esto es un fallback simple, no un parser SQL completo
+            
+            val upperSql = sql.trim().uppercase()
+            if (upperSql.contains("JOIN")) {
+                Log.w("SupabaseClient", "executeSimplifiedQuery: JOIN queries not supported in simplified mode")
+                return "{\"error\": \"JOIN queries require RPC function. Please create execute_sql function in Supabase.\"}"
+            }
+            
+            // Intentar extraer tabla principal
+            val fromIndex = upperSql.indexOf("FROM")
+            if (fromIndex == -1) return "[]"
+            
+            val afterFrom = sql.substring(fromIndex + 4).trim()
+            val tableName = afterFrom.split(" ", "\n", "\t")[0].trim()
+            
+            Log.d("SupabaseClient", "executeSimplifiedQuery: Attempting to query table: $tableName")
+            
+            // Ejecutar query simple a la tabla
+            val request = buildGetRequest(tableName)
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: "[]"
+            
+            if (!response.isSuccessful) {
+                Log.w("SupabaseClient", "executeSimplifiedQuery failed: ${response.code}")
+                return "[]"
+            }
+            
+            return body
+            
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "executeSimplifiedQuery failed", e)
+            return "[]"
+        }
+    }
+    
+    /**
+     * Notifica al listener registrado sobre la URL consultada
+     */
+    private fun notifyRequestListener(url: String) {
+        try {
+            requestListener?.invoke(url)
+        } catch (t: Throwable) {
+            Log.w("SupabaseClient", "Request listener threw exception", t)
+        }
+    }
+
     // Generic GET helper
     /**
      * Construye una petición GET a Supabase REST API
@@ -1100,6 +1441,23 @@ object SupabaseClient {
         }
     }
     suspend fun fetchVideos(): List<VideoData> = fetchList("videos", Array<VideoData>::class.java)
+    
+    /**
+     * Fetch all videos with optional ordering
+     * @param orderBy Column name to order by (e.g., "id", "title", "price")
+     * @param direction "asc" or "desc"
+     */
+    suspend fun fetchVideosOrdered(orderBy: String = "id", direction: String = "asc"): List<VideoData> = withContext(Dispatchers.IO) {
+        try {
+            val path = "videos?order=$orderBy.$direction"
+            Log.d("SupabaseClient", "📥 Fetching videos ordered by: $orderBy $direction")
+            fetchList(path, Array<VideoData>::class.java)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching ordered videos", e)
+            emptyList()
+        }
+    }
+    
     // Fetch videos for a specific username (server-side filter). Attempts exact eq match.
     suspend fun fetchVideosByUsername(username: String): List<VideoData> = withContext(Dispatchers.IO) {
         try {
@@ -1151,6 +1509,22 @@ object SupabaseClient {
     suspend fun fetchTopics(): List<Topic> = fetchList("topics", Array<Topic>::class.java)
     
     /**
+     * Fetch all topics with optional ordering
+     * @param orderBy Column name to order by (e.g., "id", "name")
+     * @param direction "asc" or "desc"
+     */
+    suspend fun fetchTopicsOrdered(orderBy: String = "id", direction: String = "asc"): List<Topic> = withContext(Dispatchers.IO) {
+        try {
+            val path = "topics?order=$orderBy.$direction"
+            Log.d("SupabaseClient", "📥 Fetching topics ordered by: $orderBy $direction")
+            fetchList(path, Array<Topic>::class.java)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching ordered topics", e)
+            emptyList()
+        }
+    }
+    
+    /**
      * Fetch a single Topic by exact name using server-side filter. Returns null if not found.
      */
     suspend fun fetchTopicByName(name: String): Topic? = withContext(Dispatchers.IO) {
@@ -1182,7 +1556,41 @@ object SupabaseClient {
         }
     }
     suspend fun fetchContentItems(): List<ContentItem> = fetchList("content_items", Array<ContentItem>::class.java)
+    
+    /**
+     * Fetch all content items with optional ordering
+     * @param orderBy Column name to order by (e.g., "id", "name", "order_index")
+     * @param direction "asc" or "desc"
+     */
+    suspend fun fetchContentItemsOrdered(orderBy: String = "id", direction: String = "asc"): List<ContentItem> = withContext(Dispatchers.IO) {
+        try {
+            val path = "content_items?order=$orderBy.$direction"
+            Log.d("SupabaseClient", "📥 Fetching content items ordered by: $orderBy $direction")
+            fetchList(path, Array<ContentItem>::class.java)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching ordered content items", e)
+            emptyList()
+        }
+    }
+    
     suspend fun fetchTasks(): List<Task> = fetchList("tasks", Array<Task>::class.java)
+    
+    /**
+     * Fetch all tasks with optional ordering
+     * @param orderBy Column name to order by (e.g., "id", "name", "order_index")
+     * @param direction "asc" or "desc"
+     */
+    suspend fun fetchTasksOrdered(orderBy: String = "id", direction: String = "asc"): List<Task> = withContext(Dispatchers.IO) {
+        try {
+            val path = "tasks?order=$orderBy.$direction"
+            Log.d("SupabaseClient", "📥 Fetching tasks ordered by: $orderBy $direction")
+            fetchList(path, Array<Task>::class.java)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching ordered tasks", e)
+            emptyList()
+        }
+    }
+    
     // Fetch a single task by id using server-side filter
     suspend fun fetchTaskById(id: Long): Task? = withContext(Dispatchers.IO) {
         try {
@@ -1202,6 +1610,96 @@ object SupabaseClient {
             null
         }
     }
+    
+    // Fetch a single video by id using server-side filter
+    suspend fun fetchVideoById(id: Int): VideoData? = withContext(Dispatchers.IO) {
+        try {
+            val path = "videos?id=eq.${id}"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchVideoById failed status=${resp.code}")
+                    return@withContext null
+                }
+                val body = resp.body?.string() ?: return@withContext null
+                val arr = underscoredGson.fromJson(body, Array<VideoData>::class.java)
+                return@withContext arr.firstOrNull()
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchVideoById exception", e)
+            null
+        }
+    }
+    
+    // Fetch a single topic by id using server-side filter
+    suspend fun fetchTopicById(id: Int): Topic? = withContext(Dispatchers.IO) {
+        try {
+            val path = "topics?id=eq.${id}"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchTopicById failed status=${resp.code}")
+                    return@withContext null
+                }
+                val body = resp.body?.string() ?: return@withContext null
+                val arr = underscoredGson.fromJson(body, Array<Topic>::class.java)
+                return@withContext arr.firstOrNull()
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchTopicById exception", e)
+            null
+        }
+    }
+    
+    // Fetch a single content item by id using server-side filter
+    suspend fun fetchContentItemById(id: Int): ContentItem? = withContext(Dispatchers.IO) {
+        try {
+            val path = "content_items?id=eq.${id}"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchContentItemById failed status=${resp.code}")
+                    return@withContext null
+                }
+                val body = resp.body?.string() ?: return@withContext null
+                val arr = underscoredGson.fromJson(body, Array<ContentItem>::class.java)
+                return@withContext arr.firstOrNull()
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchContentItemById exception", e)
+            null
+        }
+    }
+    
+    // Get the maximum ID from videos table in Supabase
+    suspend fun getMaxVideoIdFromSupabase(): Long = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.w("SupabaseClient", "Supabase not configured, returning 0")
+                return@withContext 0L
+            }
+            val path = "videos?select=id&order=id.desc&limit=1"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "getMaxVideoIdFromSupabase failed status=${resp.code}")
+                    return@withContext 0L
+                }
+                val body = resp.body?.string() ?: return@withContext 0L
+                val arr = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                if (arr.size() > 0) {
+                    val maxId = arr[0].asJsonObject.get("id")?.asLong ?: 0L
+                    Log.d("SupabaseClient", "Max video ID from Supabase: $maxId")
+                    return@withContext maxId
+                }
+                return@withContext 0L
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "getMaxVideoIdFromSupabase exception", e)
+            0L
+        }
+    }
+    
     suspend fun fetchSubscriptions(): List<Subscription> = fetchList("subscriptions", Array<Subscription>::class.java)
 
     // Insert a subscription record into Supabase
@@ -1309,6 +1807,174 @@ object SupabaseClient {
     suspend fun fetchChatMessages(): List<ChatMessage> = fetchList("chat_messages", Array<ChatMessage>::class.java)
     suspend fun fetchFileContexts(): List<FileContext> = fetchList("file_contexts", Array<FileContext>::class.java)
     suspend fun fetchCourses(): List<Course> = fetchList("courses", Array<Course>::class.java)
+    
+    /**
+     * Fetch videos with pagination, ordered by timestamp (newest first)
+     * @param limit Number of videos to fetch (default 10)
+     * @param offset Number of videos to skip (for pagination)
+     * @return Pair of (list of videos, total count)
+     */
+    suspend fun fetchVideosPaginated(
+        limit: Int = 10,
+        offset: Int = 0
+    ): Pair<List<VideoData>, Int> = withContext(Dispatchers.IO) {
+        try {
+            val path = "videos?order=timestamp.desc&limit=$limit&offset=$offset"
+            val url = "$baseUrl/rest/v1/$path"
+            val key = effectiveApiKey()
+
+            val builder = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("Accept", "application/json")
+                .addHeader("Prefer", "count=exact")
+
+            if (key.isNotEmpty()) {
+                builder.addHeader("apikey", key)
+                builder.addHeader("Authorization", "Bearer $key")
+            }
+
+            // notify listener
+            try { requestListener?.invoke(url) } catch (_: Throwable) {}
+
+            client.newCall(builder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchVideosPaginated failed status=${resp.code}")
+                    return@withContext Pair(emptyList<VideoData>(), 0)
+                }
+                val body = resp.body?.string() ?: "[]"
+                val arr = underscoredGson.fromJson(body, Array<VideoData>::class.java).toList()
+
+                // Parse Content-Range header: 0-9/123
+                val contentRange = resp.header("Content-Range") ?: resp.header("content-range")
+                var total = -1
+                if (!contentRange.isNullOrEmpty()) {
+                    val slash = contentRange.indexOf('/')
+                    if (slash >= 0 && slash < contentRange.length - 1) {
+                        val totalStr = contentRange.substring(slash + 1)
+                        total = try { totalStr.toInt() } catch (_: Exception) { -1 }
+                    }
+                }
+
+                Log.d("SupabaseClient", "fetchVideosPaginated: returned ${arr.size} videos, total=$total")
+                return@withContext Pair(arr, if (total >= 0) total else arr.size)
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchVideosPaginated exception", e)
+            Pair(emptyList<VideoData>(), 0)
+        }
+    }
+    
+    /**
+     * Get the next available video ID (max ID + 1), ensuring it's > 82
+     * @return Next available video ID (minimum 83)
+     */
+    suspend fun getNextVideoId(): Long = withContext(Dispatchers.IO) {
+        try {
+            val path = "videos?select=id&order=id.desc&limit=1"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "getNextVideoId failed status=${resp.code}")
+                    return@withContext 83L // Start from 83 if can't determine
+                }
+                val body = resp.body?.string() ?: return@withContext 83L
+                
+                // Parse JSON manually to avoid class literal issues
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                    if (jsonArray.size() == 0) return@withContext 83L
+                    
+                    val jsonObject = jsonArray[0].asJsonObject
+                    val maxId = jsonObject.get("id")?.asLong ?: 82L
+                    val nextId = maxId + 1
+                    
+                    // Ensure minimum ID is 83
+                    return@withContext if (nextId < 83L) 83L else nextId
+                } catch (parseError: Exception) {
+                    Log.w("SupabaseClient", "Error parsing video ID", parseError)
+                    return@withContext 83L
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "getNextVideoId exception", e)
+            83L
+        }
+    }
+    
+    /**
+     * Fetch all courses with optional ordering
+     * @param orderBy Column name to order by (e.g., "id", "title", "price")
+     * @param direction "asc" or "desc"
+     */
+    suspend fun fetchCoursesOrdered(orderBy: String = "id", direction: String = "asc"): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            val path = "courses?order=$orderBy.$direction"
+            Log.d("SupabaseClient", "📥 Fetching courses ordered by: $orderBy $direction")
+            fetchList(path, Array<Course>::class.java)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching ordered courses", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Fetch a summary (minimal fields) of courses and the total count using PostgREST count header.
+     * Returns Pair(listOfCourses, totalCount)
+     */
+    suspend fun fetchCoursesSummary(
+        limit: Int = 40,
+        offset: Int = 0,
+        orderBy: String = "id",
+        direction: String = "desc"
+    ): Pair<List<Course>, Int> = withContext(Dispatchers.IO) {
+        try {
+            val selectFields = "id,title,creator_username,thumbnail_uri,video_uri,timestamp,is_premium,price"
+            val path = "courses?select=$selectFields&order=$orderBy.$direction&limit=$limit&offset=$offset"
+            val url = "$baseUrl/rest/v1/$path"
+            val key = effectiveApiKey()
+
+            val builder = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("Accept", "application/json")
+                .addHeader("Prefer", "count=exact")
+
+            if (key.isNotEmpty()) {
+                builder.addHeader("apikey", key)
+                builder.addHeader("Authorization", "Bearer $key")
+            }
+
+            // notify listener
+            try { requestListener?.invoke(url) } catch (_: Throwable) {}
+
+            client.newCall(builder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchCoursesSummary failed status=${resp.code}")
+                    return@withContext Pair(emptyList<Course>(), 0)
+                }
+                val body = resp.body?.string() ?: "[]"
+                val arr = underscoredGson.fromJson(body, Array<Course>::class.java).toList()
+
+                // Content-Range header format: 0-39/123  (if present)
+                val contentRange = resp.header("Content-Range") ?: resp.header("content-range")
+                var total = -1
+                if (!contentRange.isNullOrEmpty()) {
+                    val slash = contentRange.indexOf('/')
+                    if (slash >= 0 && slash < contentRange.length - 1) {
+                        val totalStr = contentRange.substring(slash + 1)
+                        total = try { totalStr.toInt() } catch (_: Exception) { -1 }
+                    }
+                }
+
+                return@withContext Pair(arr, if (total >= 0) total else arr.size)
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchCoursesSummary exception", e)
+            Pair(emptyList<Course>(), 0)
+        }
+    }
+    
     // Fetch a single Course by id using server-side filter to avoid downloading entire table
     suspend fun fetchCourseById(id: Long): Course? = withContext(Dispatchers.IO) {
         try {
@@ -1519,6 +2185,57 @@ object SupabaseClient {
         } catch (e: Exception) {
             e.printStackTrace()
             return@withContext null
+        }
+    }
+
+    /**
+     * Llama a una función RPC (Remote Procedure Call) en Supabase.
+     * Usado para consultar information_schema dinámicamente.
+     * 
+     * @param functionName Nombre de la función PostgreSQL a llamar
+     * @param params Parámetros de la función como Map
+     * @return JSON string con el resultado, o null si falla
+     */
+    suspend fun callRpcFunction(
+        functionName: String,
+        params: Map<String, Any>
+    ): String? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) {
+            Log.w("SupabaseClient", "Supabase not configured, cannot call RPC function: $functionName")
+            return@withContext null
+        }
+
+        return@withContext try {
+            val url = "$baseUrl/rest/v1/rpc/$functionName"
+            val jsonBody = gson.toJson(params)
+            
+            Log.d("SupabaseClient", "📡 Calling RPC function: $functionName")
+            Log.d("SupabaseClient", "   URL: $url")
+            Log.d("SupabaseClient", "   Params: $jsonBody")
+            
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .post(jsonBody.toRequestBody(jsonMedia))
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                
+                if (response.isSuccessful && body != null) {
+                    Log.d("SupabaseClient", "✓ RPC function $functionName returned: ${body.take(200)}...")
+                    body
+                } else {
+                    Log.e("SupabaseClient", "❌ RPC function $functionName failed: ${response.code} - $body")
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "❌ Error calling RPC function $functionName", e)
+            null
         }
     }
 }
