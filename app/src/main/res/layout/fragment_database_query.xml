@@ -158,6 +158,77 @@
             android:contentDescription="Limpiar historial" />
     </LinearLayout>
 
+    <!-- MCP Tools Toolbar (collapsible) -->
+    <LinearLayout
+        android:id="@+id/mcpToolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#0A0A0A"
+        android:visibility="gone"
+        android:elevation="4dp"
+        app:layout_constraintTop_toBottomOf="@id/chatHistoryHeader">
+
+        <!-- Toolbar Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="12dp"
+            android:gravity="center_vertical"
+            android:background="#1A1A1A">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_tool"
+                android:tint="#10A37F"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="MCP Tools"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/toolsCountBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="2"
+                android:textColor="#10A37F"
+                android:textSize="12sp"
+                android:background="@drawable/bg_tools_count_badge"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:layout_marginEnd="8dp" />
+
+            <ImageButton
+                android:id="@+id/btnToggleToolbar"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_expand_less"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:tint="#FFFFFF"
+                android:contentDescription="Toggle toolbar" />
+        </LinearLayout>
+
+        <!-- Tools RecyclerView -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/mcpToolsRecyclerView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxHeight="300dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:clipToPadding="false" />
+    </LinearLayout>
+
     <!-- Enhanced Chat RecyclerView with ChatGPT-style full-width layout -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/chatRecyclerView"
@@ -170,7 +241,7 @@
         android:overScrollMode="never"
         android:nestedScrollingEnabled="true"
         android:background="#000000"
-        app:layout_constraintTop_toBottomOf="@id/chatHistoryHeader"
+        app:layout_constraintTop_toBottomOf="@id/mcpToolbar"
         app:layout_constraintBottom_toTopOf="@id/typingIndicator" />
 
     <!-- Enhanced typing indicator with LLM branding -->
@@ -321,6 +392,24 @@
         app:borderWidth="0dp"
         android:contentDescription="Ver historial de chat"
         app:fabSize="mini"
+        android:visibility="visible"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/fabMCPTools" />
+
+    <!-- MCP Tools toggle button -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabMCPTools"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
+        android:src="@drawable/ic_tool"
+        app:tint="#FFFFFF"
+        app:backgroundTint="#10A37F"
+        app:elevation="6dp"
+        app:borderWidth="0dp"
+        android:contentDescription="MCP Tools"
+        app:fabSize="normal"
         android:visibility="visible"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toTopOf="@id/queryInputLayout" />

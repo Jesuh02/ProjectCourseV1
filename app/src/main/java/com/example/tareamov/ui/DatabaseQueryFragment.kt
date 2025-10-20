@@ -7,6 +7,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
@@ -30,6 +31,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import com.example.tareamov.ui.adapter.DatabaseChatAdapter
 import com.example.tareamov.service.LocalLlamaService.ModelDownloadWorker
 import com.example.tareamov.util.SessionManager
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -179,6 +182,14 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     private lateinit var databaseQueryService: DatabaseQueryService
     private lateinit var sessionManager: SessionManager
     
+    // MCP HTTP Client for tareamov-mcp-server (connects via HTTP to Node.js server)
+    private lateinit var mcpHttpClient: com.example.tareamov.service.MCPHttpClient
+    
+    // MCP Tools adapter
+    private lateinit var mcpToolsAdapter: com.example.tareamov.ui.adapter.MCPToolsAdapter
+    private val mcpTools = mutableListOf<com.example.tareamov.ui.model.MCPTool>()
+    private var isMCPToolbarVisible = false
+    
     // Enhanced chat state management per user
     private val chatHistory = mutableListOf<ChatMessage>()
     private var isProcessingQuery = false
@@ -199,6 +210,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     private val maxMessagesPerSession = 1000 // Prevent memory issues
 
     companion object {
+        private const val TAG = "DatabaseQueryFragment"
         private const val CHAT_HISTORY_KEY = "saved_chat_messages"
         private const val SESSION_ID_KEY = "current_session_id"
         private const val MESSAGE_COUNT_KEY = "total_message_count"
@@ -228,12 +240,35 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         mcpService = MCPService(requireContext())
         database = AppDatabase.getDatabase(requireContext())
         databaseQueryService = DatabaseQueryService(requireContext())
+        
+        // Initialize MCP HTTP Client for tareamov-mcp-server
+        mcpHttpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
+        
+        // Initialize MCP connection in background
+        viewLifecycleOwner.lifecycleScope.launch {
+            val initialized = mcpHttpClient.initialize()
+            if (initialized) {
+                Log.d(TAG, "✅ MCP HTTP client connected to server at http://10.0.2.2:3000")
+                
+                // Load MCP tools
+                loadMCPTools()
+                
+                withContext(Dispatchers.Main) {
+                    addMessageToChat("✅ Conectado a servidor MCP tareamov-mcp-server (HTTP)", false)
+                }
+            } else {
+                Log.w(TAG, "⚠️ MCP HTTP client connection failed, using fallback")
+            }
+        }
 
         // Initialize UI components
         setupUIComponents()
 
         // Setup chat RecyclerView with enhanced scrolling
         setupChatRecyclerView()
+        
+        // Setup MCP toolbar
+        setupMCPToolbar()
 
         // Setup floating action buttons
         setupFloatingActionButtons()
@@ -375,6 +410,11 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             showChatHistoryDialog()
         }
         
+        // MCP Tools button
+        binding.fabMCPTools.setOnClickListener {
+            toggleMCPToolbar()
+        }
+        
         // Clear history button in header
         binding.clearHistoryButton.setOnClickListener {
             showClearHistoryDialog()
@@ -386,6 +426,173 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         }
         binding.connectionIndicator.setOnClickListener {
             testLLMConnection()
+        }
+    }
+    
+    private fun setupMCPToolbar() {
+        // Setup MCP tools adapter
+        mcpToolsAdapter = com.example.tareamov.ui.adapter.MCPToolsAdapter(mcpTools) { tool ->
+            onMCPToolExecute(tool)
+        }
+        
+        binding.mcpToolsRecyclerView.apply {
+            layoutManager = LinearLayoutManager(context)
+            adapter = mcpToolsAdapter
+        }
+        
+        // Toggle toolbar button
+        binding.btnToggleToolbar.setOnClickListener {
+            toggleMCPToolbar()
+        }
+    }
+    
+    private fun loadMCPTools() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val tools = mcpHttpClient.listTools()
+                Log.d(TAG, "📋 Loaded ${tools.size} MCP tools")
+                
+                withContext(Dispatchers.Main) {
+                    mcpTools.clear()
+                    mcpTools.addAll(tools)
+                    mcpToolsAdapter.notifyDataSetChanged()
+                    
+                    // Update tools count badge
+                    binding.toolsCountBadge.text = tools.size.toString()
+                    
+                    // Show toolbar if tools are available
+                    if (tools.isNotEmpty()) {
+                        binding.mcpToolbar.visibility = View.VISIBLE
+                        isMCPToolbarVisible = true
+                    }
+                    
+                    Log.d(TAG, "✅ MCP tools loaded and displayed")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error loading MCP tools", e)
+            }
+        }
+    }
+    
+    private fun toggleMCPToolbar() {
+        isMCPToolbarVisible = !isMCPToolbarVisible
+        
+        if (isMCPToolbarVisible) {
+            binding.mcpToolsRecyclerView.visibility = View.VISIBLE
+            binding.btnToggleToolbar.setImageResource(R.drawable.ic_expand_less)
+        } else {
+            binding.mcpToolsRecyclerView.visibility = View.GONE
+            binding.btnToggleToolbar.setImageResource(R.drawable.ic_expand_more)
+        }
+    }
+    
+    private fun onMCPToolExecute(tool: com.example.tareamov.ui.model.MCPTool) {
+        Log.d(TAG, "🔧 Executing MCP tool: ${tool.name}")
+        Log.d(TAG, "📋 Input schema: ${tool.inputSchema}")
+        
+        // Get required parameters
+        val params = tool.getParameters()
+        Log.d(TAG, "📝 Parameters found: ${params.size}")
+        params.forEach { (name, param) ->
+            Log.d(TAG, "  - $name: ${param.description} (required: ${param.required})")
+        }
+        
+        if (params.isEmpty()) {
+            // No parameters required, execute directly
+            Log.d(TAG, "⚡ Executing without parameters")
+            executeMCPTool(tool, org.json.JSONObject())
+        } else {
+            // Show dialog to input parameters
+            Log.d(TAG, "💬 Showing parameters dialog")
+            showToolParametersDialog(tool)
+        }
+    }
+    
+    private fun showToolParametersDialog(tool: com.example.tareamov.ui.model.MCPTool) {
+        val params = tool.getParameters()
+        val dialogView = LayoutInflater.from(requireContext())
+            .inflate(R.layout.dialog_tool_parameters, null)
+        
+        val paramsContainer = dialogView.findViewById<LinearLayout>(R.id.paramsContainer)
+        val inputViews = mutableMapOf<String, android.widget.EditText>()
+        
+        // Create input fields for each parameter
+        params.forEach { (name, param) ->
+            val paramView = LayoutInflater.from(requireContext())
+                .inflate(R.layout.item_parameter_input, paramsContainer, false)
+            
+            val paramLabel = paramView.findViewById<TextView>(R.id.paramLabel)
+            val paramInput = paramView.findViewById<android.widget.EditText>(R.id.paramInput)
+            val paramHint = paramView.findViewById<TextView>(R.id.paramHint)
+            
+            paramLabel.text = name + if (param.required) " *" else ""
+            paramHint.text = param.description
+            
+            inputViews[name] = paramInput
+            paramsContainer.addView(paramView)
+        }
+        
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle(tool.getDisplayName())
+            .setMessage("Ingresa los parámetros para la herramienta:")
+            .setView(dialogView)
+            .setPositiveButton("Ejecutar") { _, _ ->
+                val arguments = org.json.JSONObject()
+                inputViews.forEach { (name, editText) ->
+                    val value = editText.text.toString()
+                    if (value.isNotEmpty()) {
+                        arguments.put(name, value)
+                    }
+                }
+                executeMCPTool(tool, arguments)
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+    
+    private fun executeMCPTool(tool: com.example.tareamov.ui.model.MCPTool, arguments: org.json.JSONObject) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Add user message showing what tool is being executed
+                val argsString = if (arguments.length() > 0) {
+                    arguments.keys().asSequence().joinToString(", ") { key ->
+                        "$key: ${arguments.get(key)}"
+                    }
+                } else {
+                    "sin parámetros"
+                }
+                
+                addMessageToChat("🔧 Ejecutando: ${tool.getDisplayName()} ($argsString)", true)
+                
+                // Show typing indicator
+                chatAdapter.addTypingIndicator()
+                scrollToBottom()
+                
+                // Execute tool
+                val result = mcpHttpClient.executeTool(tool.name, arguments)
+                
+                withContext(Dispatchers.Main) {
+                    chatAdapter.removeTypingIndicator()
+                    
+                    if (result.success) {
+                        val resultText = when (result.data) {
+                            is String -> result.data
+                            else -> result.data.toString()
+                        }
+                        addMessageToChat("✅ Resultado:\n\n$resultText", false)
+                    } else {
+                        addMessageToChat("❌ Error: ${result.error}", false)
+                    }
+                    
+                    scrollToBottom()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error executing MCP tool", e)
+                withContext(Dispatchers.Main) {
+                    chatAdapter.removeTypingIndicator()
+                    addMessageToChat("❌ Error: ${e.message}", false)
+                }
+            }
         }
     }
     
@@ -435,8 +642,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     }
 
     private fun addMessageToChat(text: String, isUser: Boolean): String {
-        val message = ChatMessage.createUserMessage(text).let { 
-            if (isUser) it else ChatMessage.createSystemMessage(text) 
+        val message = if (isUser) {
+            ChatMessage.createUserMessage(text)
+        } else {
+            ChatMessage.createSystemMessage(text)
         }
         
         // Add to both adapter and internal history
@@ -609,17 +818,17 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         Log.d("DatabaseQueryFragment", "User Query: $query")
         
         // Show processing message in chat
-        addMessageToChat("🔍 Procesando consulta con sistema RAG...", false)
+        addMessageToChat("🔍 Procesando consulta con MCP tareamov-mcp-server...", false)
 
         binding.chartContainer.visibility = View.GONE // Hide chart container
         removeCurrentChart() // Remove previous chart if any
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                Log.d("DatabaseQueryFragment", "Starting RAG-enhanced processing...")
+                Log.d("DatabaseQueryFragment", "Starting MCP server query processing...")
                 
-                // Enhanced query processing with RAG
-                val result = processRAGEnhancedQuery(query)
+                // Use MCP tareamov-mcp-server as default tool
+                val result = processQueryWithMCPServer(query)
 
                 Log.d("DatabaseQueryFragment", "=== FINAL RESULT LOG ===")
                 Log.d("DatabaseQueryFragment", "Result Length: ${result.length} characters")
@@ -643,17 +852,17 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 } else {
                     // Display the text result in chat
                     if (result.isNullOrBlank()) {
-                        addMessageToChat("⚠️ No se recibió respuesta del sistema RAG. Intente reformular su consulta.", false)
+                        addMessageToChat("⚠️ No se recibió respuesta del sistema MCP. Intente reformular su consulta.", false)
                     } else {
-                        // Format and display the RAG response
+                        // Format and display the MCP response
                         val formattedResult = formatRAGResponse(result)
                         addMessageToChat(formattedResult, false)
                     }
                 }
 
             } catch (e: Exception) {
-                Log.e("DatabaseQueryFragment", "Error processing RAG query", e)
-                val errorMessage = "❌ Error procesando la consulta: ${e.message}"
+                Log.e("DatabaseQueryFragment", "Error processing MCP query", e)
+                val errorMessage = "❌ Error procesando la consulta con MCP: ${e.message}"
                 addMessageToChat(errorMessage, false)
             } finally {
                 isProcessingQuery = false
@@ -661,6 +870,203 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 saveChatHistory()
             }
         }
+    }
+
+    /**
+     * Detect if query is requesting a graph/chart
+     */
+    private fun detectGraphRequest(query: String): String? {
+        val lowerQuery = query.lowercase()
+        return when {
+            lowerQuery.contains("gráfico") || lowerQuery.contains("grafico") || 
+            lowerQuery.contains("chart") -> {
+                when {
+                    lowerQuery.contains("usuario") && lowerQuery.contains("video") -> "GRAPH_REQUEST:USER_VIDEOS"
+                    lowerQuery.contains("tema") && lowerQuery.contains("contenido") -> "GRAPH_REQUEST:TOPIC_CONTENT"
+                    lowerQuery.contains("curso") && lowerQuery.contains("tema") -> "GRAPH_REQUEST:COURSE_TOPICS"
+                    lowerQuery.contains("tarea") && lowerQuery.contains("tema") -> "GRAPH_REQUEST:TASKS_TOPICS"
+                    lowerQuery.contains("suscripcion") || lowerQuery.contains("subscription") -> "GRAPH_REQUEST:SUBSCRIPTIONS"
+                    else -> null
+                }
+            }
+            else -> null
+        }
+    }
+
+    /**
+     * Process query using MCP tareamov-mcp-server (default tool)
+     * This uses the query_database tool from the MCP server via HTTP
+     */
+    private suspend fun processQueryWithMCPServer(query: String): String = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔧 Using MCP tareamov-mcp-server HTTP for query: $query")
+            
+            // Use MCP HTTP Client to query the database
+            val result = mcpHttpClient.queryDatabase(query)
+            
+            if (result.success) {
+                Log.d(TAG, "✅ MCP STDIO query successful")
+                
+                // Format the result
+                val resultText = when (val data = result.data) {
+                    is String -> data
+                    is JSONArray -> {
+                        // Format JSON array results
+                        if (data.length() == 0) {
+                            "No se encontraron resultados."
+                        } else {
+                            formatMCPJsonArrayResults(data)
+                        }
+                    }
+                    is JSONObject -> {
+                        // Single result from query
+                        formatMCPJsonObjectResult(data)
+                    }
+                    else -> com.google.gson.Gson().toJson(data)
+                }
+                
+                // Append SQL script if available
+                return@withContext if (result.sqlScript != null) {
+                    """
+$resultText
+
+**Script SQL:**
+```sql
+${result.sqlScript}
+```
+                    """.trimIndent()
+                } else {
+                    resultText
+                }
+            } else {
+                Log.e(TAG, "❌ MCP STDIO query failed: ${result.error}")
+                // Fallback to RAG service
+                Log.d(TAG, "⚠️ Falling back to RAG service due to MCP error")
+                return@withContext processRAGEnhancedQuery(query)
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception using MCP STDIO server: ${e.message}", e)
+            // Fallback to RAG service
+            Log.d(TAG, "⚠️ Falling back to RAG service due to exception")
+            return@withContext processRAGEnhancedQuery(query)
+        }
+    }
+    
+    /**
+     * Format JSON array results from MCP
+     */
+    private fun formatMCPJsonArrayResults(data: JSONArray): String {
+        if (data.length() == 0) return "No se encontraron resultados."
+        
+        // Check if it's a simple count result
+        if (data.length() == 1) {
+            val item = data.getJSONObject(0)
+            if (item.length() == 1 && (item.has("count") || item.has("COUNT"))) {
+                return item.optString("count", item.optString("COUNT"))
+            }
+        }
+        
+        val sb = StringBuilder()
+        for (i in 0 until data.length()) {
+            val item = data.getJSONObject(i)
+            
+            // Format as simple list
+            if (item.length() == 1) {
+                // Single field result (e.g., just a name or title)
+                val keys = item.keys()
+                if (keys.hasNext()) {
+                    sb.append("${i + 1}. ${item.get(keys.next())}\n")
+                }
+            } else {
+                // Multiple fields - show key fields
+                sb.append("${i + 1}. ")
+                val keys = item.keys()
+                var count = 0
+                while (keys.hasNext() && count < 3) {
+                    val key = keys.next()
+                    sb.append("$key: ${item.get(key)}, ")
+                    count++
+                }
+                sb.append("\n")
+            }
+        }
+        return sb.toString().trim()
+    }
+    
+    /**
+     * Format JSON object result from MCP
+     */
+    private fun formatMCPJsonObjectResult(data: JSONObject): String {
+        if (data.length() == 0) return "No se encontraron resultados."
+        
+        // Check for count result
+        if (data.length() == 1 && (data.has("count") || data.has("COUNT"))) {
+            return data.optString("count", data.optString("COUNT"))
+        }
+        
+        val sb = StringBuilder()
+        val keys = data.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            sb.append("$key: ${data.get(key)}\n")
+        }
+        return sb.toString().trim()
+    }
+    
+    /**
+     * Format list results from MCP in a readable way
+     */
+    private fun formatMCPListResults(data: List<*>): String {
+        if (data.isEmpty()) return "No se encontraron resultados."
+        
+        // Check if it's a simple count result
+        if (data.size == 1 && data[0] is Map<*, *>) {
+            val map = data[0] as Map<*, *>
+            if (map.size == 1 && (map.containsKey("count") || map.containsKey("COUNT"))) {
+                return map.values.first().toString()
+            }
+        }
+        
+        val sb = StringBuilder()
+        data.forEachIndexed { index, item ->
+            when (item) {
+                is Map<*, *> -> {
+                    // Format as simple list
+                    if (item.size == 1) {
+                        // Single field result (e.g., just a name or title)
+                        sb.append("${index + 1}. ${item.values.first()}\n")
+                    } else {
+                        // Multiple fields - show key fields
+                        sb.append("${index + 1}. ")
+                        item.entries.take(3).forEach { (key, value) ->
+                            sb.append("$key: $value, ")
+                        }
+                        sb.append("\n")
+                    }
+                }
+                else -> sb.append("${index + 1}. $item\n")
+            }
+        }
+        return sb.toString().trim()
+    }
+    
+    /**
+     * Format map result from MCP
+     */
+    private fun formatMCPMapResult(data: Map<*, *>): String {
+        if (data.isEmpty()) return "No se encontraron resultados."
+        
+        // Check for count result
+        if (data.size == 1 && (data.containsKey("count") || data.containsKey("COUNT"))) {
+            return data.values.first().toString()
+        }
+        
+        val sb = StringBuilder()
+        data.entries.forEach { (key, value) ->
+            sb.append("$key: $value\n")
+        }
+        return sb.toString().trim()
     }
 
     /**
@@ -692,16 +1098,16 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             }
 
             Log.d("DatabaseQueryFragment", "Updated Conversation Context: $currentConversationContext")
-            Log.d("DatabaseQueryFragment", "Trying DatabaseQueryService with RAG...")
+            Log.d("DatabaseQueryFragment", "Trying DatabaseQueryService with MCP Tools...")
 
-            // Try DatabaseQueryService with RAG first (most efficient)
-            val ragResult = databaseQueryService.processQuery(query)
+            // Use MCP-enhanced query processing (with tools)
+            val ragResult = databaseQueryService.processQueryWithMCP(query)
             
-            Log.d("DatabaseQueryFragment", "RAG Result Length: ${ragResult.length} characters")
-            Log.d("DatabaseQueryFragment", "RAG Result Content: $ragResult")
+            Log.d("DatabaseQueryFragment", "MCP-RAG Result Length: ${ragResult.length} characters")
+            Log.d("DatabaseQueryFragment", "MCP-RAG Result Content: $ragResult")
             
             if (ragResult.isNotBlank() && !ragResult.startsWith("Error")) {
-                Log.d("DatabaseQueryFragment", "RAG service provided result - SUCCESS")
+                Log.d("DatabaseQueryFragment", "MCP-RAG service provided result - SUCCESS")
                 Log.d("DatabaseQueryFragment", "===========================")
                 return@withContext ragResult
             }
@@ -1299,22 +1705,33 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
 
     private fun addWelcomeMessage() {
         val username = sessionManager.getUsername() ?: "Usuario"
+        val toolsCount = mcpTools.size
+        val toolsList = if (toolsCount > 0) {
+            mcpTools.joinToString("\n") { "  • ${it.getDisplayName()}: ${it.description}" }
+        } else {
+            "  (Cargando...)"
+        }
+        
         val welcomeText = """
-            ¡Hola $username! 👋 Soy el Sistema MCP.
-            
-            🔐 **Chat Personal**: Esta conversación es privada y se guarda específicamente para tu cuenta.
-            
-            Puedo ayudarte a consultar la base de datos usando lenguaje natural. 
-            
-            Algunos ejemplos de lo que puedes preguntarme:
-            • "¿Cuántos usuarios hay?"
-            • "Muestra los videos más populares"
-            • "¿Qué temas tienen más contenido?"
-            • "Crear un gráfico de suscripciones"
-            
-            📝 **Nota**: Todos tus mensajes se guardan automáticamente y se restauran cuando regreses.
-            
-            ¿En qué puedo ayudarte hoy?
+🎯 ¡Bienvenido/a, $username!
+
+Estás conectado al sistema MCP (Model Context Protocol) con acceso a:
+
+🛠️ **Herramientas MCP disponibles ($toolsCount):**
+$toolsList
+
+💬 **Modos de interacción:**
+  • Chat natural: Escribe consultas en lenguaje natural
+  • Herramientas directas: Usa el botón 🔧 para ejecutar herramientas específicas
+  • Consultas SQL: El sistema generará SQL automáticamente
+
+📊 **Capacidades:**
+  • Consultas a la base de datos en tiempo real
+  • Análisis de esquemas y relaciones
+  • Generación de gráficos y visualizaciones
+  • Respuestas contextuales con RAG
+
+✨ Escribe tu consulta o usa el botón de herramientas para empezar.
         """.trimIndent()
         
         addMessageToChat(welcomeText, false)
@@ -1538,6 +1955,14 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         
         // Unregister from user change notifications
         SessionManager.removeUserChangeListener(this)
+        
+        // Close MCP HTTP client connection
+        try {
+            mcpHttpClient.close()
+            Log.d(TAG, "✅ MCP HTTP client closed")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing MCP HTTP client", e)
+        }
 
     // Unregister Supabase request listener to avoid leaking fragment
     com.example.tareamov.service.SupabaseClient.setRequestListener(null)

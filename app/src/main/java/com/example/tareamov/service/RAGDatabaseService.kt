@@ -35,8 +35,8 @@ class RAGDatabaseService(private val context: Context) {
         "usuarios" to SchemaInfo(
             table = "usuarios", 
             columns = listOf("id", "usuario", "contrasena", "persona_id", "rol_id", "created_at"),
-            semanticTags = listOf("usuario", "login", "cuenta", "autenticacion", "acceso"),
-            description = "Cuentas de usuario para autenticación"
+            semanticTags = listOf("usuario", "login", "cuenta", "autenticacion", "acceso", "password", "contraseña", "clave", "credenciales"),
+            description = "Cuentas de usuario para autenticación (el campo 'contrasena' almacena la contraseña/password/clave)"
         ),
         "videos" to SchemaInfo(
             table = "videos",
@@ -283,6 +283,87 @@ class RAGDatabaseService(private val context: Context) {
         } catch (e: Exception) {
             Log.e(tag, "Error processing RAG query", e)
             return@withContext "Error procesando la consulta: ${e.message}"
+        }
+    }
+    
+    /**
+     * Data class for MCP tool results with metadata
+     */
+    data class QueryResultWithMetadata(
+        val data: Any?,
+        val sqlScript: String?,
+        val metadata: Map<String, Any>? = null
+    )
+
+    /**
+     * Process query and return result with metadata for MCP tools
+     * This is used by MCPToolService to get structured results
+     */
+    suspend fun processQueryWithMetadata(userQuery: String): QueryResultWithMetadata = withContext(Dispatchers.IO) {
+        Log.d(tag, "🔧 MCP Query Processing: $userQuery")
+        
+        try {
+            // Analyze query intent
+            val queryContext = analyzeQueryIntent(userQuery)
+            
+            // If it's general advice, return text response
+            if (queryContext.intent == QueryIntent.GENERAL_ADVICE) {
+                val response = generateAdviceResponse(userQuery)
+                return@withContext QueryResultWithMetadata(
+                    data = mapOf("response" to response),
+                    sqlScript = null,
+                    metadata = mapOf(
+                        "intent" to "GENERAL_ADVICE",
+                        "requiresSql" to false
+                    )
+                )
+            }
+            
+            // Retrieve data from Supabase
+            val relevantData = retrieveRelevantData(queryContext)
+            
+            // Parse the data as JSON
+            val dataList = try {
+                val jsonArray = org.json.JSONArray(relevantData)
+                val list = mutableListOf<Map<String, Any?>>()
+                
+                for (i in 0 until jsonArray.length()) {
+                    val jsonObject = jsonArray.getJSONObject(i)
+                    val map = mutableMapOf<String, Any?>()
+                    
+                    jsonObject.keys().forEach { key ->
+                        map[key] = jsonObject.get(key)
+                    }
+                    
+                    list.add(map)
+                }
+                
+                list
+            } catch (e: Exception) {
+                Log.w(tag, "Could not parse data as JSON array: ${e.message}")
+                listOf(mapOf("raw_data" to relevantData))
+            }
+            
+            return@withContext QueryResultWithMetadata(
+                data = dataList,
+                sqlScript = queryContext.sqlScript.takeIf { it.isNotBlank() },
+                metadata = mapOf(
+                    "intent" to queryContext.intent.name,
+                    "targetTables" to queryContext.targetTables,
+                    "rowCount" to dataList.size,
+                    "timestamp" to System.currentTimeMillis()
+                )
+            )
+            
+        } catch (e: Exception) {
+            Log.e(tag, "Error processing MCP query", e)
+            return@withContext QueryResultWithMetadata(
+                data = null,
+                sqlScript = null,
+                metadata = mapOf(
+                    "error" to (e.message ?: "Unknown error")
+                )
+            )
         }
     }
 
@@ -1048,9 +1129,10 @@ WHERE ts.task_id = $taskId;
         if (idFilter != null && context.targetTables.size == 1) {
             val tableName = context.targetTables[0]
             Log.d(tag, "🎯 ID FILTER DETECTED: Fetching specific record from $tableName with id=$idFilter")
+            Log.d(tag, "  📋 Requested attributes: ${context.requestedAttributes}")
             
             try {
-                val (specificData, sqlScript) = getDataById(tableName, idFilter.toInt())
+                val (specificData, sqlScript) = getDataById(tableName, idFilter.toInt(), context.requestedAttributes)
                 context.sqlScript = sqlScript
                 if (specificData.isNotBlank()) {
                     Log.d(tag, "  ✅ Found specific record: ${specificData.take(100)}...")
@@ -1178,93 +1260,125 @@ WHERE ts.task_id = $taskId;
     /**
      * NUEVO: Get specific data by ID from any table
      * Esta función recupera UN SOLO registro específico por ID
+     * @param tableName Nombre de la tabla
+     * @param id ID del registro
+     * @param requestedAttributes Lista de atributos específicos que el usuario pidió (vacío = todos)
      * @return Pair<String, String> - (datos formateados, SQL script)
      */
-    private suspend fun getDataById(tableName: String, id: Int): Pair<String, String> = withContext(Dispatchers.IO) {
+    private suspend fun getDataById(tableName: String, id: Int, requestedAttributes: List<String> = emptyList()): Pair<String, String> = withContext(Dispatchers.IO) {
         try {
-            Log.d(tag, "🔎 Fetching single record from $tableName with id=$id")
+            Log.d(tag, "🔎 Fetching single record from $tableName with id=$id using SQL")
+            Log.d(tag, "  📋 Requested attributes: $requestedAttributes")
             
-            // Generar el SQL script
-            val sqlScript = "SELECT * FROM $tableName WHERE id = $id;"
+            // Generar el SQL script correcto con esquema public
+            val sqlScript = "SELECT * FROM public.$tableName WHERE id = $id;"
             
-            val result = when (tableName) {
-                "videos" -> {
-                    val video = supabase.fetchVideoById(id)
-                    if (video != null) {
-                        "Video encontrado:\nID: ${video.id}\nTítulo: ${video.title}\nDescripción: ${video.description}\nCreador: ${video.username}\nPrecio: $${video.price}\nPago requerido: ${if (video.isPaid) "Sí" else "No"}"
+            Log.d(tag, "  📜 Executing SQL: $sqlScript")
+            
+            // Usar executeRawSql para obtener datos directamente de Supabase
+            val queryResult = supabase.executeRawSql(sqlScript)
+            
+            Log.d(tag, "  📊 Query returned ${queryResult.size} rows")
+            
+            if (queryResult.isEmpty()) {
+                return@withContext Pair(
+                    "⚠️ No se encontró ningún registro con id=$id en la tabla $tableName\n\n**Consulta SQL ejecutada:**\n```sql\n$sqlScript\n```",
+                    sqlScript
+                )
+            }
+            
+            // Obtener el primer (y único) registro
+            val record = queryResult[0]
+            val formatted = StringBuilder()
+            
+            // 🎯 FILTRAR CAMPOS: Si el usuario pidió campos específicos, mostrar SOLO esos
+            if (requestedAttributes.isNotEmpty()) {
+                Log.d(tag, "  🎯 Filtering to show only requested attributes: $requestedAttributes")
+                formatted.appendLine("✅ **Datos solicitados del registro con id=$id en $tableName:**")
+                formatted.appendLine()
+                
+                // Mapeo de términos naturales a nombres de columnas (mismo mapeo que extractRequestedAttributes)
+                val attributeMapping = mapOf(
+                    "título" to "title",
+                    "titulo" to "title",
+                    "nombre" to "nombre",
+                    "name" to "name",
+                    "usuario" to "usuario",
+                    "username" to "username",
+                    "email" to "email",
+                    "correo" to "email",
+                    "contraseña" to "contrasena",
+                    "password" to "contrasena",
+                    "clave" to "contrasena",
+                    "descripción" to "description",
+                    "descripcion" to "description",
+                    "fecha" to "created_at",
+                    "id" to "id",
+                    "precio" to "price",
+                    "calificación" to "grade",
+                    "calificacion" to "grade",
+                    "rol" to "rol_id"
+                )
+                
+                var foundAny = false
+                for (requestedAttr in requestedAttributes) {
+                    // Buscar la columna correspondiente
+                    val columnName = attributeMapping[requestedAttr.lowercase()] ?: requestedAttr
+                    
+                    // Buscar en el record (puede estar en snake_case o camelCase)
+                    val value = record[columnName] ?: record[columnName.replace("_", "")] ?: 
+                               record.entries.find { it.key.equals(columnName, ignoreCase = true) }?.value
+                    
+                    if (value != null) {
+                        formatted.appendLine("• **$requestedAttr**: $value")
+                        foundAny = true
                     } else {
-                        "No se encontró video con id=$id"
+                        Log.w(tag, "  ⚠️ Requested attribute '$requestedAttr' (mapped to '$columnName') not found in record")
                     }
                 }
-                "courses" -> {
-                    val course = supabase.fetchCourseById(id.toLong())
-                    if (course != null) {
-                        "Curso encontrado:\nID: ${course.id}\nTítulo: ${course.title}\nDescripción: ${course.description}\nCreador: ${course.creatorUsername}\nPrecio: $${course.price}"
-                    } else {
-                        "No se encontró curso con id=$id"
+                
+                if (!foundAny) {
+                    Log.w(tag, "  ⚠️ None of the requested attributes were found in the record")
+                    formatted.appendLine("⚠️ No se encontraron los campos solicitados. Mostrando todos los datos disponibles:")
+                    formatted.appendLine()
+                    record.forEach { (key, value) ->
+                        formatted.appendLine("• **$key**: ${value ?: "null"}")
                     }
                 }
-                "topics" -> {
-                    val topic = supabase.fetchTopicById(id)
-                    if (topic != null) {
-                        "Tema encontrado:\nID: ${topic.id}\nNombre: ${topic.name}\nDescripción: ${topic.description}\nID del curso: ${topic.courseId}"
-                    } else {
-                        "No se encontró tema con id=$id"
-                    }
-                }
-                "tasks" -> {
-                    val task = supabase.fetchTaskById(id.toLong())
-                    if (task != null) {
-                        "Tarea encontrada:\nID: ${task.id}\nNombre: ${task.name}\nDescripción: ${task.description}\nID del tema: ${task.topicId}"
-                    } else {
-                        "No se encontró tarea con id=$id"
-                    }
-                }
-                "content_items" -> {
-                    val item = supabase.fetchContentItemById(id)
-                    if (item != null) {
-                        "Item de contenido encontrado:\nID: ${item.id}\nTítulo: ${item.name ?: "Sin título"}\nContenido: ${item.uriString.take(200)}...\nTipo: ${item.contentType}\nID del tema: ${item.topicId}"
-                    } else {
-                        "No se encontró item de contenido con id=$id"
-                    }
-                }
-                else -> {
-                    // Para otras tablas, buscar en la lista completa
-                    val allData = when (tableName) {
-                        "personas" -> supabase.fetchPersonas().find { it.id == id.toLong() }?.let {
-                            "Persona encontrada:\nID: ${it.id}\nNombres: ${it.nombres}\nApellidos: ${it.apellidos}\nEmail: ${it.email}"
-                        }
-                        "usuarios" -> supabase.fetchUsuarios().find { it.id == id.toLong() }?.let {
-                            "Usuario encontrado:\nID: ${it.id}\nUsuario: ${it.usuario}\nID de persona: ${it.personaId}"
-                        }
-                        "chat_messages" -> supabase.fetchChatMessages().find { it.id == id.toLong() }?.let {
-                            "Mensaje encontrado:\nID: ${it.id}\nMensaje: ${it.message}\nEs usuario: ${it.isFromUser}"
-                        }
-                        "file_contexts" -> supabase.fetchFileContexts().find { it.id == id.toLong() }?.let {
-                            "Archivo encontrado:\nID: ${it.id}\nNombre: ${it.fileName}\nTipo: ${it.fileType}"
-                        }
-                        "roles" -> supabase.fetchRoles().find { it.id == id.toLong() }?.let {
-                            "Rol encontrado:\nID: ${it.id}\nNombre: ${it.nombre}"
-                        }
-                        "recursos" -> supabase.fetchRecursos().find { it.id == id.toLong() }?.let {
-                            "Recurso encontrado:\nID: ${it.id}\nNombre: ${it.nombre}\nIcono: ${it.icono}\nOrden: ${it.orden}"
-                        }
-                        "task_submissions" -> supabase.fetchTaskSubmissions().find { it.id == id.toLong() }?.let {
-                            "Entrega encontrada:\nID: ${it.id}\nID de tarea: ${it.taskId}\nUsuario: ${it.studentUsername}\nFecha: ${it.submissionDate}"
-                        }
-                        else -> null
-                    }
-                    allData ?: "No se encontró registro con id=$id en $tableName"
+            } else {
+                // Si no pidió campos específicos, mostrar TODO
+                Log.d(tag, "  📋 No specific attributes requested, showing all fields")
+                formatted.appendLine("✅ **Registro encontrado en $tableName (id=$id):**")
+                formatted.appendLine()
+                
+                record.forEach { (key, value) ->
+                    formatted.appendLine("• **$key**: ${value ?: "null"}")
                 }
             }
             
-            Log.d(tag, "  ✅ Result: ${result.take(100)}...")
-            Log.d(tag, "  📜 SQL: $sqlScript")
-            return@withContext Pair(result, sqlScript)
+            // Agregar el SQL al final
+            formatted.appendLine()
+            formatted.appendLine("**Consulta SQL ejecutada:**")
+            formatted.appendLine("```sql")
+            formatted.appendLine(sqlScript)
+            formatted.appendLine("```")
+            
+            Log.d(tag, "  ✅ Data formatted successfully")
+            return@withContext Pair(formatted.toString(), sqlScript)
             
         } catch (e: Exception) {
-            Log.e(tag, "❌ Error fetching data by id from $tableName", e)
-            return@withContext Pair("Error obteniendo datos: ${e.message}", "SELECT * FROM $tableName WHERE id = $id;")
+            Log.e(tag, "❌ Error fetching data by id from $tableName: ${e.message}", e)
+            val sqlScript = "SELECT * FROM public.$tableName WHERE id = $id;"
+            return@withContext Pair(
+                "❌ Error obteniendo datos: ${e.message}\n\n" +
+                "Posibles causas:\n" +
+                "• La tabla no existe en Supabase\n" +
+                "• No hay permisos para acceder a la tabla\n" +
+                "• La conexión con Supabase falló\n" +
+                "• El registro con id=$id no existe\n\n" +
+                "**Consulta SQL que falló:**\n```sql\n$sqlScript\n```",
+                sqlScript
+            )
         }
     }
     
@@ -1847,7 +1961,17 @@ WHERE ts.task_id = $taskId;
                 """.trimIndent()
             }
 
-            // Otherwise return successful MSP result
+            // 🆕 CRÍTICO: SIEMPRE extraer SQL del resultado del LLM y ejecutarlo
+            Log.d(tag, "  🔍 Checking for SQL in LLM response...")
+            val sqlExecutedResult = executeSqlFromLlmResponse(mspResult, originalQuery)
+            if (sqlExecutedResult != null) {
+                Log.d(tag, "  ✅ SQL extracted and executed successfully - returning REAL DATA from Supabase")
+                return sqlExecutedResult
+            } else {
+                Log.d(tag, "  ⚠️ No executable SQL found in LLM response, returning LLM text as-is")
+            }
+
+            // Otherwise return successful MSP result (if no SQL was found)
             Log.d(tag, "  ✓ MSPClient succeeded with response length: ${mspResult.length} chars")
             mspResult
         } catch (e: Exception) {
@@ -1860,6 +1984,105 @@ WHERE ts.task_id = $taskId;
                 Datos recuperados:
                 $directResponse
             """.trimIndent()
+        }
+    }
+    
+    /**
+     * 🆕 Extrae SQL del response del LLM, lo ejecuta en Supabase y devuelve datos reales
+     */
+    private suspend fun executeSqlFromLlmResponse(llmResponse: String, originalQuery: String): String? = withContext(Dispatchers.IO) {
+        try {
+            // Buscar bloques SQL en la respuesta del LLM
+            val sqlPattern = """```sql\s*(.*?)\s*```""".toRegex(RegexOption.DOT_MATCHES_ALL)
+            val sqlMatch = sqlPattern.find(llmResponse) ?: return@withContext null
+            
+            val sqlQuery = sqlMatch.groupValues[1].trim()
+            if (sqlQuery.isBlank() || !sqlQuery.lowercase().contains("select")) {
+                Log.w(tag, "  ⚠️ No valid SELECT query found in LLM response")
+                return@withContext null
+            }
+            
+            Log.d(tag, "  🔍 SQL extracted from LLM: ${sqlQuery.take(100)}...")
+            
+            // Ejecutar el SQL en Supabase
+            val queryResult = supabase.executeRawSql(sqlQuery)
+            Log.d(tag, "  ✅ SQL executed, result count: ${queryResult.size} rows")
+            
+            // Convertir resultado a JSON
+            val jsonArray = org.json.JSONArray(queryResult)
+            
+            if (jsonArray.length() == 0) {
+                Log.d(tag, "  ⚠️ Query returned 0 results")
+                return@withContext """
+🔍 CONSULTA EJECUTADA EN SUPABASE
+
+La consulta se ejecutó correctamente, pero **no se encontraron resultados**.
+
+**Script SQL ejecutado:**
+```sql
+$sqlQuery
+```
+
+❌ **No se encontraron datos que coincidan con los criterios especificados.**
+
+💡 Posibles razones:
+   • El registro no existe en la base de datos
+   • Los filtros no coinciden con ningún dato (ej: username incorrecto)
+   • La tabla está vacía
+
+🔎 Sugerencias:
+   • Verifica que los valores de búsqueda sean correctos
+   • Consulta primero qué datos existen: "dame todos los usuarios"
+   • Revisa si el nombre está bien escrito (es sensible a mayúsculas/minúsculas)
+                """.trimIndent()
+            }
+            
+            // Formatear el resultado de forma legible
+            val formattedData = StringBuilder()
+            formattedData.appendLine("✅ DATOS OBTENIDOS DE SUPABASE")
+            formattedData.appendLine()
+            
+            // Detectar el tipo de consulta para formatear apropiadamente
+            val isTaskQuery = originalQuery.lowercase().contains("tarea")
+            val isUserQuery = originalQuery.lowercase().contains("usuario")
+            
+            // Formatear cada resultado
+            for (i in 0 until jsonArray.length()) {
+                val jsonObj = jsonArray.getJSONObject(i)
+                
+                if (i > 0) formattedData.appendLine("─".repeat(50))
+                formattedData.appendLine("📋 REGISTRO ${i + 1}:")
+                
+                // Iterar todas las claves del objeto JSON
+                val keys = jsonObj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val value = jsonObj.opt(key)
+                    
+                    // Formatear valores null
+                    val displayValue = when {
+                        value == null || value == org.json.JSONObject.NULL -> "N/A"
+                        value is String && value.isBlank() -> "(vacío)"
+                        else -> value.toString()
+                    }
+                    
+                    // Formato legible para cada campo
+                    formattedData.appendLine("  • $key: $displayValue")
+                }
+                formattedData.appendLine()
+            }
+            
+            formattedData.appendLine()
+            formattedData.appendLine("**Script SQL usado:**")
+            formattedData.appendLine("```sql")
+            formattedData.appendLine(sqlQuery)
+            formattedData.appendLine("```")
+            
+            return@withContext formattedData.toString()
+            
+        } catch (e: Exception) {
+            Log.e(tag, "  ❌ Error executing SQL from LLM response", e)
+            return@withContext null
         }
     }
 
@@ -1890,77 +2113,51 @@ WHERE ts.task_id = $taskId;
             Log.d(tag, "  🗂️ Building schema-specific prompt")
             
             return """
-🌐 IDIOMA OBLIGATORIO: Responde SIEMPRE en ESPAÑOL. Nunca uses inglés.
+🌐 IDIOMA OBLIGATORIO: Responde SIEMPRE en ESPAÑOL.
 
-Eres un experto en bases de datos relacionales PostgreSQL/Supabase. El usuario te ha pedido información COMPLETA sobre el esquema de la base de datos.
-
-═══════════════════════════════════════════════════════════════════
 ESQUEMA COMPLETO DE LA BASE DE DATOS (PostgreSQL/Supabase):
-═══════════════════════════════════════════════════════════════════
 $dbSchema
 
-═══════════════════════════════════════════════════════════════════
-DATOS ACTUALES DE LA BASE DE DATOS (JSON):
-═══════════════════════════════════════════════════════════════════
+DATOS ACTUALES DE LA BASE DE DATOS:
 $relevantData
 
-CONSULTA DEL USUARIO: 
-"$originalQuery"
+CONSULTA DEL USUARIO: "$originalQuery"
 
-INSTRUCCIONES CRÍTICAS - DEBES SEGUIR ESTRICTAMENTE:
+INSTRUCCIONES CRÍTICAS - FORMATO DE RESPUESTA:
 
-**PASO 1: EXTRAE TODAS LAS FOREIGN KEYS DEL ESQUEMA**
-Busca en el esquema la sección "🔗 RESUMEN DE RELACIONES (Grafo de dependencias)".
-Esta sección lista TODAS las tablas que tienen Foreign Keys.
+Para consultas de ESQUEMA o RELACIONES:
+- Lista directamente las tablas o relaciones
+- NO agregues encabezados decorativos
+- Formato simple y directo
 
-**PASO 2: CUENTA LAS FOREIGN KEYS**
-Para cada tabla listada en la sección de resumen, cuenta cuántos "├─→" tiene.
-Ejemplo:
-```
-chat_messages:
-  ├─→ usuarios (via usuario_id)           <-- 1 FK
-content_items:
-  ├─→ usuarios (via creator_usuario_id)   <-- 1 FK
-  ├─→ tasks (via task_id)                 <-- 1 FK (total: 2 FKs para content_items)
-```
+EJEMPLOS:
 
-**PASO 3: LISTA TODAS LAS RELACIONES SIN OMITIR NINGUNA**
-Formato OBLIGATORIO para cada relación:
-[TABLA_ORIGEN].[columna_fk] → [TABLA_DESTINO].[columna] [REGLA_DELETE]
+Query: "¿cuántas tablas hay?"
+Respuesta: "14"
 
-Ejemplo:
-- chat_messages.usuario_id → usuarios.id [SET NULL]
-- content_items.creator_usuario_id → usuarios.id [SET NULL]
-- content_items.task_id → tasks.id [CASCADE]
+Query: "lista todas las tablas"
+Respuesta: "1. personas
+2. usuarios
+3. videos
+4. topics
+5. content_items
+6. tasks
+7. subscriptions
+8. task_submissions
+9. chat_messages
+10. file_contexts
+11. courses
+12. roles
+13. recursos
+14. rol_recursos"
 
-**PASO 4: VERIFICA TU CONTEO**
-Cuenta cuántas relaciones listaste. El número DEBE coincidir con el total de "├─→" en el esquema.
+Query: "lista las foreign keys de la tabla usuarios"
+Respuesta: "usuarios.rol_id → roles.id [CASCADE]"
 
-❌ **PROHIBIDO:**
-- Decir "hay más relaciones pero no las listo"
-- Omitir relaciones por brevedad
-- Agrupar múltiples relaciones en una sola línea
-- Resumir o simplificar la respuesta
+Query: "¿cuántas relaciones hay en total?"
+Respuesta: "X" (donde X es el número total de foreign keys)
 
-✅ **OBLIGATORIO:**
-- Listar TODAS las Foreign Keys encontradas en "🔗 RESUMEN DE RELACIONES"
-- Usar el formato especificado
-- Incluir la regla ON DELETE para cada FK
-- Numerar cada relación (1., 2., 3., etc.)
-
-**FORMATO DE RESPUESTA OBLIGATORIO:**
-```
-La base de datos TareaMov tiene X Foreign Keys (relaciones):
-
-1. [tabla1].[col] → [tabla2].[col] [REGLA]
-2. [tabla1].[col] → [tabla2].[col] [REGLA]
-...
-X. [tabla1].[col] → [tabla2].[col] [REGLA]
-
-VERIFICACIÓN: He listado todas las X relaciones presentes en el esquema.
-```
-
-RESPONDE AHORA SIGUIENDO ESTE FORMATO EXACTO.
+RESPONDE AHORA CON ESTE FORMATO DIRECTO Y SIMPLE.
             """.trimIndent()
         }
         
@@ -1982,82 +2179,48 @@ ${context.sqlScript}
             } else ""
             
             return """
-🌐 IDIOMA OBLIGATORIO: Responde SIEMPRE en ESPAÑOL. Nunca uses inglés.
-
-Eres un asistente de base de datos experto, preciso y comunicativo.
-
-═══════════════════════════════════════════════════════════════════
-ESQUEMA DE LA BASE DE DATOS (PostgreSQL/Supabase):
-═══════════════════════════════════════════════════════════════════
-$dbSchema
-
-═══════════════════════════════════════════════════════════════════
-CONTEXTO DE LA CONSULTA:
-═══════════════════════════════════════════════════════════════════
-El usuario preguntó específicamente por un registro con ID=$idValue en la tabla ${context.targetTables.firstOrNull() ?: "desconocida"}.
+🌐 IDIOMA OBLIGATORIO: Responde SIEMPRE en ESPAÑOL.
 
 DATOS RECUPERADOS DE SUPABASE:
-$relevantData$sqlScript
+$relevantData
 
-CONSULTA ORIGINAL DEL USUARIO: 
-"$originalQuery"
+CONSULTA ORIGINAL: "$originalQuery"
 
-ATRIBUTOS SOLICITADOS: 
-${if (context.requestedAttributes.isEmpty()) "Todos los campos disponibles" else context.requestedAttributes.joinToString(", ")}
-
-INSTRUCCIONES PARA TU RESPUESTA:
-1. **USA EL ESQUEMA DE LA BASE DE DATOS** de arriba para entender las relaciones entre tablas
-2. Si la consulta requiere datos de múltiples tablas relacionadas, **GENERA UNA CONSULTA SQL CON JOIN**
-3. ARGUMENTA brevemente qué consulta se realizó (ej: "He consultado la base de datos para obtener...")
-4. Presenta ÚNICAMENTE la información del registro encontrado
-5. Si el usuario pidió campos específicos (título, username, etc.), muestra SOLO esos campos
-6. Si pidió "todos los datos" o no especificó, muestra todos los campos relevantes
-7. Usa un formato claro y legible:
-   - Para un solo campo: "El [campo] del [entidad] con id=$idValue es: [valor]"
-   - Para múltiples campos: Lista estructurada con viñetas o formato limpio
-8. NO inventes información que no esté en los datos
-9. NO menciones otros registros
-10. Sé conciso pero informativo
-11. **AL FINAL, MUESTRA EL SCRIPT SQL** usado para obtener estos datos
-
-IMPORTANTE PARA CONSULTAS CON RELACIONES:
-- Si la consulta menciona "dueño", "creador", "pertenece", necesitas hacer JOIN entre tablas
-- **ANALIZA EL ESQUEMA DE LA BASE DE DATOS de arriba** para identificar las Foreign Keys correctas
-- **NO inventes relaciones**, usa SOLO las que aparecen en el esquema
-- Busca en la sección "🔗 RESUMEN DE RELACIONES" y "⚡ CADENA DE RELACIONES CRÍTICA"
-
-FORMATO OBLIGATORIO DE RESPUESTA:
-[Tu explicación argumentada]
-[Datos encontrados]
-
-**Script SQL usado:**
-\`\`\`sql
-${context.sqlScript}
-\`\`\`
+INSTRUCCIONES CRÍTICAS - FORMATO DE RESPUESTA OBLIGATORIO:
+1. **NO agregues encabezados decorativos** como "✅ DATOS OBTENIDOS", "📋 REGISTRO", emojis, separadores, etc.
+2. **SOLO responde con los datos directamente**, sin explicaciones previas
+3. **Formato SIMPLE y DIRECTO:**
+   - Si es una consulta de CONTEO: responde SOLO el número
+   - Si es una consulta de un campo específico: responde SOLO el valor
+   - Si son múltiples campos: lista solo los valores solicitados, uno por línea
 
 EJEMPLOS DE RESPUESTAS CORRECTAS:
-- Query: "¿cuál es el título del curso con id=1?"
-  Respuesta: "He consultado la tabla de cursos en Supabase. El título del curso con id=1 es: '[TÍTULO DEL CURSO]'
-  
-  **Script SQL usado:**
-  \`\`\`sql
-  SELECT * FROM courses WHERE id = 1;
-  \`\`\`"
-  
-- Query: "dame todos los datos del video con id=5"
-  Respuesta: "He recuperado la información completa del video con id=5:
-  • ID: 5
-  • Título: [TÍTULO]
-  • Descripción: [DESCRIPCIÓN]
-  • Creador: [USERNAME]
-  • Precio: $[PRECIO]
-  
-  **Script SQL usado:**
-  \`\`\`sql
-  SELECT * FROM videos WHERE id = 5;
-  \`\`\`"
 
-RESPONDE AHORA:
+Query: "¿cuántos usuarios hay?"
+Respuesta: "9"
+
+Query: "¿cuál es el título del curso con id=1?"
+Respuesta: "Introducción a Python"
+
+Query: "dame el username y email del usuario con id=5"
+Respuesta: "username: jesus
+email: jesus@example.com"
+
+Query: "lista los títulos de todos los videos"
+Respuesta: "lol
+Mi video
+sub
+subj
+load"
+
+4. **AL FINAL** (después de los datos), agrega en una nueva línea:
+
+**Script SQL:**
+\`\`\`sql
+${context.sqlScript ?: "N/A"}
+\`\`\`
+
+RESPONDE AHORA CON ESTE FORMATO EXACTO:
             """.trimIndent()
         }
         
@@ -2077,55 +2240,45 @@ ${context.sqlScript}
             } else ""
             
             return """
-🌐 IDIOMA OBLIGATORIO: Responde SIEMPRE en ESPAÑOL. Nunca uses inglés.
+🌐 IDIOMA OBLIGATORIO: Responde SIEMPRE en ESPAÑOL.
 
-Eres un asistente experto en bases de datos relacionales y SQL con JOINs.
-
-═══════════════════════════════════════════════════════════════════
 ESQUEMA DE LA BASE DE DATOS (PostgreSQL/Supabase):
-═══════════════════════════════════════════════════════════════════
 $dbSchema
-
-═══════════════════════════════════════════════════════════════════
-CONTEXTO DE LA CONSULTA:
-═══════════════════════════════════════════════════════════════════
-El usuario hizo una consulta que requiere relacionar múltiples tablas: ${context.targetTables.joinToString(", ")}
 
 DATOS RELACIONADOS RECUPERADOS:
 $relevantData$sqlScript
 
 CONSULTA ORIGINAL: "$originalQuery"
 
-INSTRUCCIONES IMPORTANTES:
-1. **ANALIZA EL ESQUEMA DE LA BASE DE DATOS** de arriba para identificar las Foreign Keys correctas
-2. **GENERA UNA CONSULTA SQL CON JOINs** basada en las relaciones del esquema
-3. EXPLICA la consulta SQL realizada:
-   - Menciona las tablas relacionadas mediante JOINs
-   - Explica cómo se conectan las tablas usando las Foreign Keys del esquema
-   - Indica qué columnas se recuperaron
-4. Presenta el RESULTADO FINAL de forma clara y concisa
-5. El SQL debe usar JOINs eficientes, NO múltiples consultas separadas
-6. Usa alias de tabla para claridad (t, tp, c, etc.)
-7. Sé preciso con los datos mostrados
-8. **AL FINAL, MUESTRA EL SCRIPT SQL CON JOINS** usado para la consulta
+INSTRUCCIONES CRÍTICAS - FORMATO DE RESPUESTA OBLIGATORIO:
+1. **NO agregues encabezados decorativos** como "✅ DATOS OBTENIDOS", emojis, separadores
+2. **RESPONDE DIRECTAMENTE** con los datos sin explicaciones previas
+3. **Formato SIMPLE:**
+   - Si es conteo: solo el número
+   - Si es un valor específico: solo el valor
+   - Si son múltiples registros: lista limpia sin decoración
 
-FORMATO OBLIGATORIO:
-[Explicación de la consulta SQL con JOINs basada en el esquema]
-[Resultado final]
+EJEMPLOS:
 
-**Script SQL usado:**
+Query: "¿cuántos usuarios hay en el curso con id=1?"
+Respuesta: "5"
+
+Query: "¿cuál es el nombre del creador del video con id=10?"
+Respuesta: "jesus"
+
+Query: "lista los títulos de las tareas del tema con id=3"
+Respuesta: "Tarea de matemáticas
+Tarea de física
+Ejercicio de cálculo"
+
+4. **AL FINAL**, agrega el script SQL:
+
+**Script SQL:**
 \`\`\`sql
 ${context.sqlScript}
 \`\`\`
 
-IMPORTANTE: 
-- **CONSULTA EL ESQUEMA DE LA BASE DE DATOS de arriba** antes de generar SQL
-- Busca en las secciones "🔗 Relaciones (Foreign Keys)" para cada tabla
-- Verifica la sección "🔗 RESUMEN DE RELACIONES" para el grafo completo
-- **NO uses relaciones que no estén explícitamente en el esquema**
-- Si hay ejemplo en "⚡ CADENA DE RELACIONES CRÍTICA", úsalo como guía
-
-RESPONDE AHORA:
+RESPONDE AHORA CON ESTE FORMATO EXACTO:
             """.trimIndent()
         }
         
@@ -2143,56 +2296,45 @@ ${context.sqlScript}
             } else ""
             
             return """
-🌐 IDIOMA OBLIGATORIO: Responde SIEMPRE en ESPAÑOL. Nunca uses inglés.
-
-Eres un asistente de base de datos que presenta información ordenada de forma clara.
-
-CONTEXTO:
-El usuario solicitó datos ordenados por: $column ($direction)
-Tablas consultadas: ${context.targetTables.joinToString(", ")}
+🌐 IDIOMA OBLIGATORIO: Responde SIEMPRE en ESPAÑOL.
 
 DATOS RECUPERADOS Y ORDENADOS:
 $relevantData$sqlScript
 
 CONSULTA ORIGINAL: "$originalQuery"
 
-ATRIBUTOS A MOSTRAR:
-${if (context.requestedAttributes.isEmpty()) "Todos los campos disponibles" else context.requestedAttributes.joinToString(", ")}
+INSTRUCCIONES CRÍTICAS - FORMATO DE RESPUESTA OBLIGATORIO:
+1. **NO agregues encabezados decorativos**, emojis, separadores, ni explicaciones
+2. **RESPONDE DIRECTAMENTE** con la lista de datos ordenados
+3. **Formato SIMPLE:**
+   - Lista numerada si son múltiples elementos
+   - Solo los campos solicitados (ej: si pidió "títulos", solo títulos)
+   - Mantén el orden de los datos
 
-INSTRUCCIONES:
-1. MENCIONA que los datos están ordenados por $column en orden ${if (direction == "asc") "ascendente" else "descendente"}
-2. Presenta los datos en una lista clara y numerada
-3. Si pidió solo ciertos atributos (ej: "títulos"), muestra SOLO esos
-4. Mantén el orden proporcionado
-5. Usa formato limpio (viñetas, numeración, o tabla simple)
-6. **AL FINAL, MUESTRA EL SCRIPT SQL** usado para la consulta
+EJEMPLOS:
 
-FORMATO OBLIGATORIO:
-[Explicación del ordenamiento]
-[Lista de datos ordenados]
+Query: "dame los títulos ordenados por id"
+Respuesta: "1. lol
+2. Mi video
+3. sub
+4. subj
+5. load"
 
-**Script SQL usado:**
+Query: "lista los usuarios ordenados alfabéticamente"
+Respuesta: "1. jesus
+2. jesus1
+3. nuevo
+4. prueba
+5. pruebe"
+
+4. **AL FINAL**, agrega el script:
+
+**Script SQL:**
 \`\`\`sql
 ${context.sqlScript}
 \`\`\`
 
-EJEMPLO:
-Query: "dame todos los títulos de videos ordenados por id"
-Respuesta: "He consultado todos los videos de Supabase, ordenados por ID ascendente. Aquí están los títulos:
-
-1. (ID: 1) Introducción a Python
-2. (ID: 2) Bases de datos relacionales
-3. (ID: 3) Desarrollo web moderno
-...
-
-**Script SQL usado:**
-\`\`\`sql
-SELECT id, title, description, username, timestamp, is_paid, thumbnail_uri, price 
-FROM videos 
-ORDER BY id ASC;
-\`\`\`"
-
-RESPONDE AHORA:
+RESPONDE AHORA CON ESTE FORMATO EXACTO:
             """.trimIndent()
         }
         
@@ -2229,25 +2371,25 @@ RESPONDE AHORA:
         val instructions = if (isCompleteDataRequest) {
             """
 INSTRUCCIONES ESPECIALES PARA DATOS COMPLETOS:
-1. ARGUMENTA brevemente qué datos recuperaste (ej: "He consultado la tabla de [X] en Supabase...")
-2. MUESTRA TODOS LOS DATOS proporcionados sin restricciones de longitud
-3. NO limites el número de elementos mostrados 
-4. Presenta CADA REGISTRO completo con todos sus campos
-5. Usa el formato estructurado proporcionado en los datos
-6. NO resumas ni omitas información
-7. **AL FINAL, MUESTRA EL SCRIPT SQL** usado para obtener estos datos
+1. GENERA UNA CONSULTA SQL válida para PostgreSQL/Supabase que obtenga EXACTAMENTE lo que el usuario pidió
+2. Encierra el SQL en un bloque de código: ```sql ... ```
+3. El SQL será ejecutado automáticamente en Supabase para obtener los datos reales
+4. DESPUÉS del bloque SQL, explica brevemente qué datos recuperaste
+5. NO limites el número de elementos - el SQL debe obtener todos los datos solicitados
+6. Usa JOINs si la consulta involucra múltiples tablas relacionadas
+7. Consulta el esquema de arriba para identificar las relaciones correctas
             """.trimIndent()
         } else {
             """
 INSTRUCCIONES:
-1. ARGUMENTA brevemente tu respuesta (ej: "He consultado [tabla/tablas] y encontré...")
-2. Responde de manera concisa y directa (máximo ${RAGConfig.MAX_RESPONSE_LENGTH} caracteres)
-3. Usa SOLO la información proporcionada de Supabase
-4. Si pides una lista, presenta máximo ${RAGConfig.MAX_LIST_ITEMS} elementos
-5. Si es un conteo, da el número específico y justifícalo
-6. Si no hay datos suficientes, indícalo claramente
-7. Menciona la fuente: "según los datos de Supabase..." o similar
-8. **AL FINAL, MUESTRA EL SCRIPT SQL** usado para obtener estos datos
+1. GENERA UNA CONSULTA SQL válida para PostgreSQL/Supabase que responda EXACTAMENTE la pregunta del usuario
+2. Encierra el SQL en un bloque de código: ```sql ... ```
+3. El SQL será ejecutado automáticamente en Supabase y los datos reales serán devueltos al usuario
+4. Si la consulta requiere datos de múltiples tablas, usa JOINs apropiados consultando el esquema de arriba
+5. DESPUÉS del bloque SQL, explica brevemente qué datos se están consultando
+6. Usa SOLO las tablas y columnas que existen en el esquema proporcionado
+7. Si es un conteo, usa COUNT(*); si es búsqueda específica, usa WHERE con los filtros apropiados
+8. Para consultas con relaciones (ej: "dueño del curso de la tarea"), consulta el esquema para identificar las FK correctas
             """.trimIndent()
         }
         
@@ -2262,54 +2404,54 @@ ${context.sqlScript}
         } else ""
 
         return """
-🌐 IDIOMA OBLIGATORIO: Responde SIEMPRE en ESPAÑOL. Nunca uses inglés.
+🌐 IDIOMA OBLIGATORIO: Responde SIEMPRE en ESPAÑOL.
 
-$systemPrompt
-
-═══════════════════════════════════════════════════════════════════
-ESQUEMA COMPLETO DE LA BASE DE DATOS (PostgreSQL/Supabase):
-═══════════════════════════════════════════════════════════════════
+ESQUEMA DE LA BASE DE DATOS (PostgreSQL/Supabase):
 $dbSchema
-
-═══════════════════════════════════════════════════════════════════
-CONTEXTO DE LA CONSULTA:
-═══════════════════════════════════════════════════════════════════
-- Tablas consultadas: ${context.targetTables.joinToString(", ")}
-- Tipo de consulta: ${context.intent}
-- Filtros aplicados: ${if (context.filters.isEmpty()) "ninguno" else context.filters.entries.joinToString(", ") { "${it.key}=${it.value}" }}
-
-ESQUEMA RELEVANTE (resumen):
-${getRelevantSchemaInfo(context.targetTables)}
 
 DATOS RECUPERADOS DE SUPABASE:
 $limitedData$sqlScriptSection
 
-CONSULTA ORIGINAL DEL USUARIO: 
-"$originalQuery"
+CONSULTA ORIGINAL: "$originalQuery"
 
-ATRIBUTOS SOLICITADOS:
-${if (context.requestedAttributes.isEmpty()) "Todos los campos" else context.requestedAttributes.joinToString(", ")}
+INSTRUCCIONES CRÍTICAS - FORMATO DE RESPUESTA OBLIGATORIO:
+1. **NO agregues encabezados decorativos** como "✅ DATOS OBTENIDOS", emojis, separadores
+2. **RESPONDE DIRECTAMENTE** con los datos solicitados sin explicaciones previas
+3. **Formato SIMPLE:**
+   - Conteos: solo el número
+   - Valores específicos: solo el valor
+   - Listas: formato limpio sin decoración
+   - Múltiples registros: lista numerada simple
 
-$responseTemplate
+EJEMPLOS DE RESPUESTAS CORRECTAS:
 
-$instructions
+Query: "¿cuántos usuarios hay?"
+Respuesta: "9"
 
-IMPORTANTE:
-- USA EL ESQUEMA DE LA BASE DE DATOS de arriba para entender la estructura y relaciones
-- Si necesitas consultar múltiples tablas relacionadas, GENERA UNA CONSULTA SQL CON JOINs
-- Identifica las Foreign Keys correctas del esquema para relacionar tablas
-- Si la consulta actual no tiene el esquema SQL, GENERA UNO basado en el esquema de la BD
+Query: "¿cuál es el título del curso con id=1?"
+Respuesta: "Introducción a Python"
 
-FORMATO DE RESPUESTA ESPERADO:
-1. Breve argumentación: "He consultado [tablas] en Supabase y [resultado]..."
-2. Datos específicos solicitados
-3. Conclusión o resumen si aplica
-4. **Script SQL usado:**
-   \`\`\`sql
-   ${context.sqlScript}
-   \`\`\`
+Query: "dame el username del usuario con id=5"
+Respuesta: "jesus"
 
-RESPONDE AHORA:
+Query: "lista los títulos de todos los videos"
+Respuesta: "1. lol
+2. Mi video
+3. sub
+4. subj
+5. load"
+
+Query: "¿cuál es el email del usuario 'jesus'?"
+Respuesta: "jesus@example.com"
+
+4. **AL FINAL**, agrega el script SQL usado:
+
+**Script SQL:**
+\`\`\`sql
+${context.sqlScript ?: "SELECT * FROM ${context.targetTables.firstOrNull() ?: "tabla"}"}
+\`\`\`
+
+RESPONDE AHORA CON ESTE FORMATO EXACTO Y DIRECTO.
         """.trimIndent()
     }
 

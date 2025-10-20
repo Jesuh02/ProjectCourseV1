@@ -54,11 +54,13 @@ class MSPClient(private val context: Context) {
     private val modelName = "llama3"
 
     // Enhanced OkHttpClient with better timeout handling for large payloads
+    // Increased timeouts to handle Ollama's model loading time (7+ seconds)
     private val client by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)  // Increased read timeout for large responses
-            .writeTimeout(60, TimeUnit.SECONDS)  // Increased write timeout for large requests
+            .connectTimeout(60, TimeUnit.SECONDS)      // Increased for initial connection
+            .readTimeout(300, TimeUnit.SECONDS)        // 5 minutes for model loading + response generation
+            .writeTimeout(120, TimeUnit.SECONDS)       // 2 minutes for large requests
+            .callTimeout(360, TimeUnit.SECONDS)        // 6 minutes total call timeout
             .build()
     }
 

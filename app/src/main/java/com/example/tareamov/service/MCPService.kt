@@ -1,5 +1,5 @@
 package com.example.tareamov.service
-
+//
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -38,6 +38,9 @@ class MCPService(private val context: Context) {
     // RAG service for enhanced query processing
     private val ragService by lazy { RAGDatabaseService(context) }
     
+    // MCP Tool Service for protocol integration
+    private val mcpToolService by lazy { MCPToolService(context) }
+    
     // System context to maintain conversation state
     private var conversationContext: String = "general"
     
@@ -52,8 +55,9 @@ class MCPService(private val context: Context) {
         // Usando localhost (127.0.0.1) en lugar de 10.0.2.2 para reducir problemas de conectividad
         private const val MCP_SERVER_URL = "http://127.0.0.1:3000/convert"
         
-        // Tiempo máximo de espera para la conversión de archivos grandes - reducido para evitar ANRs
-        private const val TIMEOUT_SECONDS = 15L
+        // Tiempo máximo de espera para la conversión de archivos grandes y carga de modelos
+        // Aumentado para permitir que Ollama cargue el modelo (7+ segundos) + generar respuesta
+        private const val TIMEOUT_SECONDS = 300L  // 5 minutos
         
         // URLs alternativos en caso de que el principal falle - EMULADOR PRIMERO
         private val FALLBACK_URLS = listOf(
@@ -83,6 +87,7 @@ class MCPService(private val context: Context) {
             .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .callTimeout(TIMEOUT_SECONDS + 60, TimeUnit.SECONDS)  // Extra time for total call
             .build()
     }
 
@@ -530,6 +535,56 @@ class MCPService(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Error processing query", e)
             "Error al procesar la consulta: ${e.message ?: "Error desconocido"}"
+        }
+    }
+    
+    /**
+     * Get available MCP tools
+     */
+    fun getAvailableMCPTools(): List<MCPToolService.MCPTool> {
+        return mcpToolService.getAvailableTools()
+    }
+    
+    /**
+     * Execute MCP tool directly
+     * This method allows the UI to execute tools without going through the LLM
+     */
+    suspend fun executeMCPTool(toolName: String, arguments: Map<String, Any?>): String = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔧 Executing MCP tool: $toolName")
+            Log.d(TAG, "Arguments: $arguments")
+            
+            val result = mcpToolService.executeTool(toolName, arguments)
+            
+            // Format the result for display
+            val formattedResult = mcpToolService.formatToolResult(result, toolName)
+            
+            Log.d(TAG, if (result.success) "✅ Tool executed successfully" else "❌ Tool execution failed")
+            
+            return@withContext formattedResult
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing MCP tool", e)
+            return@withContext "❌ Error ejecutando herramienta MCP: ${e.message}"
+        }
+    }
+    
+    /**
+     * Process query with MCP tools available
+     * The LLM will automatically use tools when needed
+     */
+    suspend fun processQueryWithMCP(query: String): String = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔧 Processing query with MCP tools: $query")
+            
+            // Use DatabaseQueryService which now has MCP integration
+            val result = databaseQueryService.processQueryWithMCP(query)
+            
+            return@withContext result
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in MCP query processing", e)
+            return@withContext "Error procesando consulta con MCP: ${e.message}"
         }
     }
 

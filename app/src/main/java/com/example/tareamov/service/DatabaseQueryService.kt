@@ -15,6 +15,7 @@ import com.google.gson.Gson // <-- Add this import
 
 /**
  * Service that handles natural language queries to the database using RAG
+ * NOW WITH MCP TOOLS INTEGRATION - Like VS Code MCP Extension
  */
 class DatabaseQueryService(private val context: Context) {
     private val tag = "DatabaseQueryService"
@@ -25,6 +26,9 @@ class DatabaseQueryService(private val context: Context) {
     
     // RAG service for efficient database querying
     private val ragService by lazy { RAGDatabaseService(context) }
+    
+    // MCP Tool Service for protocol-based tool execution
+    private val mcpToolService by lazy { MCPToolService(context) }
 
     // Add schema definitions for Task and Subscription
     private val taskSchema = """
@@ -85,6 +89,158 @@ class DatabaseQueryService(private val context: Context) {
         }
     }
 
+    /**
+     * Get available MCP tools for display in UI
+     */
+    fun getAvailableMCPTools(): List<MCPToolService.MCPTool> {
+        return mcpToolService.getAvailableTools()
+    }
+    
+    /**
+     * Execute MCP tool directly (bypassing LLM)
+     */
+    suspend fun executeMCPTool(toolName: String, arguments: Map<String, Any?>): MCPToolService.MCPToolResult {
+        return mcpToolService.executeTool(toolName, arguments)
+    }
+    
+    /**
+     * Process query with MCP tools - Uses RAG for intelligent query processing
+     * This ensures proper filtering and field selection based on user request
+     */
+    suspend fun processQueryWithMCP(query: String): String = withContext(Dispatchers.IO) {
+        Log.i(tag, "🔧 Processing MCP-enabled query: '$query'")
+        
+        try {
+            val normalizedQuery = query.lowercase().trim()
+            
+            // Check if asking for schema - handle directly
+            if (normalizedQuery.contains("esquema") || normalizedQuery.contains("schema") || 
+                normalizedQuery.contains("estructura") || normalizedQuery.contains("tablas")) {
+                Log.d(tag, "Detected schema query - using get_database_schema tool")
+                val result = mcpToolService.executeTool("get_database_schema", emptyMap())
+                return@withContext formatMCPResult(result, "get_database_schema")
+            }
+            
+            // For ALL other queries, use RAGDatabaseService to ensure proper filtering
+            // This includes ID-based queries, field-specific requests, etc.
+            Log.d(tag, "🎯 Using RAGDatabaseService for intelligent query processing")
+            
+            // Process query through RAG to get filtered results
+            val ragResult = ragService.processQueryWithMetadata(query)
+            
+            // Build response with results and SQL
+            val response = StringBuilder()
+            
+            // Add the data
+            response.appendLine(ragResult.data)
+            
+            // Add SQL script at the end if available
+            val sqlScript = ragResult.sqlScript ?: ""
+            if (sqlScript.isNotEmpty()) {
+                response.appendLine()
+                response.appendLine("**Consulta SQL ejecutada:**")
+                response.appendLine("```sql")
+                response.appendLine(sqlScript)
+                response.appendLine("```")
+            }
+            
+            return@withContext response.toString()
+            
+        } catch (e: Exception) {
+            Log.e(tag, "❌ Error in MCP query processing", e)
+            return@withContext "❌ Error procesando consulta: ${e.message}"
+        }
+    }
+    
+    /**
+     * Format MCP tool result for display
+     */
+    private fun formatMCPResult(result: MCPToolService.MCPToolResult, toolName: String): String {
+        val sb = StringBuilder()
+        
+        if (result.success) {
+            sb.appendLine("✅ **Consulta ejecutada exitosamente**")
+            sb.appendLine()
+            
+            // Show SQL script if available
+            if (!result.sqlScript.isNullOrBlank()) {
+                sb.appendLine("### 📜 Script SQL Ejecutado:")
+                sb.appendLine("```sql")
+                sb.appendLine(result.sqlScript)
+                sb.appendLine("```")
+                sb.appendLine()
+            }
+            
+            // Show metadata
+            if (result.metadata != null) {
+                val rowCount = result.metadata["rowCount"] as? Int ?: 0
+                sb.appendLine("ℹ️ **Resultados:** $rowCount registros encontrados")
+                sb.appendLine()
+            }
+            
+            // Show data in a readable format
+            when (val data = result.data) {
+                is List<*> -> {
+                    if (data.isEmpty()) {
+                        sb.appendLine("⚠️ No se encontraron resultados.")
+                    } else {
+                        sb.appendLine("### 📊 Datos obtenidos:")
+                        sb.appendLine()
+                        data.forEachIndexed { index, item ->
+                            sb.appendLine("**Registro ${index + 1}:**")
+                            if (item is Map<*, *>) {
+                                item.forEach { (key, value) ->
+                                    sb.appendLine("  • **$key**: $value")
+                                }
+                            } else {
+                                sb.appendLine("  $item")
+                            }
+                            sb.appendLine()
+                        }
+                    }
+                }
+                is Map<*, *> -> {
+                    sb.appendLine("### 📊 Datos obtenidos:")
+                    sb.appendLine()
+                    data.forEach { (key, value) ->
+                        sb.appendLine("• **$key**: $value")
+                    }
+                }
+                else -> {
+                    sb.appendLine("### 📊 Resultado:")
+                    sb.appendLine(data.toString())
+                }
+            }
+        } else {
+            sb.appendLine("❌ **Error en la ejecución**")
+            sb.appendLine()
+            sb.appendLine("**Error**: ${result.error}")
+            
+            if (!result.sqlScript.isNullOrBlank()) {
+                sb.appendLine()
+                sb.appendLine("### 📜 Script SQL intentado:")
+                sb.appendLine("```sql")
+                sb.appendLine(result.sqlScript)
+                sb.appendLine("```")
+            }
+        }
+        
+        return sb.toString()
+    }
+    
+    /**
+     * Build tools context description for LLM
+     */
+    private fun buildToolsContext(tools: List<MCPToolService.MCPTool>): String {
+        return tools.joinToString("\n\n") { tool ->
+            """
+            🔧 **${tool.name}**
+            Descripción: ${tool.description}
+            Parámetros: ${tool.inputSchema["properties"]}
+            """.trimIndent()
+        }
+    }
+    
     /**
      * Process a natural language query and return a response using RAG
      */
