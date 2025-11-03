@@ -25,6 +25,8 @@ export class MCPService {
       } = options;
       
       logger.info(`Processing query: ${query.substring(0, 100)}...`);
+      logger.info(`Full query length: ${query.length} characters`);
+      logger.info(`Complete query: "${query}"`);
       
       // Extract SQL query from natural language
       const queryPlan = await this.extractSQLFromQuery(query);
@@ -45,7 +47,57 @@ export class MCPService {
           logger.error('Error stack:', sqlError.stack);
         }
       } else {
-        logger.warn('No query plan generated for query:', query);
+        // If no SQL plan generated, check if the user asked for Business Intelligence / KPIs / architecture
+        const lowerQ = (query || '').toLowerCase();
+        const biKeywords = ['inteligencia', 'inteligencia de negocio', 'inteligencia de negocios', 'business intelligence', 'kpi', 'kpis', 'indicadores'];
+        const askedForBI = biKeywords.some(k => lowerQ.includes(k));
+
+        if (askedForBI) {
+          logger.info('Detected BI-style query; returning schema and BI suggestions instead of SQL plan');
+          try {
+            const schemaObj = await this.getDatabaseSchema();
+
+            // Build simple BI suggestions based on available tables/counts
+            let suggestions = [];
+            const tables = schemaObj && schemaObj.schema ? schemaObj.schema : schemaObj || {};
+
+            // Prioritize common BI candidates
+            if (tables['usuarios'] && tables['usuarios'].exists) {
+              suggestions.push('Usuarios: calcular tasa de crecimiento mensual, usuarios activos diarios (DAU), usuarios por rol.');
+            }
+            if (tables['courses'] && tables['courses'].exists) {
+              suggestions.push('Courses: top cursos por suscripciones, tasa de finalización, engagement por curso.');
+            }
+            if (tables['videos'] && tables['videos'].exists) {
+              suggestions.push('Videos: vistas por video, duración promedio, videos que generan más suscripciones.');
+            }
+            if (tables['subscriptions'] && tables['subscriptions'].exists) {
+              suggestions.push('Suscripciones: churn, nuevas suscripciones por periodo, revenue por suscripción (si aplica).');
+            }
+            if (tables['task_submissions'] && tables['task_submissions'].exists) {
+              suggestions.push('Tareas: completitud por estudiante, tiempos promedio de entrega, correlación con engagement.');
+            }
+
+            if (suggestions.length === 0) {
+              suggestions.push('Recomendar revisar tablas principales y definir KPIs basados en usuarios, contenido y actividad (suscripciones, tareas, interacciones).');
+            }
+
+            const biResponse = {
+              schema: tables,
+              bi_suggestions: suggestions,
+              note: 'This response contains the database schema and starter BI suggestions. Use an LLM or analyst to expand into KPIs, SQL examples and an implementation plan.'
+            };
+
+            data = biResponse;
+            sqlScript = null;
+          } catch (schemaErr) {
+            logger.error('Error fetching schema for BI response:', schemaErr);
+            // fall through to default no-plan behavior
+            logger.warn('No query plan generated for query:', query);
+          }
+        } else {
+          logger.warn('No query plan generated for query:', query);
+        }
       }
       
       // Prepare response
@@ -74,6 +126,7 @@ export class MCPService {
    */
   async extractSQLFromQuery(query) {
     const lowerQuery = query.toLowerCase().trim();
+    logger.info(`🔍 Analyzing query: "${lowerQuery}"`);
     
     // FIRST: Check if it's a direct SQL query (SELECT, INSERT, UPDATE, DELETE)
     if (lowerQuery.startsWith('select ') || 
@@ -81,6 +134,7 @@ export class MCPService {
         lowerQuery.startsWith('update ') || 
         lowerQuery.startsWith('delete ') ||
         lowerQuery.startsWith('with ')) {
+      logger.info('✅ Matched: raw_sql');
       return { operation: 'raw_sql', sql: query };
     }
     
@@ -96,15 +150,28 @@ export class MCPService {
          (lowerQuery.includes('cuales') && lowerQuery.includes('no se tiene')))) {
       // Make sure it's not asking about courses specifically
       if (!lowerQuery.includes('curso') && !lowerQuery.includes('course')) {
+        logger.info('✅ Matched: isolated_users');
         return { table: 'usuarios', operation: 'isolated_users' };
       }
     }
     
-    // "dame usuarios que no aparecen en courses" or "usuarios sin cursos"
-    if ((lowerQuery.includes('usuarios') || lowerQuery.includes('usuario')) && 
-        (lowerQuery.includes('no aparecen') || lowerQuery.includes('sin') || lowerQuery.includes('not in')) && 
-        (lowerQuery.includes('curso') || lowerQuery.includes('course'))) {
+    // "dame usuarios que no aparecen en courses" or "usuarios sin cursos" or "usuarios que nunca han creado un curso"
+    // "lista de usuarios que nunca han creado un curso"
+    // "lista de usuario" - broad match for any user list
+    if ((lowerQuery.includes('usuarios') || lowerQuery.includes('usuario') || lowerQuery.includes('lista')) && 
+        (lowerQuery.includes('no aparecen') || lowerQuery.includes('sin') || lowerQuery.includes('not in') || 
+         lowerQuery.includes('nunca') || lowerQuery.includes('never') || lowerQuery.includes('no han') || lowerQuery.includes('no ha')) && 
+        (lowerQuery.includes('curso') || lowerQuery.includes('course') || lowerQuery.includes('creado') || lowerQuery.includes('crear'))) {
+      logger.info('✅ Matched: not_in_courses');
       return { table: 'usuarios', operation: 'not_in_courses' };
+    }
+    
+    // "lista de usuario" or "todos los usuarios" - generic user list (only if not asking about courses)
+    if ((lowerQuery.includes('lista') || lowerQuery.includes('todos') || lowerQuery.includes('dame')) && 
+        (lowerQuery.includes('usuario') || lowerQuery.includes('user')) &&
+        !lowerQuery.includes('curso') && !lowerQuery.includes('course')) {
+      logger.info('✅ Matched: select_all usuarios');
+      return { table: 'usuarios', operation: 'select_all' };
     }
     
     // "dame lista única/distinta de creator_username en courses"
@@ -187,16 +254,20 @@ export class MCPService {
     // "cuantos videos hay" -> SELECT COUNT(*) FROM videos
     if (lowerQuery.includes('cuantos') || lowerQuery.includes('cuántos') || lowerQuery.includes('how many')) {
       if (lowerQuery.includes('video')) {
+        logger.info('✅ Matched: count videos');
         return { table: 'videos', operation: 'count' };
       }
       if (lowerQuery.includes('usuario')) {
+        logger.info('✅ Matched: count usuarios');
         return { table: 'usuarios', operation: 'count' };
       }
       if (lowerQuery.includes('curso')) {
+        logger.info('✅ Matched: count courses');
         return { table: 'courses', operation: 'count' };
       }
     }
     
+    logger.warn(`⚠️ No pattern matched for query: "${lowerQuery}"`);
     return null;
   }
   

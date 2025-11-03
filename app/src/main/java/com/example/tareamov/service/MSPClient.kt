@@ -6,6 +6,7 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
@@ -42,6 +43,10 @@ class MSPClient(private val context: Context) {
         "http://127.0.0.1:11435",       // Loopback - High priority
         "http://192.168.1.10:11435",    // IP Wi-Fi anterior (Oct 6, 2025)
         "http://10.218.57.181:11435",   // IP Wi-Fi anterior
+        // IPs adicionales añadidas desde ipconfig de Windows (WSL, Ethernet, Wi‑Fi)
+        "http://10.111.202.181:11435",  // Wi‑Fi actual (ipconfig)
+        "http://10.111.202.15:11435",   // Wi‑Fi gateway (ipconfig)
+        "http://108.168.41.26:11435",   // Ethernet IPv4 (ipconfig)
         "http://10.218.57.109:11435",   // Gateway predeterminado anterior
         "http://172.17.112.1:11435",    // WSL IP from ipconfig
         "http://192.168.1.224:11435",   // IP Wi-Fi anterior
@@ -52,6 +57,17 @@ class MSPClient(private val context: Context) {
     )
     private val emulatorUrl = "http://10.0.2.2:11435" // Kept for backward compatibility
     private val modelName = "llama3"
+    // Possible MCP (HTTP) server URLs (MCP server runs on port 3000 in this workspace)
+    private val possibleMcpUrls = listOf(
+        "http://10.0.2.2:3000",   // emulator -> host
+        // Agregadas IPs del ipconfig (Wi‑Fi y WSL) para intentar conectar al MCP en la red local
+        "http://10.111.202.181:3000", // Wi‑Fi actual
+        "http://10.111.202.15:3000",  // Wi‑Fi gateway
+        "http://172.17.112.1:3000",   // WSL (Hyper‑V) host
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "http://192.168.1.16:3000"
+    )
 
     // Enhanced OkHttpClient with better timeout handling for large payloads
     // Increased timeouts to handle Ollama's model loading time (7+ seconds)
@@ -65,6 +81,17 @@ class MSPClient(private val context: Context) {
     }
 
     private fun getBaseUrl(): String {
+        // Prefer MCP HTTP server if available (acts as official MCP bridge)
+        for (mcp in possibleMcpUrls) {
+            try {
+                if (isPortOpen(mcp, 1500)) {
+                    Log.d(tag, "Using MCP HTTP server at $mcp")
+                    return mcp // return MCP base (will be used specially)
+                }
+            } catch (e: Exception) {
+                Log.d(tag, "MCP port check failed for $mcp: ${e.message}")
+            }
+        }
         if (isEmulator()) {
             Log.d(tag, "Using emulator URL: $emulatorUrl")
             return emulatorUrl
@@ -286,6 +313,24 @@ $prompt
         var response = ""
         var success = false
         var lastError: Exception? = null
+
+        // Prefer MCP HTTP bridge first (port 3000) - try each candidate
+        for (mcp in possibleMcpUrls) {
+            try {
+                if (isPortOpen(mcp, 1500)) {
+                    Log.d(tag, "Attempting to send prompt via MCP bridge at $mcp")
+                    val r = sendPromptViaMcp(mcp, enhancedPrompt)
+                    if (!r.isNullOrEmpty()) {
+                        Log.d(tag, "Received response via MCP bridge at $mcp")
+                        return@withContext r
+                    } else {
+                        Log.d(tag, "MCP bridge at $mcp returned empty response")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(tag, "MCP bridge attempt failed for $mcp: ${e.message}")
+            }
+        }
     
         // Try each possible base URL until one works
         for (baseUrl in possibleBaseUrls) {
@@ -408,6 +453,65 @@ $prompt
         Log.d(tag, "=================================")
         
         return@withContext response
+    }
+
+    // Helper: send prompt via MCP HTTP bridge (/tools/call). Returns response text or null.
+    private suspend fun sendPromptViaMcp(mcpBase: String, prompt: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("${mcpBase.trimEnd('/')}/tools/call")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("Accept", "application/json")
+            conn.connectTimeout = 8000
+            conn.readTimeout = 60000
+            conn.doOutput = true
+
+            // JSON-RPC body calling tool 'query_database' as a passthrough for the prompt
+            val rpc = JSONObject()
+            rpc.put("jsonrpc", "2.0")
+            rpc.put("id", 1)
+            val params = JSONObject()
+            params.put("name", "query_database")
+            val args = JSONObject()
+            args.put("query", prompt)
+            params.put("arguments", args)
+            rpc.put("params", params)
+
+            val out = OutputStreamWriter(conn.outputStream)
+            out.write(rpc.toString())
+            out.flush()
+            out.close()
+
+            val code = conn.responseCode
+            if (code == HttpURLConnection.HTTP_OK) {
+                val reader = BufferedReader(InputStreamReader(conn.inputStream))
+                val text = reader.readText()
+                reader.close()
+                // The MCP server wraps result.content[0].text
+                try {
+                    val obj = JSONObject(text)
+                    val result = obj.optJSONObject("result")
+                    if (result != null) {
+                        val content = result.optJSONArray("content")
+                        if (content != null && content.length() > 0) {
+                            val first = content.getJSONObject(0)
+                            return@withContext first.optString("text", null)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(tag, "Failed to parse MCP response JSON: ${e.message}")
+                    return@withContext text
+                }
+            } else {
+                Log.d(tag, "MCP bridge returned HTTP $code")
+            }
+
+            return@withContext null
+        } catch (e: Exception) {
+            Log.d(tag, "sendPromptViaMcp failed: ${e.message}")
+            return@withContext null
+        }
     }
 
     /**
@@ -765,6 +869,225 @@ puedes preguntar explícitamente: "¿Cuál es la estructura de la base de datos?
             Log.e(tag, "Error in RAG-enhanced prompt", e)
             // Final fallback to basic prompt
             sendPrompt(prompt, includeHistory = false, includeDatabaseContext = true)
+        }
+    }
+
+    /**
+     * Send a prompt with MCP tool calling capability
+     * The LLM can request to use MCP tools and receive their results
+     */
+    suspend fun sendPromptWithToolCalling(
+        prompt: String,
+        mcpHttpClient: MCPHttpClient?,
+        includeHistory: Boolean = false,
+        includeDatabaseContext: Boolean = false,
+        maxToolIterations: Int = 3
+    ): String = withContext(Dispatchers.IO) {
+        if (mcpHttpClient == null) {
+            // Fall back to regular prompt if no MCP client
+            return@withContext sendPrompt(prompt, includeHistory, includeDatabaseContext)
+        }
+
+        // Build initial prompt with tool capability instructions
+        val dbContext = if (includeDatabaseContext) {
+            buildQuerySpecificContext(prompt)
+        } else {
+            ""
+        }
+
+        var enhancedPrompt = if (includeDatabaseContext) {
+            """
+Eres un asistente con acceso a herramientas para consultar una base de datos educativa.
+
+⚠️ REGLAS: En este sistema SOLO existen 2 ROLES: "usuario" y "admin"
+
+🛠️ HERRAMIENTAS DISPONIBLES:
+
+1. get_database_schema() - Obtiene el esquema completo
+   Uso: TOOL_CALL: get_database_schema()
+
+2. query_database(query="consulta") - Ejecuta consultas
+   Uso: TOOL_CALL: query_database(query="dame todos los usuarios")
+
+CONTEXTO ACTUAL:
+$dbContext
+
+📋 CONSULTA DEL USUARIO:
+$prompt
+
+⚠️ INSTRUCCIONES:
+1. Para BI/análisis/decisiones/KPIs: USA PRIMERO get_database_schema()
+2. Para datos específicos: USA query_database(query="...")
+3. Formato EXACTO: TOOL_CALL: herramienta(parametro="valor")
+4. NO inventes datos, USA LAS HERRAMIENTAS
+
+¿Qué herramienta necesitas?
+            """.trimIndent()
+        } else {
+            """
+Eres un asistente con acceso a herramientas de base de datos.
+
+⚠️ SISTEMA: Solo 2 roles válidos: "usuario" y "admin"
+
+🛠️ HERRAMIENTAS:
+1. get_database_schema() - Obtiene esquema
+2. query_database(query="consulta") - Consulta datos
+
+📋 CONSULTA:
+$prompt
+
+FORMATO: TOOL_CALL: herramienta(parametro="valor")
+
+¿Qué herramienta usarás?
+            """.trimIndent()
+        }
+
+        // Tool calling loop
+        var iteration = 0
+        var finalResponse: String? = null
+        val toolExecutionHistory = StringBuilder()
+
+        while (iteration < maxToolIterations && finalResponse == null) {
+            Log.d(tag, "🔄 MSPClient tool calling iteration ${iteration + 1}/$maxToolIterations")
+
+            // Send prompt to Ollama
+            val response = sendPromptInternal(enhancedPrompt, isWarmup = false)
+
+            // Check if LLM wants to use a tool
+            val toolCall = parseToolCall(response)
+
+            if (toolCall != null) {
+                Log.d(tag, "🛠️ MSPClient LLM requested tool: ${toolCall.first}")
+
+                // Execute the tool via MCP
+                val toolResult = executeToolViaMCP(toolCall, mcpHttpClient)
+                toolExecutionHistory.append("\n\n---\n")
+                toolExecutionHistory.append("TOOL: ${toolCall.first}\n")
+                toolExecutionHistory.append("ARGUMENTS: ${toolCall.second}\n")
+                toolExecutionHistory.append("RESULT: $toolResult\n")
+
+                // Update prompt with tool result
+                enhancedPrompt = """
+$enhancedPrompt
+
+HERRAMIENTA EJECUTADA: ${toolCall.first}
+ARGUMENTOS: ${toolCall.second}
+RESULTADO:
+$toolResult
+
+Con esta información, proporciona tu respuesta final al usuario.
+Si necesitas usar otra herramienta, especifícalo usando TOOL_CALL.
+                """.trimIndent()
+
+                iteration++
+            } else {
+                // No tool call - this is the final response
+                finalResponse = response
+            }
+        }
+
+        // Return final response with tool execution history if applicable
+        val result = finalResponse ?: "Error: Se alcanzó el límite de iteraciones de herramientas"
+
+        return@withContext if (toolExecutionHistory.isNotEmpty()) {
+            "$result\n\n--- Historial de ejecución de herramientas ---$toolExecutionHistory"
+        } else {
+            result
+        }
+    }
+
+    /**
+     * Parse tool call from LLM response
+     * Format: TOOL_CALL: tool_name(arg1=value1, arg2=value2)
+     */
+    private fun parseToolCall(response: String): Pair<String, Map<String, String>>? {
+        try {
+            val toolCallPattern = Regex("""TOOL_CALL:\s*(\w+)\((.*?)\)""", RegexOption.IGNORE_CASE)
+            val match = toolCallPattern.find(response) ?: return null
+
+            val toolName = match.groupValues[1]
+            val argsString = match.groupValues[2]
+
+            // Parse arguments
+            val arguments = mutableMapOf<String, String>()
+            if (argsString.isNotBlank()) {
+                val argPattern = Regex("""(\w+)=["']?([^,"']+)["']?""")
+                argPattern.findAll(argsString).forEach { argMatch ->
+                    val key = argMatch.groupValues[1]
+                    val value = argMatch.groupValues[2]
+                    arguments[key] = value
+                }
+            }
+
+            return Pair(toolName, arguments)
+        } catch (e: Exception) {
+            Log.e(tag, "Error parsing tool call", e)
+            return null
+        }
+    }
+
+    /**
+     * Execute tool via MCP HTTP client
+     */
+    private suspend fun executeToolViaMCP(
+        toolCall: Pair<String, Map<String, String>>,
+        mcpClient: MCPHttpClient
+    ): String = withContext(Dispatchers.IO) {
+        try {
+            val (toolName, arguments) = toolCall
+            return@withContext when (toolName.lowercase()) {
+                "query_database" -> {
+                    val query = arguments["query"] ?: return@withContext "Error: falta argumento 'query'"
+                    val result = mcpClient.queryDatabase(query)
+
+                    if (result.success) {
+                        val data = result.data
+                        val sql = result.sqlScript ?: "N/A"
+
+                        """
+Consulta ejecutada exitosamente.
+SQL: $sql
+Datos: ${formatMCPData(data)}
+                        """.trimIndent()
+                    } else {
+                        "Error: ${result.error}"
+                    }
+                }
+
+                "get_database_schema" -> {
+                    val schema = mcpClient.getDatabaseSchema()
+
+                    if (schema.success) {
+                        "Esquema obtenido:\n${schema.schema}"
+                    } else {
+                        "Error: ${schema.error}"
+                    }
+                }
+
+                else -> "Error: Herramienta desconocida '$toolName'"
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Error executing tool via MCP", e)
+            return@withContext "Error ejecutando herramienta: ${e.message}"
+        }
+    }
+
+    /**
+     * Format MCP data for LLM consumption
+     */
+    private fun formatMCPData(data: Any?): String {
+        return when (data) {
+            is JSONArray -> {
+                val items = mutableListOf<String>()
+                for (i in 0 until data.length()) {
+                    items.add(data.getJSONObject(i).toString())
+                }
+                items.joinToString("\n")
+            }
+            is JSONObject -> data.toString(2)
+            is List<*> -> data.joinToString("\n")
+            is Map<*, *> -> data.entries.joinToString("\n") { "${it.key}: ${it.value}" }
+            else -> data.toString()
         }
     }
 

@@ -107,13 +107,18 @@ object SupabaseClient {
     // Update an existing Task by id. Returns true on success.
     suspend fun updateTask(task: com.example.tareamov.data.entity.Task): Boolean = withContext(Dispatchers.IO) {
         try {
+            Log.d("SupabaseClient", "updateTask called: id=${task.id}, topicId=${task.topicId}, name='${task.name}', desc='${task.description}'")
+            
             val map = mutableMapOf<String, Any?>()
             if (task.topicId != 0L) map["topic_id"] = task.topicId
             map["title"] = task.name
             map["description"] = task.description
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
-            val url = "$baseUrl/rest/v1/tasks?id=eq.${'$'}{task.id}"
+            val url = "$baseUrl/rest/v1/tasks?id=eq.${task.id}"
+            
+            Log.d("SupabaseClient", "updateTask URL: $url")
+            Log.d("SupabaseClient", "updateTask body: ${gson.toJson(map)}")
 
             val request = Request.Builder()
                 .url(url)
@@ -126,11 +131,12 @@ object SupabaseClient {
                 .build()
 
             client.newCall(request).execute().use { resp ->
+                val bodyStr = resp.body?.string() ?: ""
                 if (!resp.isSuccessful) {
-                    val bodyStr = resp.body?.string() ?: ""
-                    Log.w("SupabaseClient", "updateTask failed: ${'$'}{resp.code} ${'$'}{resp.message} body=${'$'}bodyStr")
+                    Log.e("SupabaseClient", "updateTask failed: ${resp.code} ${resp.message} body=$bodyStr")
                     return@withContext false
                 }
+                Log.d("SupabaseClient", "updateTask success: ${resp.code} body=$bodyStr")
                 return@withContext true
             }
         } catch (e: Exception) {
@@ -803,6 +809,63 @@ object SupabaseClient {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            return@withContext null
+        }
+    }
+
+    suspend fun insertFileContext(fileContext: com.example.tareamov.data.entity.FileContext): Long? = withContext(Dispatchers.IO) {
+        try {
+            // Do NOT send local 'id' to server - let Postgres sequence generate primary key
+            val map = mutableMapOf<String, Any?>()
+            if (fileContext.id != 0L) {
+                Log.w("SupabaseClient", "Not sending local id=${fileContext.id} to server for file_contexts (will let DB assign id)")
+            }
+            map["submission_id"] = fileContext.submissionId
+            map["file_name"] = fileContext.fileName
+            map["file_type"] = fileContext.fileType
+            map["file_content"] = fileContext.fileContent
+            map["extracted_text"] = fileContext.extractedText
+            map["metadata"] = fileContext.metadata
+            map["timestamp"] = fileContext.timestamp
+            map["json_content"] = fileContext.jsonContent
+            map["content_summary"] = fileContext.contentSummary
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            Log.d("SupabaseClient", "insertFileContext payload: submissionId=${fileContext.submissionId}, fileName=${fileContext.fileName}, fileType=${fileContext.fileType}")
+            val url = "$baseUrl/rest/v1/file_contexts"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val responseBody = resp.body?.string() ?: ""
+                if (!resp.isSuccessful) {
+                    Log.e("SupabaseClient", "insertFileContext failed: ${resp.code} ${resp.message}")
+                    Log.e("SupabaseClient", "Response body: $responseBody")
+                    return@withContext null
+                }
+
+                // Parse response to extract assigned ID
+                val jsonArray = gson.fromJson(responseBody, com.google.gson.JsonArray::class.java)
+                if (jsonArray != null && jsonArray.size() > 0) {
+                    val obj = jsonArray[0].asJsonObject
+                    val remoteId = obj.get("id")?.asLong
+                    Log.d("SupabaseClient", "insertFileContext success: remoteId=$remoteId for submissionId=${fileContext.submissionId}")
+                    return@withContext remoteId
+                } else {
+                    Log.w("SupabaseClient", "insertFileContext returned empty array")
+                    return@withContext null
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "insertFileContext exception", e)
             return@withContext null
         }
     }

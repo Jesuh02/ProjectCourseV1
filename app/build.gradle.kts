@@ -199,7 +199,8 @@ dependencies {
     implementation("at.favre.lib:bcrypt:0.9.0")
 
     // File conversion libraries
-    implementation("org.apache.pdfbox:pdfbox:2.0.29")
+    // PDFBox-Android - versión compatible con Android (no usa java.awt)
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("org.apache.poi:poi:5.2.5")
     implementation("org.apache.poi:poi-ooxml:5.2.5")
     implementation("org.apache.poi:poi-scratchpad:5.2.5")

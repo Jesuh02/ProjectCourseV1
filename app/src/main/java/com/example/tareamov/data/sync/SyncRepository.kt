@@ -692,19 +692,32 @@ class SyncRepository(
 
             // Try direct insert
             val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertTask(task) }
-            if (remoteId != null) return remoteId
+            if (remoteId != null) {
+                Log.d("SyncRepository", "Task inserted successfully with id=$remoteId")
+                return remoteId
+            } else {
+                Log.w("SyncRepository", "Direct insert returned null for task: name=${task.name}, topicId=${task.topicId}")
+            }
 
             // If insert failed, it may be due to missing parent topic on remote. Attempt upsert via SupabaseRepository which uses app_documents or direct upsert.
             try {
+                Log.d("SyncRepository", "Attempting fallback upsert for task: name=${task.name}")
                 val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", task) }
                 if (ok) {
                     // After upsert, try to fetch by a heuristic: tasks with same title under the topic
                     val candidates = withContext(Dispatchers.IO) { supabaseClient.fetchTasksByTopicIds(listOf(task.topicId)) }
                     val found = candidates.firstOrNull { (it.name ?: "") == (task.name ?: "") }
-                    if (found != null) return found.id
+                    if (found != null) {
+                        Log.d("SyncRepository", "Task found after upsert with id=${found.id}")
+                        return found.id
+                    } else {
+                        Log.w("SyncRepository", "Task not found after successful upsert")
+                    }
+                } else {
+                    Log.w("SyncRepository", "Upsert returned false")
                 }
             } catch (e: Exception) {
-                Log.w("SyncRepository", "Fallback upsert for task failed", e)
+                Log.e("SyncRepository", "Fallback upsert for task failed", e)
             }
 
             // Final fallback: try to ensure parent topic exists remotely then retry insert
@@ -731,10 +744,42 @@ class SyncRepository(
     // Update a Task remotely via SupabaseClient
     suspend fun updateTaskRemote(task: com.example.tareamov.data.entity.Task): Boolean {
         return try {
-            if (!supabaseClient.isConfigured()) return false
-            withContext(Dispatchers.IO) { supabaseClient.updateTask(task) }
+            Log.d("SyncRepository", "updateTaskRemote: id=${task.id}, topicId=${task.topicId}, name='${task.name}'")
+            if (!supabaseClient.isConfigured()) {
+                Log.e("SyncRepository", "updateTaskRemote: SupabaseClient not configured")
+                return false
+            }
+            
+            // First try to update
+            val result = withContext(Dispatchers.IO) { supabaseClient.updateTask(task) }
+            Log.d("SyncRepository", "updateTaskRemote initial result: $result for task ${task.id}")
+            
+            if (!result) {
+                // Update failed - check if task exists in Supabase
+                Log.w("SyncRepository", "Update failed for task ${task.id}, checking if task exists in Supabase...")
+                val existingTask = withContext(Dispatchers.IO) { supabaseClient.fetchTaskById(task.id) }
+                
+                if (existingTask == null) {
+                    // Task doesn't exist remotely, insert it instead
+                    Log.w("SyncRepository", "Task ${task.id} doesn't exist in Supabase, attempting insert instead")
+                    val insertedId = withContext(Dispatchers.IO) { supabaseClient.insertTask(task) }
+                    if (insertedId != null) {
+                        Log.i("SyncRepository", "Task inserted successfully with remote id=$insertedId (local was ${task.id})")
+                        return true
+                    } else {
+                        Log.e("SyncRepository", "Failed to insert task ${task.id} as fallback")
+                        return false
+                    }
+                } else {
+                    // Task exists but update still failed - might be permissions or validation issue
+                    Log.e("SyncRepository", "Task ${task.id} exists in Supabase but update failed. Existing task: ${existingTask.name}")
+                    return false
+                }
+            }
+            
+            result
         } catch (e: Exception) {
-            Log.w("SyncRepository", "updateTaskRemote failed", e)
+            Log.e("SyncRepository", "updateTaskRemote failed for task ${task.id}", e)
             false
         }
     }

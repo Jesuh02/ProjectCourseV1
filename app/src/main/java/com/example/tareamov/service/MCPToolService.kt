@@ -179,22 +179,45 @@ class MCPToolService(private val context: Context) {
     }
     
     /**
-     * Get complete database schema
+     * Get complete database schema using MCP tool
      */
     private suspend fun executeGetSchema(): MCPToolResult {
-        Log.d(tag, "📋 Fetching database schema")
+        Log.d(tag, "📋 Fetching database schema via MCP tool")
         
-        val schemaService = DatabaseSchemaService(context)
-        val schema = schemaService.getDatabaseSchema(forceRefresh = false)
-        
-        return MCPToolResult(
-            success = true,
-            data = schema,
-            metadata = mapOf(
-                "timestamp" to System.currentTimeMillis(),
-                "cached" to true
+        try {
+            // Use MCP client to get schema from the Node.js MCP server
+            val mcpClient = MCPStdioClient(context)
+            val schemaJson = mcpClient.getDatabaseSchema()
+            mcpClient.close()
+            
+            if (schemaJson != null) {
+                // Parse the JSON response
+                val schemaData = gson.fromJson(schemaJson, Map::class.java)
+                
+                return MCPToolResult(
+                    success = true,
+                    data = schemaData,
+                    metadata = mapOf(
+                        "timestamp" to System.currentTimeMillis(),
+                        "source" to "mcp_tool"
+                    )
+                )
+            } else {
+                Log.w(tag, "⚠️ No schema data returned from MCP")
+                return MCPToolResult(
+                    success = false,
+                    data = null,
+                    error = "No schema data returned from MCP server"
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "❌ Error getting schema via MCP: ${e.message}", e)
+            return MCPToolResult(
+                success = false,
+                data = null,
+                error = "Error fetching schema: ${e.message}"
             )
-        )
+        }
     }
     
     /**

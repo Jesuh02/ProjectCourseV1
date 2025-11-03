@@ -603,9 +603,17 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 val testMessageId = addMessageToChat("🔍 Probando conexión con servidor LLM...", false)
                 
                 withContext(Dispatchers.IO) {
-                    // Create MSPClient to test connection
-                    val mspClient = MSPClient(requireContext())
-                    val status = mspClient.getConnectionStatus()
+                    // First try MCP HTTP server (preferred bridge)
+                    val mcpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
+                    val mcpAvailable = mcpClient.initialize()
+
+                    val status = if (mcpAvailable) {
+                        "✓ MCP HTTP server disponible (http://10.0.2.2:3000). El LLM se puede usar a través del MCP bridge."
+                    } else {
+                        // Fallback: Create MSPClient to test direct Ollama connection
+                        val mspClient = MSPClient(requireContext())
+                        mspClient.getConnectionStatus()
+                    }
                     
                     withContext(Dispatchers.Main) {
                         // Remove test message
@@ -615,7 +623,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                         addMessageToChat(status, false)
                         
                         // Update connection indicator
-                        val isConnected = status.contains("✓ SERVIDOR OLLAMA CONECTADO")
+                        val isConnected = status.contains("✓ MCP HTTP server disponible") || status.contains("✓ SERVIDOR OLLAMA CONECTADO")
                         updateConnectionStatus(isConnected, if (isConnected) "Conectado" else "Desconectado")
                     }
                 }
@@ -818,17 +826,44 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         Log.d("DatabaseQueryFragment", "User Query: $query")
         
         // Show processing message in chat
-        addMessageToChat("🔍 Procesando consulta con MCP tareamov-mcp-server...", false)
+        addMessageToChat("🔍 Procesando consulta con capacidad de herramientas MCP...", false)
 
         binding.chartContainer.visibility = View.GONE // Hide chart container
         removeCurrentChart() // Remove previous chart if any
 
+        // If the user is asking about Business Intelligence, handle with MCP schema + LLM
+        val lowerQuery = query.lowercase()
+        if (isBIQuery(lowerQuery)) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                addMessageToChat("🔍 Procesando petición de Inteligencia de Negocios con herramientas MCP...", false)
+                try {
+                    val biResponse = handleBIQuery(query)
+                    addMessageToChat(biResponse, false)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error handling BI query", e)
+                    addMessageToChat("❌ Error al generar análisis BI: ${e.message}", false)
+                } finally {
+                    isProcessingQuery = false
+                    saveChatHistory()
+                }
+            }
+            return
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                Log.d("DatabaseQueryFragment", "Starting MCP server query processing...")
+                Log.d("DatabaseQueryFragment", "Starting query processing with MCP tool calling...")
                 
-                // Use MCP tareamov-mcp-server as default tool
-                val result = processQueryWithMCPServer(query)
+                // NEW: Try to use LLM with tool calling capability
+                val useLLMWithTools = true // Enable tool calling by default
+                
+                val result = if (useLLMWithTools) {
+                    // Use MSPClient (Ollama) with tool calling
+                    processQueryWithLLMToolCalling(query)
+                } else {
+                    // Fallback: Use MCP tareamov-mcp-server directly (old behavior)
+                    processQueryWithMCPServer(query)
+                }
 
                 Log.d("DatabaseQueryFragment", "=== FINAL RESULT LOG ===")
                 Log.d("DatabaseQueryFragment", "Result Length: ${result.length} characters")
@@ -852,23 +887,270 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 } else {
                     // Display the text result in chat
                     if (result.isNullOrBlank()) {
-                        addMessageToChat("⚠️ No se recibió respuesta del sistema MCP. Intente reformular su consulta.", false)
+                        addMessageToChat("⚠️ No se recibió respuesta del sistema. Intente reformular su consulta.", false)
                     } else {
-                        // Format and display the MCP response
+                        // Format and display the response
                         val formattedResult = formatRAGResponse(result)
                         addMessageToChat(formattedResult, false)
                     }
                 }
 
             } catch (e: Exception) {
-                Log.e("DatabaseQueryFragment", "Error processing MCP query", e)
-                val errorMessage = "❌ Error procesando la consulta con MCP: ${e.message}"
+                Log.e("DatabaseQueryFragment", "Error processing query", e)
+                val errorMessage = "❌ Error procesando la consulta: ${e.message}"
                 addMessageToChat(errorMessage, false)
             } finally {
                 isProcessingQuery = false
                 // Save updated chat history
                 saveChatHistory()
             }
+        }
+
+    }
+    
+    /**
+     * Process query using LLM with MCP tool calling capability
+     * The LLM can decide when to use MCP tools (query_database, get_database_schema)
+     */
+    private suspend fun processQueryWithLLMToolCalling(query: String): String = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🤖 Using LLM with MCP tool calling for: $query")
+            
+            // Initialize MCP client if needed
+            if (!mcpHttpClient.initialize()) {
+                Log.w(TAG, "MCP client not available, falling back to regular LLM")
+                // Fall back to LocalLlama without tools
+                return@withContext localLlamaService.generateResponse(query, null, 0)
+            }
+            
+            // Try MSPClient (Ollama) first with tool calling
+            val mspClient = MSPClient(requireContext())
+            
+            try {
+                // Use the new sendPromptWithToolCalling method
+                val response = mspClient.sendPromptWithToolCalling(
+                    prompt = query,
+                    mcpHttpClient = mcpHttpClient,
+                    includeHistory = false,
+                    includeDatabaseContext = true,
+                    maxToolIterations = 3
+                )
+                
+                if (response.isNotBlank() && !response.startsWith("Error:")) {
+                    Log.d(TAG, "✅ Got response from Ollama with tool calling")
+                    return@withContext response
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Ollama not available, trying LocalLlama with tools", e)
+            }
+            
+            // Fall back to LocalLlama with tool calling
+            Log.d(TAG, "📱 Using LocalLlama with MCP tool calling")
+            return@withContext localLlamaService.generateResponse(
+                prompt = query,
+                mcpHttpClient = mcpHttpClient,
+                maxToolIterations = 3
+            )
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in LLM tool calling", e)
+            return@withContext "Error: No se pudo procesar la consulta con herramientas LLM. ${e.message}"
+        }
+    }
+
+    // Detect simple BI intent keywords
+    private fun isBIQuery(lowerQuery: String): Boolean {
+        return listOf(
+            "inteligencia de negocio",
+            "inteligencia de negocios",
+            "inteligencia de negocios",
+            "inteligencia de negocio",
+            "business intelligence",
+            "bi ",
+            "kpi",
+            "indicadores",
+            "indicador",
+            "inteligencia"
+        ).any { lowerQuery.contains(it) }
+    }
+
+    // Handle BI queries by asking the MCP HTTP server for schema and running the local LLM with tool calling
+    private suspend fun handleBIQuery(query: String): String = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "handleBIQuery: initializing MCP client for tool calling")
+            val initialized = try {
+                mcpHttpClient.initialize()
+            } catch (e: Exception) {
+                Log.w(TAG, "MCP init failed: ${e.message}")
+                false
+            }
+
+            var schemaText: String? = null
+            if (initialized) {
+                Log.d(TAG, "Requesting database schema from MCP server")
+                val schemaResult = mcpHttpClient.executeTool("get_database_schema", JSONObject())
+                if (schemaResult.success && schemaResult.data != null) {
+                    schemaText = schemaResult.data.toString()
+                    // Provide structured schema to the local LLM for better RAG
+                    try {
+                        localLlamaService.setDatabaseContext(schemaText)
+                        Log.d(TAG, "Database context set on LocalLlamaService (${schemaText.length} chars)")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to set database context on LLM: ${e.message}")
+                    }
+                } else {
+                    Log.w(TAG, "get_database_schema failed: ${schemaResult.error}")
+                }
+            } else {
+                Log.w(TAG, "MCP server not initialized, falling back to local schema if available")
+            }
+
+            // If we still don't have a schema from the MCP server, build a lightweight
+            // local schema summary from the Room database so the LLM has context.
+            if (schemaText.isNullOrBlank()) {
+                try {
+                    Log.d(TAG, "Building local schema summary from Room DB as fallback")
+                    schemaText = getLocalSchemaSummary()
+                    if (!schemaText.isNullOrBlank()) {
+                        try {
+                            localLlamaService.setDatabaseContext(schemaText)
+                            Log.d(TAG, "Database context set on LocalLlamaService from local DB (${schemaText.length} chars)")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to set database context on LLM from local DB: ${e.message}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to build local schema summary: ${e.message}")
+                }
+            }
+
+            // Build prompt for the local LLM using the retrieved schema (if any)
+            val promptBuilder = StringBuilder()
+            
+            // VS Code-style prompt: clear, structured, actionable
+            promptBuilder.append("""
+Eres un asistente de inteligencia empresarial experto. El usuario pregunta: "$query"
+
+**Tu misión**: Proporcionar un análisis accionable estilo VS Code LLM con decisiones críticas, KPIs, arquitectura BI y ejemplos SQL.
+
+**Contexto disponible**:
+""".trimIndent())
+            promptBuilder.append("\n\n")
+
+            if (!schemaText.isNullOrBlank()) {
+                promptBuilder.append("ESQUEMA DE BASE DE DATOS OBTENIDO (get_database_schema ejecutado):\n")
+                promptBuilder.append(schemaText.take(20000)) // limit size
+                promptBuilder.append("\n\n")
+                // Also inject as TOOL_RESULT so the model recognizes it in the same format
+                promptBuilder.append("TOOL_RESULT for get_database_schema:\n")
+                promptBuilder.append(schemaText.take(20000))
+                promptBuilder.append("\n\n")
+            } else {
+                promptBuilder.append("⚠️ No se pudo obtener esquema desde MCP. Usaré esquema conocido: usuarios, personas, videos, courses, topics, content_items, tasks, task_submissions, subscriptions, chat_messages, file_contexts, roles, recursos, rol_recursos.\n\n")
+            }
+
+            promptBuilder.append("""
+**FORMATO DE RESPUESTA REQUERIDO (estilo VS Code LLM)**:
+
+## Resumen ejecutivo — Objetivo
+- Objetivo: [descripción clara del objetivo empresarial]
+- Resultado esperado: [dashboard/métricas específicas]
+
+## Decisiones críticas a tomar ahora
+1. [Decisión 1 con subtareas]
+2. [Decisión 2 con subtareas]
+3. [Decisión 3 con subtareas]
+[etc. - mínimo 5 decisiones]
+
+## Mapeo tablas → métricas (heurístico según esquema)
+- [tabla1] → [métricas derivadas]
+- [tabla2] → [métricas derivadas]
+[analizar todas las tablas del esquema]
+
+## KPIs priorizados (top 6)
+1. [KPI 1]: [descripción y cómo medirlo]
+2. [KPI 2]: [descripción y cómo medirlo]
+[etc. hasta 6 KPIs]
+
+## Arquitectura BI sugerida (MVP)
+- Ingest: [cómo obtener datos]
+- Storage/Layer: [vistas materializadas, etc.]
+- Orchestración: [jobs de refresco]
+- Visualization: [herramientas sugeridas]
+- Access: [dashboards + endpoints]
+
+## Ejemplos de SQL (ajusta nombres si cambian)
+[Provee mínimo 5 queries SQL específicas usando tablas reales del esquema]
+
+## Plan corto de implementación (2-4 semanas)
+1. Semana 0-1: [tareas]
+2. Semana 1: [tareas]
+[etc.]
+
+## Riesgos y mitigaciones
+- [Riesgo 1]: [mitigación]
+- [Riesgo 2]: [mitigación]
+
+## Acción inmediata sugerida
+- [Acción concreta que el usuario puede tomar YA]
+
+**IMPORTANTE**: 
+- Usa SOLO las tablas que aparecen en el esquema proporcionado
+- Genera SQL válido basado en las columnas reales
+- Sé específico, accionable y conciso
+- Si necesitas más datos, menciona que puedes ejecutar query_database
+
+Responde AHORA con el formato anterior:
+""".trimIndent())
+
+            var prompt = promptBuilder.toString()
+
+            Log.d(TAG, "Sending prompt to LLM for BI analysis with MCP tool calling (size=${prompt.length})")
+
+            // Use the new tool calling method that handles everything automatically
+            val llmResponse = try {
+                if (!mcpHttpClient.initialize()) {
+                    Log.w(TAG, "MCP client could not be initialized, using LLM without tools")
+                    localLlamaService.generateResponse(prompt, null, 0)
+                } else {
+                    // Use LocalLlama with full tool calling support
+                    localLlamaService.generateResponse(
+                        prompt = prompt,
+                        mcpHttpClient = mcpHttpClient,
+                        maxToolIterations = 5  // Allow up to 5 tool iterations for complex BI queries
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during LLM tool calling", e)
+                "Error generando análisis BI: ${e.message}"
+            }
+
+            Log.d(TAG, "BI analysis complete, response length: ${llmResponse.length}")
+
+            // Propose a small todo list (not executed) to track progress — presented as created/proposed
+            val todos = listOf(
+                "Obtener columnas exactas de tablas clave (usuarios, courses, videos, tasks, task_submissions, subscriptions)",
+                "Definir y documentar KPIs prioritarios",
+                "Crear vistas/materialized views para KPIs críticos",
+                "Configurar refresco/cron para MVs y orquestación",
+                "Crear dashboards iniciales en Metabase y validar con stakeholders"
+            )
+
+            val todoText = StringBuilder()
+            todoText.append("Voy a crear y actualizar la lista de tareas (plan) para rastrear el progreso: registrar que obtuvimos el esquema y marcar la siguiente tarea como en progreso. Luego te doy el análisis y las consultas ejemplo.\n\n")
+            todoText.append("Created ${todos.size} todos (propuesta):\n")
+            todos.forEachIndexed { i, t -> todoText.append("- ${t}\n") }
+
+            // Build final response similar to MCP VSCode format
+            val final = StringBuilder()
+            final.append("${promptBuilder.take(200)}...\n\n")
+            final.append("${llmResponse}\n\n")
+            final.append(todoText.toString())
+
+            return@withContext final.toString()
+        } catch (e: Exception) {
+            Log.e(TAG, "handleBIQuery error", e)
+            return@withContext "❌ Error generando análisis BI: ${e.message}"
         }
     }
 
@@ -901,49 +1183,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         try {
             Log.d(TAG, "🔧 Using MCP tareamov-mcp-server HTTP for query: $query")
             
-            // Use MCP HTTP Client to query the database
-            val result = mcpHttpClient.queryDatabase(query)
+            // Use enhanced multi-step reasoning from DatabaseQueryService
+            val result = databaseQueryService.processQueryWithMCP(query)
             
-            if (result.success) {
-                Log.d(TAG, "✅ MCP STDIO query successful")
-                
-                // Format the result
-                val resultText = when (val data = result.data) {
-                    is String -> data
-                    is JSONArray -> {
-                        // Format JSON array results
-                        if (data.length() == 0) {
-                            "No se encontraron resultados."
-                        } else {
-                            formatMCPJsonArrayResults(data)
-                        }
-                    }
-                    is JSONObject -> {
-                        // Single result from query
-                        formatMCPJsonObjectResult(data)
-                    }
-                    else -> com.google.gson.Gson().toJson(data)
-                }
-                
-                // Append SQL script if available
-                return@withContext if (result.sqlScript != null) {
-                    """
-$resultText
-
-**Script SQL:**
-```sql
-${result.sqlScript}
-```
-                    """.trimIndent()
-                } else {
-                    resultText
-                }
-            } else {
-                Log.e(TAG, "❌ MCP STDIO query failed: ${result.error}")
-                // Fallback to RAG service
-                Log.d(TAG, "⚠️ Falling back to RAG service due to MCP error")
-                return@withContext processRAGEnhancedQuery(query)
-            }
+            return@withContext result
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Exception using MCP STDIO server: ${e.message}", e)
@@ -1407,6 +1650,126 @@ ${result.sqlScript}
             currentChart = null
         }
         binding.chartControls.visibility = View.GONE // Hide chart controls when removing chart
+    }
+
+    /**
+     * Attempt to extract the first JSON object found anywhere in a text blob.
+     * This is useful because some LLMs emit prose around a JSON tool call.
+     */
+    private fun parseFirstJsonObject(text: String): JSONObject? {
+        val start = text.indexOf('{')
+        if (start < 0) return null
+        var depth = 0
+        for (i in start until text.length) {
+            val c = text[i]
+            if (c == '{') depth++
+            else if (c == '}') depth--
+
+            if (depth == 0) {
+                val candidate = text.substring(start, i + 1)
+                try {
+                    return JSONObject(candidate)
+                } catch (e: Exception) {
+                    // If parse failed, continue searching for next '{'
+                    val nextStart = text.indexOf('{', start + 1)
+                    if (nextStart <= start) return null
+                    return parseFirstJsonObject(text.substring(nextStart))
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Build a compact JSON-like schema summary by querying local Room DAOs
+     * This runs on IO dispatcher and is a best-effort fallback when MCP is unreachable.
+     */
+    private suspend fun getLocalSchemaSummary(): String = withContext(Dispatchers.IO) {
+        val schemaObj = JSONObject()
+        val tables = JSONObject()
+
+        try {
+            try {
+                val usuarios = database.usuarioDao().getAllUsuarios()
+                val obj = JSONObject()
+                obj.put("count", usuarios.size)
+                obj.put("exists", true)
+                tables.put("usuarios", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val personas = database.personaDao().getAllPersonasList()
+                val obj = JSONObject()
+                obj.put("count", personas.size)
+                obj.put("exists", true)
+                tables.put("personas", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val videos = database.videoDao().getAllVideos()
+                val obj = JSONObject()
+                obj.put("count", videos.size)
+                obj.put("exists", true)
+                tables.put("videos", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val courses = database.courseDao().getAllCourses()
+                val obj = JSONObject()
+                obj.put("count", courses.size)
+                obj.put("exists", true)
+                tables.put("courses", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val topics = database.topicDao().getAllTopics()
+                val obj = JSONObject()
+                obj.put("count", topics.size)
+                obj.put("exists", true)
+                tables.put("topics", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val contentItems = database.contentItemDao().getAllContentItems()
+                val obj = JSONObject()
+                obj.put("count", contentItems.size)
+                obj.put("exists", true)
+                tables.put("content_items", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val tasks = database.taskDao().getAllTasks()
+                val obj = JSONObject()
+                obj.put("count", tasks.size)
+                obj.put("exists", true)
+                tables.put("tasks", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val submissions = database.taskSubmissionDao().getAllTaskSubmissions()
+                val obj = JSONObject()
+                obj.put("count", submissions.size)
+                obj.put("exists", true)
+                tables.put("task_submissions", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val subs = database.subscriptionDao().getAllSubscriptions()
+                val obj = JSONObject()
+                obj.put("count", subs.size)
+                obj.put("exists", true)
+                tables.put("subscriptions", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            // Add timestamp
+            schemaObj.put("schema", tables)
+            schemaObj.put("generated_at", System.currentTimeMillis())
+        } catch (e: Exception) {
+            // If anything goes wrong, return an empty schema message
+            return@withContext "{\"schema\": {}, \"note\": \"failed to introspect local DB: ${e.message}\"}"
+        }
+
+        return@withContext schemaObj.toString(2)
     }
 
     private fun processUserQuery(userInput: String) {

@@ -48,6 +48,12 @@ class MCPHttpClient(private val context: Context) {
         val error: String?
     )
     
+    data class MCPSchemaResult(
+        val success: Boolean,
+        val schema: String?,
+        val error: String?
+    )
+    
     /**
      * Initialize MCP server connection
      */
@@ -213,11 +219,15 @@ class MCPHttpClient(private val context: Context) {
     /**
      * Get database schema
      */
-    suspend fun getDatabaseSchema(): String? = withContext(Dispatchers.IO) {
+    suspend fun getDatabaseSchema(): MCPSchemaResult = withContext(Dispatchers.IO) {
         try {
             if (!isInitialized) {
                 Log.w(tag, "MCP client not initialized")
-                return@withContext null
+                return@withContext MCPSchemaResult(
+                    success = false,
+                    schema = null,
+                    error = "MCP client not initialized"
+                )
             }
             
             Log.d(tag, "📋 Getting database schema")
@@ -236,28 +246,62 @@ class MCPHttpClient(private val context: Context) {
             val response = httpClient.newCall(requestBody).execute()
             if (!response.isSuccessful) {
                 Log.e(tag, "❌ Schema request failed: ${response.code}")
-                return@withContext null
+                return@withContext MCPSchemaResult(
+                    success = false,
+                    schema = null,
+                    error = "HTTP ${response.code}: ${response.message}"
+                )
             }
             
-            val responseBody = response.body?.string() ?: return@withContext null
+            val responseBody = response.body?.string() ?: return@withContext MCPSchemaResult(
+                success = false,
+                schema = null,
+                error = "Empty response"
+            )
             val jsonResponse = JSONObject(responseBody)
             
             if (jsonResponse.has("error")) {
-                return@withContext null
+                val error = jsonResponse.getJSONObject("error")
+                return@withContext MCPSchemaResult(
+                    success = false,
+                    schema = null,
+                    error = error.optString("message", "Unknown error")
+                )
             }
             
-            val result = jsonResponse.optJSONObject("result") ?: return@withContext null
-            val content = result.optJSONArray("content") ?: return@withContext null
+            val result = jsonResponse.optJSONObject("result") ?: return@withContext MCPSchemaResult(
+                success = false,
+                schema = null,
+                error = "Invalid response format"
+            )
+            val content = result.optJSONArray("content") ?: return@withContext MCPSchemaResult(
+                success = false,
+                schema = null,
+                error = "No content in response"
+            )
             
             if (content.length() > 0) {
-                return@withContext content.getJSONObject(0).optString("text")
+                val schema = content.getJSONObject(0).optString("text")
+                return@withContext MCPSchemaResult(
+                    success = true,
+                    schema = schema,
+                    error = null
+                )
             }
             
-            return@withContext null
+            return@withContext MCPSchemaResult(
+                success = false,
+                schema = null,
+                error = "Empty schema"
+            )
             
         } catch (e: Exception) {
             Log.e(tag, "❌ Schema error", e)
-            return@withContext null
+            return@withContext MCPSchemaResult(
+                success = false,
+                schema = null,
+                error = e.message ?: "Unknown error"
+            )
         }
     }
     
@@ -382,10 +426,23 @@ class MCPHttpClient(private val context: Context) {
             
             if (content != null && content.length() > 0) {
                 val textContent = content.getJSONObject(0).optString("text", "")
-                
+
+                // Try to parse returned text as JSON (object or array). If parsing fails, return raw string.
+                val parsedData = try {
+                    // Prefer JSONObject, then JSONArray
+                    JSONObject(textContent)
+                } catch (je: Exception) {
+                    try {
+                        JSONArray(textContent)
+                    } catch (je2: Exception) {
+                        // Not JSON, return raw text
+                        textContent
+                    }
+                }
+
                 return@withContext MCPQueryResult(
                     success = true,
-                    data = textContent,
+                    data = parsedData,
                     sqlScript = null,
                     error = null
                 )

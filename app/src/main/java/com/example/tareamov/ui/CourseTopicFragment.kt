@@ -217,13 +217,13 @@ class CourseTopicFragment : Fragment() {
                 val remoteTopicId = withContext(Dispatchers.IO) {
                     val topicToPush = com.example.tareamov.data.entity.Topic(
                         id = 0,
-                        courseId = validCourseId, // keep local courseId for local DB, but we will not send it to Supabase
+                        courseId = validCourseId,
                         name = topicName,
                         description = topicDescription,
                         orderIndex = topicNumber
                     )
-                    // Use the trigger-based insert to avoid sending course_id (server trigger will map via courseName)
-                    activity.syncRepository.insertTopicRemoteUsingTrigger(topicToPush, courseName)
+                    // Use the regular insert method since we already have the correct courseId
+                    activity.syncRepository.insertTopicRemote(topicToPush)
                 }
 
                 if (remoteTopicId != null && remoteTopicId > 0) {
@@ -483,8 +483,8 @@ class CourseTopicFragment : Fragment() {
                         Log.d("CourseTopicFragment", "Updating topic $topicId (update not yet implemented)")
                         topicId
                     } else {
-                        // Insert new topic to Supabase
-                        activity.syncRepository.insertTopicRemoteUsingTrigger(topicToSave, courseName)
+                        // Insert new topic to Supabase using regular insert (we already have correct courseId)
+                        activity.syncRepository.insertTopicRemote(topicToSave)
                     }
                 }
 

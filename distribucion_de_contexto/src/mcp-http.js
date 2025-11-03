@@ -32,13 +32,35 @@ const mcpService = new MCPService();
 /**
  * Health check endpoint
  */
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    server: 'tareamov-mcp-server',
-    version: '1.0.0',
-    timestamp: new Date().toISOString()
-  });
+app.get('/health', async (req, res) => {
+  try {
+    const dbHealth = await supabase.healthCheck();
+    
+    // Test LLM connection
+    let llmHealth = { status: 'not_tested' };
+    try {
+      llmHealth = await mcpService.llmService.testConnection();
+    } catch (e) {
+      llmHealth = { status: 'error', error: e.message };
+    }
+    
+    res.json({
+      status: 'ok',
+      server: 'tareamov-mcp-server',
+      version: '1.0.0',
+      timestamp: new Date().toISOString(),
+      services: {
+        database: dbHealth,
+        llm: llmHealth
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 /**
