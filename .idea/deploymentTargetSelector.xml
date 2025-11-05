@@ -4,10 +4,14 @@
     <selectionStates>
       <SelectionState runConfigName="app">
         <option name="selectionMode" value="DROPDOWN" />
+ perico
+        <DropdownSelection timestamp="2025-10-25T01:13:13.900752400Z">
+
         <DropdownSelection timestamp="2025-10-14T04:18:15.611401900Z">
+ main
           <Target type="DEFAULT_BOOT">
             <handle>
-              <DeviceId pluginId="LocalEmulator" identifier="path=C:\Users\yasuy\.android\avd\Medium_Phone.avd" />
+              <DeviceId pluginId="Default" identifier="serial=R28M60JDDBM;connection=81fb2437" />
             </handle>
           </Target>
         </DropdownSelection>

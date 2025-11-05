@@ -1448,6 +1448,14 @@ class CourseDetailFragment : Fragment() {
             loadContentThumbnail(item, contentThumbnailImageView)
             setContentTypeIcon(item.contentType, contentTypeIconView)
 
+            // If this is a video, allow opening in floating player by tapping the play icon
+            if (item.contentType == "video") {
+                contentTypeIconView.isClickable = true
+                contentTypeIconView.setOnClickListener {
+                    openFloatingPlayer(item)
+                }
+            }
+
         } else {
             // Handle course content display (item_course_content_detail.xml)
             val contentNameTextView = contentView.findViewById<TextView>(R.id.contentNameTextView)
@@ -1636,6 +1644,41 @@ class CourseDetailFragment : Fragment() {
         } catch (e: Exception) {
             Log.e("CourseDetailFragment", "Error opening content URI: ${item.uriString}", e)
             Toast.makeText(context, "No se puede abrir el contenido: ${item.name}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Open a video in the in-app floating player (MainActivity.showFloatingPlayer)
+    private fun openFloatingPlayer(item: ContentItem) {
+        try {
+            var processedUri = item.uriString ?: ""
+            if (processedUri.isNotEmpty()) {
+                if (!processedUri.startsWith("content://") && !processedUri.startsWith("file://") && !processedUri.startsWith("android.resource://")) {
+                    val file = java.io.File(processedUri)
+                    if (file.exists()) {
+                        try {
+                            val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                                requireContext(),
+                                "${requireContext().packageName}.service.fileprovider",
+                                file
+                            )
+                            processedUri = contentUri.toString()
+                        } catch (e: Exception) {
+                            processedUri = "file://$processedUri"
+                        }
+                    } else {
+                        // leave as-is (may be a remote URL)
+                    }
+                }
+            } else {
+                android.widget.Toast.makeText(context, "URI del video no válida", android.widget.Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            // Call MainActivity API to show floating player
+            (activity as? com.example.tareamov.MainActivity)?.showFloatingPlayer(processedUri)
+        } catch (e: Exception) {
+            android.util.Log.e("CourseDetailFragment", "Error opening floating player", e)
+            android.widget.Toast.makeText(context, "No se pudo abrir el reproductor flotante", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 

@@ -1,12 +1,21 @@
 package com.example.tareamov.ui
 
+import android.app.PictureInPictureParams
+import android.app.PendingIntent
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+import android.graphics.drawable.Icon
 import android.content.Intent
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.util.Rational
 import android.view.View
 import android.view.WindowManager
 import android.widget.*
@@ -31,6 +40,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private lateinit var titleText: TextView
     private lateinit var skipBackIcon: ImageView
     private lateinit var skipForwardIcon: ImageView
+    private lateinit var btnFloatingMode: ImageView
 
     private var mediaPlayer: MediaPlayer? = null
     private var mediaPlayerPrepared: Boolean = false
@@ -42,6 +52,8 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var autoHideRunnable: Runnable? = null
     private var pendingUserSeekMs: Int? = null
     private var isScrubbing: Boolean = false
+    private val ACTION_TOGGLE_PLAYBACK = "com.example.tareamov.action.TOGGLE_PIP_PLAYBACK"
+    private var pipReceiver: BroadcastReceiver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,6 +82,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         titleText = findViewById(R.id.titleText)
         skipBackIcon = findViewById(R.id.skipBackIcon)
         skipForwardIcon = findViewById(R.id.skipForwardIcon)
+    btnFloatingMode = findViewById(R.id.btn_floating_mode)
 
         uriPermissionManager = UriPermissionManager(this)
 
@@ -205,7 +218,68 @@ class VideoPlayerActivity : AppCompatActivity() {
                 showCenterOverlay(R.drawable.ic_pause_overlay)
             }
         }
-        backButton.setOnClickListener { finish() }
+        backButton.setOnClickListener {
+            try {
+                // Instead of finishing the app, navigate back to the VideoHomeFragment hosted by MainActivity
+                val i = Intent(this, com.example.tareamov.MainActivity::class.java)
+                i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                i.putExtra("open_video_home", true)
+                startActivity(i)
+                finish()
+            } catch (e: Exception) {
+                Log.w("VideoPlayerActivity", "Failed to navigate to VideoHomeFragment via MainActivity", e)
+                finish()
+            }
+        }
+
+        btnFloatingMode.setOnClickListener {
+            try {
+                val uriToSend = pathOrUri
+                if (uriToSend.isNullOrEmpty()) {
+                    Toast.makeText(this, "URI de video no disponible para modo flotante", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+
+                // Prefer system Picture-in-Picture when available (Android O+). This keeps playback
+                // visible after leaving the app. Otherwise fallback to the existing in-app floating container.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        // Use current video view dimensions as aspect ratio hint
+                        val w = if (videoView.width > 0) videoView.width else 16
+                        val h = if (videoView.height > 0) videoView.height else 9
+                        val builder = PictureInPictureParams.Builder()
+                            .setAspectRatio(Rational(w, h))
+                        // attach play/pause action
+                        try {
+                            val actions = createPipActions(videoView.isPlaying)
+                            if (actions.isNotEmpty()) builder.setActions(actions)
+                        } catch (_: Throwable) { }
+                        // ensure receiver is registered
+                        registerPipReceiver()
+                        enterPictureInPictureMode(builder.build())
+                        // Do not finish activity: leaving it in PIP keeps playback.
+                    } catch (pipEx: Exception) {
+                        Log.w("VideoPlayerActivity", "PIP failed, falling back to in-app floating", pipEx)
+                        // fallback to MainActivity in-app floating
+                        val i = Intent(this, com.example.tareamov.MainActivity::class.java)
+                        i.putExtra("floating_video_path", uriToSend)
+                        i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        startActivity(i)
+                        finish()
+                    }
+                } else {
+                    // Older devices: use the in-app floating fragment pathway
+                    val i = Intent(this, com.example.tareamov.MainActivity::class.java)
+                    i.putExtra("floating_video_path", uriToSend)
+                    i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    startActivity(i)
+                    finish()
+                }
+            } catch (e: Exception) {
+                Log.e("VideoPlayerActivity", "Error initiating floating mode", e)
+                Toast.makeText(this, "No se pudo abrir el modo flotante", Toast.LENGTH_SHORT).show()
+            }
+        }
 
         skipBackIcon.setOnClickListener { seekBy(-10_000) }
         skipForwardIcon.setOnClickListener { seekBy(10_000) }
@@ -361,12 +435,125 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (videoView.isPlaying) videoView.pause()
+        // If the activity enters background but is in PIP mode, keep playback running.
+        // Otherwise pause playback when the activity is fully paused.
+        if (!isInPictureInPictureMode && videoView.isPlaying) videoView.pause()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Trigger PIP automatically when user leaves the activity (press Home) and video is playing
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && videoView.isPlaying && !isInPictureInPictureMode) {
+            try {
+                val w = if (videoView.width > 0) videoView.width else 16
+                val h = if (videoView.height > 0) videoView.height else 9
+                val builder = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(w, h))
+                try {
+                    val actions = createPipActions(videoView.isPlaying)
+                    if (actions.isNotEmpty()) builder.setActions(actions)
+                } catch (_: Throwable) { }
+                registerPipReceiver()
+                enterPictureInPictureMode(builder.build())
+            } catch (t: Throwable) {
+                Log.w("VideoPlayerActivity", "Auto PIP failed", t)
+            }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        // Hide controls in PIP to keep the small window clean
+        if (isInPictureInPictureMode) {
+            // hide heavy UI
+            findViewById<View>(R.id.topBar)?.visibility = View.GONE
+            findViewById<View>(R.id.bottomBar)?.visibility = View.GONE
+            controlsOverlay.visibility = View.GONE
+            // update actions to reflect current playback state
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val actions = createPipActions(videoView.isPlaying)
+                try {
+                    setPictureInPictureParams(PictureInPictureParams.Builder().setActions(actions).build())
+                } catch (_: Exception) { }
+            }
+        } else {
+            // restore UI when returning
+            findViewById<View>(R.id.topBar)?.visibility = View.VISIBLE
+            findViewById<View>(R.id.bottomBar)?.visibility = View.VISIBLE
+            controlsOverlay.visibility = View.VISIBLE
+            // unregister receiver when exiting PIP
+            unregisterPipReceiver()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         progressRunnable?.let { uiHandler.removeCallbacks(it) }
-        videoView.stopPlayback()
+        unregisterPipReceiver()
+        try { videoView.stopPlayback() } catch (_: Exception) { }
+    }
+
+    private fun flagsForPendingIntent(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else PendingIntent.FLAG_UPDATE_CURRENT
+    }
+
+    private fun createPipActions(isPlaying: Boolean): ArrayList<RemoteAction> {
+        val actions = ArrayList<RemoteAction>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val iconRes = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+                val icon = Icon.createWithResource(this, iconRes)
+                val title = if (isPlaying) "Pause" else "Play"
+                val desc = "Toggle playback"
+                val intent = Intent(ACTION_TOGGLE_PLAYBACK)
+                // keep intent generic (no explicit package) so the dynamically-registered receiver can receive it
+                val pi = PendingIntent.getBroadcast(this, 0, intent, flagsForPendingIntent())
+                actions.add(RemoteAction(icon, title, desc, pi))
+            } catch (t: Throwable) {
+                Log.w("VideoPlayerActivity", "Failed to create PIP action", t)
+            }
+        }
+        return actions
+    }
+
+    private fun registerPipReceiver() {
+        if (pipReceiver != null) return
+        pipReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                Log.d("VideoPlayerActivity", "PIP action received: ${intent?.action}")
+                if (intent?.action == ACTION_TOGGLE_PLAYBACK) {
+                    try {
+                        if (videoView.isPlaying) {
+                            videoView.pause()
+                        } else {
+                            videoView.start()
+                        }
+                        // update PIP actions to reflect new state
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode) {
+                            val actions = createPipActions(videoView.isPlaying)
+                            try {
+                                setPictureInPictureParams(PictureInPictureParams.Builder().setActions(actions).build())
+                            } catch (_: Exception) { }
+                        }
+                    } catch (t: Throwable) { t.printStackTrace() }
+                }
+            }
+        }
+        try {
+            applicationContext.registerReceiver(pipReceiver, IntentFilter(ACTION_TOGGLE_PLAYBACK))
+            Log.d("VideoPlayerActivity", "PIP receiver registered")
+        } catch (t: Throwable) {
+            Log.w("VideoPlayerActivity", "Failed to register PIP receiver", t)
+        }
+    }
+
+    private fun unregisterPipReceiver() {
+        pipReceiver?.let {
+            try { applicationContext.unregisterReceiver(it) } catch (_: Exception) { }
+            pipReceiver = null
+            Log.d("VideoPlayerActivity", "PIP receiver unregistered")
+        }
     }
 }
