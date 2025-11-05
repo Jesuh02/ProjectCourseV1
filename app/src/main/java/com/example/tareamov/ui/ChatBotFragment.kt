@@ -130,6 +130,15 @@ class ChatBotFragment : Fragment() {
             .connectTimeout(20, java.util.concurrent.TimeUnit.MINUTES)  // Aumentado a 20 minutos
             .readTimeout(20, java.util.concurrent.TimeUnit.MINUTES)     // Aumentado a 20 minutos
             .writeTimeout(20, java.util.concurrent.TimeUnit.MINUTES)    // Aumentado a 20 minutos
+            .addInterceptor { chain ->
+                // Agregar el header X-API-Key a todas las peticiones al microservicio
+                val originalRequest = chain.request()
+                val requestWithApiKey = originalRequest.newBuilder()
+                    .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
+                    .header("Content-Type", "application/json")
+                    .build()
+                chain.proceed(requestWithApiKey)
+            }
             .build()
         val retrofit = Retrofit.Builder()
             .baseUrl(getMicroserviceBaseUrl())
@@ -599,6 +608,54 @@ class ChatBotFragment : Fragment() {
             // Contexto por defecto: la tarea/archivo actualmente cargado en el chat
             var effectiveTaskDescription = currentFileContext?.contentSummary ?: ""
             var effectiveFileContent = currentFileContext?.fileContent ?: ""
+            
+            // Agregar información del tipo de archivo para que el LLM lo entienda mejor
+            if (currentFileContext != null && effectiveFileContent.isNotEmpty()) {
+                val fileName = currentFileContext!!.fileName
+                val fileType = currentFileContext!!.fileType
+                val fileExtension = fileName.substringAfterLast('.', "")
+                
+                // Detectar si el archivo no pudo ser procesado (lógica mejorada)
+                // Un archivo es no procesable solo si tiene mensajes de error Y contenido muy corto
+                val tieneIndicadoresError = effectiveFileContent.contains("Tipo de archivo no soportado") ||
+                                           effectiveFileContent.contains("no pudo ser procesado") ||
+                                           effectiveFileContent.contains("ESTADO DEL ANÁLISIS")
+                
+                val contenidoMuyCorto = effectiveFileContent.length < 200
+                
+                // Solo marcar como no procesable si tiene errores específicos O es muy corto
+                val archivoNoProcessable = (tieneIndicadoresError && contenidoMuyCorto) ||
+                                           (fileType.equals("UNKNOWN", ignoreCase = true) && contenidoMuyCorto)
+                
+                if (archivoNoProcessable) {
+                    // Marcar claramente que el archivo no es procesable
+                    val fileMetadata = """
+                        |⚠️ ARCHIVO NO PROCESABLE - NO SE PUEDE CALIFICAR ⚠️
+                        |=== INFORMACIÓN DEL ARCHIVO ENVIADO ===
+                        |Nombre del archivo: $fileName
+                        |Tipo de archivo: $fileType
+                        |Extensión: ${if (fileExtension.isNotEmpty()) fileExtension else "sin extensión"}
+                        |Estado: NO PROCESABLE - El archivo no pudo ser leído o está en formato no compatible
+                        |=== MENSAJE DEL SISTEMA ===
+                        |
+                    """.trimMargin()
+                    effectiveFileContent = fileMetadata + effectiveFileContent
+                } else {
+                    // Prepend file metadata to help LLM understand the content
+                    val fileMetadata = """
+                        |=== INFORMACIÓN DEL ARCHIVO ENVIADO ===
+                        |Nombre del archivo: $fileName
+                        |Tipo de archivo: $fileType
+                        |Extensión: ${if (fileExtension.isNotEmpty()) fileExtension else "sin extensión"}
+                        |=== CONTENIDO DEL ARCHIVO ===
+                        |
+                    """.trimMargin()
+                    
+                    effectiveFileContent = fileMetadata + effectiveFileContent
+                }
+                
+                Log.d("ChatBotFragment", "📎 Metadata agregada al archivo: Nombre=$fileName, Tipo=$fileType, Extensión=$fileExtension, Procesable=${!archivoNoProcessable}")
+            }
             
             // FALLBACK: Si taskDescription está vacío, intentar obtener el último contentSummary desde Supabase
             if (effectiveTaskDescription.isEmpty()) {

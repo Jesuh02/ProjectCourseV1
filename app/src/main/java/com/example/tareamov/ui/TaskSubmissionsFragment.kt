@@ -24,7 +24,9 @@ import com.example.tareamov.R
 import com.example.tareamov.data.repository.SupabaseRepository
 import com.example.tareamov.data.entity.TaskSubmission
 import com.example.tareamov.data.entity.FileContext
+import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.service.FileAnalysisService
+import com.example.tareamov.service.FileConverterService
 import com.example.tareamov.service.MCPService
 import com.example.tareamov.service.SupabaseClient
 import com.example.tareamov.util.CalificationManager
@@ -43,7 +45,9 @@ class TaskSubmissionsFragment : Fragment() {
     private lateinit var adapter: SubmissionsAdapter
     private lateinit var sessionManager: SessionManager
     private lateinit var fileAnalysisService: FileAnalysisService
+    private lateinit var fileConverterService: FileConverterService
     private lateinit var mcpService: MCPService
+    private lateinit var database: com.example.tareamov.data.AppDatabase
     private var taskId: Long = -1
     private var taskName: String = ""
     private var courseCreatorUsername: String? = null
@@ -85,7 +89,10 @@ class TaskSubmissionsFragment : Fragment() {
             } else {
                 // Es un archivo local, procesarlo normalmente
                 selectedFileUri = uri
-                view?.findViewById<TextView>(R.id.selectedFileNameTextView)?.text = uri.lastPathSegment ?: "Archivo seleccionado"
+                // Usar getFileName() para mostrar el nombre real del archivo
+                val displayFileName = getFileName(uri) ?: uri.lastPathSegment ?: "Archivo seleccionado"
+                view?.findViewById<TextView>(R.id.selectedFileNameTextView)?.text = displayFileName
+                Log.d("TaskSubmissionsFragment", "📎 Archivo seleccionado: $displayFileName")
 
                 // Take persistable URI permission
                 requireContext().contentResolver.takePersistableUriPermission(
@@ -105,6 +112,7 @@ class TaskSubmissionsFragment : Fragment() {
         }
         sessionManager = SessionManager.getInstance(requireContext())
         fileAnalysisService = FileAnalysisService(requireContext())
+    fileConverterService = FileConverterService(requireContext())
         mcpService = MCPService(requireContext())
         val currentUsername = sessionManager.getUsername()
         isCourseCreator = (courseCreatorUsername != null && courseCreatorUsername == currentUsername)
@@ -115,6 +123,9 @@ class TaskSubmissionsFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View? {
         val view = inflater.inflate(R.layout.fragment_task_submissions, container, false)
+
+        // Initialize database
+        database = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
 
         val titleTextView = view.findViewById<TextView>(R.id.taskTitleTextView)
         titleTextView.text = taskName
@@ -527,7 +538,15 @@ class TaskSubmissionsFragment : Fragment() {
             return
         }
 
-        val fileName = uri.lastPathSegment ?: "archivo_tarea"
+        // Usar getFileName() para obtener el nombre real del archivo con extensión
+        val fileName = getFileName(uri) ?: uri.lastPathSegment ?: "archivo_tarea"
+        Log.d("TaskSubmissionsFragment", "📎 Nombre del archivo obtenido: $fileName")
+        
+        // Mostrar progreso mientras se procesa
+        progressSection.visibility = View.VISIBLE
+        progressBar.isIndeterminate = true
+        progressTextView.text = "Analizando archivo $fileName..."
+        
         val submission = TaskSubmission(
             taskId = taskId,
             studentUsername = username,
@@ -540,6 +559,42 @@ class TaskSubmissionsFragment : Fragment() {
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
+                // PASO 1: Extraer el contenido del archivo ANTES de subirlo
+                Log.d("TaskSubmissionsFragment", "🔄 Extrayendo contenido del archivo antes de subir...")
+                val analysisResult = withContext(Dispatchers.IO) {
+                    fileAnalysisService.extractFileContent(uri, fileName)
+                }
+                Log.d("TaskSubmissionsFragment", "📊 Contenido extraído: ${analysisResult.content.take(100)}...")
+
+                progressTextView.text = "Generando contexto estructurado..."
+                var structuredFileContext: FileContext? = null
+                try {
+                    structuredFileContext = withContext(Dispatchers.IO) {
+                        fileConverterService.convertFileToStructuredJson(uri, fileName)
+                    }
+                    structuredFileContext?.let {
+                        Log.d(
+                            "TaskSubmissionsFragment",
+                            "🧩 FileConverterService generó contexto -> tipo=${it.fileType}, longitud=${it.fileContent.length}"
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "❌ Error generando contexto estructurado", e)
+                }
+
+                if ((!analysisResult.success || analysisResult.content.isEmpty()) &&
+                    (structuredFileContext?.fileContent.isNullOrBlank())) {
+                    Log.w("TaskSubmissionsFragment", "⚠️ No se pudo extraer contenido util del archivo")
+                    Toast.makeText(
+                        context,
+                        "Advertencia: No se pudo leer el contenido del archivo",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+
+                progressTextView.text = "Subiendo tarea al servidor..."
+                progressBar.progress = 30
+                
                 try {
                     // Directly insert submission to Supabase
                     val remoteId = withContext(Dispatchers.IO) {
@@ -558,7 +613,8 @@ class TaskSubmissionsFragment : Fragment() {
                                     found = all.firstOrNull { it.id == remoteId }
                                     if (found != null) return@withContext found
                                 } catch (e: Exception) {
-                                    Log.w("TaskSubmissionsFragment", "Attempt ${'$'}{attempt + 1} fetch created submission failed: ${'$'}{e.message}")
+                                    val attemptNum = attempt + 1
+                                    Log.w("TaskSubmissionsFragment", "Attempt $attemptNum fetch created submission failed: ${e.message}")
                                 }
                                 kotlinx.coroutines.delay(500)
                             }
@@ -566,6 +622,56 @@ class TaskSubmissionsFragment : Fragment() {
                         }
 
                         if (created != null) {
+                            // PASO 2: Crear el FileContext con el contenido extraído
+                            progressTextView.text = "Guardando contexto del archivo..."
+                            progressBar.progress = 70
+                            
+                            val createdSubmissionId = created.id
+                            val taskDescription = withContext(Dispatchers.IO) {
+                                try {
+                                    val task = SupabaseClient.fetchTaskById(taskId)
+                                    task?.description ?: "Tarea: ${task?.name ?: "Sin nombre"}"
+                                } catch (e: Exception) {
+                                    Log.e("TaskSubmissionsFragment", "Error obteniendo descripción de tarea", e)
+                                    "Tarea sin descripción"
+                                }
+                            }
+
+                            val fileContext = buildFileContextForSubmission(
+                                submissionId = createdSubmissionId,
+                                originalFileName = fileName,
+                                structuredContext = structuredFileContext,
+                                analysisResult = analysisResult,
+                                taskDescription = taskDescription
+                            )
+
+                            Log.d(
+                                "TaskSubmissionsFragment",
+                                "📦 FileContext final -> nombre=${fileContext.fileName}, tipo=${fileContext.fileType}, longitud=${fileContext.fileContent.length}"
+                            )
+                            
+                            // Guardar FileContext en la base de datos local Y en Supabase
+                            withContext(Dispatchers.IO) {
+                                try {
+                                    // 1. Guardar en base de datos local
+                                    database.fileContextDao().insertFileContext(fileContext)
+                                    Log.d("TaskSubmissionsFragment", "✅ FileContext guardado en BD local para submission $createdSubmissionId")
+                                    
+                                    // 2. Enviar a Supabase
+                                    val remoteFileContextId = SupabaseClient.insertFileContext(fileContext)
+                                    if (remoteFileContextId != null) {
+                                        Log.d("TaskSubmissionsFragment", "✅ FileContext enviado a Supabase con ID remoto: ${remoteFileContextId}")
+                                    } else {
+                                        Log.w("TaskSubmissionsFragment", "⚠️ FileContext no pudo ser enviado a Supabase (quedó solo en BD local)")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e("TaskSubmissionsFragment", "❌ Error guardando/enviando FileContext", e)
+                                }
+                            }
+                            
+                            progressTextView.text = "¡Tarea enviada exitosamente!"
+                            progressBar.progress = 100
+                            
                             // Refresh the submissions list from Supabase to ensure frontend data comes from server
                             loadSubmissions()
                         } else {
@@ -582,6 +688,7 @@ class TaskSubmissionsFragment : Fragment() {
                 } catch (e: Exception) {
                     Log.e("TaskSubmissionsFragment", "Error sending submission to Supabase", e)
                     Toast.makeText(context, "Error al enviar tarea al servidor: ${e.message}", Toast.LENGTH_SHORT).show()
+                    progressSection.visibility = View.GONE
                 }
                 selectedFileUri = null
                 view?.findViewById<TextView>(R.id.selectedFileNameTextView)?.text = "Ningún archivo seleccionado"
@@ -595,10 +702,15 @@ class TaskSubmissionsFragment : Fragment() {
                     statusTextView.setTextColor(resources.getColor(android.R.color.holo_green_light, null))
                 }
 
-                // Update progress after submission
+                // Update progress after submission - ocultar barra después de 2 segundos
+                kotlinx.coroutines.delay(2000)
+                progressSection.visibility = View.GONE
+                
+                // Reset progress bar for next submission
                 progressBar.max = 100
-                progressBar.progress = 50 // 50% porque está entregado pero no calificado (nota = 0)
-                progressTextView.text = "Tarea entregada, pendiente de calificación"
+                progressBar.progress = 0
+                progressBar.isIndeterminate = false
+                progressTextView.text = "0% completado"
 
                 // Disable submit button
                 view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
@@ -610,6 +722,107 @@ class TaskSubmissionsFragment : Fragment() {
                 Log.e("TaskSubmissionsFragment", "Error submitting task", e)
                 Toast.makeText(context, "Error al enviar tarea: ${e.message}", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun buildFileContextForSubmission(
+        submissionId: Long,
+        originalFileName: String,
+        structuredContext: FileContext?,
+        analysisResult: FileAnalysisService.FileAnalysisResult,
+        taskDescription: String
+    ): FileContext {
+        val fallbackType = analysisResult.fileType.name.lowercase(Locale.getDefault())
+        val candidateType = structuredContext?.fileType?.takeIf { !it.isNullOrBlank() }?.lowercase(Locale.getDefault())
+            ?: fallbackType
+        val sanitizedFileName = sanitizeFileName(
+            structuredContext?.fileName ?: originalFileName,
+            candidateType
+        )
+
+        val mergedMetadata = structuredContext?.metadata ?: analysisResult.metadata
+        val mergedSummary = when {
+            taskDescription.isNotBlank() -> taskDescription
+            !structuredContext?.contentSummary.isNullOrBlank() -> structuredContext?.contentSummary ?: ""
+            !analysisResult.metadata.isNullOrBlank() -> analysisResult.metadata
+            else -> ""
+        }
+
+        structuredContext?.let {
+            if (it.fileContent.isNotBlank()) {
+                return it.copy(
+                    submissionId = submissionId,
+                    fileName = sanitizedFileName,
+                    fileType = candidateType,
+                    metadata = mergedMetadata,
+                    contentSummary = mergedSummary.ifBlank { null },
+                    extractedText = it.extractedText ?: it.fileContent
+                )
+            }
+        }
+
+        // Construir contenido más descriptivo cuando hay errores
+        val fallbackContent = when {
+            analysisResult.content.isNotBlank() -> analysisResult.content
+            !analysisResult.error.isNullOrBlank() -> {
+                // Si hay error, crear un mensaje más informativo para el LLM
+                buildString {
+                    appendLine("INFORMACIÓN DEL ARCHIVO:")
+                    appendLine("Nombre: $originalFileName")
+                    appendLine("Tipo detectado: $candidateType")
+                    if (!mergedMetadata.isNullOrBlank()) {
+                        appendLine("Metadata: $mergedMetadata")
+                    }
+                    appendLine()
+                    appendLine("ESTADO DEL ANÁLISIS:")
+                    appendLine("⚠️ ${analysisResult.error}")
+                    appendLine()
+                    appendLine("CONTEXTO DE LA TAREA:")
+                    if (taskDescription.isNotBlank()) {
+                        appendLine(taskDescription)
+                    } else {
+                        appendLine("Sin descripción de tarea disponible")
+                    }
+                    appendLine()
+                    appendLine("NOTA: El archivo no pudo ser procesado completamente. Por favor, verifica que el formato del archivo sea compatible o que el archivo no esté corrupto.")
+                }
+            }
+            else -> "Archivo enviado sin contenido extraíble. Nombre: $originalFileName, Tipo: $candidateType"
+        }
+
+        return FileContext(
+            submissionId = submissionId,
+            fileName = sanitizedFileName,
+            fileType = candidateType,
+            fileContent = fallbackContent,
+            extractedText = fallbackContent,
+            metadata = mergedMetadata,
+            jsonContent = structuredContext?.jsonContent,
+            contentSummary = mergedSummary.ifBlank { null }
+        )
+    }
+
+    private fun sanitizeFileName(rawName: String, forcedExtension: String?): String {
+        val cleaned = rawName
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .substringAfterLast(':')
+
+        val base = cleaned.substringBeforeLast('.')
+        val sanitizedBase = base.ifBlank { cleaned }.ifBlank { "archivo" }
+            .replace(Regex("[^A-Za-z0-9_-]"), "_")
+
+        val normalizedExtension = when {
+            !forcedExtension.isNullOrBlank() && forcedExtension.lowercase(Locale.getDefault()) != "unknown" ->
+                forcedExtension.lowercase(Locale.getDefault()).removePrefix(".")
+            cleaned.contains('.') -> cleaned.substringAfterLast('.').lowercase(Locale.getDefault())
+            else -> "dat"
+        }
+
+        return if (normalizedExtension.isNotBlank()) {
+            "${sanitizedBase}.$normalizedExtension"
+        } else {
+            sanitizedBase
         }
     }
 
@@ -639,7 +852,8 @@ class TaskSubmissionsFragment : Fragment() {
                 }
                 Log.d("TaskSubmissionsFragment", "📊 Resultado del análisis - Éxito: ${analysisResult.success}")
                 val fileType = fileAnalysisService.getFileType(submission.fileName)
-                Log.d("TaskSubmissionsFragment", "📄 Tipo de archivo: $fileType")
+                Log.d("TaskSubmissionsFragment", "📄 Tipo de archivo detectado: $fileType para archivo: ${submission.fileName}")
+                Log.d("TaskSubmissionsFragment", "📝 Extensión del archivo: ${submission.fileName.substringAfterLast('.', "sin extensión")}")
                 Log.d("TaskSubmissionsFragment", "📝 Contenido extraído (${analysisResult.content.length} caracteres): ${analysisResult.content.take(100)}...")
                 // Obtener la descripción de la tarea desde Supabase (remote-first)
                 val taskDescription = withContext(Dispatchers.IO) {
@@ -1237,5 +1451,93 @@ class TaskSubmissionsFragment : Fragment() {
                 }
             }
         }
+    }
+
+    /**
+     * Obtiene el nombre real del archivo desde el URI, incluyendo la extensión
+     * Esta función consulta el ContentResolver para obtener el DISPLAY_NAME real del archivo
+     * Implementa múltiples estrategias para manejar diferentes tipos de URIs
+     */
+    private fun getFileName(uri: Uri): String? {
+        val contentResolver = requireContext().contentResolver
+        
+        // Estrategia 1: Intentar obtener DISPLAY_NAME del cursor
+        try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    // Intentar obtener DISPLAY_NAME
+                    val displayNameIndex = cursor.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
+                    if (displayNameIndex != -1) {
+                        val displayName = cursor.getString(displayNameIndex)
+                        if (!displayName.isNullOrEmpty()) {
+                            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via DISPLAY_NAME: $displayName")
+                            return displayName
+                        }
+                    }
+                    
+                    // Intentar obtener _DISPLAY_NAME (alternativa)
+                    val displayNameIndex2 = cursor.getColumnIndex("_display_name")
+                    if (displayNameIndex2 != -1) {
+                        val displayName = cursor.getString(displayNameIndex2)
+                        if (!displayName.isNullOrEmpty()) {
+                            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via _display_name: $displayName")
+                            return displayName
+                        }
+                    }
+                    
+                    // Log todas las columnas disponibles para debugging
+                    Log.d("TaskSubmissionsFragment", "📋 Columnas disponibles en cursor: ${cursor.columnNames.joinToString()}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("TaskSubmissionsFragment", "Error obteniendo nombre via cursor: ${e.message}")
+        }
+        
+        // Estrategia 2: Usar el path del URI
+        val path = uri.path
+        if (!path.isNullOrEmpty()) {
+            val fileName = path.substringAfterLast('/')
+            if (fileName.isNotEmpty() && fileName.contains('.')) {
+                Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via URI path: $fileName")
+                return fileName
+            }
+        }
+        
+        // Estrategia 3: lastPathSegment
+        val lastSegment = uri.lastPathSegment
+        if (!lastSegment.isNullOrEmpty() && lastSegment.contains('.')) {
+            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via lastPathSegment: $lastSegment")
+            return lastSegment
+        }
+        
+        // Estrategia 4: Intentar obtener el tipo MIME y generar un nombre
+        try {
+            val mimeType = contentResolver.getType(uri)
+            if (!mimeType.isNullOrEmpty()) {
+                val extension = when {
+                    mimeType.contains("pdf") -> "pdf"
+                    mimeType.contains("image") -> "jpg"
+                    mimeType.contains("text") -> "txt"
+                    mimeType.contains("sql") -> "sql"
+                    mimeType.contains("json") -> "json"
+                    mimeType.contains("xml") -> "xml"
+                    mimeType.contains("python") -> "py"
+                    mimeType.contains("java") -> "java"
+                    mimeType.contains("javascript") -> "js"
+                    else -> mimeType.substringAfterLast('/').takeIf { it.length <= 5 } ?: "dat"
+                }
+                val generatedName = "archivo_${System.currentTimeMillis()}.$extension"
+                Log.d("TaskSubmissionsFragment", "⚠️ Nombre generado desde MIME type ($mimeType): $generatedName")
+                return generatedName
+            }
+        } catch (e: Exception) {
+            Log.e("TaskSubmissionsFragment", "Error obteniendo MIME type: ${e.message}")
+        }
+        
+        // Fallback final: nombre genérico con timestamp
+        val fallbackName = "archivo_${System.currentTimeMillis()}.dat"
+        Log.w("TaskSubmissionsFragment", "⚠️ No se pudo obtener nombre real, usando fallback: $fallbackName")
+        Log.w("TaskSubmissionsFragment", "⚠️ URI problemático: $uri")
+        return fallbackName
     }
 }

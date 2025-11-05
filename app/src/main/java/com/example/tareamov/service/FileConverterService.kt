@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import android.webkit.MimeTypeMap
 import com.example.tareamov.data.entity.FileContext
 import com.example.tareamov.data.model.FileContent
 import com.example.tareamov.data.model.FileSection
@@ -12,9 +13,12 @@ import org.apache.poi.xslf.usermodel.XMLSlideShow
 import org.apache.poi.xwpf.usermodel.XWPFDocument
 import org.json.JSONArray
 import org.json.JSONObject
-import org.apache.pdfbox.pdmodel.PDDocument
-import org.apache.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import java.io.*
+import java.util.Locale
+import java.util.zip.ZipInputStream
 
 /**
  * Servicio para convertir diferentes tipos de archivos a JSON estructurado
@@ -39,6 +43,11 @@ class FileConverterService(private val context: Context) {
         )
     }
     
+    init {
+        // Inicializar PDFBox-Android
+        PDFBoxResourceLoader.init(context)
+    }
+    
     /**
      * Convierte un archivo a un formato JSON estructurado
      * @param uri URI del archivo a convertir
@@ -46,29 +55,38 @@ class FileConverterService(private val context: Context) {
      * @return FileContext con el contenido convertido
      */
     suspend fun convertFileToStructuredJson(uri: Uri, fileName: String): FileContext {
-        val fileExtension = getFileExtension(fileName).lowercase()
-        
+        val resolvedExtension = resolveFileExtension(uri, fileName)
+        val normalizedFileName = sanitizeFileName(fileName, resolvedExtension)
+        val fileExtension = resolvedExtension.lowercase(Locale.getDefault())
+
         return try {
-            Log.d(TAG, "Convirtiendo archivo: $fileName con extensión $fileExtension")
+            Log.d(TAG, "Convirtiendo archivo: $normalizedFileName con extensión $fileExtension")
             
-            val fileContent = when (fileExtension) {
+            val rawContent = when (fileExtension) {
                 "json" -> processJsonFile(uri)
-                "txt" -> processTextFile(uri, fileName)
-                "doc", "docx" -> processWordFile(uri, fileName)
-                "pdf" -> processPdfFile(uri, fileName)
-                "ppt", "pptx" -> processPowerPointFile(uri, fileName)
-                "xls", "xlsx" -> processExcelFile(uri, fileName)
+                "txt" -> processTextFile(uri, normalizedFileName)
+                "pdf" -> processPdfFile(uri, normalizedFileName)
+                "doc", "docx" -> processWordFile(uri, normalizedFileName)
+                "ppt", "pptx" -> processPowerPointFile(uri, normalizedFileName)
+                "xls", "xlsx" -> processExcelFile(uri, normalizedFileName)
                 else -> {
                     Log.w(TAG, "Tipo de archivo no soportado: $fileExtension")
-                    createGenericFileContent(uri, fileName, "Tipo de archivo no soportado: $fileExtension")
+                    createGenericFileContent(uri, normalizedFileName, "Tipo de archivo no soportado: $fileExtension")
                 }
             }
-            
+
+            val preparedContent = rawContent.copy(
+                fileName = normalizedFileName,
+                fileType = rawContent.fileType.ifBlank {
+                    if (fileExtension.isNotBlank()) fileExtension else "unknown"
+                }
+            )
+
             // Convertir el FileContent a FileContext para la integración con MCP
-            fileContentToFileContext(fileContent)
+            fileContentToFileContext(preparedContent)
         } catch (e: Exception) {
             Log.e(TAG, "Error al convertir archivo: ${e.message}", e)
-            createErrorFileContext(fileName, "Error al procesar el archivo: ${e.message}")
+            createErrorFileContext(normalizedFileName, "Error al procesar el archivo: ${e.message}")
         }
     }
     
@@ -443,6 +461,90 @@ class FileConverterService(private val context: Context) {
             sections = sections
         )
     }
+
+    private fun resolveFileExtension(uri: Uri, originalFileName: String): String {
+        val fromName = getFileExtension(originalFileName).lowercase(Locale.getDefault())
+        if (fromName.isNotBlank()) return fromName
+
+        val mimeType = try {
+            context.contentResolver.getType(uri)
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo obtener MIME type: ${e.message}")
+            null
+        }
+
+        if (!mimeType.isNullOrBlank()) {
+            val mapped = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
+            if (!mapped.isNullOrBlank()) {
+                return mapped.lowercase(Locale.getDefault())
+            }
+        }
+
+        return detectExtensionFromContent(uri).orEmpty()
+    }
+
+    private fun detectExtensionFromContent(uri: Uri): String? {
+        try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BufferedInputStream(stream).use { buffered ->
+                    buffered.mark(8)
+                    val header = ByteArray(8)
+                    val read = buffered.read(header)
+                    buffered.reset()
+                    if (read >= 4) {
+                        val headerString = String(header, Charsets.US_ASCII)
+                        if (headerString.startsWith("%PDF")) {
+                            return "pdf"
+                        }
+                    }
+                }
+            }
+
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                ZipInputStream(BufferedInputStream(stream)).use { zip ->
+                    var entry = zip.nextEntry
+                    while (entry != null) {
+                        val name = entry.name.lowercase(Locale.getDefault())
+                        when {
+                            name.startsWith("word/") -> return "docx"
+                            name.startsWith("ppt/") -> return "pptx"
+                            name.startsWith("xl/") -> return "xlsx"
+                            name.endsWith(".json") -> return "json"
+                            name.endsWith(".txt") -> return "txt"
+                        }
+                        entry = zip.nextEntry
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo detectar extensión desde contenido: ${e.message}")
+        }
+        return null
+    }
+
+    private fun sanitizeFileName(originalName: String, extension: String): String {
+        val cleaned = originalName
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .substringAfterLast(':')
+
+        val baseWithoutExt = cleaned.substringBeforeLast('.')
+        val sanitizedBase = baseWithoutExt.ifBlank { cleaned }
+            .ifBlank { "archivo" }
+            .replace(Regex("[^A-Za-z0-9_-]"), "_")
+
+        val normalizedExtension = when {
+            extension.isNotBlank() -> extension.lowercase(Locale.getDefault())
+            cleaned.contains('.') -> cleaned.substringAfterLast('.').lowercase(Locale.getDefault())
+            else -> "dat"
+        }
+
+        return if (normalizedExtension.isNotBlank()) {
+            "${sanitizedBase}.$normalizedExtension"
+        } else {
+            sanitizedBase
+        }
+    }
     
     /**
      * Convierte un FileContent a FileContext para integración con MCP
@@ -490,11 +592,17 @@ class FileConverterService(private val context: Context) {
         // Añade contenido completo
         jsonBuilder.put("fullContent", fileContent.content)
         
+        val metadataSummary = if (fileContent.metadata.isNotEmpty()) {
+            fileContent.metadata.entries.joinToString("; ") { (key, value) -> "$key=$value" }
+        } else null
+
         return FileContext(
             submissionId = 0, // Placeholder, should be set by caller
             fileName = fileContent.fileName,
             fileType = fileContent.fileType,
             fileContent = fileContent.content,
+            extractedText = fileContent.content,
+            metadata = metadataSummary,
             jsonContent = jsonBuilder.toString(),
             contentSummary = generateSummary(fileContent)
         )

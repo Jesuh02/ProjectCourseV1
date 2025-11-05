@@ -15,6 +15,7 @@ import com.google.gson.Gson // <-- Add this import
 
 /**
  * Service that handles natural language queries to the database using RAG
+ * NOW WITH MCP TOOLS INTEGRATION - Like VS Code MCP Extension
  */
 class DatabaseQueryService(private val context: Context) {
     private val tag = "DatabaseQueryService"
@@ -25,6 +26,15 @@ class DatabaseQueryService(private val context: Context) {
     
     // RAG service for efficient database querying
     private val ragService by lazy { RAGDatabaseService(context) }
+    
+    // MCP Tool Service for protocol-based tool execution
+    private val mcpToolService by lazy { MCPToolService(context) }
+    
+    // MCP HTTP Client for remote Node.js MCP server (Supabase connection)
+    private val mcpHttpClient by lazy { MCPHttpClient(context) }
+    
+    // Flag to track if remote MCP server is available
+    private var remoteMcpAvailable: Boolean? = null
 
     // Add schema definitions for Task and Subscription
     private val taskSchema = """
@@ -86,6 +96,371 @@ class DatabaseQueryService(private val context: Context) {
     }
 
     /**
+     * Get available MCP tools for display in UI
+     */
+    fun getAvailableMCPTools(): List<MCPToolService.MCPTool> {
+        return mcpToolService.getAvailableTools()
+    }
+    
+    /**
+     * Execute MCP tool directly (bypassing LLM)
+     */
+    suspend fun executeMCPTool(toolName: String, arguments: Map<String, Any?>): MCPToolService.MCPToolResult {
+        return mcpToolService.executeTool(toolName, arguments)
+    }
+    
+    /**
+     * Check if remote MCP server (Node.js) is available
+     */
+    private suspend fun isRemoteMcpAvailable(): Boolean {
+        if (remoteMcpAvailable != null) {
+            return remoteMcpAvailable!!
+        }
+        
+        return try {
+            Log.d(tag, "🔍 Checking remote MCP server availability...")
+            val available = mcpHttpClient.initialize()
+            remoteMcpAvailable = available
+            if (available) {
+                Log.d(tag, "✅ Remote MCP server (Node.js) is available and connected to Supabase")
+            } else {
+                Log.d(tag, "⚠️ Remote MCP server not available, will use local database")
+            }
+            available
+        } catch (e: Exception) {
+            Log.e(tag, "❌ Error checking remote MCP availability: ${e.message}")
+            remoteMcpAvailable = false
+            false
+        }
+    }
+    
+    /**
+     * Process query with MCP tools - Uses remote Node.js MCP server when available
+     * Falls back to local RAG processing if remote server is not available
+     * 
+     * Priority:
+     * 1. Remote MCP Server (Node.js) -> Supabase (real-time, centralized)
+     * 2. Local RAG Service -> Local SQLite (fallback)
+     * 
+     * NEW: Multi-step reasoning approach like GitHub Copilot
+     */
+    suspend fun processQueryWithMCP(query: String): String = withContext(Dispatchers.IO) {
+        Log.i(tag, "🔧 Processing MCP-enabled query: '$query'")
+        
+        try {
+            val normalizedQuery = query.lowercase().trim()
+            
+            // Try remote MCP server first (connects to Supabase via Node.js)
+            if (isRemoteMcpAvailable()) {
+                Log.d(tag, "🌐 Using remote MCP server (Node.js + Supabase)")
+                
+                return@withContext try {
+                    // Check if asking for schema
+                    if (normalizedQuery.contains("esquema") || normalizedQuery.contains("schema") || 
+                        normalizedQuery.contains("estructura") || normalizedQuery.contains("tablas")) {
+                        Log.d(tag, "📋 Fetching database schema from remote MCP server")
+                        val schemaResult = mcpHttpClient.getDatabaseSchema()
+                        
+                        if (schemaResult.success && schemaResult.schema != null) {
+                            "**Esquema de la base de datos (Supabase):**\n\n${schemaResult.schema}"
+                        } else {
+                            "❌ No se pudo obtener el esquema de la base de datos: ${schemaResult.error}"
+                        }
+                    } else {
+                        // NEW: Multi-step reasoning for complex queries
+                        Log.d(tag, "🔍 Executing multi-step query analysis on remote MCP server")
+                        processQueryWithMultiStepReasoning(query, normalizedQuery)
+                    }
+                } catch (e: Exception) {
+                    Log.e(tag, "❌ Remote MCP error, falling back to local: ${e.message}")
+                    // Mark as unavailable and fall through to local processing
+                    remoteMcpAvailable = false
+                    processWithLocalMcp(normalizedQuery, query)
+                }
+            }
+            
+            // Fallback to local processing
+            Log.d(tag, "💾 Using local RAG service")
+            return@withContext processWithLocalMcp(normalizedQuery, query)
+            
+        } catch (e: Exception) {
+            Log.e(tag, "❌ Error in MCP query processing", e)
+            return@withContext "❌ Error procesando consulta: ${e.message}"
+        }
+    }
+    
+    /**
+     * Multi-step reasoning approach for complex queries
+     * Sends query to MCP server and formats the response
+     */
+    private suspend fun processQueryWithMultiStepReasoning(query: String, normalizedQuery: String): String {
+        Log.d(tag, "🔍 Sending query to MCP server: $query")
+        
+        // Send the natural language query directly to MCP server
+        // The server will parse it and execute the appropriate SQL
+        val result = mcpHttpClient.queryDatabase(query)
+        
+        if (!result.success) {
+            return "❌ Error ejecutando consulta: ${result.error ?: "Error desconocido"}"
+        }
+        
+        // Build formatted response
+        val response = StringBuilder()
+        
+        // Format the data based on type
+        when (val data = result.data) {
+            is JSONArray -> {
+                if (data.length() == 0) {
+                    response.appendLine("**Resultado:** No se encontraron registros")
+                } else {
+                    response.appendLine("**Resultado:** ${data.length()} registro(s) encontrado(s)")
+                    response.appendLine()
+                    
+                    // Display data in a readable format
+                    for (i in 0 until minOf(data.length(), 50)) { // Limit to 50 for readability
+                        val item = data.optJSONObject(i)
+                        if (item != null) {
+                            response.appendLine("**${i + 1}.** ${formatJsonObject(item)}")
+                        }
+                    }
+                    
+                    if (data.length() > 50) {
+                        response.appendLine()
+                        response.appendLine("... y ${data.length() - 50} registro(s) más")
+                    }
+                }
+            }
+            is JSONObject -> {
+                // Special handling for BI-style responses from remote MCP server
+                if (data.has("bi_suggestions") || data.has("schema")) {
+                    response.appendLine("**Análisis BI sugerido:**")
+                    // Suggestions
+                    if (data.has("bi_suggestions")) {
+                        val suggestions = data.optJSONArray("bi_suggestions")
+                        if (suggestions != null) {
+                            for (i in 0 until suggestions.length()) {
+                                response.appendLine("- ${suggestions.optString(i)}")
+                            }
+                        }
+                    }
+
+                    // Schema summary (table counts)
+                    if (data.has("schema")) {
+                        response.appendLine()
+                        response.appendLine("**Esquema (resumen):**")
+                        val schemaObj = data.optJSONObject("schema")
+                        if (schemaObj != null) {
+                            val keys = schemaObj.keys()
+                            while (keys.hasNext()) {
+                                val table = keys.next()
+                                val info = schemaObj.optJSONObject(table)
+                                if (info != null) {
+                                    val cnt = info.optInt("count", 0)
+                                    response.appendLine("• $table: $cnt registros")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    response.appendLine("**Resultado:**")
+                    response.appendLine(formatJsonObject(data))
+                }
+            }
+            else -> {
+                response.appendLine("**Resultado:** ${data?.toString() ?: "Sin datos"}")
+            }
+        }
+        
+        // Add SQL script at the end
+        if (!result.sqlScript.isNullOrEmpty()) {
+            response.appendLine()
+            response.appendLine("**Consulta SQL ejecutada:**")
+            response.appendLine("```sql")
+            response.appendLine(result.sqlScript)
+            response.appendLine("```")
+        }
+        
+        return response.toString()
+    }
+    
+    /**
+     * Format JSONObject for display
+     */
+    private fun formatJsonObject(obj: JSONObject): String {
+        val parts = mutableListOf<String>()
+        val keys = obj.keys()
+        
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val value = obj.opt(key)
+            
+            // Skip null values and complex nested objects
+            if (value != null && value !is JSONObject && value !is JSONArray) {
+                parts.add("$key: $value")
+            }
+        }
+        
+        return parts.joinToString(", ")
+    }
+    
+    /**
+     * Process query with local MCP tools (SQLite via RAG)
+     */
+    private suspend fun processWithLocalMcp(normalizedQuery: String, originalQuery: String): String {
+        // Check if asking for schema - handle directly
+        if (normalizedQuery.contains("esquema") || normalizedQuery.contains("schema") || 
+            normalizedQuery.contains("estructura") || normalizedQuery.contains("tablas")) {
+            Log.d(tag, "📋 Using local get_database_schema tool")
+            val result = mcpToolService.executeTool("get_database_schema", emptyMap())
+            return formatMCPResult(result, "get_database_schema")
+        }
+        
+        // For ALL other queries, use RAGDatabaseService to ensure proper filtering
+        Log.d(tag, "🎯 Using RAGDatabaseService for intelligent query processing")
+        
+        // Process query through RAG to get filtered results
+        val ragResult = ragService.processQueryWithMetadata(originalQuery)
+        
+        // Build response with results and SQL
+        val response = StringBuilder()
+        
+        // Add the data
+        response.appendLine(ragResult.data)
+        
+        // Add SQL script at the end if available
+        val sqlScript = ragResult.sqlScript ?: ""
+        if (sqlScript.isNotEmpty()) {
+            response.appendLine()
+            response.appendLine("**Consulta SQL ejecutada:**")
+            response.appendLine("```sql")
+            response.appendLine(sqlScript)
+            response.appendLine("```")
+        }
+        
+        return response.toString()
+    }
+    
+    /**
+     * Format remote MCP data for display
+     */
+    private fun formatRemoteMcpData(data: Any?): String {
+        return when (data) {
+            is JSONArray -> {
+                if (data.length() == 0) {
+                    "Sin resultados"
+                } else {
+                    val sb = StringBuilder()
+                    for (i in 0 until data.length()) {
+                        val item = data.optJSONObject(i)
+                        if (item != null) {
+                            sb.appendLine("${i + 1}. ${formatJsonObject(item)}")
+                        }
+                    }
+                    sb.toString()
+                }
+            }
+            is org.json.JSONObject -> {
+                formatJsonObject(data)
+            }
+            is String -> {
+                data
+            }
+            else -> {
+                data?.toString() ?: "Sin datos"
+            }
+        }
+    }
+    
+    /**
+     * Format MCP tool result for display
+     */
+    private fun formatMCPResult(result: MCPToolService.MCPToolResult, toolName: String): String {
+        val sb = StringBuilder()
+        
+        if (result.success) {
+            sb.appendLine("✅ **Consulta ejecutada exitosamente**")
+            sb.appendLine()
+            
+            // Show SQL script if available
+            if (!result.sqlScript.isNullOrBlank()) {
+                sb.appendLine("### 📜 Script SQL Ejecutado:")
+                sb.appendLine("```sql")
+                sb.appendLine(result.sqlScript)
+                sb.appendLine("```")
+                sb.appendLine()
+            }
+            
+            // Show metadata
+            if (result.metadata != null) {
+                val rowCount = result.metadata["rowCount"] as? Int ?: 0
+                sb.appendLine("ℹ️ **Resultados:** $rowCount registros encontrados")
+                sb.appendLine()
+            }
+            
+            // Show data in a readable format
+            when (val data = result.data) {
+                is List<*> -> {
+                    if (data.isEmpty()) {
+                        sb.appendLine("⚠️ No se encontraron resultados.")
+                    } else {
+                        sb.appendLine("### 📊 Datos obtenidos:")
+                        sb.appendLine()
+                        data.forEachIndexed { index, item ->
+                            sb.appendLine("**Registro ${index + 1}:**")
+                            if (item is Map<*, *>) {
+                                item.forEach { (key, value) ->
+                                    sb.appendLine("  • **$key**: $value")
+                                }
+                            } else {
+                                sb.appendLine("  $item")
+                            }
+                            sb.appendLine()
+                        }
+                    }
+                }
+                is Map<*, *> -> {
+                    sb.appendLine("### 📊 Datos obtenidos:")
+                    sb.appendLine()
+                    data.forEach { (key, value) ->
+                        sb.appendLine("• **$key**: $value")
+                    }
+                }
+                else -> {
+                    sb.appendLine("### 📊 Resultado:")
+                    sb.appendLine(data.toString())
+                }
+            }
+        } else {
+            sb.appendLine("❌ **Error en la ejecución**")
+            sb.appendLine()
+            sb.appendLine("**Error**: ${result.error}")
+            
+            if (!result.sqlScript.isNullOrBlank()) {
+                sb.appendLine()
+                sb.appendLine("### 📜 Script SQL intentado:")
+                sb.appendLine("```sql")
+                sb.appendLine(result.sqlScript)
+                sb.appendLine("```")
+            }
+        }
+        
+        return sb.toString()
+    }
+    
+    /**
+     * Build tools context description for LLM
+     */
+    private fun buildToolsContext(tools: List<MCPToolService.MCPTool>): String {
+        return tools.joinToString("\n\n") { tool ->
+            """
+            🔧 **${tool.name}**
+            Descripción: ${tool.description}
+            Parámetros: ${tool.inputSchema["properties"]}
+            """.trimIndent()
+        }
+    }
+    
+    /**
      * Process a natural language query and return a response using RAG
      */
     suspend fun processQuery(query: String): String = withContext(Dispatchers.IO) {
@@ -93,6 +468,22 @@ class DatabaseQueryService(private val context: Context) {
         Log.i(tag, "Processing RAG-enhanced query: '$normalizedQuery'")
 
         try {
+            // QUICK SHORTCUT: If this is a casual greeting or very short chat, respond directly
+            // without invoking the RAG engine which can return noisy DB listings.
+            val greetingPattern = """^(hola+|holaa+|buenas|buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|qué\s+tal|q\.?t\.?|hey|hi|hello)\b""".toRegex(RegexOption.IGNORE_CASE)
+            if (normalizedQuery.length <= 12 && greetingPattern.containsMatchIn(normalizedQuery)) {
+                Log.d(tag, "Detected greeting input - using lightweight response path")
+                try {
+                    val local = localLlamaService.generateResponse(normalizedQuery)
+                    if (local.isNotBlank()) return@withContext local
+                } catch (e: Exception) {
+                    Log.w(tag, "LocalLlama greeting response failed: ${e.message}")
+                }
+
+                // Fallback canned reply
+                return@withContext "¡Hola! ¿En qué puedo ayudarte hoy? Puedes pedirme datos de la base como 'dame todos los videos' o consultas específicas como 'video con id=1'"
+            }
+
             // Check for graph requests first
             val graphRequest = checkForGraphRequest(normalizedQuery)
             if (graphRequest != null) {
@@ -189,7 +580,8 @@ class DatabaseQueryService(private val context: Context) {
         for (attempt in 1..3) {
             try {
                 Log.d(tag, "MSPClient attempt $attempt")
-                val response = mspClient.sendPrompt(finalPrompt, includeHistory = false, includeDatabaseContext = false)
+                // Include database context where possible so the LLM can use retrieved RAG data
+                val response = mspClient.sendPrompt(finalPrompt, includeHistory = false, includeDatabaseContext = true)
                 if (response.isNotBlank() && !response.contains("Error:", ignoreCase = true)) {
                     return response
                 }

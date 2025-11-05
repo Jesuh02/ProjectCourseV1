@@ -311,4 +311,73 @@ class SupabaseRepository(
             return false
         }
     }
+    
+    /**
+     * Execute a raw SQL query via Supabase RPC endpoint
+     * This allows direct SQL execution for MCP tools
+     */
+    suspend fun executeRawQuery(sql: String): List<Map<String, Any?>> {
+        return try {
+            Log.d("SupabaseRepository", "Executing raw SQL: $sql")
+            
+            // Use the Supabase RPC endpoint to execute raw SQL
+            val url = "${supabaseUrl.trimEnd('/')}/rest/v1/rpc/execute_sql"
+            
+            val payload = mapOf("query" to sql)
+            val bodyJson = gson.toJson(payload)
+            
+            val request = Request.Builder()
+                .url(url)
+                .post(bodyJson.toRequestBody(jsonMediaType))
+                .addHeader("apikey", supabaseKey)
+                .addHeader("Authorization", "Bearer $supabaseKey")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Accept", "application/json")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val body = resp.body?.string() ?: ""
+                
+                if (!resp.isSuccessful) {
+                    Log.e("SupabaseRepository", "SQL execution failed: code=${resp.code} body=$body")
+                    throw Exception("SQL execution failed: ${resp.message}")
+                }
+                
+                // Parse the response as JSON array
+                val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                val resultList = mutableListOf<Map<String, Any?>>()
+                
+                for (element in jsonArray) {
+                    if (element.isJsonObject) {
+                        val obj = element.asJsonObject
+                        val map = mutableMapOf<String, Any?>()
+                        
+                        for ((key, value) in obj.entrySet()) {
+                            map[key] = when {
+                                value.isJsonNull -> null
+                                value.isJsonPrimitive -> {
+                                    val primitive = value.asJsonPrimitive
+                                    when {
+                                        primitive.isBoolean -> primitive.asBoolean
+                                        primitive.isNumber -> primitive.asNumber
+                                        primitive.isString -> primitive.asString
+                                        else -> value.toString()
+                                    }
+                                }
+                                else -> value.toString()
+                            }
+                        }
+                        
+                        resultList.add(map)
+                    }
+                }
+                
+                Log.d("SupabaseRepository", "SQL executed successfully: ${resultList.size} rows")
+                resultList
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error executing raw SQL", e)
+            throw e
+        }
+    }
 }

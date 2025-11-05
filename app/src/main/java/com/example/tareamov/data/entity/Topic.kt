@@ -12,7 +12,7 @@ import androidx.room.PrimaryKey
     tableName = "topics",
     foreignKeys = [
         ForeignKey(
-            entity = VideoData::class,
+            entity = Course::class,
             parentColumns = ["id"],
             childColumns = ["courseId"],
             onDelete = ForeignKey.CASCADE

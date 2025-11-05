@@ -1,5 +1,5 @@
 package com.example.tareamov.service
-
+//
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -38,6 +38,9 @@ class MCPService(private val context: Context) {
     // RAG service for enhanced query processing
     private val ragService by lazy { RAGDatabaseService(context) }
     
+    // MCP Tool Service for protocol integration
+    private val mcpToolService by lazy { MCPToolService(context) }
+    
     // System context to maintain conversation state
     private var conversationContext: String = "general"
     
@@ -52,20 +55,22 @@ class MCPService(private val context: Context) {
         // Usando localhost (127.0.0.1) en lugar de 10.0.2.2 para reducir problemas de conectividad
         private const val MCP_SERVER_URL = "http://127.0.0.1:3000/convert"
         
-        // Tiempo máximo de espera para la conversión de archivos grandes - reducido para evitar ANRs
-        private const val TIMEOUT_SECONDS = 15L
+        // Tiempo máximo de espera para la conversión de archivos grandes y carga de modelos
+        // Aumentado para permitir que Ollama cargue el modelo (7+ segundos) + generar respuesta
+        private const val TIMEOUT_SECONDS = 300L  // 5 minutos
         
-        // URLs alternativos en caso de que el principal falle
-        // Incluimos las IPs reportadas por el usuario (Wi‑Fi y WSL/Hyper‑V) y alternativas de loopback
+        // URLs alternativos en caso de que el principal falle - EMULADOR PRIMERO
         private val FALLBACK_URLS = listOf(
-            "http://10.218.57.181:3000/convert",
-            "http://10.218.57.109:3000/convert",
-            "http://172.17.112.1:3000/convert",
-            "http://10.0.2.2:3000/convert",
-            "http://localhost:3000/convert",
-            "http://127.0.0.1:3000/convert",
-            "http://10.0.2.2:5000/convert",
-            "http://10.0.2.2:8000/convert",
+            "http://10.0.2.2:3000/convert",       // 🎯 EMULADOR -> HOST (MÁXIMA PRIORIDAD)
+            "http://192.168.1.16:3000/convert",   // IP Wi-Fi ACTUAL (ipconfig - Oct 10, 2025)
+            "http://192.168.1.1:3000/convert",    // Gateway predeterminado (Oct 10, 2025)
+            "http://127.0.0.1:3000/convert",      // Localhost
+            "http://localhost:3000/convert",      // Localhost alternative
+            "http://10.218.57.181:3000/convert",  // IP Wi-Fi anterior
+            "http://10.218.57.109:3000/convert",  // Gateway anterior
+            "http://172.17.112.1:3000/convert",   // WSL IP
+            "http://10.0.2.2:5000/convert",       // Emulator alternate port
+            "http://10.0.2.2:8000/convert",       // Emulator alternate port
             "http://127.0.0.1:5000/convert"
         )
     }
@@ -82,6 +87,7 @@ class MCPService(private val context: Context) {
             .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .callTimeout(TIMEOUT_SECONDS + 60, TimeUnit.SECONDS)  // Extra time for total call
             .build()
     }
 
@@ -180,6 +186,307 @@ class MCPService(private val context: Context) {
             Log.d(TAG, "=== MCP SERVICE QUERY LOG ===")
             Log.d(TAG, "Input Query: $query")
             Log.d(TAG, "Processing query with RAG enhancement...")
+            // Shortcut: detect explicit "field of table by id" requests (e.g. "dame el title del video con id=55")
+            try {
+                val fid = detectFieldByIdRequest(query)
+                if (fid != null) {
+                    Log.d(TAG, "Detected field-by-id request: table=${fid.table} id=${fid.id} field=${fid.field}")
+                    // Try Supabase first if configured
+                    if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        try {
+                            // If a specific field was requested, first try a server-side selective query
+                            if (fid.field != null) {
+                                val normalized = normalizeRequestedField(fid.field)
+                                val mappings = mapOf("titulo" to "title", "nombre" to "name", "descripcion" to "description")
+                                // candidate column names to try in order
+                                val candidates = listOf(normalized, normalized.replace("_", ""), normalized.replace("_", " "), fid.field, mappings[normalized])
+                                    .filterNotNull()
+                                    .map { it.trim() }
+                                    .distinct()
+
+                                for (c in candidates) {
+                                    try {
+                                        // Build a PostgREST select for a single column. Example: videos?id=eq.38&select=title
+                                        val enc = java.net.URLEncoder.encode(c, "UTF-8")
+                                        var path = "${fid.table}?id=eq.${fid.id}&select=$enc"
+                                        var arr = com.example.tareamov.service.SupabaseClient.fetchTableJson(path)
+                                        // If no rows returned, try plural table fallback
+                                        if (arr.size() == 0) {
+                                            val plural = if (fid.table.endsWith("s")) fid.table else fid.table + "s"
+                                            if (plural != fid.table) {
+                                                Log.d(TAG, "No rows for ${fid.table} with select=$c, trying plural table: $plural")
+                                                path = "${plural}?id=eq.${fid.id}&select=$enc"
+                                                arr = com.example.tareamov.service.SupabaseClient.fetchTableJson(path)
+                                            }
+                                        }
+                                        if (arr.size() > 0) {
+                                            val first = arr[0].asJsonObject
+                                            // try to extract the value for column c (may be returned as the exact name or underscored)
+                                            val v = extractFieldFromJson(first, c)
+                                            if (v != null) return@withContext v
+                                            // also attempt unmapped fallback mapping (e.g., titulo -> title)
+                                            mappings[c]?.let { mapped ->
+                                                val v2 = extractFieldFromJson(first, mapped)
+                                                if (v2 != null) return@withContext v2
+                                            }
+                                            // if column exists but value is null, try relational fallbacks (e.g. creator_username)
+                                            try {
+                                                if (fid.field != null) {
+                                                    val requested = fid.field.lowercase()
+                                                    if (requested.endsWith("username") || requested.contains("creator")) {
+                                                        // Look for possible foreign-key fields on the row
+                                                        val fkCandidates = listOf("creator_id", "creatorid", "creator", "user_id", "usuario_id", "creatorId")
+                                                        var fkVal: Long? = null
+                                                        for (fk in fkCandidates) {
+                                                            if (first.has(fk) && !first.get(fk).isJsonNull) {
+                                                                try {
+                                                                    val el = first.get(fk)
+                                                                    fkVal = when {
+                                                                        el.isJsonPrimitive && el.asJsonPrimitive.isNumber -> el.asLong
+                                                                        el.isJsonPrimitive -> el.asString.toLongOrNull()
+                                                                        else -> null
+                                                                    }
+                                                                    if (fkVal != null) break
+                                                                } catch (_: Exception) { /* ignore parse issues */ }
+                                                            }
+                                                        }
+
+                                                        if (fkVal != null) {
+                                                            try {
+                                                                val usuarios = com.example.tareamov.service.SupabaseClient.fetchUsuarios()
+                                                                val user = usuarios.firstOrNull { it.id == fkVal }
+                                                                if (user != null) {
+                                                                    val userJson = com.google.gson.Gson().toJsonTree(user).asJsonObject
+                                                                    val usernameCandidates = listOf("creator_username", "creatorUsername", "username", "user_name", "name")
+                                                                    for (pn in usernameCandidates) {
+                                                                        val v = extractFieldFromJson(userJson, pn)
+                                                                        if (v != null) return@withContext v
+                                                                    }
+                                                                }
+                                                            } catch (e: Exception) {
+                                                                Log.w(TAG, "relational lookup for fk=$fkVal failed", e)
+                                                            }
+                                                        } else {
+                                                            // If no numeric FK, maybe the row stores creator username directly in a different key
+                                                            val nameKeys = listOf("creator", "creator_username", "creatorname", "author", "author_username")
+                                                            for (nk in nameKeys) {
+                                                                if (first.has(nk) && !first.get(nk).isJsonNull) {
+                                                                    try {
+                                                                        val valStr = first.get(nk).asString
+                                                                        if (!valStr.isNullOrBlank()) return@withContext valStr
+                                                                    } catch (_: Exception) { }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                Log.w(TAG, "relational fallback error", e)
+                                            }
+                                            // Fallback: return pretty JSON row as final fallback
+                                            val gson = com.google.gson.GsonBuilder().setPrettyPrinting().create()
+                                            return@withContext gson.toJson(first)
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "select=$c attempt failed", e)
+                                    }
+                                }
+                            }
+
+                            // If select attempts didn't return a value, fall back to fetching full row by id
+                            var tablePath = "${fid.table}?id=eq.${fid.id}"
+                            var arr = com.example.tareamov.service.SupabaseClient.fetchTableJson(tablePath)
+
+                            // If no rows were returned, try a simple pluralization fallback (e.g. video -> videos)
+                            if (arr.size() == 0) {
+                                val plural = if (fid.table.endsWith("s")) fid.table else fid.table + "s"
+                                if (plural != fid.table) {
+                                    Log.d(TAG, "No rows for ${fid.table}, trying plural table: $plural")
+                                    tablePath = "${plural}?id=eq.${fid.id}"
+                                    arr = com.example.tareamov.service.SupabaseClient.fetchTableJson(tablePath)
+                                }
+                            }
+
+                            if (arr.size() > 0) {
+                                val first = arr[0].asJsonObject
+                                // If a specific field was requested, try to normalize and extract it (different possible key names)
+                                if (fid.field != null) {
+                                    val normalized = normalizeRequestedField(fid.field)
+                                    // Try several candidate names: raw, normalized, and simple translations
+                                    val candidates = listOf(normalized, normalized.replace("_", ""), normalized.replace("_", " "), fid.field)
+                                    for (c in candidates) {
+                                        val v = extractFieldFromJson(first, c)
+                                        if (v != null) return@withContext v
+                                    }
+                                    // Common Spanish->English mappings for field names
+                                    val mappings = mapOf("titulo" to "title", "nombre" to "name", "descripcion" to "description")
+                                    mappings[normalized]?.let { mapped ->
+                                        val v = extractFieldFromJson(first, mapped)
+                                        if (v != null) return@withContext v
+                                    }
+                                }
+                                // Before returning the pretty JSON, try relational fallbacks (e.g., resolve creator_username via creator_id)
+                                try {
+                                    if (fid.field != null) {
+                                        val requested = fid.field.lowercase()
+                                        if (requested.endsWith("username") || requested.contains("creator")) {
+                                            val fkCandidates = listOf("creator_id", "creatorid", "creator", "user_id", "usuario_id", "creatorId")
+                                            var fkVal: Long? = null
+                                            for (fk in fkCandidates) {
+                                                if (first.has(fk) && !first.get(fk).isJsonNull) {
+                                                    try {
+                                                        val el = first.get(fk)
+                                                        fkVal = when {
+                                                            el.isJsonPrimitive && el.asJsonPrimitive.isNumber -> el.asLong
+                                                            el.isJsonPrimitive -> el.asString.toLongOrNull()
+                                                            else -> null
+                                                        }
+                                                        if (fkVal != null) break
+                                                    } catch (_: Exception) { }
+                                                }
+                                            }
+
+                                            if (fkVal != null) {
+                                                try {
+                                                    val usuarios = com.example.tareamov.service.SupabaseClient.fetchUsuarios()
+                                                    val user = usuarios.firstOrNull { it.id == fkVal }
+                                                    if (user != null) {
+                                                        val userJson = com.google.gson.Gson().toJsonTree(user).asJsonObject
+                                                        val usernameCandidates = listOf("creator_username", "creatorUsername", "username", "user_name", "name")
+                                                        for (pn in usernameCandidates) {
+                                                            val v = extractFieldFromJson(userJson, pn)
+                                                            if (v != null) return@withContext v
+                                                        }
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Log.w(TAG, "relational lookup for fk=$fkVal failed", e)
+                                                }
+                                            } else {
+                                                val nameKeys = listOf("creator", "creator_username", "creatorname", "author", "author_username")
+                                                for (nk in nameKeys) {
+                                                    if (first.has(nk) && !first.get(nk).isJsonNull) {
+                                                        try {
+                                                            val valStr = first.get(nk).asString
+                                                            if (!valStr.isNullOrBlank()) return@withContext valStr
+                                                        } catch (_: Exception) { }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "relational fallback error", e)
+                                }
+                                // Fallback: return pretty JSON of the object
+                                val gson = com.google.gson.GsonBuilder().setPrettyPrinting().create()
+                                return@withContext gson.toJson(first)
+                            } else {
+                                Log.d(TAG, "Supabase returned no rows for ${fid.table} id=${fid.id}")
+                                // Try typed Supabase fetcher fallbacks (e.g., fetchVideos()) as a last-resort client-side match
+                                try {
+                                    val plural = if (fid.table.endsWith("s")) fid.table else fid.table + "s"
+                                    when (plural) {
+                                        "videos" -> {
+                                            val list = com.example.tareamov.service.SupabaseClient.fetchVideos()
+                                            val found = list.firstOrNull { it.id == fid.id }
+                                            if (found != null) {
+                                                if (fid.field != null) {
+                                                    val json = com.google.gson.Gson().toJsonTree(found).asJsonObject
+                                                    val norm = normalizeRequestedField(fid.field)
+                                                    val candidates = listOf(norm, norm.replace("_", ""), norm.replace("_", " "), fid.field)
+                                                    for (c in candidates) {
+                                                        val v = extractFieldFromJson(json, c)
+                                                        if (v != null) return@withContext v
+                                                    }
+                                                }
+                                                return@withContext com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(found)
+                                            }
+                                        }
+                                        "personas" -> {
+                                            val list = com.example.tareamov.service.SupabaseClient.fetchPersonas()
+                                            val found = list.firstOrNull { it.id == fid.id }
+                                            if (found != null) return@withContext com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(found)
+                                        }
+                                        "usuarios" -> {
+                                            val list = com.example.tareamov.service.SupabaseClient.fetchUsuarios()
+                                            val found = list.firstOrNull { it.id == fid.id }
+                                            if (found != null) return@withContext com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(found)
+                                        }
+                                        // add more typed fallbacks as needed
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Typed Supabase fallback failed", e)
+                                }
+                                // fallthrough to local DB fallback
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Supabase fetch error for field-by-id", e)
+                        }
+                    }
+
+                    // Local DB fallback: try to find the row in Room and return field or JSON
+                    try {
+                        when (fid.table) {
+                            "videos" -> {
+                                val list = database.videoDao().getAllVideos()
+                                val found = list.firstOrNull { it.id == fid.id }
+                                if (found != null) {
+                                    if (fid.field != null) {
+                                        // Try common field names
+                                        val possible = listOf(fid.field, "title", "titulo", "name", "nombre")
+                                        for (p in possible) {
+                                            val json = com.google.gson.Gson().toJsonTree(found).asJsonObject
+                                            val v = extractFieldFromJson(json, p)
+                                            if (v != null) return@withContext v
+                                        }
+                                    }
+                                    val gson = com.google.gson.GsonBuilder().setPrettyPrinting().create()
+                                    return@withContext gson.toJson(found)
+                                }
+                            }
+                            else -> {
+                                // Generic fallback: try Supabase again without select (if not configured earlier)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Local DB fallback failed for field-by-id", e)
+                    }
+
+                    return@withContext "No hay información disponible sobre ${fid.field ?: "la fila"} con id=${fid.id} en la tabla ${fid.table}."
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "field-by-id detection failed", t)
+            }
+
+            // Shortcut: detect explicit table fetch requests and answer directly from Supabase
+            try {
+                val requestedTable = detectTableFetchRequest(query)
+                if (requestedTable != null) {
+                    Log.d(TAG, "Detected direct table request for: $requestedTable")
+                    // Ensure SupabaseClient is configured
+                    if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        Log.d(TAG, "SupabaseClient not configured - cannot fetch table")
+                        return@withContext "Supabase no está configurado. Configure SUPABASE_URL/SUPABASE_KEY o inyecte la API key para permitir consultas directas."
+                    }
+
+                    // Fetch JSON array for the table. Ask server to order by id ascending when possible.
+                    return@withContext try {
+                        // Prefer server-side ordering; PostgREST/Supabase supports order=column.asc
+                        val path = "$requestedTable?order=id.asc.nullslast"
+                        var jsonArray = com.example.tareamov.service.SupabaseClient.fetchTableJson(path)
+
+                        // Defensive: if server doesn't return sorted results or id is missing, sort client-side by 'id'
+                        jsonArray = sortJsonArrayById(jsonArray)
+
+                        formatTableJsonResponse(requestedTable, jsonArray)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error fetching table $requestedTable from Supabase", e)
+                        "Error al obtener datos de la tabla '$requestedTable' desde Supabase: ${e.message}"
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "Table-detection shortcut failed", t)
+            }
             
             // First try with RAG service for better context understanding
             val ragResponse = ragService.processRAGQuery(query)
@@ -201,20 +508,341 @@ class MCPService(private val context: Context) {
             Log.d(TAG, "Enhanced Prompt Length: ${enhancedPrompt.length} characters")
             Log.d(TAG, "Enhanced Prompt Content: $enhancedPrompt")
             
-            val response = mspClient.sendPrompt(
-                enhancedPrompt,
-                includeHistory = true,
-                includeDatabaseContext = true
-            )
-            
-            Log.d(TAG, "MSP Client Response Length: ${response.length} characters")
-            Log.d(TAG, "MSP Client Response Content: $response")
-            Log.d(TAG, "============================")
-            
-            response
+            val rawResponse = try {
+                mspClient.sendPrompt(enhancedPrompt, includeHistory = true, includeDatabaseContext = true)
+            } catch (e: Exception) {
+                Log.w(TAG, "MSPClient threw while sending enhanced prompt", e)
+                "Error: ${e.message}"
+            }
+
+            Log.d(TAG, "MSP Client raw response preview: ${rawResponse.take(200)}")
+
+            // Detect explicit error responses from MSPClient
+            if (rawResponse.isBlank() || rawResponse.startsWith("Error:") || rawResponse.contains("No se pudo conectar", ignoreCase = true)) {
+                Log.w(TAG, "MSPClient unavailable or returned error. Falling back to LocalLlama or direct response.")
+                try {
+                    val local = LocalLlamaService(context).generateResponse(enhancedPrompt)
+                    if (local.isNotBlank()) return@withContext local
+                } catch (e: Exception) {
+                    Log.e(TAG, "LocalLlama also failed", e)
+                }
+
+                // As last resort, return a helpful error message
+                return@withContext "No se pudo procesar la consulta con el servidor LLM. Aquí hay datos crudos disponibles o intenta de nuevo más tarde."
+            }
+
+            rawResponse
         } catch (e: Exception) {
             Log.e(TAG, "Error processing query", e)
             "Error al procesar la consulta: ${e.message ?: "Error desconocido"}"
+        }
+    }
+    
+    /**
+     * Get available MCP tools
+     */
+    fun getAvailableMCPTools(): List<MCPToolService.MCPTool> {
+        return mcpToolService.getAvailableTools()
+    }
+    
+    /**
+     * Execute MCP tool directly
+     * This method allows the UI to execute tools without going through the LLM
+     */
+    suspend fun executeMCPTool(toolName: String, arguments: Map<String, Any?>): String = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔧 Executing MCP tool: $toolName")
+            Log.d(TAG, "Arguments: $arguments")
+            
+            val result = mcpToolService.executeTool(toolName, arguments)
+            
+            // Format the result for display
+            val formattedResult = mcpToolService.formatToolResult(result, toolName)
+            
+            Log.d(TAG, if (result.success) "✅ Tool executed successfully" else "❌ Tool execution failed")
+            
+            return@withContext formattedResult
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing MCP tool", e)
+            return@withContext "❌ Error ejecutando herramienta MCP: ${e.message}"
+        }
+    }
+    
+    /**
+     * Process query with MCP tools available
+     * The LLM will automatically use tools when needed
+     */
+    suspend fun processQueryWithMCP(query: String): String = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔧 Processing query with MCP tools: $query")
+            
+            // Use DatabaseQueryService which now has MCP integration
+            val result = databaseQueryService.processQueryWithMCP(query)
+            
+            return@withContext result
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in MCP query processing", e)
+            return@withContext "Error procesando consulta con MCP: ${e.message}"
+        }
+    }
+
+    /**
+     * Detects simple phrases asking for "todos los datos" or "dame todos" of a table.
+     * Returns the normalized table name if detected, otherwise null.
+     */
+    private fun detectTableFetchRequest(query: String): String? {
+        try {
+            val q = query.lowercase().trim()
+            // pattern examples: "dame todos los datos de la tabla videos", "mostrar tabla personas", "ver todos usuarios"
+            val patterns = listOf("tabla", "tabla de", "tabla:", "de la tabla", "de la tabla ")
+
+            // check common Spanish request starters
+            val starters = listOf("dame todos", "dame todos los datos", "mostrar", "mostrar todos", "ver todos", "ver todos los datos", "listar", "lista de", "muéstrame", "muestrame")
+
+            val containsStarter = starters.any { q.contains(it) }
+            if (!containsStarter && !q.contains("tabla")) return null
+
+            // attempt to extract the word after 'tabla' or after starter 'de la tabla' etc.
+            // Look for 'tabla X' or 'tabla de X' or 'de la tabla X'
+            val tableRegex = Regex("tabla(?: de|:)?\\s+([a-z0-9_]+)", RegexOption.IGNORE_CASE)
+            var match = tableRegex.find(q)
+            if (match != null) {
+                return match.groupValues[1].lowercase()
+            }
+
+            val simpleRegex = Regex("(?:dame todos(?: los datos)? de )([a-z0-9_]+)", RegexOption.IGNORE_CASE)
+            match = simpleRegex.find(q)
+            if (match != null) return match.groupValues[1].lowercase()
+
+            // fallback: find known table names in query by scanning expected table list
+            val knownTables = listOf(
+                "personas", "usuarios", "videos", "topics", "content_items", "tasks",
+                "subscriptions", "task_submissions", "chat_messages", "file_contexts", "courses",
+                "roles", "recursos", "rol_recursos", "contentitems", "contentitems"
+            )
+            for (t in knownTables) {
+                if (q.contains(t)) return t
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "detectTableFetchRequest error", e)
+        }
+        return null
+    }
+
+    // Data class for field-by-id extraction
+    private data class FieldById(val table: String, val id: Long, val field: String?)
+
+    /**
+     * Detect expressions like:
+     *  - "dame el title del video con id=55"
+     *  - "¿Cuál es el titulo del video id 55?"
+     *  - "dame el creator_username del id 11 de la tabla courses"
+     * Returns FieldById(table, id, field) or null
+     */
+    private fun detectFieldByIdRequest(query: String): FieldById? {
+        try {
+            val q = query.lowercase()
+            
+            // First try pattern: "field del id X de la tabla Y" (explicit table mention)
+            val regexExplicitTable = Regex("([a-z0-9_áéíóúñ ]+?)\\s+del?\\s+id\\s*(?:=|:)?\\s*([0-9]+)\\s+de\\s+(?:la |el )?tabla\\s+([a-z0-9_]+)", RegexOption.IGNORE_CASE)
+            val mExplicit = regexExplicitTable.find(q)
+            if (mExplicit != null) {
+                val rawField = mExplicit.groupValues[1].trim()
+                val normalizedField = normalizeRequestedField(rawField)
+                val id = mExplicit.groupValues[2].toLongOrNull() ?: return null
+                val rawTable = mExplicit.groupValues[3].trim().lowercase()
+                val table = mapTableName(rawTable)
+                Log.d(TAG, "detectFieldById matched (explicit tabla): rawField='${rawField}', normalizedField='${normalizedField}', table='$table', id=$id")
+                return FieldById(table, id, normalizedField)
+            }
+            
+            // Original pattern: 'field del table con id=123' or 'field del table id 123'
+            val regex = Regex("([a-z0-9_áéíóúñ ]+?) del? (?:la |el )?([a-z0-9_]+) (?:con )?id\\s*(?:=|:)?\\s*([0-9]+)", RegexOption.IGNORE_CASE)
+            val m = regex.find(q)
+            if (m != null) {
+                val rawField = m.groupValues[1].trim()
+                val normalizedField = normalizeRequestedField(rawField)
+                val rawTable = m.groupValues[2].trim().lowercase()
+                val table = mapTableName(rawTable)
+                val id = m.groupValues[3].toLongOrNull() ?: return null
+                Log.d(TAG, "detectFieldById matched: rawField='${rawField}', normalizedField='${normalizedField}', table='$table', id=$id")
+                return FieldById(table, id, normalizedField)
+            }
+
+            // Another pattern: 'title of video with id 55' or 'title video id 55'
+            val regex2 = Regex("([a-z0-9_áéíóúñ ]+?) (?:de |del | del)?([a-z0-9_]+) id\\s*(?:=|:)?\\s*([0-9]+)", RegexOption.IGNORE_CASE)
+            val m2 = regex2.find(q)
+            if (m2 != null) {
+                val rawField = m2.groupValues[1].trim()
+                val normalizedField = normalizeRequestedField(rawField)
+                val rawTable = m2.groupValues[2].trim().lowercase()
+                val table = mapTableName(rawTable)
+                val id = m2.groupValues[3].toLongOrNull() ?: return null
+                Log.d(TAG, "detectFieldById matched (alt): rawField='${rawField}', normalizedField='${normalizedField}', table='$table', id=$id")
+                return FieldById(table, id, normalizedField)
+            }
+
+            return null
+        } catch (e: Exception) {
+            Log.w(TAG, "detectFieldByIdRequest error", e)
+            return null
+        }
+    }
+
+    // Map common Spanish (or user-friendly) table names to the actual database table names
+    // e.g. 'tarea' or 'tareas' -> 'tasks', 'video' -> 'videos', 'curso' -> 'courses'
+    private fun mapTableName(raw: String): String {
+        try {
+            val r = raw.lowercase().trim()
+            val mapping = mapOf(
+                "tarea" to "tasks",
+                "tareas" to "tasks",
+                "video" to "videos",
+                "videos" to "videos",
+                "usuario" to "usuarios",
+                "usuarios" to "usuarios",
+                "persona" to "personas",
+                "personas" to "personas",
+                "curso" to "courses",
+                "cursos" to "courses",
+                "rol" to "roles",
+                "roles" to "roles",
+                "recurso" to "recursos",
+                "recursos" to "recursos",
+                "tema" to "topics",
+                "temas" to "topics",
+                "topic" to "topics",
+                "topics" to "topics",
+                "contentitem" to "content_items",
+                "content_items" to "content_items",
+                "task_submission" to "task_submissions",
+                "task_submissions" to "task_submissions"
+            )
+
+            if (mapping.containsKey(r)) return mapping[r]!!
+
+            // If already matches known table names used in DB, return as-is
+            val known = listOf(
+                "personas", "usuarios", "videos", "topics", "content_items", "tasks",
+                "subscriptions", "task_submissions", "chat_messages", "file_contexts", "courses",
+                "roles", "recursos", "rol_recursos"
+            )
+            if (known.contains(r)) return r
+
+            // Try simple English pluralization fallback: if Spanish looks singular, attempt to map to english plural
+            when (r) {
+                "tarea" -> return "tasks"
+            }
+
+            // Default: if it ends with 's' assume plural; otherwise add 's'
+            return if (r.endsWith("s")) r else r + "s"
+        } catch (e: Exception) {
+            Log.w(TAG, "mapTableName failed for $raw", e)
+            return raw
+        }
+    }
+
+    /**
+     * Try to extract a field from a JsonObject by multiple likely names
+     */
+    private fun extractFieldFromJson(obj: com.google.gson.JsonObject, field: String): String? {
+        try {
+            val candidates = listOf(field, field.lowercase(), field.replace("_", ""), field.replace("_", " "), field.replace(" ", "_"))
+            for (c in candidates) {
+                if (obj.has(c) && !obj.get(c).isJsonNull) {
+                    val v = obj.get(c)
+                    return if (v.isJsonPrimitive) v.asString else v.toString()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "extractFieldFromJson error", e)
+        }
+        return null
+    }
+
+    // Normalize a user-requested field phrase into a likely JSON key: remove Spanish stopwords/verbs and punctuation
+    private fun normalizeRequestedField(raw: String): String {
+        try {
+            var s = raw.lowercase().trim()
+            // Remove leading polite verbs or phrases like 'dame','muéstrame','muestrame','mostrar','por favor'
+            s = s.replace(Regex("^(dame|muéstrame|muestrame|mostrar|por favor|porfa)\\b\\s*" , RegexOption.IGNORE_CASE), "")
+            // Remove occurrences of articles/prepositions that can appear around field names
+            s = s.replace(Regex("\\b(de|del|la|el|los|las|con|al|para)\\b", RegexOption.IGNORE_CASE), " ")
+            // Remove punctuation
+            s = s.replace(Regex("[^a-z0-9_ ]"), " ")
+            // Collapse spaces and convert to underscore-delimited key
+            s = s.replace(Regex("\\s+"), " ").trim().replace(" ", "_")
+            // Trim leading/trailing underscores
+            s = s.trim('_')
+            if (s.isEmpty()) return raw.lowercase().replace(Regex("[^a-z0-9_]"), "_")
+            return s
+        } catch (e: Exception) {
+            Log.w(TAG, "normalizeRequestedField failed for '$raw'", e)
+            return raw.lowercase().replace(Regex("[^a-z0-9_]"), "_")
+        }
+    }
+
+    /**
+     * Formats the Supabase JsonArray response into a human-friendly trimmed JSON string.
+     * Caps rows to 100 and total size to avoid huge payloads.
+     */
+    private fun formatTableJsonResponse(table: String, jsonArray: com.google.gson.JsonArray): String {
+        return try {
+            val maxRows = 100
+            val rows = jsonArray.take(maxRows)
+            val gson = com.google.gson.GsonBuilder().setPrettyPrinting().create()
+            val limited = com.google.gson.JsonArray()
+            for (el in rows) limited.add(el)
+
+            var out = "Tabla: $table\nFilas mostradas: ${rows.size}"
+            if (jsonArray.size() > maxRows) out += " (mostrando primeros $maxRows filas)"
+            out += "\n\n"
+            out += gson.toJson(limited)
+
+            // cap output size
+            val maxSize = 200 * 1024 // 200KB
+            if (out.length > maxSize) {
+                out = out.take(maxSize) + "\n... (salida truncada por tamaño)"
+            }
+            out
+        } catch (e: Exception) {
+            Log.e(TAG, "formatTableJsonResponse error", e)
+            "Error formateando la respuesta de la tabla '$table': ${e.message}"
+        }
+    }
+
+    /**
+     * Sorts a JsonArray by numeric 'id' field ascending when possible. Returns a new JsonArray.
+     */
+    private fun sortJsonArrayById(arr: com.google.gson.JsonArray): com.google.gson.JsonArray {
+        return try {
+            val list = arr.mapNotNull { el ->
+                try {
+                    val obj = el.asJsonObject
+                    val idEl = obj.get("id")
+                    val idNum = when {
+                        idEl == null || idEl.isJsonNull -> null
+                        idEl.isJsonPrimitive && idEl.asJsonPrimitive.isNumber -> idEl.asLong
+                        idEl.isJsonPrimitive -> idEl.asString.toLongOrNull()
+                        else -> null
+                    }
+                    Pair(idNum, obj)
+                } catch (e: Exception) {
+                    null
+                }
+            }.sortedWith(compareBy<Pair<Long?, com.google.gson.JsonObject>> { it.first ?: Long.MAX_VALUE })
+
+            val out = com.google.gson.JsonArray()
+            for ((_, obj) in list) out.add(obj)
+            // include any elements that couldn't be parsed (append at end)
+            val parsed = list.map { it.second }
+            arr.forEach { if (it.isJsonObject && parsed.none { p -> p == it.asJsonObject }) out.add(it) }
+            out
+        } catch (e: Exception) {
+            Log.w(TAG, "sortJsonArrayById failed", e)
+            arr
         }
     }
     

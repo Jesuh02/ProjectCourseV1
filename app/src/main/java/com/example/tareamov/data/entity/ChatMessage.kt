@@ -13,7 +13,12 @@ data class ChatMessage(
     val sessionId: String? = null, // Optional: to group conversations
     val hasCalification: Boolean = false, // Indica si el mensaje contiene una calificación
     val calificationValue: String? = null, // El valor de la calificación extraída (ej: "90/100")
-    val calificationAdded: Boolean = false // Indica si la calificación ya fue agregada por el usuario
+    val calificationAdded: Boolean = false, // Indica si la calificación ya fue agregada por el usuario
+    
+    // MCP Tool metadata
+    val toolName: String? = null, // Nombre de la herramienta MCP usada
+    val sqlScript: String? = null, // Script SQL ejecutado (si aplica)
+    val toolMetadata: String? = null // Metadata adicional en formato JSON
 )
 
 //Hola Herazo...

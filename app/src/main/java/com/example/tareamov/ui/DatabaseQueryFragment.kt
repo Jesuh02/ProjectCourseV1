@@ -7,6 +7,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
@@ -19,6 +20,7 @@ import com.example.tareamov.databinding.FragmentDatabaseQueryBinding
 import com.example.tareamov.service.DatabaseQueryService
 import com.example.tareamov.service.LocalLlamaService
 import com.example.tareamov.service.MCPService
+import com.example.tareamov.service.MSPClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -29,6 +31,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import com.example.tareamov.ui.adapter.DatabaseChatAdapter
 import com.example.tareamov.service.LocalLlamaService.ModelDownloadWorker
 import com.example.tareamov.util.SessionManager
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -178,6 +182,14 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     private lateinit var databaseQueryService: DatabaseQueryService
     private lateinit var sessionManager: SessionManager
     
+    // MCP HTTP Client for tareamov-mcp-server (connects via HTTP to Node.js server)
+    private lateinit var mcpHttpClient: com.example.tareamov.service.MCPHttpClient
+    
+    // MCP Tools adapter
+    private lateinit var mcpToolsAdapter: com.example.tareamov.ui.adapter.MCPToolsAdapter
+    private val mcpTools = mutableListOf<com.example.tareamov.ui.model.MCPTool>()
+    private var isMCPToolbarVisible = false
+    
     // Enhanced chat state management per user
     private val chatHistory = mutableListOf<ChatMessage>()
     private var isProcessingQuery = false
@@ -185,6 +197,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     private var totalMessageCount = 0
     private var isScrolledToBottom = true
     private var currentUser: String? = null
+    // Keep the last Supabase GET URL for display with final results
+    private var lastSupabaseUrl: String? = null
     
     // User-specific SharedPreferences for better persistence
     private val chatPrefs by lazy {
@@ -196,6 +210,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     private val maxMessagesPerSession = 1000 // Prevent memory issues
 
     companion object {
+        private const val TAG = "DatabaseQueryFragment"
         private const val CHAT_HISTORY_KEY = "saved_chat_messages"
         private const val SESSION_ID_KEY = "current_session_id"
         private const val MESSAGE_COUNT_KEY = "total_message_count"
@@ -225,18 +240,54 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         mcpService = MCPService(requireContext())
         database = AppDatabase.getDatabase(requireContext())
         databaseQueryService = DatabaseQueryService(requireContext())
+        
+        // Initialize MCP HTTP Client for tareamov-mcp-server
+        mcpHttpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
+        
+        // Initialize MCP connection in background
+        viewLifecycleOwner.lifecycleScope.launch {
+            val initialized = mcpHttpClient.initialize()
+            if (initialized) {
+                Log.d(TAG, "✅ MCP HTTP client connected to server at http://10.0.2.2:3000")
+                
+                // Load MCP tools
+                loadMCPTools()
+                
+                withContext(Dispatchers.Main) {
+                    addMessageToChat("✅ Conectado a servidor MCP tareamov-mcp-server (HTTP)", false)
+                }
+            } else {
+                Log.w(TAG, "⚠️ MCP HTTP client connection failed, using fallback")
+            }
+        }
 
         // Initialize UI components
         setupUIComponents()
 
         // Setup chat RecyclerView with enhanced scrolling
         setupChatRecyclerView()
+        
+        // Setup MCP toolbar
+        setupMCPToolbar()
 
         // Setup floating action buttons
         setupFloatingActionButtons()
 
         // Initialize LocalLlamaService and trigger model download if needed
         setupLocalLlamaService()
+
+        // Register SupabaseClient request listener so we can surface the last query URL in the UI
+        com.example.tareamov.service.SupabaseClient.setRequestListener { url ->
+            // We're possibly on a background thread; post to main thread
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+                try {
+                    // Store the last Supabase GET URL so it can be appended when results are shown
+                    lastSupabaseUrl = url
+                } catch (t: Throwable) {
+                    Log.w("DatabaseQueryFragment", "Failed to update Supabase URL display", t)
+                }
+            }
+        }
 
         // Set up enhanced UI interactions
         setupEnhancedUI()
@@ -359,9 +410,227 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             showChatHistoryDialog()
         }
         
+        // MCP Tools button
+        binding.fabMCPTools.setOnClickListener {
+            toggleMCPToolbar()
+        }
+        
         // Clear history button in header
         binding.clearHistoryButton.setOnClickListener {
             showClearHistoryDialog()
+        }
+        
+        // Connection status - make it clickable to test connection
+        binding.connectionStatus.setOnClickListener {
+            testLLMConnection()
+        }
+        binding.connectionIndicator.setOnClickListener {
+            testLLMConnection()
+        }
+    }
+    
+    private fun setupMCPToolbar() {
+        // Setup MCP tools adapter
+        mcpToolsAdapter = com.example.tareamov.ui.adapter.MCPToolsAdapter(mcpTools) { tool ->
+            onMCPToolExecute(tool)
+        }
+        
+        binding.mcpToolsRecyclerView.apply {
+            layoutManager = LinearLayoutManager(context)
+            adapter = mcpToolsAdapter
+        }
+        
+        // Toggle toolbar button
+        binding.btnToggleToolbar.setOnClickListener {
+            toggleMCPToolbar()
+        }
+    }
+    
+    private fun loadMCPTools() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val tools = mcpHttpClient.listTools()
+                Log.d(TAG, "📋 Loaded ${tools.size} MCP tools")
+                
+                withContext(Dispatchers.Main) {
+                    mcpTools.clear()
+                    mcpTools.addAll(tools)
+                    mcpToolsAdapter.notifyDataSetChanged()
+                    
+                    // Update tools count badge
+                    binding.toolsCountBadge.text = tools.size.toString()
+                    
+                    // Show toolbar if tools are available
+                    if (tools.isNotEmpty()) {
+                        binding.mcpToolbar.visibility = View.VISIBLE
+                        isMCPToolbarVisible = true
+                    }
+                    
+                    Log.d(TAG, "✅ MCP tools loaded and displayed")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error loading MCP tools", e)
+            }
+        }
+    }
+    
+    private fun toggleMCPToolbar() {
+        isMCPToolbarVisible = !isMCPToolbarVisible
+        
+        if (isMCPToolbarVisible) {
+            binding.mcpToolsRecyclerView.visibility = View.VISIBLE
+            binding.btnToggleToolbar.setImageResource(R.drawable.ic_expand_less)
+        } else {
+            binding.mcpToolsRecyclerView.visibility = View.GONE
+            binding.btnToggleToolbar.setImageResource(R.drawable.ic_expand_more)
+        }
+    }
+    
+    private fun onMCPToolExecute(tool: com.example.tareamov.ui.model.MCPTool) {
+        Log.d(TAG, "🔧 Executing MCP tool: ${tool.name}")
+        Log.d(TAG, "📋 Input schema: ${tool.inputSchema}")
+        
+        // Get required parameters
+        val params = tool.getParameters()
+        Log.d(TAG, "📝 Parameters found: ${params.size}")
+        params.forEach { (name, param) ->
+            Log.d(TAG, "  - $name: ${param.description} (required: ${param.required})")
+        }
+        
+        if (params.isEmpty()) {
+            // No parameters required, execute directly
+            Log.d(TAG, "⚡ Executing without parameters")
+            executeMCPTool(tool, org.json.JSONObject())
+        } else {
+            // Show dialog to input parameters
+            Log.d(TAG, "💬 Showing parameters dialog")
+            showToolParametersDialog(tool)
+        }
+    }
+    
+    private fun showToolParametersDialog(tool: com.example.tareamov.ui.model.MCPTool) {
+        val params = tool.getParameters()
+        val dialogView = LayoutInflater.from(requireContext())
+            .inflate(R.layout.dialog_tool_parameters, null)
+        
+        val paramsContainer = dialogView.findViewById<LinearLayout>(R.id.paramsContainer)
+        val inputViews = mutableMapOf<String, android.widget.EditText>()
+        
+        // Create input fields for each parameter
+        params.forEach { (name, param) ->
+            val paramView = LayoutInflater.from(requireContext())
+                .inflate(R.layout.item_parameter_input, paramsContainer, false)
+            
+            val paramLabel = paramView.findViewById<TextView>(R.id.paramLabel)
+            val paramInput = paramView.findViewById<android.widget.EditText>(R.id.paramInput)
+            val paramHint = paramView.findViewById<TextView>(R.id.paramHint)
+            
+            paramLabel.text = name + if (param.required) " *" else ""
+            paramHint.text = param.description
+            
+            inputViews[name] = paramInput
+            paramsContainer.addView(paramView)
+        }
+        
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle(tool.getDisplayName())
+            .setMessage("Ingresa los parámetros para la herramienta:")
+            .setView(dialogView)
+            .setPositiveButton("Ejecutar") { _, _ ->
+                val arguments = org.json.JSONObject()
+                inputViews.forEach { (name, editText) ->
+                    val value = editText.text.toString()
+                    if (value.isNotEmpty()) {
+                        arguments.put(name, value)
+                    }
+                }
+                executeMCPTool(tool, arguments)
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+    
+    private fun executeMCPTool(tool: com.example.tareamov.ui.model.MCPTool, arguments: org.json.JSONObject) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Add user message showing what tool is being executed
+                val argsString = if (arguments.length() > 0) {
+                    arguments.keys().asSequence().joinToString(", ") { key ->
+                        "$key: ${arguments.get(key)}"
+                    }
+                } else {
+                    "sin parámetros"
+                }
+                
+                addMessageToChat("🔧 Ejecutando: ${tool.getDisplayName()} ($argsString)", true)
+                
+                // Show typing indicator
+                chatAdapter.addTypingIndicator()
+                scrollToBottom()
+                
+                // Execute tool
+                val result = mcpHttpClient.executeTool(tool.name, arguments)
+                
+                withContext(Dispatchers.Main) {
+                    chatAdapter.removeTypingIndicator()
+                    
+                    if (result.success) {
+                        val resultText = when (result.data) {
+                            is String -> result.data
+                            else -> result.data.toString()
+                        }
+                        addMessageToChat("✅ Resultado:\n\n$resultText", false)
+                    } else {
+                        addMessageToChat("❌ Error: ${result.error}", false)
+                    }
+                    
+                    scrollToBottom()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error executing MCP tool", e)
+                withContext(Dispatchers.Main) {
+                    chatAdapter.removeTypingIndicator()
+                    addMessageToChat("❌ Error: ${e.message}", false)
+                }
+            }
+        }
+    }
+    
+    private fun testLLMConnection() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Show testing message
+                val testMessageId = addMessageToChat("🔍 Probando conexión con servidor LLM...", false)
+                
+                withContext(Dispatchers.IO) {
+                    // First try MCP HTTP server (preferred bridge)
+                    val mcpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
+                    val mcpAvailable = mcpClient.initialize()
+
+                    val status = if (mcpAvailable) {
+                        "✓ MCP HTTP server disponible (http://10.0.2.2:3000). El LLM se puede usar a través del MCP bridge."
+                    } else {
+                        // Fallback: Create MSPClient to test direct Ollama connection
+                        val mspClient = MSPClient(requireContext())
+                        mspClient.getConnectionStatus()
+                    }
+                    
+                    withContext(Dispatchers.Main) {
+                        // Remove test message
+                        chatAdapter.removeMessageById(testMessageId)
+                        
+                        // Show connection status
+                        addMessageToChat(status, false)
+                        
+                        // Update connection indicator
+                        val isConnected = status.contains("✓ MCP HTTP server disponible") || status.contains("✓ SERVIDOR OLLAMA CONECTADO")
+                        updateConnectionStatus(isConnected, if (isConnected) "Conectado" else "Desconectado")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("DatabaseQueryFragment", "Error testing connection", e)
+                addMessageToChat("❌ Error al probar conexión: ${e.message}", false)
+            }
         }
     }
     
@@ -381,8 +650,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     }
 
     private fun addMessageToChat(text: String, isUser: Boolean): String {
-        val message = ChatMessage.createUserMessage(text).let { 
-            if (isUser) it else ChatMessage.createSystemMessage(text) 
+        val message = if (isUser) {
+            ChatMessage.createUserMessage(text)
+        } else {
+            ChatMessage.createSystemMessage(text)
         }
         
         // Add to both adapter and internal history
@@ -488,7 +759,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 binding.chatRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)
 
                 // Process the query in the background
-                processUserQuery(userInput)
+                // Use unified sendMessage flow to ensure RAG is executed once
+                sendMessage()
             }
         }
     }
@@ -509,18 +781,32 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     }
 
     private fun checkServerStatus() {
-        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val isServerRunning = try {
-                // Try to check if server is running
-                val modelFile = requireContext().filesDir.resolve("llama3-8b-q4_0.gguf")
-                modelFile.exists()
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Create MSPClient to check Ollama connection
+                val mspClient = MSPClient(requireContext())
+                val testResults = mspClient.testAllConnections()
+                val hasConnection = testResults.any { it.value }
+                
+                updateConnectionStatus(hasConnection, if (hasConnection) "Conectado" else "Desconectado")
+                
+                if (hasConnection) {
+                    Log.d("DatabaseQueryFragment", "✓ LLM server is reachable")
+                } else {
+                    Log.w("DatabaseQueryFragment", "⚠️ LLM server is not reachable")
+                    // Optionally show a message to the user
+                    addMessageToChat("""
+                        ⚠️ No se detectó conexión con el servidor LLM.
+                        
+                        Puedes usar las funciones de consulta, pero las respuestas 
+                        no serán procesadas por IA.
+                        
+                        💡 Toca el indicador de conexión para probar la conectividad.
+                    """.trimIndent(), false)
+                }
             } catch (e: Exception) {
                 Log.e("DatabaseQueryFragment", "Error checking server status", e)
-                false
-            }
-
-            withContext(Dispatchers.Main) {
-                updateConnectionStatus(isServerRunning)
+                updateConnectionStatus(false, "Error")
             }
         }
     }
@@ -540,17 +826,44 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         Log.d("DatabaseQueryFragment", "User Query: $query")
         
         // Show processing message in chat
-        addMessageToChat("🔍 Procesando consulta con sistema RAG...", false)
+        addMessageToChat("🔍 Procesando consulta con capacidad de herramientas MCP...", false)
 
         binding.chartContainer.visibility = View.GONE // Hide chart container
         removeCurrentChart() // Remove previous chart if any
 
+        // If the user is asking about Business Intelligence, handle with MCP schema + LLM
+        val lowerQuery = query.lowercase()
+        if (isBIQuery(lowerQuery)) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                addMessageToChat("🔍 Procesando petición de Inteligencia de Negocios con herramientas MCP...", false)
+                try {
+                    val biResponse = handleBIQuery(query)
+                    addMessageToChat(biResponse, false)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error handling BI query", e)
+                    addMessageToChat("❌ Error al generar análisis BI: ${e.message}", false)
+                } finally {
+                    isProcessingQuery = false
+                    saveChatHistory()
+                }
+            }
+            return
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                Log.d("DatabaseQueryFragment", "Starting RAG-enhanced processing...")
+                Log.d("DatabaseQueryFragment", "Starting query processing with MCP tool calling...")
                 
-                // Enhanced query processing with RAG
-                val result = processRAGEnhancedQuery(query)
+                // NEW: Try to use LLM with tool calling capability
+                val useLLMWithTools = true // Enable tool calling by default
+                
+                val result = if (useLLMWithTools) {
+                    // Use MSPClient (Ollama) with tool calling
+                    processQueryWithLLMToolCalling(query)
+                } else {
+                    // Fallback: Use MCP tareamov-mcp-server directly (old behavior)
+                    processQueryWithMCPServer(query)
+                }
 
                 Log.d("DatabaseQueryFragment", "=== FINAL RESULT LOG ===")
                 Log.d("DatabaseQueryFragment", "Result Length: ${result.length} characters")
@@ -574,16 +887,16 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 } else {
                     // Display the text result in chat
                     if (result.isNullOrBlank()) {
-                        addMessageToChat("⚠️ No se recibió respuesta del sistema RAG. Intente reformular su consulta.", false)
+                        addMessageToChat("⚠️ No se recibió respuesta del sistema. Intente reformular su consulta.", false)
                     } else {
-                        // Format and display the RAG response
+                        // Format and display the response
                         val formattedResult = formatRAGResponse(result)
                         addMessageToChat(formattedResult, false)
                     }
                 }
 
             } catch (e: Exception) {
-                Log.e("DatabaseQueryFragment", "Error processing RAG query", e)
+                Log.e("DatabaseQueryFragment", "Error processing query", e)
                 val errorMessage = "❌ Error procesando la consulta: ${e.message}"
                 addMessageToChat(errorMessage, false)
             } finally {
@@ -592,10 +905,428 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 saveChatHistory()
             }
         }
+
+    }
+    
+    /**
+     * Process query using LLM with MCP tool calling capability
+     * The LLM can decide when to use MCP tools (query_database, get_database_schema)
+     */
+    private suspend fun processQueryWithLLMToolCalling(query: String): String = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🤖 Using LLM with MCP tool calling for: $query")
+            
+            // Initialize MCP client if needed
+            if (!mcpHttpClient.initialize()) {
+                Log.w(TAG, "MCP client not available, falling back to regular LLM")
+                // Fall back to LocalLlama without tools
+                return@withContext localLlamaService.generateResponse(query, null, 0)
+            }
+            
+            // Try MSPClient (Ollama) first with tool calling
+            val mspClient = MSPClient(requireContext())
+            
+            try {
+                // Use the new sendPromptWithToolCalling method
+                val response = mspClient.sendPromptWithToolCalling(
+                    prompt = query,
+                    mcpHttpClient = mcpHttpClient,
+                    includeHistory = false,
+                    includeDatabaseContext = true,
+                    maxToolIterations = 3
+                )
+                
+                if (response.isNotBlank() && !response.startsWith("Error:")) {
+                    Log.d(TAG, "✅ Got response from Ollama with tool calling")
+                    return@withContext response
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Ollama not available, trying LocalLlama with tools", e)
+            }
+            
+            // Fall back to LocalLlama with tool calling
+            Log.d(TAG, "📱 Using LocalLlama with MCP tool calling")
+            return@withContext localLlamaService.generateResponse(
+                prompt = query,
+                mcpHttpClient = mcpHttpClient,
+                maxToolIterations = 3
+            )
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in LLM tool calling", e)
+            return@withContext "Error: No se pudo procesar la consulta con herramientas LLM. ${e.message}"
+        }
+    }
+
+    // Detect simple BI intent keywords
+    private fun isBIQuery(lowerQuery: String): Boolean {
+        return listOf(
+            "inteligencia de negocio",
+            "inteligencia de negocios",
+            "inteligencia de negocios",
+            "inteligencia de negocio",
+            "business intelligence",
+            "bi ",
+            "kpi",
+            "indicadores",
+            "indicador",
+            "inteligencia"
+        ).any { lowerQuery.contains(it) }
+    }
+
+    // Handle BI queries by asking the MCP HTTP server for schema and running the local LLM with tool calling
+    private suspend fun handleBIQuery(query: String): String = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "handleBIQuery: initializing MCP client for tool calling")
+            val initialized = try {
+                mcpHttpClient.initialize()
+            } catch (e: Exception) {
+                Log.w(TAG, "MCP init failed: ${e.message}")
+                false
+            }
+
+            var schemaText: String? = null
+            if (initialized) {
+                Log.d(TAG, "Requesting database schema from MCP server")
+                val schemaResult = mcpHttpClient.executeTool("get_database_schema", JSONObject())
+                if (schemaResult.success && schemaResult.data != null) {
+                    schemaText = schemaResult.data.toString()
+                    // Provide structured schema to the local LLM for better RAG
+                    try {
+                        localLlamaService.setDatabaseContext(schemaText)
+                        Log.d(TAG, "Database context set on LocalLlamaService (${schemaText.length} chars)")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to set database context on LLM: ${e.message}")
+                    }
+                } else {
+                    Log.w(TAG, "get_database_schema failed: ${schemaResult.error}")
+                }
+            } else {
+                Log.w(TAG, "MCP server not initialized, falling back to local schema if available")
+            }
+
+            // If we still don't have a schema from the MCP server, build a lightweight
+            // local schema summary from the Room database so the LLM has context.
+            if (schemaText.isNullOrBlank()) {
+                try {
+                    Log.d(TAG, "Building local schema summary from Room DB as fallback")
+                    schemaText = getLocalSchemaSummary()
+                    if (!schemaText.isNullOrBlank()) {
+                        try {
+                            localLlamaService.setDatabaseContext(schemaText)
+                            Log.d(TAG, "Database context set on LocalLlamaService from local DB (${schemaText.length} chars)")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to set database context on LLM from local DB: ${e.message}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to build local schema summary: ${e.message}")
+                }
+            }
+
+            // Build prompt for the local LLM using the retrieved schema (if any)
+            val promptBuilder = StringBuilder()
+            
+            // VS Code-style prompt: clear, structured, actionable
+            promptBuilder.append("""
+Eres un asistente de inteligencia empresarial experto. El usuario pregunta: "$query"
+
+**Tu misión**: Proporcionar un análisis accionable estilo VS Code LLM con decisiones críticas, KPIs, arquitectura BI y ejemplos SQL.
+
+**Contexto disponible**:
+""".trimIndent())
+            promptBuilder.append("\n\n")
+
+            if (!schemaText.isNullOrBlank()) {
+                promptBuilder.append("ESQUEMA DE BASE DE DATOS OBTENIDO (get_database_schema ejecutado):\n")
+                promptBuilder.append(schemaText.take(20000)) // limit size
+                promptBuilder.append("\n\n")
+                // Also inject as TOOL_RESULT so the model recognizes it in the same format
+                promptBuilder.append("TOOL_RESULT for get_database_schema:\n")
+                promptBuilder.append(schemaText.take(20000))
+                promptBuilder.append("\n\n")
+            } else {
+                promptBuilder.append("⚠️ No se pudo obtener esquema desde MCP. Usaré esquema conocido: usuarios, personas, videos, courses, topics, content_items, tasks, task_submissions, subscriptions, chat_messages, file_contexts, roles, recursos, rol_recursos.\n\n")
+            }
+
+            promptBuilder.append("""
+**FORMATO DE RESPUESTA REQUERIDO (estilo VS Code LLM)**:
+
+## Resumen ejecutivo — Objetivo
+- Objetivo: [descripción clara del objetivo empresarial]
+- Resultado esperado: [dashboard/métricas específicas]
+
+## Decisiones críticas a tomar ahora
+1. [Decisión 1 con subtareas]
+2. [Decisión 2 con subtareas]
+3. [Decisión 3 con subtareas]
+[etc. - mínimo 5 decisiones]
+
+## Mapeo tablas → métricas (heurístico según esquema)
+- [tabla1] → [métricas derivadas]
+- [tabla2] → [métricas derivadas]
+[analizar todas las tablas del esquema]
+
+## KPIs priorizados (top 6)
+1. [KPI 1]: [descripción y cómo medirlo]
+2. [KPI 2]: [descripción y cómo medirlo]
+[etc. hasta 6 KPIs]
+
+## Arquitectura BI sugerida (MVP)
+- Ingest: [cómo obtener datos]
+- Storage/Layer: [vistas materializadas, etc.]
+- Orchestración: [jobs de refresco]
+- Visualization: [herramientas sugeridas]
+- Access: [dashboards + endpoints]
+
+## Ejemplos de SQL (ajusta nombres si cambian)
+[Provee mínimo 5 queries SQL específicas usando tablas reales del esquema]
+
+## Plan corto de implementación (2-4 semanas)
+1. Semana 0-1: [tareas]
+2. Semana 1: [tareas]
+[etc.]
+
+## Riesgos y mitigaciones
+- [Riesgo 1]: [mitigación]
+- [Riesgo 2]: [mitigación]
+
+## Acción inmediata sugerida
+- [Acción concreta que el usuario puede tomar YA]
+
+**IMPORTANTE**: 
+- Usa SOLO las tablas que aparecen en el esquema proporcionado
+- Genera SQL válido basado en las columnas reales
+- Sé específico, accionable y conciso
+- Si necesitas más datos, menciona que puedes ejecutar query_database
+
+Responde AHORA con el formato anterior:
+""".trimIndent())
+
+            var prompt = promptBuilder.toString()
+
+            Log.d(TAG, "Sending prompt to LLM for BI analysis with MCP tool calling (size=${prompt.length})")
+
+            // Use the new tool calling method that handles everything automatically
+            val llmResponse = try {
+                if (!mcpHttpClient.initialize()) {
+                    Log.w(TAG, "MCP client could not be initialized, using LLM without tools")
+                    localLlamaService.generateResponse(prompt, null, 0)
+                } else {
+                    // Use LocalLlama with full tool calling support
+                    localLlamaService.generateResponse(
+                        prompt = prompt,
+                        mcpHttpClient = mcpHttpClient,
+                        maxToolIterations = 5  // Allow up to 5 tool iterations for complex BI queries
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during LLM tool calling", e)
+                "Error generando análisis BI: ${e.message}"
+            }
+
+            Log.d(TAG, "BI analysis complete, response length: ${llmResponse.length}")
+
+            // Propose a small todo list (not executed) to track progress — presented as created/proposed
+            val todos = listOf(
+                "Obtener columnas exactas de tablas clave (usuarios, courses, videos, tasks, task_submissions, subscriptions)",
+                "Definir y documentar KPIs prioritarios",
+                "Crear vistas/materialized views para KPIs críticos",
+                "Configurar refresco/cron para MVs y orquestación",
+                "Crear dashboards iniciales en Metabase y validar con stakeholders"
+            )
+
+            val todoText = StringBuilder()
+            todoText.append("Voy a crear y actualizar la lista de tareas (plan) para rastrear el progreso: registrar que obtuvimos el esquema y marcar la siguiente tarea como en progreso. Luego te doy el análisis y las consultas ejemplo.\n\n")
+            todoText.append("Created ${todos.size} todos (propuesta):\n")
+            todos.forEachIndexed { i, t -> todoText.append("- ${t}\n") }
+
+            // Build final response similar to MCP VSCode format
+            val final = StringBuilder()
+            final.append("${promptBuilder.take(200)}...\n\n")
+            final.append("${llmResponse}\n\n")
+            final.append(todoText.toString())
+
+            return@withContext final.toString()
+        } catch (e: Exception) {
+            Log.e(TAG, "handleBIQuery error", e)
+            return@withContext "❌ Error generando análisis BI: ${e.message}"
+        }
+    }
+
+    /**
+     * Detect if query is requesting a graph/chart
+     */
+    private fun detectGraphRequest(query: String): String? {
+        val lowerQuery = query.lowercase()
+        return when {
+            lowerQuery.contains("gráfico") || lowerQuery.contains("grafico") || 
+            lowerQuery.contains("chart") -> {
+                when {
+                    lowerQuery.contains("usuario") && lowerQuery.contains("video") -> "GRAPH_REQUEST:USER_VIDEOS"
+                    lowerQuery.contains("tema") && lowerQuery.contains("contenido") -> "GRAPH_REQUEST:TOPIC_CONTENT"
+                    lowerQuery.contains("curso") && lowerQuery.contains("tema") -> "GRAPH_REQUEST:COURSE_TOPICS"
+                    lowerQuery.contains("tarea") && lowerQuery.contains("tema") -> "GRAPH_REQUEST:TASKS_TOPICS"
+                    lowerQuery.contains("suscripcion") || lowerQuery.contains("subscription") -> "GRAPH_REQUEST:SUBSCRIPTIONS"
+                    else -> null
+                }
+            }
+            else -> null
+        }
+    }
+
+    /**
+     * Process query using MCP tareamov-mcp-server (default tool)
+     * This uses the query_database tool from the MCP server via HTTP
+     */
+    private suspend fun processQueryWithMCPServer(query: String): String = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔧 Using MCP tareamov-mcp-server HTTP for query: $query")
+            
+            // Use enhanced multi-step reasoning from DatabaseQueryService
+            val result = databaseQueryService.processQueryWithMCP(query)
+            
+            return@withContext result
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception using MCP STDIO server: ${e.message}", e)
+            // Fallback to RAG service
+            Log.d(TAG, "⚠️ Falling back to RAG service due to exception")
+            return@withContext processRAGEnhancedQuery(query)
+        }
+    }
+    
+    /**
+     * Format JSON array results from MCP
+     */
+    private fun formatMCPJsonArrayResults(data: JSONArray): String {
+        if (data.length() == 0) return "No se encontraron resultados."
+        
+        // Check if it's a simple count result
+        if (data.length() == 1) {
+            val item = data.getJSONObject(0)
+            if (item.length() == 1 && (item.has("count") || item.has("COUNT"))) {
+                return item.optString("count", item.optString("COUNT"))
+            }
+        }
+        
+        val sb = StringBuilder()
+        for (i in 0 until data.length()) {
+            val item = data.getJSONObject(i)
+            
+            // Format as simple list
+            if (item.length() == 1) {
+                // Single field result (e.g., just a name or title)
+                val keys = item.keys()
+                if (keys.hasNext()) {
+                    sb.append("${i + 1}. ${item.get(keys.next())}\n")
+                }
+            } else {
+                // Multiple fields - show key fields
+                sb.append("${i + 1}. ")
+                val keys = item.keys()
+                var count = 0
+                while (keys.hasNext() && count < 3) {
+                    val key = keys.next()
+                    sb.append("$key: ${item.get(key)}, ")
+                    count++
+                }
+                sb.append("\n")
+            }
+        }
+        return sb.toString().trim()
+    }
+    
+    /**
+     * Format JSON object result from MCP
+     */
+    private fun formatMCPJsonObjectResult(data: JSONObject): String {
+        if (data.length() == 0) return "No se encontraron resultados."
+        
+        // Check for count result
+        if (data.length() == 1 && (data.has("count") || data.has("COUNT"))) {
+            return data.optString("count", data.optString("COUNT"))
+        }
+        
+        val sb = StringBuilder()
+        val keys = data.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            sb.append("$key: ${data.get(key)}\n")
+        }
+        return sb.toString().trim()
+    }
+    
+    /**
+     * Format list results from MCP in a readable way
+     */
+    private fun formatMCPListResults(data: List<*>): String {
+        if (data.isEmpty()) return "No se encontraron resultados."
+        
+        // Check if it's a simple count result
+        if (data.size == 1 && data[0] is Map<*, *>) {
+            val map = data[0] as Map<*, *>
+            if (map.size == 1 && (map.containsKey("count") || map.containsKey("COUNT"))) {
+                return map.values.first().toString()
+            }
+        }
+        
+        val sb = StringBuilder()
+        data.forEachIndexed { index, item ->
+            when (item) {
+                is Map<*, *> -> {
+                    // Format as simple list
+                    if (item.size == 1) {
+                        // Single field result (e.g., just a name or title)
+                        sb.append("${index + 1}. ${item.values.first()}\n")
+                    } else {
+                        // Multiple fields - show key fields
+                        sb.append("${index + 1}. ")
+                        item.entries.take(3).forEach { (key, value) ->
+                            sb.append("$key: $value, ")
+                        }
+                        sb.append("\n")
+                    }
+                }
+                else -> sb.append("${index + 1}. $item\n")
+            }
+        }
+        return sb.toString().trim()
+    }
+    
+    /**
+     * Format map result from MCP
+     */
+    private fun formatMCPMapResult(data: Map<*, *>): String {
+        if (data.isEmpty()) return "No se encontraron resultados."
+        
+        // Check for count result
+        if (data.size == 1 && (data.containsKey("count") || data.containsKey("COUNT"))) {
+            return data.values.first().toString()
+        }
+        
+        val sb = StringBuilder()
+        data.entries.forEach { (key, value) ->
+            sb.append("$key: $value\n")
+        }
+        return sb.toString().trim()
     }
 
     /**
      * Process query using RAG-enhanced system
+     * 
+     * FLUJO COMPLETO:
+     * 1. Usuario escribe en lenguaje natural (ej: "dame el creator_username del id 11 de la tabla courses")
+     * 2. MCPService.processQuery() detecta shortcuts o delega a RAGDatabaseService
+     * 3. RAGDatabaseService:
+     *    - Analiza intención de la consulta
+     *    - Identifica tablas y columnas relevantes
+     *    - **CONSULTA SUPABASE DIRECTAMENTE** (SupabaseClient.fetchXXX())
+     *    - Obtiene JSON real ordenado por ID
+     *    - Filtra datos relevantes
+     *    - Genera respuesta con LLM
+     * 4. SupabaseClient notifica la URL usada via requestListener
+     * 5. Este fragment muestra respuesta + URL de Supabase
      */
     private suspend fun processRAGEnhancedQuery(query: String): String = withContext(Dispatchers.IO) {
         try {
@@ -610,16 +1341,16 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             }
 
             Log.d("DatabaseQueryFragment", "Updated Conversation Context: $currentConversationContext")
-            Log.d("DatabaseQueryFragment", "Trying DatabaseQueryService with RAG...")
+            Log.d("DatabaseQueryFragment", "Trying DatabaseQueryService with MCP Tools...")
 
-            // Try DatabaseQueryService with RAG first (most efficient)
-            val ragResult = databaseQueryService.processQuery(query)
+            // Use MCP-enhanced query processing (with tools)
+            val ragResult = databaseQueryService.processQueryWithMCP(query)
             
-            Log.d("DatabaseQueryFragment", "RAG Result Length: ${ragResult.length} characters")
-            Log.d("DatabaseQueryFragment", "RAG Result Content: $ragResult")
+            Log.d("DatabaseQueryFragment", "MCP-RAG Result Length: ${ragResult.length} characters")
+            Log.d("DatabaseQueryFragment", "MCP-RAG Result Content: $ragResult")
             
             if (ragResult.isNotBlank() && !ragResult.startsWith("Error")) {
-                Log.d("DatabaseQueryFragment", "RAG service provided result - SUCCESS")
+                Log.d("DatabaseQueryFragment", "MCP-RAG service provided result - SUCCESS")
                 Log.d("DatabaseQueryFragment", "===========================")
                 return@withContext ragResult
             }
@@ -921,6 +1652,126 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         binding.chartControls.visibility = View.GONE // Hide chart controls when removing chart
     }
 
+    /**
+     * Attempt to extract the first JSON object found anywhere in a text blob.
+     * This is useful because some LLMs emit prose around a JSON tool call.
+     */
+    private fun parseFirstJsonObject(text: String): JSONObject? {
+        val start = text.indexOf('{')
+        if (start < 0) return null
+        var depth = 0
+        for (i in start until text.length) {
+            val c = text[i]
+            if (c == '{') depth++
+            else if (c == '}') depth--
+
+            if (depth == 0) {
+                val candidate = text.substring(start, i + 1)
+                try {
+                    return JSONObject(candidate)
+                } catch (e: Exception) {
+                    // If parse failed, continue searching for next '{'
+                    val nextStart = text.indexOf('{', start + 1)
+                    if (nextStart <= start) return null
+                    return parseFirstJsonObject(text.substring(nextStart))
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Build a compact JSON-like schema summary by querying local Room DAOs
+     * This runs on IO dispatcher and is a best-effort fallback when MCP is unreachable.
+     */
+    private suspend fun getLocalSchemaSummary(): String = withContext(Dispatchers.IO) {
+        val schemaObj = JSONObject()
+        val tables = JSONObject()
+
+        try {
+            try {
+                val usuarios = database.usuarioDao().getAllUsuarios()
+                val obj = JSONObject()
+                obj.put("count", usuarios.size)
+                obj.put("exists", true)
+                tables.put("usuarios", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val personas = database.personaDao().getAllPersonasList()
+                val obj = JSONObject()
+                obj.put("count", personas.size)
+                obj.put("exists", true)
+                tables.put("personas", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val videos = database.videoDao().getAllVideos()
+                val obj = JSONObject()
+                obj.put("count", videos.size)
+                obj.put("exists", true)
+                tables.put("videos", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val courses = database.courseDao().getAllCourses()
+                val obj = JSONObject()
+                obj.put("count", courses.size)
+                obj.put("exists", true)
+                tables.put("courses", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val topics = database.topicDao().getAllTopics()
+                val obj = JSONObject()
+                obj.put("count", topics.size)
+                obj.put("exists", true)
+                tables.put("topics", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val contentItems = database.contentItemDao().getAllContentItems()
+                val obj = JSONObject()
+                obj.put("count", contentItems.size)
+                obj.put("exists", true)
+                tables.put("content_items", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val tasks = database.taskDao().getAllTasks()
+                val obj = JSONObject()
+                obj.put("count", tasks.size)
+                obj.put("exists", true)
+                tables.put("tasks", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val submissions = database.taskSubmissionDao().getAllTaskSubmissions()
+                val obj = JSONObject()
+                obj.put("count", submissions.size)
+                obj.put("exists", true)
+                tables.put("task_submissions", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            try {
+                val subs = database.subscriptionDao().getAllSubscriptions()
+                val obj = JSONObject()
+                obj.put("count", subs.size)
+                obj.put("exists", true)
+                tables.put("subscriptions", obj)
+            } catch (_: Exception) { /* ignore */ }
+
+            // Add timestamp
+            schemaObj.put("schema", tables)
+            schemaObj.put("generated_at", System.currentTimeMillis())
+        } catch (e: Exception) {
+            // If anything goes wrong, return an empty schema message
+            return@withContext "{\"schema\": {}, \"note\": \"failed to introspect local DB: ${e.message}\"}"
+        }
+
+        return@withContext schemaObj.toString(2)
+    }
+
     private fun processUserQuery(userInput: String) {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
@@ -1217,22 +2068,33 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
 
     private fun addWelcomeMessage() {
         val username = sessionManager.getUsername() ?: "Usuario"
+        val toolsCount = mcpTools.size
+        val toolsList = if (toolsCount > 0) {
+            mcpTools.joinToString("\n") { "  • ${it.getDisplayName()}: ${it.description}" }
+        } else {
+            "  (Cargando...)"
+        }
+        
         val welcomeText = """
-            ¡Hola $username! 👋 Soy el Sistema MCP.
-            
-            🔐 **Chat Personal**: Esta conversación es privada y se guarda específicamente para tu cuenta.
-            
-            Puedo ayudarte a consultar la base de datos usando lenguaje natural. 
-            
-            Algunos ejemplos de lo que puedes preguntarme:
-            • "¿Cuántos usuarios hay?"
-            • "Muestra los videos más populares"
-            • "¿Qué temas tienen más contenido?"
-            • "Crear un gráfico de suscripciones"
-            
-            📝 **Nota**: Todos tus mensajes se guardan automáticamente y se restauran cuando regreses.
-            
-            ¿En qué puedo ayudarte hoy?
+🎯 ¡Bienvenido/a, $username!
+
+Estás conectado al sistema MCP (Model Context Protocol) con acceso a:
+
+🛠️ **Herramientas MCP disponibles ($toolsCount):**
+$toolsList
+
+💬 **Modos de interacción:**
+  • Chat natural: Escribe consultas en lenguaje natural
+  • Herramientas directas: Usa el botón 🔧 para ejecutar herramientas específicas
+  • Consultas SQL: El sistema generará SQL automáticamente
+
+📊 **Capacidades:**
+  • Consultas a la base de datos en tiempo real
+  • Análisis de esquemas y relaciones
+  • Generación de gráficos y visualizaciones
+  • Respuestas contextuales con RAG
+
+✨ Escribe tu consulta o usa el botón de herramientas para empezar.
         """.trimIndent()
         
         addMessageToChat(welcomeText, false)
@@ -1299,12 +2161,11 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             // Show typing indicator
             val typingIndicatorId = addMessageToChat("Escribiendo...", false)
 
-            // Launch a coroutine to process the query
+            // Launch a coroutine to process the query using the unified RAG flow
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
-                    // Process the query using DatabaseQueryService
                     val result = withContext(Dispatchers.IO) {
-                        databaseQueryService.processQuery(query)
+                        processRAGEnhancedQuery(query)
                     }
 
                     // Remove typing indicator and show result
@@ -1323,7 +2184,11 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     private fun displayQueryResults(result: String) {
         // Update your UI to show the query results
         // For example, if you have a TextView to display results:
-        binding.resultText?.text = result
+        var out = result
+        lastSupabaseUrl?.let { url ->
+            out += "\n\n[Última consulta Supabase]: ${url}"
+        }
+        binding.resultText?.text = out
         // Or if you're using a RecyclerView adapter:
         // adapter.submitList(parseResults(result))
     }
@@ -1453,6 +2318,17 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         
         // Unregister from user change notifications
         SessionManager.removeUserChangeListener(this)
+        
+        // Close MCP HTTP client connection
+        try {
+            mcpHttpClient.close()
+            Log.d(TAG, "✅ MCP HTTP client closed")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing MCP HTTP client", e)
+        }
+
+    // Unregister Supabase request listener to avoid leaking fragment
+    com.example.tareamov.service.SupabaseClient.setRequestListener(null)
         
         super.onDestroyView()
         _binding = null

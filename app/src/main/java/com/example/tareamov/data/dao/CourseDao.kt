@@ -54,4 +54,8 @@ interface CourseDao {
 
     @Query("SELECT * FROM courses WHERE creatorUsername = :username ORDER BY creationDate DESC")
     fun getCoursesByCreatorFlow(username: String): Flow<List<Course>>
+
+    // Add this method to get the maximum course ID for consecutive ID generation
+    @Query("SELECT MAX(id) FROM courses")
+    suspend fun getMaxCourseId(): Long?
 }

@@ -319,10 +319,10 @@ class CreatedCourseAdapter(
         }        fun bind(course: VideoData) {
             currentCourse = course
 
+            // FAST: Bind essential text data immediately (no async operations)
             titleTextView.text = course.title.takeIf { !it.isNullOrEmpty() } ?: "Curso sin título"
             titleTextView.maxLines = 2
             titleTextView.ellipsize = android.text.TextUtils.TruncateAt.END
-            // Bind author and price synchronously
             authorTextView.text = course.username
             priceTextView.text = if (course.price != null && course.price > 0.0) {
                 String.format("$%.2f", course.price)
@@ -330,35 +330,13 @@ class CreatedCourseAdapter(
                 "Gratis"
             }
 
-            // Fetch subscriber count asynchronously from Room
-            studentsTextView.text = "... estudiantes"
-            try {
-                val db = com.example.tareamov.data.AppDatabase.getDatabase(itemView.context)
-                val subscriptionDao = db.subscriptionDao()
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                    try {
-                        val count = subscriptionDao.getSubscriptionCountForCreator(course.username)
-                        withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            studentsTextView.text = if (count == 1) "1 estudiante" else "${count} estudiantes"
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.e("CreatedCourseAdapter", "Error fetching subscription count for ${course.username}", e)
-                        withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            studentsTextView.text = "0 estudiantes"
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("CreatedCourseAdapter", "Error starting coroutine to fetch subscription count", e)
-                studentsTextView.text = "0 estudiantes"
-            }
-
-            // Show different category text for owned vs other courses
-            if (canUserModifyCourse(course)) {
+            // FAST: Show/hide options menu button IMMEDIATELY based on permissions
+            val isCreator = canUserModifyCourse(course)
+            if (isCreator) {
                 categoryTextView.text = "Mis Cursos"
-                categoryTextView.setBackgroundColor(android.graphics.Color.parseColor("#4CAF50")) // Green for owned courses
+                categoryTextView.setBackgroundColor(android.graphics.Color.parseColor("#4CAF50"))
 
-                // Show the new options menu button next to category for course creators
+                // Show options menu button IMMEDIATELY (no animation delay for faster UX)
                 try {
                     val resourceId = itemView.context.resources.getIdentifier(
                         "courseOptionsMenuButton",
@@ -368,24 +346,17 @@ class CreatedCourseAdapter(
                     if (resourceId != 0) {
                         val optionsMenuButton = itemView.findViewById<ImageView>(resourceId)
                         optionsMenuButton?.visibility = View.VISIBLE
-                        optionsMenuButton?.alpha = 0f
-                        optionsMenuButton?.animate()
-                            ?.alpha(1f)
-                            ?.setDuration(300)
-                            ?.start()
-                        Log.d("CreatedCourseAdapter", "✅ Options menu button shown for creator: ${course.username}")
+                        // Remove animation for instant display
+                        optionsMenuButton?.alpha = 1f
                     }
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error showing options menu button", e)
                 }
-
-                Log.d("CreatedCourseAdapter", "✅ Options menu button shown for creator: ${course.username}")
-
             } else {
                 categoryTextView.text = "Tecnología"
-                categoryTextView.setBackgroundColor(android.graphics.Color.parseColor("#333333")) // Default gray
+                categoryTextView.setBackgroundColor(android.graphics.Color.parseColor("#333333"))
 
-                // Hide the options menu button for non-creators
+                // Hide menu button IMMEDIATELY for non-creators
                 try {
                     val resourceId = itemView.context.resources.getIdentifier(
                         "courseOptionsMenuButton",
@@ -395,13 +366,26 @@ class CreatedCourseAdapter(
                     if (resourceId != 0) {
                         val optionsMenuButton = itemView.findViewById<ImageView>(resourceId)
                         optionsMenuButton?.visibility = View.GONE
-                        Log.d("CreatedCourseAdapter", "❌ Options menu button hidden for non-creator: ${course.username}")
                     }
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error hiding options menu button", e)
                 }
+            }
 
-                Log.d("CreatedCourseAdapter", "❌ Options menu button hidden for non-creator: ${course.username}")
+            // ASYNC: Fetch student count in background (non-blocking)
+            studentsTextView.text = "..."
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                try {
+                    val db = com.example.tareamov.data.AppDatabase.getDatabase(itemView.context)
+                    val count = db.subscriptionDao().getSubscriptionCountForCreator(course.username)
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        studentsTextView.text = if (count == 1) "1 estudiante" else "${count} estudiantes"
+                    }
+                } catch (e: Exception) {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        studentsTextView.text = "0 estudiantes"
+                    }
+                }
             }
 
             Log.d("CreatedCourseAdapter", "Binding course: ${course.title} with URI: ${course.videoUriString ?: "null"}")
@@ -409,24 +393,21 @@ class CreatedCourseAdapter(
             // Reset views
             videoView.visibility = View.GONE
             thumbnailImageView.visibility = View.VISIBLE
-            stopAutoPlay()            // Mostrar la miniatura seleccionada si existe, si no, cargar la miniatura del video o un placeholder
+            stopAutoPlay()            // ASYNC: Load thumbnail in background (non-blocking)
             if (!course.thumbnailUri.isNullOrEmpty()) {
                 try {
-                    // Usar Glide para cargar el thumbnail de manera más eficiente
                     Glide.with(context)
                         .load(Uri.parse(course.thumbnailUri))
                         .placeholder(R.drawable.placeholder_image)
                         .error(R.drawable.placeholder_image)
                         .centerCrop()
                         .into(thumbnailImageView)
-
-                    Log.d("CreatedCourseAdapter", "Loaded custom thumbnail for: ${course.title}")
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error loading custom thumbnail", e)
                     thumbnailImageView.setImageResource(R.drawable.placeholder_image)
                 }
             } else {
-                // Try to generate thumbnail if it doesn't exist
+                // Generate thumbnail asynchronously
                 loadOrGenerateVideoThumbnail(course)
             }
         }

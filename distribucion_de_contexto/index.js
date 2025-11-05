@@ -60,6 +60,40 @@ app.post('/analizar-entrega', async (req, res) => {
   if (!submissionId || !fileContent || typeof contentSummary === 'undefined' || !ollamaUrl) {
     return res.status(400).json({ error: 'Faltan datos requeridos.' });
   }
+  
+  // Detectar si el archivo no pudo ser procesado correctamente
+  const esArchivoNoProcessable = fileContent.includes('Tipo de archivo no soportado') ||
+                                  fileContent.includes('ESTADO DEL ANÁLISIS') ||
+                                  fileContent.includes('no pudo ser procesado') ||
+                                  fileType === 'UNKNOWN' ||
+                                  fileType === 'unknown' ||
+                                  fileContent.length < 100;
+  
+  if (esArchivoNoProcessable) {
+    // Si el archivo no es procesable, devolver nota 0 con explicación clara
+    const nota = 0;
+    const cumplimiento = 'El archivo no pudo ser analizado correctamente.';
+    const resumen = `❌ NO SE PUEDE CALIFICAR: El archivo enviado (${fileName || 'sin nombre'}) no pudo ser procesado o no contiene contenido legible. 
+
+📋 DESCRIPCIÓN DE LA TAREA: ${contentSummary}
+
+⚠️ PROBLEMAS DETECTADOS:
+- El archivo puede estar en un formato no soportado
+- El archivo puede estar corrupto o vacío
+- El sistema no pudo extraer el contenido del archivo
+
+💡 RECOMENDACIÓN: 
+1. Verifica que el archivo esté en un formato compatible (PDF, DOCX, TXT, SQL, etc.)
+2. Asegúrate de que el archivo no esté corrupto
+3. Si es un archivo de Google Drive, descárgalo localmente primero
+4. Vuelve a subir el archivo en un formato compatible
+
+Para poder calificar esta tarea, necesito poder leer y analizar el contenido del archivo.`;
+
+    ragCache[submissionId] = { nota, resumen, cumplimiento };
+    return res.json({ nota, resumen, cumplimiento });
+  }
+  
   // Extracción de contexto usando LangChain
   let textoExtraido = fileContent;
   try {
@@ -605,7 +639,20 @@ app.post('/procesar-prompt', async (req, res) => {
     console.log('==============================================');
 
     // Recibe prompt del usuario, url de ollama y contexto del archivo (descripcionTarea)
-    const { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent } = req.body;
+    let { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent } = req.body;
+
+    // CORRECCIÓN: Si ollamaUrl usa una IP que coincide con la del servidor, cambiarla a localhost
+    // Esto es necesario porque el móvil envía la IP del host, pero Ollama está en localhost del servidor
+    if (ollamaUrl) {
+      const serverIPs = ['192.168.1.158', '192.168.1.203', '10.0.2.2']; // IPs comunes
+      serverIPs.forEach(ip => {
+        if (ollamaUrl.includes(ip)) {
+          const originalUrl = ollamaUrl;
+          ollamaUrl = ollamaUrl.replace(ip, 'localhost');
+          console.log(`🔄 URL de Ollama corregida: ${originalUrl} → ${ollamaUrl}`);
+        }
+      });
+    }
 
     // Validaciones: solo una respuesta por error
     if (typeof prompt !== 'string' || !prompt.trim()) {
@@ -622,6 +669,59 @@ app.post('/procesar-prompt', async (req, res) => {
     console.log('🌐 OllamaUrl:', ollamaUrl);
     console.log('📋 TaskDescription:', taskDescription || 'NO PROPORCIONADO');
     console.log('📄 FileContent length:', (fileContent || '').length);
+
+    // Detectar archivos no procesables y responder inmediatamente
+    // LÓGICA MEJORADA: Un archivo es no procesable solo si tiene indicadores de error específicos
+    const esArchivoNoProcessable = fileContent && (
+      // Indicadores claros de error
+      (fileContent.includes('Tipo de archivo no soportado') && fileContent.length < 500) ||
+      (fileContent.includes('ESTADO DEL ANÁLISIS') && fileContent.includes('⚠️')) ||
+      (fileContent.includes('no pudo ser procesado') && fileContent.length < 500) ||
+      fileContent.includes('⚠️ ARCHIVO NO PROCESABLE') ||
+      fileContent.includes('NO SE PUEDE CALIFICAR ⚠️') ||
+      (fileContent.includes('Tipo de archivo: UNKNOWN') && !fileContent.includes('CREATE TABLE') && !fileContent.includes('SELECT')) ||
+      fileContent.includes('Estado: NO PROCESABLE') ||
+      // Contenido extremadamente corto (menos de 100 caracteres de contenido real)
+      (fileContent.length < 150 && !fileContent.includes('=== CONTENIDO DEL ARCHIVO ==='))
+    );
+
+    if (esArchivoNoProcessable) {
+      console.log('⚠️ ARCHIVO NO PROCESABLE DETECTADO');
+      const respuestaError = `❌ **NO SE PUEDE CALIFICAR ESTA ENTREGA**
+
+El archivo que enviaste no pudo ser procesado correctamente por el sistema. Esto puede deberse a varias razones:
+
+🔸 **Posibles causas:**
+- El formato del archivo no es compatible
+- El archivo está corrupto o vacío  
+- Es un archivo de Google Drive (no compatible)
+- El sistema no pudo extraer el contenido
+
+📋 **Tarea solicitada:** ${taskDescription || 'Sin descripción'}
+
+💡 **¿Qué debes hacer?**
+1. Verifica que tu archivo esté en un formato compatible:
+   ✅ PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx)
+   ✅ Archivos de texto (.txt)
+   ✅ Archivos SQL (.sql)
+   
+2. Si es un archivo de Google Drive:
+   - Descárgalo primero a tu dispositivo
+   - Luego súbelo nuevamente a la tarea
+   
+3. Asegúrate de que el archivo no esté vacío o corrupto
+
+4. Vuelve a intentar subir el archivo
+
+⚠️ **Nota:** Necesito poder leer el contenido del archivo para poder ayudarte con la calificación.`;
+
+      console.log('📤 ENVIANDO RESPUESTA DE ARCHIVO NO PROCESABLE');
+      return res.json({ 
+        respuesta: respuestaError,
+        esError: true,
+        archivoNoProcesable: true
+      });
+    }
 
     // Determinar si la pregunta es sobre nota/calificación/tarea/feedback/archivo (ampliado)
     const preguntaLower = (prompt || '').toLowerCase();
@@ -1019,6 +1119,8 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA:`;
       try {
         const tokensEvaluacion = encode(promptEvaluacionCritica).length;
         console.log('[MODO CRÍTICO - GEMMA3N] TOKENS CONSUMIDOS:', tokensEvaluacion);
+        console.log('[MODO CRÍTICO - GEMMA3N] URL COMPLETA:', `${ollamaUrl}/api/generate`);
+        console.log('[MODO CRÍTICO - GEMMA3N] MODELO:', 'gemma3n:latest');
         
         const response = await axios({
           method: 'post',

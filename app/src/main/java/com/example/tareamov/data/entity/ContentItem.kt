@@ -16,14 +16,24 @@ import com.google.gson.annotations.SerializedName
             onDelete = ForeignKey.CASCADE
         ),
         ForeignKey(
-            entity = Task::class, // Add foreign key for Task
+            entity = Task::class,
             parentColumns = ["id"],
             childColumns = ["taskId"],
-            onDelete = ForeignKey.CASCADE // Delete content if the parent task is deleted
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = Usuario::class,
+            parentColumns = ["id"],
+            childColumns = ["creator_usuario_id"],
+            onDelete = ForeignKey.SET_NULL
         )
     ],
-    // Index both topicId and taskId for efficient querying
-    indices = [Index(value = ["topicId"]), Index(value = ["taskId"])]
+    indices = [
+        Index(value = ["topicId"]), 
+        Index(value = ["taskId"]),
+        Index(value = ["creator_usuario_id"]),
+        Index(value = ["creator_username"])
+    ]
 )
 data class ContentItem(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -32,5 +42,8 @@ data class ContentItem(
     @SerializedName("title") val name: String? = null,
     @SerializedName("body") val uriString: String = "",
     val contentType: String = "",
-    val orderIndex: Int? = 0
+    val orderIndex: Int? = 0,
+    val creator_usuario_id: Long? = null,  // ID del usuario creador (FK a usuarios)
+    val creator_username: String? = null,  // Username del creador (para búsquedas rápidas)
+    val created_at: Long? = System.currentTimeMillis()
 ) 

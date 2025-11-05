@@ -46,8 +46,25 @@ class FileAnalysisService(private val context: Context) {
                     fileType = getFileType(fileName)
                 )
             }
-            val fileType = getFileType(fileName)
-            Log.d("FileAnalysisService", "Tipo de archivo detectado: $fileType")
+            
+            // Detectar tipo de archivo: primero por extensión, luego por MIME type
+            var fileType = getFileType(fileName)
+            Log.d("FileAnalysisService", "Tipo de archivo detectado por extensión: $fileType para archivo: $fileName")
+            
+            // Si el tipo es UNKNOWN, intentar detectar por MIME type
+            if (fileType == FileType.UNKNOWN) {
+                try {
+                    val mimeType = contentResolver.getType(uri)
+                    Log.d("FileAnalysisService", "MIME type del archivo: $mimeType")
+                    if (!mimeType.isNullOrEmpty()) {
+                        fileType = getFileTypeFromMimeType(mimeType)
+                        Log.d("FileAnalysisService", "Tipo de archivo detectado por MIME type: $fileType")
+                    }
+                } catch (e: Exception) {
+                    Log.e("FileAnalysisService", "Error obteniendo MIME type: ${e.message}")
+                }
+            }
+            
             val content = when (fileType) {
                 FileType.TEXT, FileType.CODE, FileType.SQL, FileType.JSON, FileType.XML -> {
                     Log.d("FileAnalysisService", "Extrayendo contenido de texto")
@@ -317,6 +334,41 @@ class FileAnalysisService(private val context: Context) {
         } catch (e: Exception) {
             Log.e("FileAnalysisService", "Error verificando accesibilidad del URI: ${e.message}")
             false
+        }
+    }
+    
+    /**
+     * Detecta el tipo de archivo basándose en el MIME type
+     */
+    private fun getFileTypeFromMimeType(mimeType: String): FileType {
+        return when {
+            mimeType.startsWith("text/") -> {
+                when {
+                    mimeType.contains("sql") -> FileType.SQL
+                    mimeType.contains("json") -> FileType.JSON
+                    mimeType.contains("xml") || mimeType.contains("html") -> FileType.XML
+                    mimeType.contains("python") -> FileType.CODE
+                    mimeType.contains("java") -> FileType.CODE
+                    mimeType.contains("javascript") -> FileType.CODE
+                    else -> FileType.TEXT
+                }
+            }
+            mimeType == "application/json" -> FileType.JSON
+            mimeType == "application/xml" || mimeType == "text/xml" -> FileType.XML
+            mimeType == "application/sql" || mimeType == "text/sql" -> FileType.SQL
+            mimeType == "application/pdf" -> FileType.PDF
+            mimeType.contains("word") || mimeType.contains("msword") -> FileType.WORD
+            mimeType.contains("excel") || mimeType.contains("spreadsheet") -> FileType.EXCEL
+            mimeType.contains("powerpoint") || mimeType.contains("presentation") -> FileType.POWERPOINT
+            mimeType.startsWith("image/") -> FileType.IMAGE
+            mimeType.startsWith("video/") -> FileType.VIDEO
+            mimeType.startsWith("audio/") -> FileType.AUDIO
+            // Intentar detectar código por MIME types comunes
+            mimeType.contains("python") -> FileType.CODE
+            mimeType.contains("java") -> FileType.CODE
+            mimeType.contains("javascript") -> FileType.CODE
+            mimeType.contains("typescript") -> FileType.CODE
+            else -> FileType.UNKNOWN
         }
     }
 

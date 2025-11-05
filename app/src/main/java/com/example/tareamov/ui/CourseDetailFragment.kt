@@ -330,15 +330,8 @@ class CourseDetailFragment : Fragment() {
                                         } catch (ignored: Exception) { }
                                     }
 
-                                    // Update VideoData entry if it exists
-                                    try {
-                                        val videoDao = db.videoDao()
-                                        val video = videoDao.getVideoById(course.id)
-                                        if (video != null) {
-                                            val updatedVideo = video.copy(title = newTitle, description = newDesc)
-                                            videoDao.updateVideo(updatedVideo)
-                                        }
-                                    } catch (ignored: Exception) { }
+                                    // No longer update VideoData as course is stored in Course table
+                                    // If there's additional media metadata tied to a Course, it should be handled separately.
                                 }
 
                                 // Request Supabase upsert for the updated course
@@ -506,6 +499,26 @@ class CourseDetailFragment : Fragment() {
                 Log.w("CourseDetailFragment", "Error handling topic_created event", e)
             }
         }
+        
+        // Observe task creation notifications
+        navBackEntry?.savedStateHandle?.getLiveData<Long>("task_created")?.observe(viewLifecycleOwner) { taskId ->
+            try {
+                Log.d("CourseDetailFragment", "Task created event received, refreshing from Supabase...")
+                refreshTopicsFromSupabase()
+                navBackEntry.savedStateHandle.remove<Long>("task_created")
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Error handling task_created event", e)
+            }
+        }
+        
+        // Observe general refresh flag
+        navBackEntry?.savedStateHandle?.getLiveData<Boolean>("refresh_from_supabase")?.observe(viewLifecycleOwner) { shouldRefresh ->
+            if (shouldRefresh == true) {
+                Log.d("CourseDetailFragment", "Refresh flag received, reloading from Supabase...")
+                refreshTopicsFromSupabase()
+                navBackEntry.savedStateHandle.remove<Boolean>("refresh_from_supabase")
+            }
+        }
     }
       private fun setupBottomNavigation(view: View) {
         // Initialize the bottom navigation binding
@@ -585,7 +598,7 @@ class CourseDetailFragment : Fragment() {
         val topicDao = db.topicDao()
         val contentItemDao = db.contentItemDao()
         val taskDao = db.taskDao()
-        val videoDao = db.videoDao()
+        val courseDao = db.courseDao()
         val usuarioDao = db.usuarioDao()
         val personaDao = db.personaDao()
         val subscriptionDao = db.subscriptionDao()  // Use the DAO
@@ -701,15 +714,15 @@ class CourseDetailFragment : Fragment() {
                         creatorInfoContainer.visibility = View.GONE
                     }
                 } else {
-                    // Fallback: load local video/course info
-                    val course = withContext(Dispatchers.IO) { videoDao.getVideoById(courseId) }
+                    // Fallback: load local course info from courseDao
+                    val course = withContext(Dispatchers.IO) { courseDao.getCourseById(courseId) }
 
                     // Set the course title
                     courseTitleTextView?.text = course?.title ?: "Curso sin título"
                     courseName = course?.title ?: "Curso sin título"
 
-                    // Map creator username from local video record
-                    courseCreatorUsername = course?.username
+                    // Map creator username from local course record
+                    courseCreatorUsername = course?.creatorUsername
                     isCurrentUserCreator = courseCreatorUsername == currentUsername
 
                     // Control visibility of the bottom action bar based on creator status

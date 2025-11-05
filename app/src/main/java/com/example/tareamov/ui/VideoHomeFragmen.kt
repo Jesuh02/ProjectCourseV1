@@ -50,6 +50,15 @@ class VideoHomeFragment : Fragment() {
 
     private var isLiked = false
     private var isMuted = false
+    
+    // Paginación
+    private val videoList = mutableListOf<VideoData>()
+    private var currentVideoIndex = 0
+    private lateinit var videoAdapter: VideoAdapter
+    private var currentPage = 0
+    private val pageSize = 10
+    private var totalVideos = 0
+    private var isLoadingVideos = false
 
 
     override fun onCreateView(
@@ -59,9 +68,6 @@ class VideoHomeFragment : Fragment() {
         return inflater.inflate(R.layout.fragment_video_home, container, false)
     }
 
-    private val videoList = mutableListOf<VideoData>()
-    private var currentVideoIndex = 0
-    private lateinit var videoAdapter: VideoAdapter
     private var isVideosLoaded = false // Flag para evitar cargas duplicadas
 
     // In the onViewCreated method, update the goToHomeButton click listener
@@ -361,6 +367,12 @@ class VideoHomeFragment : Fragment() {
                 super.onPageSelected(position)
                 currentVideoIndex = position
 
+                // Cargar más videos cuando se acerque al final
+                if (position >= videoList.size - 2 && !isLoadingVideos && videoList.size < totalVideos) {
+                    Log.d("VideoHomeFragment", "Near end of list (pos $position/${videoList.size}), loading more...")
+                    loadMoreVideos()
+                }
+
                 // Pausar todos los videos y reproducir solo el actual
                 val viewHolder = (viewPager.getChildAt(0) as RecyclerView)
                     .findViewHolderForAdapterPosition(position) as? VideoAdapter.VideoViewHolder
@@ -415,127 +427,119 @@ class VideoHomeFragment : Fragment() {
             }
         }
         // --- FIN DEL BLOQUE NUEVO ---
-    }    private fun loadVideos(targetVideoId: Long = -1L, targetVideoTitle: String? = null, targetVideoUsername: String? = null) {
-        // Evitar cargas concurrentes
-        if (isVideosLoaded && targetVideoId == -1L) {
-            Log.d("VideoHomeFragment", "Videos already loaded, skipping reload")
+    }
+    
+    /**
+     * Carga los primeros 10 videos desde Supabase (más recientes primero)
+     */
+    private fun loadVideos(targetVideoId: Long = -1L, targetVideoTitle: String? = null, targetVideoUsername: String? = null) {
+        if (isLoadingVideos) {
+            Log.d("VideoHomeFragment", "Already loading videos, skipping")
             return
         }
 
-        // Cargar videos desde la base de datos usando VideoManager
+        isLoadingVideos = true
         lifecycleScope.launch {
             try {
-                // Limpiar la lista en el hilo principal para evitar problemas de concurrencia
+                Log.d("VideoHomeFragment", "Loading initial videos from Supabase (page 0)")
+
+                val (videos, total) = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.fetchVideosPaginated(
+                        limit = pageSize,
+                        offset = 0
+                    )
+                }
+
+                totalVideos = total
+                currentPage = 0
+                
                 withContext(Dispatchers.Main) {
                     videoList.clear()
-                    if (::videoAdapter.isInitialized) {
-                        videoAdapter.notifyDataSetChanged()
-                    }
-                }
-
-                Log.d("VideoHomeFragment", "Starting to load videos from database")
-
-                // Obtener todos los videos de la base de datos
-                val savedVideos = withContext(Dispatchers.IO) {
-                    videoManager.getAllVideos()
-                }
-                Log.d("VideoHomeFragment", "Retrieved ${savedVideos.size} videos from database")
-
-                // Log each video for debugging
-                savedVideos.forEachIndexed { index, video ->
-                    Log.d("VideoHomeFragment", "Video $index: ID=${video.id}, title='${video.title}', username='${video.username}', localPath='${video.localFilePath}', uriString='${video.videoUriString}'")
-                }
-
-                // Filtrar videos válidos y que NO sean por defecto
-                val playableVideos = savedVideos.filter { video ->
-                    val hasLocalFile = video.localFilePath != null && File(video.localFilePath).exists()
-                    val isNotDefaultTitle = !video.title.equals("mi video", ignoreCase = true) &&
-                            !video.title.equals("movideo", ignoreCase = true)
-
-                    Log.d("VideoHomeFragment", "Video '${video.title}': hasLocalFile=$hasLocalFile, isNotDefaultTitle=$isNotDefaultTitle")
-
-                    // For debugging, let's be less restrictive initially
-                    hasLocalFile || !video.videoUriString.isNullOrEmpty()
-                }
-
-                // Agregar videos en el hilo principal y notificar al adaptador
-                withContext(Dispatchers.Main) {
-                    videoList.addAll(playableVideos)
-                    Log.d("VideoHomeFragment", "Loaded ${playableVideos.size} playable videos from database")
-
-                    // Notificar al adaptador que los datos han cambiado
+                    videoList.addAll(videos)
+                    
                     if (::videoAdapter.isInitialized) {
                         videoAdapter.updateVideos(videoList)
-                        Log.d("VideoHomeFragment", "Updated video adapter with ${videoList.size} videos")
                     }
-
-                    // Si hay un video específico solicitado, intentar navegar a él
-                    if (targetVideoId != -1L && videoList.isNotEmpty()) {
-                        val targetIndex = videoList.indexOfFirst { it.id == targetVideoId }
-                        if (targetIndex != -1) {
-                            currentVideoIndex = targetIndex
-                            navigateToVideoIndex(targetIndex)
-                            Log.d("VideoHomeFragment", "Navigated to target video at index $targetIndex")
-                        } else {
-                            // Si no se encuentra por ID, intentar por título y usuario
-                            val fallbackIndex = videoList.indexOfFirst {
-                                it.title == targetVideoTitle && it.username == targetVideoUsername
-                            }
-                            if (fallbackIndex != -1) {
-                                currentVideoIndex = fallbackIndex
-                                navigateToVideoIndex(fallbackIndex)
-                                Log.d("VideoHomeFragment", "Navigated to fallback video at index $fallbackIndex")
-                            } else {
-                                // Si no se encuentra el video específico, mostrar el primero
-                                if (videoList.isNotEmpty()) {
-                                    // Video info is now handled by individual video items
-                                    // displayVideo(videoList[0]) - Removed 
-                                    Log.d("VideoHomeFragment", "Target video not found, first video will display automatically")
-                                } else {
-                                    Log.w("VideoHomeFragment", "No videos available to display after fallback search")
-                                }
-                            }
-                        }
-                    } else if (videoList.isNotEmpty()) {
-                        // Display the first video if available and no specific video requested
-                        // Video info is now handled by individual video items
-                        // displayVideo(videoList[0]) - Removed
-                        Log.d("VideoHomeFragment", "First video will display automatically: ${videoList[0].title}")
-                    } else {
-                        Log.w("VideoHomeFragment", "No videos available to display")
-                    }
-
-                    // Marcar que los videos han sido cargados
+                    
+                    Log.d("VideoHomeFragment", "Loaded ${videos.size} videos (total: $totalVideos)")
                     isVideosLoaded = true
                 }
 
             } catch (e: Exception) {
                 Log.e("VideoHomeFragment", "Error loading videos", e)
-                e.printStackTrace()
-                // Incluso en caso de error, marcar como cargado para evitar reintentos infinitos
-                isVideosLoaded = true
+                Toast.makeText(context, "Error cargando videos: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isLoadingVideos = false
+            }
+        }
+    }
+    
+    /**
+     * Carga 10 videos más desde Supabase (siguiente página)
+     */
+    private fun loadMoreVideos() {
+        if (isLoadingVideos) {
+            Log.d("VideoHomeFragment", "Already loading videos, skipping")
+            return
+        }
+
+        isLoadingVideos = true
+        lifecycleScope.launch {
+            try {
+                val nextPage = currentPage + 1
+                val offset = nextPage * pageSize
+                
+                Log.d("VideoHomeFragment", "Loading more videos from Supabase (page $nextPage, offset $offset)")
+
+                val (videos, _) = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.fetchVideosPaginated(
+                        limit = pageSize,
+                        offset = offset
+                    )
+                }
+
+                if (videos.isNotEmpty()) {
+                    currentPage = nextPage
+                    
+                    withContext(Dispatchers.Main) {
+                        val oldSize = videoList.size
+                        videoList.addAll(videos)
+                        
+                        if (::videoAdapter.isInitialized) {
+                            videoAdapter.notifyItemRangeInserted(oldSize, videos.size)
+                        }
+                        
+                        Log.d("VideoHomeFragment", "Loaded ${videos.size} more videos (total now: ${videoList.size}/$totalVideos)")
+                    }
+                } else {
+                    Log.d("VideoHomeFragment", "No more videos to load")
+                }
+
+            } catch (e: Exception) {
+                Log.e("VideoHomeFragment", "Error loading more videos", e)
+            } finally {
+                isLoadingVideos = false
             }
         }
     }    override fun onResume() {
         super.onResume()
-        // Solo recargar videos si ya se habían cargado antes (evita duplicación en primera carga)
+        // Recargar videos desde Supabase al volver al fragmento
         if (isVideosLoaded) {
-            Log.d("VideoHomeFragment", "onResume: Reloading videos due to fragment resume")
-            forceReloadVideos() // Forzar recarga al volver al fragmento
-        } else {
-            Log.d("VideoHomeFragment", "onResume: Skipping reload, videos not loaded yet")
+            Log.d("VideoHomeFragment", "onResume: Reloading videos from Supabase")
+            forceReloadVideos()
         }
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
-        // Resetear el flag cuando se destruye la vista
         isVideosLoaded = false
     }
 
-    // Método para forzar la recarga de videos
+    // Método para forzar la recarga de videos desde Supabase
     private fun forceReloadVideos() {
         isVideosLoaded = false
+        currentPage = 0
+        totalVideos = 0
         loadVideos()
     }
 
