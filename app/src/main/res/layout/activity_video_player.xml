@@ -51,6 +51,16 @@
                 android:src="@drawable/ic_arrow_back"
                 android:tint="#FFFFFF" />
 
+            <ImageView
+                android:id="@+id/btn_floating_mode"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginStart="8dp"
+                android:padding="2dp"
+                android:src="@drawable/ic_videos_icon"
+                android:tint="#FFFFFF"
+                android:contentDescription="Abrir en ventana flotante" />
+
             <TextView
                 android:id="@+id/titleText"
                 android:layout_width="0dp"

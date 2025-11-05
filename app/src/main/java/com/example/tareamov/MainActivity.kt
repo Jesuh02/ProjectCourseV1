@@ -1,5 +1,6 @@
 package com.example.tareamov
 //
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
@@ -171,6 +172,16 @@ class MainActivity : AppCompatActivity() {
         navGraph.setStartDestination(R.id.splashFragment)
         navController.graph = navGraph
 
+        // If the activity was launched with an intent asking to open VideoHomeFragment, navigate now
+        try {
+            val openHome = intent?.getBooleanExtra("open_video_home", false) ?: false
+            if (openHome) {
+                navController.navigate(R.id.videoHomeFragment)
+            }
+        } catch (t: Throwable) {
+            // ignore
+        }
+
        
         navController.addOnDestinationChangedListener { _, destination, _ ->
             // If we're coming from RegisterFragment and going to HomeFragment, redirect to LoginFragment
@@ -185,6 +196,52 @@ class MainActivity : AppCompatActivity() {
             // Add debug logging to track navigation
             println("Navigation: Navigated to ${destination.label}")
         }
+
+        // Optional: prepare floating player container (hidden by default)
+        // The floating player can be shown from anywhere via (activity as MainActivity).showFloatingPlayer(uri)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        try {
+            val path = intent.getStringExtra("floating_video_path")
+            if (!path.isNullOrEmpty()) {
+                showFloatingPlayer(path)
+            }
+            // handle navigation back to VideoHomeFragment requested by other activities
+            val openHome = intent.getBooleanExtra("open_video_home", false)
+            if (openHome) {
+                try {
+                    navController.navigate(R.id.videoHomeFragment)
+                } catch (t: Throwable) { t.printStackTrace() }
+            }
+        } catch (t: Throwable) {
+            t.printStackTrace()
+        }
+    }
+
+    // Public API to show an in-app floating video player. Pass a valid video URI string (file://, http://, content://)
+    fun showFloatingPlayer(videoUri: String) {
+        try {
+            val container = findViewById<android.view.ViewGroup>(R.id.floating_video_container)
+            // make container visible
+            container.visibility = android.view.View.VISIBLE
+            // add fragment into container
+            val frag = com.example.tareamov.ui.FloatingVideoPlayerFragment.newInstance(videoUri)
+            val tx = supportFragmentManager.beginTransaction()
+            tx.replace(R.id.floating_video_container, frag, "floating_player")
+            tx.commitAllowingStateLoss()
+        } catch (t: Throwable) {
+            t.printStackTrace()
+        }
+    }
+
+    // Called by FloatingVideoPlayerFragment when closed to hide container
+    fun onFloatingPlayerClosed() {
+        try {
+            val container = findViewById<android.view.ViewGroup>(R.id.floating_video_container)
+            container.visibility = android.view.View.GONE
+        } catch (t: Throwable) { /* ignore */ }
     }
 
     override fun onSupportNavigateUp(): Boolean {
