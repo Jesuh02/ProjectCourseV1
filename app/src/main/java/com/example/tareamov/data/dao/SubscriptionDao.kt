@@ -33,4 +33,21 @@ interface SubscriptionDao {
     // Add this method to get the total count of subscriptions
     @Query("SELECT COUNT(*) FROM subscriptions")
     suspend fun getSubscriptionCount(): Int
+
+    // Convenience methods for subscription management
+    suspend fun subscribeToCreator(subscriberUsername: String, creatorUsername: String) {
+        insertSubscription(Subscription(
+            subscriberUsername = subscriberUsername,
+            creatorUsername = creatorUsername,
+            subscriptionDate = System.currentTimeMillis()
+        ))
+    }
+
+    suspend fun unsubscribeFromCreator(subscriberUsername: String, creatorUsername: String) {
+        deleteSubscription(subscriberUsername, creatorUsername)
+    }
+
+    suspend fun isUserSubscribedToCreator(subscriberUsername: String, creatorUsername: String): Boolean {
+        return isSubscribed(subscriberUsername, creatorUsername)
+    }
 }

@@ -12,7 +12,251 @@ export class MCPService {
     this.ragService = new RAGService();
     this.supabase = SupabaseService.getInstance();
   }
+
+  /**
+   * Detect business / marketing intent keywords in the natural language query.
+   */
+  isBusinessIntent(query) {
+    if (!query) {
+      return false;
+    }
+
+    const keywords = [
+      'inteligencia',
+      'business intelligence',
+      'bi ',
+      'kpi',
+      'indicador',
+      'indicadores',
+      'marketing',
+      'growth',
+      'ventas',
+      'retencion',
+      'estrategia',
+      'funnel',
+      'conversion',
+      'campana',
+      'campaign'
+    ];
+
+    const lower = query.toLowerCase();
+    return keywords.some(keyword => lower.includes(keyword));
+  }
   
+  /**
+   * Build a curated data snapshot so the LLM always has real Supabase metrics.
+   */
+  async generateDataSnapshot(query, options = {}) {
+    const {
+      isBusinessQuestion = false,
+      reason = 'fallback'
+    } = options;
+
+    const sqlStatements = [];
+    const metrics = {};
+    const samples = {};
+    const insights = {};
+    const summary = [];
+
+    const countConfigs = [
+      { key: 'usuarios_total', table: 'usuarios' },
+      { key: 'courses_total', table: 'courses' },
+      { key: 'videos_total', table: 'videos' },
+      { key: 'subscriptions_total', table: 'subscriptions' },
+      { key: 'task_submissions_total', table: 'task_submissions' }
+    ];
+
+    for (const { key, table } of countConfigs) {
+      const sql = `SELECT COUNT(*) AS total FROM ${table}`;
+      sqlStatements.push(sql);
+
+      try {
+        const { count, error } = await this.supabase.client
+          .from(table)
+          .select('*', { head: true, count: 'exact' });
+
+        if (error) {
+          throw error;
+        }
+
+        metrics[key] = count ?? 0;
+      } catch (error) {
+        logger.warn(`Count query failed for ${key}: ${error.message}`);
+      }
+    }
+
+    const tablesToSample = ['usuarios', 'courses', 'videos', 'subscriptions', 'task_submissions', 'content_items'];
+    for (const table of tablesToSample) {
+      const sql = `SELECT * FROM ${table} LIMIT 5`;
+      sqlStatements.push(sql);
+
+      try {
+        const { data, error } = await this.supabase.client
+          .from(table)
+          .select('*')
+          .limit(5);
+
+        if (error) {
+          throw error;
+        }
+
+        if (data && data.length > 0) {
+          samples[table] = data;
+
+          // Capture a short preview for the summary (first row key metrics)
+          const preview = Array.isArray(data) && data[0] ? data[0] : null;
+          if (preview) {
+            const previewText = Object.entries(preview)
+              .slice(0, 3)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join(', ');
+            summary.push(`Muestra de ${table}: ${previewText}`);
+          }
+        }
+      } catch (error) {
+        logger.warn(`Sample query failed for ${table}: ${error.message}`);
+      }
+    }
+
+    if (isBusinessQuestion) {
+      const marketingConfigs = [
+        {
+          key: 'top_creators_by_courses',
+          table: 'courses',
+          candidateFields: ['creator_username', 'creatorUsername'],
+          canonicalField: 'creator_username',
+          countField: 'courses_count',
+          sql: 'SELECT creator_username, COUNT(*) AS courses_count FROM courses GROUP BY creator_username ORDER BY courses_count DESC LIMIT 5'
+        },
+        {
+          key: 'top_creators_by_videos',
+          table: 'videos',
+          candidateFields: ['username', 'creator_username', 'creatorUsername', 'uploader'],
+          canonicalField: 'username',
+          countField: 'videos_count',
+          sql: 'SELECT username, COUNT(*) AS videos_count FROM videos GROUP BY username ORDER BY videos_count DESC LIMIT 5'
+        },
+        {
+          key: 'subscribers_activity',
+          table: 'subscriptions',
+          candidateFields: ['subscriber_username', 'subscriberUsername'],
+          canonicalField: 'subscriber_username',
+          countField: 'subscriptions_count',
+          sql: 'SELECT subscriber_username, COUNT(*) AS subscriptions_count FROM subscriptions GROUP BY subscriber_username ORDER BY subscriptions_count DESC LIMIT 5'
+        }
+      ];
+
+      for (const config of marketingConfigs) {
+        sqlStatements.push(config.sql);
+
+        try {
+          let dataset = [];
+          let fieldFound = false;
+
+          for (const column of config.candidateFields) {
+            const { data, error } = await this.supabase.client
+              .from(config.table)
+              .select(column);
+
+            if (!error) {
+              dataset = Array.isArray(data) ? data : [];
+              fieldFound = true;
+              break;
+            }
+
+            logger.warn(`Column ${column} not available in ${config.table}: ${error.message}`);
+          }
+
+          if (!fieldFound) {
+            const { data, error } = await this.supabase.client
+              .from(config.table)
+              .select('*');
+
+            if (error) {
+              throw error;
+            }
+
+            dataset = Array.isArray(data) ? data : [];
+          }
+
+          if (dataset.length > 0) {
+            const aggregated = dataset.reduce((acc, row) => {
+              const value = config.candidateFields
+                .map(column => row[column])
+                .find(columnValue => typeof columnValue === 'string' && columnValue.trim().length > 0);
+
+              if (!value) {
+                return acc;
+              }
+
+              acc[value] = (acc[value] || 0) + 1;
+              return acc;
+            }, {});
+
+            const ranked = Object.entries(aggregated)
+              .map(([name, total]) => ({ [config.canonicalField]: name, [config.countField]: total }))
+              .sort((a, b) => b[config.countField] - a[config.countField])
+              .slice(0, 5);
+
+            if (ranked.length > 0) {
+              insights[config.key] = ranked;
+
+              const headline = ranked
+                .map(entry => {
+                  const name = entry[config.canonicalField];
+                  const total = entry[config.countField];
+                  return `${name}: ${total}`;
+                })
+                .join(', ');
+              summary.push(`Insight ${config.key}: ${headline}`);
+            }
+          }
+        } catch (error) {
+          logger.warn(`Marketing insight query failed for ${config.key}: ${error.message}`);
+        }
+      }
+    }
+
+    // Build headline summary from metrics if available
+    if (Object.keys(metrics).length > 0) {
+      summary.unshift(
+        `Totales — Usuarios: ${metrics.usuarios_total ?? 'N/D'}, Cursos: ${metrics.courses_total ?? 'N/D'}, Videos: ${metrics.videos_total ?? 'N/D'}, Suscripciones: ${metrics.subscriptions_total ?? 'N/D'}, Entregas de tareas: ${metrics.task_submissions_total ?? 'N/D'}`
+      );
+    }
+
+    const recommendedActions = [];
+    if (insights.top_creators_by_courses?.length) {
+      recommendedActions.push('Consolidar colaboraciones con los creadores con más cursos publicados para impulsar campañas conjuntas.');
+    }
+    if (insights.top_creators_by_videos?.length) {
+      recommendedActions.push('Reutilizar los videos de mayor volumen para anuncios o secuencias de email nurturing.');
+    }
+    if (insights.subscribers_activity?.length) {
+      recommendedActions.push('Segmentar comunicaciones personalizadas a los suscriptores más activos para mejorar retención.');
+    }
+
+    const snapshot = {
+      reason,
+      isBusinessQuestion,
+      query,
+      generated_at: new Date().toISOString(),
+      metrics,
+      samples,
+      insights,
+      summary,
+      recommended_actions: recommendedActions
+    };
+
+    if (!Object.keys(metrics).length && !Object.keys(samples).length && !Object.keys(insights).length) {
+      snapshot.note = 'No se pudieron recuperar datos en el snapshot automático. Revise la conexión con Supabase o refine la consulta.';
+    }
+
+    return {
+      data: snapshot,
+      sqlScript: sqlStatements.map(sql => `${sql};`).join('\n')
+    };
+  }
+
   /**
    * Process a query and return actual data from Supabase
    */
@@ -20,100 +264,72 @@ export class MCPService {
     try {
       const {
         includeRAG = true,
-        includeSchema = false,
-        maxTokens = 4000
+        includeSchema = false
       } = options;
-      
+
       logger.info(`Processing query: ${query.substring(0, 100)}...`);
       logger.info(`Full query length: ${query.length} characters`);
       logger.info(`Complete query: "${query}"`);
-      
-      // Extract SQL query from natural language
+
       const queryPlan = await this.extractSQLFromQuery(query);
-      logger.info(`Query plan generated:`, JSON.stringify(queryPlan));
-      
-      // Execute the SQL query
+      logger.info('Query plan generated:', JSON.stringify(queryPlan));
+
       let data = null;
       let sqlScript = null;
-      
+      let schemaDetails = null;
+
       if (queryPlan) {
         try {
-          const result = await this.executeQuery(queryPlan);
-          data = result.data;
-          sqlScript = result.sql;
-          logger.info(`SQL executed successfully. Data type: ${typeof data}, Array: ${Array.isArray(data)}, Length: ${Array.isArray(data) ? data.length : 'N/A'}`);
+          const execution = await this.executeQuery(queryPlan);
+          data = execution.data;
+          sqlScript = execution.sql;
         } catch (sqlError) {
-          logger.error('SQL execution error:', sqlError);
-          logger.error('Error stack:', sqlError.stack);
+          logger.error('SQL execution failed. Falling back to snapshot.', sqlError);
+          const fallback = await this.generateDataSnapshot(query, {
+            reason: 'execution-error',
+            isBusinessQuestion: this.isBusinessIntent(query)
+          });
+          data = fallback.data;
+          sqlScript = fallback.sqlScript;
         }
       } else {
-        // If no SQL plan generated, check if the user asked for Business Intelligence / KPIs / architecture
-        const lowerQ = (query || '').toLowerCase();
-        const biKeywords = ['inteligencia', 'inteligencia de negocio', 'inteligencia de negocios', 'business intelligence', 'kpi', 'kpis', 'indicadores'];
-        const askedForBI = biKeywords.some(k => lowerQ.includes(k));
+        const fallback = await this.generateDataSnapshot(query, {
+          reason: 'no-plan',
+          isBusinessQuestion: this.isBusinessIntent(query)
+        });
+        data = fallback.data;
+        sqlScript = fallback.sqlScript;
+      }
 
-        if (askedForBI) {
-          logger.info('Detected BI-style query; returning schema and BI suggestions instead of SQL plan');
-          try {
-            const schemaObj = await this.getDatabaseSchema();
-
-            // Build simple BI suggestions based on available tables/counts
-            let suggestions = [];
-            const tables = schemaObj && schemaObj.schema ? schemaObj.schema : schemaObj || {};
-
-            // Prioritize common BI candidates
-            if (tables['usuarios'] && tables['usuarios'].exists) {
-              suggestions.push('Usuarios: calcular tasa de crecimiento mensual, usuarios activos diarios (DAU), usuarios por rol.');
-            }
-            if (tables['courses'] && tables['courses'].exists) {
-              suggestions.push('Courses: top cursos por suscripciones, tasa de finalización, engagement por curso.');
-            }
-            if (tables['videos'] && tables['videos'].exists) {
-              suggestions.push('Videos: vistas por video, duración promedio, videos que generan más suscripciones.');
-            }
-            if (tables['subscriptions'] && tables['subscriptions'].exists) {
-              suggestions.push('Suscripciones: churn, nuevas suscripciones por periodo, revenue por suscripción (si aplica).');
-            }
-            if (tables['task_submissions'] && tables['task_submissions'].exists) {
-              suggestions.push('Tareas: completitud por estudiante, tiempos promedio de entrega, correlación con engagement.');
-            }
-
-            if (suggestions.length === 0) {
-              suggestions.push('Recomendar revisar tablas principales y definir KPIs basados en usuarios, contenido y actividad (suscripciones, tareas, interacciones).');
-            }
-
-            const biResponse = {
-              schema: tables,
-              bi_suggestions: suggestions,
-              note: 'This response contains the database schema and starter BI suggestions. Use an LLM or analyst to expand into KPIs, SQL examples and an implementation plan.'
-            };
-
-            data = biResponse;
-            sqlScript = null;
-          } catch (schemaErr) {
-            logger.error('Error fetching schema for BI response:', schemaErr);
-            // fall through to default no-plan behavior
-            logger.warn('No query plan generated for query:', query);
-          }
-        } else {
-          logger.warn('No query plan generated for query:', query);
+      if (includeSchema) {
+        try {
+          schemaDetails = await this.getDatabaseSchema();
+          logger.info('Schema snapshot attached to response');
+        } catch (schemaError) {
+          logger.error('Error fetching schema for response:', schemaError);
         }
       }
-      
-      // Prepare response
+
+      // Format the response with RAW DATA ONLY - let the LLM do the analysis
       const response = {
-        data: data,
+        data,
         sql_script: sqlScript,
-        query: query,
+        query,
         timestamp: new Date().toISOString(),
+        schema: schemaDetails,
         metadata: {
           ragEnabled: includeRAG,
-          success: data !== null
+          success: data !== null,
+          isBusinessQuestion: data?.isBusinessQuestion || false
         }
       };
+
+      // REMOVED: Automatic formatted_summary generation
+      // The LLM will now analyze raw data and generate its own narrative
+      // Old behavior: response.formatted_summary = this.buildMarketingSummary(data);
       
-      logger.info(`Query processed successfully. Returned ${data ? (Array.isArray(data) ? data.length : 1) : 0} records`);
-      
+      logger.info(`Query processed successfully. Returned RAW DATA for LLM analysis - ${data ? (Array.isArray(data) ? data.length : 1) : 0} records`);
+
       return response;
     } catch (error) {
       logger.error('Error processing query:', error);
@@ -136,6 +352,38 @@ export class MCPService {
         lowerQuery.startsWith('with ')) {
       logger.info('✅ Matched: raw_sql');
       return { operation: 'raw_sql', sql: query };
+    }
+    
+    // VS Code style enriched queries: detect JOIN instructions from LocalLlamaService
+    // Pattern: "rol|role" + "usuario|user" + "IMPORTANTE" + "LEFT JOIN" + "roles"
+    if ((lowerQuery.includes('rol') || lowerQuery.includes('role')) && 
+        (lowerQuery.includes('usuario') || lowerQuery.includes('user') || lowerQuery.includes('username')) &&
+        lowerQuery.includes('importante') && 
+        lowerQuery.includes('left join') && 
+        lowerQuery.includes('roles')) {
+      
+      // Extract username if specified (pattern: username = 'X' or usuario = 'X')
+      const usernameMatch = query.match(/(?:username|usuario)\s*[=:]\s*["']?(\w+)["']?/i);
+      const username = usernameMatch ? usernameMatch[1] : null;
+      
+      if (username) {
+        logger.info(`✅ Enriched role query detected for username: ${username}`);
+        const sql = `SELECT u.id, u.usuario, u.persona_id, u.rol_id, r.name AS rol_nombre, u.created_at FROM usuarios u LEFT JOIN roles r ON u.rol_id = r.id WHERE u.usuario = '${username}'`;
+        return { operation: 'raw_sql', sql };
+      }
+    }
+    
+    // Alternative pattern: simple "rol del usuario X" or "role of user X" (without IMPORTANTE)
+    if ((lowerQuery.includes('rol') || lowerQuery.includes('role')) && 
+        (lowerQuery.includes('usuario') || lowerQuery.includes('user') || lowerQuery.includes('username'))) {
+      
+      const usernameMatch = query.match(/(?:username|usuario)\s*[=:]\s*["']?(\w+)["']?/i);
+      if (usernameMatch) {
+        const username = usernameMatch[1];
+        logger.info(`✅ Role query detected for username: ${username}`);
+        const sql = `SELECT u.id, u.usuario, u.persona_id, u.rol_id, r.name AS rol_nombre, u.created_at FROM usuarios u LEFT JOIN roles r ON u.rol_id = r.id WHERE u.usuario = '${username}'`;
+        return { operation: 'raw_sql', sql };
+      }
     }
     
     // Pattern matching for common queries
@@ -586,6 +834,249 @@ ORDER BY u.id;
       throw error;
     }
   }
-}
 
-export default MCPService;
+  /**
+   * Build a narrative marketing summary from snapshot data
+   * Enhanced to provide VS Code-style comprehensive analysis
+   */
+  buildMarketingSummary(snapshot) {
+    const lines = [];
+    
+    lines.push('# 📊 Análisis Completo de Marketing e Inteligencia de Negocio - TareaMov\n');
+    lines.push(`**Fecha de análisis:** ${new Date(snapshot.generated_at).toLocaleString('es-ES')}`);
+    lines.push(`**Pregunta original:** ${snapshot.query}`);
+    lines.push(`**Fuente de datos:** Supabase (real-time)\n`);
+    
+    // Executive summary with business context
+    lines.push('## 📋 Resumen Ejecutivo — Objetivo y Contexto\n');
+    if (snapshot.summary && snapshot.summary.length > 0) {
+      snapshot.summary.forEach(item => lines.push(`- ${item}`));
+    } else {
+      lines.push('- Análisis de datos del sistema TareaMov para fundamentar estrategia de marketing');
+      lines.push('- Objetivo: Identificar oportunidades de crecimiento, engagement y monetización');
+    }
+    lines.push('- **Resultado esperado:** Dashboard ejecutivo con KPIs clave y plan de acción accionable\n');
+    
+    // Key metrics section (quantitative)
+    if (snapshot.metrics && Object.keys(snapshot.metrics).length > 0) {
+      lines.push('## 🎯 Métricas Clave del Sistema\n');
+      lines.push('### Población de Usuarios y Contenido');
+      lines.push(`- **Usuarios totales:** ${snapshot.metrics.usuarios_total ?? 0}`);
+      lines.push(`- **Cursos publicados:** ${snapshot.metrics.courses_total ?? 0}`);
+      lines.push(`- **Videos disponibles:** ${snapshot.metrics.videos_total ?? 0}`);
+      lines.push(`- **Suscripciones activas:** ${snapshot.metrics.subscriptions_total ?? 0}`);
+      lines.push(`- **Tareas entregadas:** ${snapshot.metrics.task_submissions_total ?? 0}\n`);
+    }
+    
+    // Insights section with actionable intelligence
+    if (snapshot.insights && Object.keys(snapshot.insights).length > 0) {
+      lines.push('## 💡 Insights de Negocio (Top Performers)\n');
+      
+      if (snapshot.insights.top_creators_by_courses && snapshot.insights.top_creators_by_courses.length > 0) {
+        lines.push('### Top Creadores por Cursos');
+        snapshot.insights.top_creators_by_courses.slice(0, 5).forEach((creator, idx) => {
+          lines.push(`${idx + 1}. **${creator.creator_username}** — ${creator.courses_count} cursos`);
+        });
+        lines.push('');
+      }
+      
+      if (snapshot.insights.top_creators_by_videos && snapshot.insights.top_creators_by_videos.length > 0) {
+        lines.push('### Top Creadores por Videos');
+        snapshot.insights.top_creators_by_videos.slice(0, 5).forEach((creator, idx) => {
+          lines.push(`${idx + 1}. **${creator.username}** — ${creator.videos_count} videos`);
+        });
+        lines.push('');
+      }
+      
+      if (snapshot.insights.subscribers_activity && snapshot.insights.subscribers_activity.length > 0) {
+        lines.push('### Suscriptores Más Activos');
+        snapshot.insights.subscribers_activity.slice(0, 5).forEach((sub, idx) => {
+          lines.push(`${idx + 1}. **${sub.subscriber_username}** — ${sub.subscriptions_count} suscripciones`);
+        });
+        lines.push('');
+      }
+    }
+    
+    // Critical decisions and priorities
+    lines.push('## 🚨 Decisiones Críticas a Tomar Ahora\n');
+    lines.push('### 1. Segmentación y Personalización');
+    lines.push('   - Crear segmentos: power users, activos, inactivos, nuevos');
+    lines.push('   - Configurar campañas personalizadas por segmento');
+    lines.push('   - **Owner:** Marketing Lead | **Timeline:** Semana 1-2\n');
+    lines.push('### 2. Monetización y Pricing');
+    lines.push('   - Validar modelo actual (suscripciones vs. pago por curso)');
+    lines.push('   - Implementar A/B testing en precios para 2 cohortes');
+    lines.push('   - **Owner:** Product/Growth | **Timeline:** Semana 2-3\n');
+    lines.push('### 3. Retención y Engagement');
+    lines.push('   - Mejorar onboarding (primer video, primer task)');
+    lines.push('   - Implementar notificaciones y email nurturing');
+    lines.push('   - **Owner:** Product + CS | **Timeline:** Semana 3-4\n');
+    lines.push('### 4. Content Strategy');
+    lines.push('   - Promover top cursos/videos (los que generan más engagement)');
+    lines.push('   - Incentivar a top creadores con programa de afiliados');
+    lines.push('   - **Owner:** Content Team | **Timeline:** Ongoing\n');
+    lines.push('### 5. Data Infrastructure y BI');
+    lines.push('   - Construir dashboard ejecutivo (MRR, DAU/MAU, churn, conversión)');
+    lines.push('   - Automatizar ETL diario para KPIs críticos');
+    lines.push('   - **Owner:** Data/Engineering | **Timeline:** Mes 1\n');
+    
+    // Recommended actions (tactical)
+    if (snapshot.recommended_actions && snapshot.recommended_actions.length > 0) {
+      lines.push('## ✅ Acciones Recomendadas (Tácticas Concretas)\n');
+      snapshot.recommended_actions.forEach((action, idx) => {
+        lines.push(`${idx + 1}. ${action}`);
+      });
+      lines.push('');
+    }
+    
+    // KPIs prioritized (what to measure)
+    lines.push('## 📈 KPIs Priorizados (Top 6)\n');
+    lines.push('1. **MRR (Monthly Recurring Revenue)**: Ingresos recurrentes mensuales de suscripciones');
+    lines.push('   - Fórmula: SUM(subscriptions.price WHERE status=active)');
+    lines.push('   - Target: Crecimiento 15-20% mes a mes\n');
+    lines.push('2. **DAU/MAU Ratio**: Engagement de usuarios activos');
+    lines.push('   - Fórmula: COUNT(DISTINCT usuarios activos hoy) / COUNT(DISTINCT usuarios activos este mes)');
+    lines.push('   - Target: >20% (indica alta retención)\n');
+    lines.push('3. **Conversion Rate (Free → Pay)**: Tasa de conversión a pago');
+    lines.push('   - Fórmula: COUNT(nuevos suscriptores) / COUNT(nuevos usuarios registrados) * 100');
+    lines.push('   - Target: >5% en primeros 30 días\n');
+    lines.push('4. **Churn Rate**: Tasa de cancelación mensual');
+    lines.push('   - Fórmula: COUNT(suscripciones canceladas este mes) / COUNT(suscripciones activas inicio mes) * 100');
+    lines.push('   - Target: <5% mensual\n');
+    lines.push('5. **ARPU (Average Revenue Per User)**: Ingreso promedio por usuario');
+    lines.push('   - Fórmula: Total revenue / Total active users');
+    lines.push('   - Benchmark: Varía por mercado (curso online ~$15-50/mes)\n');
+    lines.push('6. **Content Engagement Rate**: Engagement con contenido');
+    lines.push('   - Fórmula: (Video views + Task submissions) / Total usuarios activos');
+    lines.push('   - Target: >3 interacciones por usuario/semana\n');
+    
+    // BI Architecture suggestion
+    lines.push('## 🏗️ Arquitectura BI Sugerida (MVP — 4 semanas)\n');
+    lines.push('### Ingest');
+    lines.push('- **Source:** Supabase (Postgres) con Change Data Capture (CDC)');
+    lines.push('- **Events:** Instrumentar login, video_play, course_enroll, purchase, subscription_cancel\n');
+    lines.push('### Storage/Transformation');
+    lines.push('- **Raw Layer:** Tablas originales en Supabase');
+    lines.push('- **Analytics Layer:** Vistas materializadas o tablas agregadas:');
+    lines.push('  - `daily_users_agg` (DAU, MAU, new users)');
+    lines.push('  - `monthly_revenue_agg` (MRR, ARPU, churn)');
+    lines.push('  - `content_performance_agg` (views, completions, ratings por curso/video)');
+    lines.push('  - `cohort_retention_agg` (retención 1/7/30/90 días)\n');
+    lines.push('### Orchestration');
+    lines.push('- **Tool:** Cron jobs (simple) o Airflow (escalable)');
+    lines.push('- **Schedule:** Refresh diario a las 2 AM para KPIs críticos\n');
+    lines.push('### Visualization');
+    lines.push('- **Tool:** Metabase (open-source, fácil) o Looker/PowerBI (enterprise)');
+    lines.push('- **Dashboards:**');
+    lines.push('  - Executive Dashboard (MRR, nuevos suscriptores, churn, ARPU)');
+    lines.push('  - Growth Dashboard (CAC, conversion funnel, cohort retention)');
+    lines.push('  - Content Performance (top cursos/videos, engagement)\n');
+    lines.push('### Access');
+    lines.push('- **Users:** Exec team (solo lectura), Growth/Marketing (interactivo)');
+    lines.push('- **API:** REST endpoints para integrar KPIs en producto\n');
+    
+    // SQL queries (actionable)
+    lines.push('## 💻 Ejemplos de SQL para Ejecutar Ahora\n');
+    lines.push('```sql');
+    lines.push('-- 1. Ingresos por mes (últimos 12 meses)');
+    lines.push('SELECT date_trunc(\'month\', created_at) AS mes,');
+    lines.push('       SUM(price) AS ingresos,');
+    lines.push('       COUNT(*) AS num_subscriptions');
+    lines.push('FROM subscriptions');
+    lines.push('WHERE status IN (\'active\', \'paid\')');
+    lines.push('GROUP BY 1 ORDER BY 1 DESC LIMIT 12;');
+    lines.push('');
+    lines.push('-- 2. Top 10 cursos por número de videos');
+    lines.push('SELECT c.id, c.title, c.creator_username,');
+    lines.push('       COUNT(v.id) AS num_videos');
+    lines.push('FROM courses c');
+    lines.push('LEFT JOIN videos v ON v.course_id = c.id');
+    lines.push('GROUP BY c.id, c.title, c.creator_username');
+    lines.push('ORDER BY num_videos DESC LIMIT 10;');
+    lines.push('');
+    lines.push('-- 3. Usuarios sin actividad reciente (inactivos >30 días)');
+    lines.push('SELECT u.id, u.usuario, u.created_at,');
+    lines.push('       MAX(COALESCE(cm.created_at, ts.submitted_at)) AS last_activity');
+    lines.push('FROM usuarios u');
+    lines.push('LEFT JOIN chat_messages cm ON cm.user_id = u.id');
+    lines.push('LEFT JOIN task_submissions ts ON ts.user_id = u.id');
+    lines.push('GROUP BY u.id, u.usuario, u.created_at');
+    lines.push('HAVING MAX(COALESCE(cm.created_at, ts.submitted_at)) < NOW() - INTERVAL \'30 days\'');
+    lines.push('   OR MAX(COALESCE(cm.created_at, ts.submitted_at)) IS NULL;');
+    lines.push('');
+    lines.push('-- 4. Cohort retention simple (mes de registro vs. mes de actividad)');
+    lines.push('WITH cohorts AS (');
+    lines.push('  SELECT id, date_trunc(\'month\', created_at) AS cohort_month');
+    lines.push('  FROM usuarios');
+    lines.push(')');
+    lines.push('SELECT cohort_month,');
+    lines.push('       date_trunc(\'month\', cm.created_at) AS activity_month,');
+    lines.push('       COUNT(DISTINCT u.id) AS active_users');
+    lines.push('FROM usuarios u');
+    lines.push('JOIN cohorts c ON u.id = c.id');
+    lines.push('LEFT JOIN chat_messages cm ON cm.user_id = u.id');
+    lines.push('GROUP BY cohort_month, activity_month');
+    lines.push('ORDER BY cohort_month, activity_month;');
+    lines.push('');
+    lines.push('-- 5. Engagement rate (interacciones por usuario)');
+    lines.push('SELECT u.id, u.usuario,');
+    lines.push('       COUNT(DISTINCT cm.id) AS num_messages,');
+    lines.push('       COUNT(DISTINCT ts.id) AS num_task_submissions,');
+    lines.push('       COUNT(DISTINCT cm.id) + COUNT(DISTINCT ts.id) AS total_interactions');
+    lines.push('FROM usuarios u');
+    lines.push('LEFT JOIN chat_messages cm ON cm.user_id = u.id');
+    lines.push('LEFT JOIN task_submissions ts ON ts.user_id = u.id');
+    lines.push('GROUP BY u.id, u.usuario');
+    lines.push('ORDER BY total_interactions DESC LIMIT 20;');
+    lines.push('```\n');
+    
+    // Marketing strategies
+    lines.push('## 🚀 Estrategias de Marketing Sugeridas (90 días)\n');
+    lines.push('### Semana 1-2: Fundación y Segmentación');
+    lines.push('- [ ] Auditar datos actuales y confirmar calidad (verificar contraseñas hasheadas, etc.)');
+    lines.push('- [ ] Crear segmentos de usuarios: power users, activos, inactivos, nuevos');
+    lines.push('- [ ] Definir KPIs críticos y configurar tracking de eventos\n');
+    lines.push('### Semana 3-4: Activación y Re-engagement');
+    lines.push('- [ ] Lanzar campaña de re-engagement por email para usuarios inactivos (>30 días)');
+    lines.push('- [ ] Implementar onboarding mejorado (primer video guiado, primer task con recompensa)');
+    lines.push('- [ ] A/B test en copy de landing page para mejorar conversión free→trial\n');
+    lines.push('### Mes 2: Monetización y Growth');
+    lines.push('- [ ] A/B test de pricing en 2 cohortes (ej. $9.99 vs. $14.99/mes)');
+    lines.push('- [ ] Lanzar programa de afiliados para top creadores (comisión por referidos)');
+    lines.push('- [ ] Crear bundles de cursos populares con descuento para aumentar ticket promedio\n');
+    lines.push('### Mes 3: Optimización y Scale');
+    lines.push('- [ ] Automatizar ETL y dashboards de KPIs críticos (refresh diario)');
+    lines.push('- [ ] Analizar cohort retention y ajustar estrategias por cohorte');
+    lines.push('- [ ] Lanzar campañas de paid acquisition en canales con mejor LTV/CAC\n');
+    
+    // Risks and mitigations
+    lines.push('## ⚠️ Riesgos y Mitigaciones\n');
+    lines.push('### Riesgo 1: Datos incompletos o de mala calidad');
+    lines.push('- **Mitigación:** Auditar datos ahora, configurar validaciones y tests de calidad\n');
+    lines.push('### Riesgo 2: Baja población de usuarios (dataset pequeño)');
+    lines.push('- **Mitigación:** Si es entorno de prueba, poblar con datos sintéticos realistas para validar dashboards\n');
+    lines.push('### Riesgo 3: Falta de eventos de actividad (login, video_play, etc.)');
+    lines.push('- **Mitigación:** Instrumentar eventos clave en la app lo antes posible\n');
+    lines.push('### Riesgo 4: Churn alto o conversión baja');
+    lines.push('- **Mitigación:** Implementar análisis de cohortes, encuestas de salida, mejorar producto\n');
+    
+    // Immediate action
+    lines.push('## 🎯 Acción Inmediata Sugerida\n');
+    lines.push('**Ejecutar las 5 consultas SQL de arriba** para:');
+    lines.push('1. Validar si hay datos suficientes de ingresos, actividad, cohorts');
+    lines.push('2. Identificar vacíos críticos (ej. tabla de payments faltante)');
+    lines.push('3. Confirmar top creadores/cursos y usuarios power\n');
+    lines.push('Una vez confirmados los datos, **crear un dashboard MVP en Metabase** con:');
+    lines.push('- MRR actual y tendencia (últimos 6 meses)');
+    lines.push('- DAU/MAU ratio');
+    lines.push('- Top 10 cursos por engagement');
+    lines.push('- Cohort retention (simple)\n');
+    lines.push('---\n');
+    lines.push('💬 **¿Necesitas más detalles?** Pregunta:');
+    lines.push('- "Ejecuta las consultas SQL sugeridas y muéstrame los resultados"');
+    lines.push('- "Dame el plan detallado de implementación del dashboard BI"');
+    lines.push('- "¿Cómo configuro el tracking de eventos en mi app?"');
+    
+    return lines.join('\n');
+  }
+}

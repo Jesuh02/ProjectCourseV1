@@ -1693,7 +1693,7 @@ $tableList
     /**
      * Check the status of the Ollama server
      */
-    private fun checkServerStatus(): String {
+    private suspend fun checkServerStatus(): String {
         return try {
             val isRunning = mspClient.isServerRunning()
             if (isRunning) {

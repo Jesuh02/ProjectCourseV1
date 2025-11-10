@@ -63,7 +63,7 @@ class CourseDetailFragment : Fragment() {
     private lateinit var sessionManager: SessionManager
     private lateinit var bottomNavBinding: ComponentBottomNavigationBinding
 
-    // Views for course creator info
+    // Views for course creator info - Moved to ExploreFragment cards (keeping as placeholders to prevent compilation errors)
     private lateinit var creatorInfoContainer: View
     private lateinit var creatorAvatarImageView: CircleImageView
     private lateinit var creatorUsernameTextView: TextView
@@ -139,12 +139,12 @@ class CourseDetailFragment : Fragment() {
         val backButton = view.findViewById<ImageButton>(R.id.backButton)
         courseActionBar = view.findViewById(R.id.courseActionBar) // Initialize courseActionBar
 
-        // Initialize creator info views
-        creatorInfoContainer = view.findViewById(R.id.creatorInfoContainer)
-        creatorAvatarImageView = view.findViewById(R.id.creatorAvatarImageView)
-        creatorUsernameTextView = view.findViewById(R.id.creatorUsernameTextView)
-        subscriberCountTextView = view.findViewById(R.id.subscriberCountTextView)
-        subscribeButton = view.findViewById(R.id.subscribeButton)
+        // Initialize creator info views - Creating placeholder views to prevent compilation errors (functionality moved to ExploreFragment cards)
+        creatorInfoContainer = View(requireContext())
+        creatorAvatarImageView = de.hdodenhof.circleimageview.CircleImageView(requireContext())
+        creatorUsernameTextView = TextView(requireContext())
+        subscriberCountTextView = TextView(requireContext())
+        subscribeButton = Button(requireContext())
 
         // Initialize payment container and button
         val paymentButtonContainer = view.findViewById<FrameLayout>(R.id.paymentButtonContainer)
@@ -156,18 +156,33 @@ class CourseDetailFragment : Fragment() {
         tabTareas = view.findViewById(R.id.tabTareas)
         //  continueWatchingContainer = view.findViewById(R.id.continueWatchingContainer) // Initialization
 
-        // Set up tab click listeners
+        // Set up tab click listeners with ultra-fast filtering
         tabDocumentos.setOnClickListener {
-            currentTab = "documentos"
-            updateTabSelection()
-            loadCourseDetails() // Reload with filter applied
+            if (currentTab != "documentos") {
+                currentTab = "documentos"
+                updateTabSelection()
+                if (cachedTopicsData.isNotEmpty()) {
+                    filterContentUltraFast()
+                } else {
+                    loadCourseDetails()
+                }
+            }
         }
 
         tabTareas.setOnClickListener {
-            currentTab = "tareas"
-            updateTabSelection()
-            loadCourseDetails() // Reload with filter applied
+            if (currentTab != "tareas") {
+                currentTab = "tareas"
+                updateTabSelection()
+                if (cachedTopicsData.isNotEmpty()) {
+                    filterContentUltraFast()
+                } else {
+                    loadCourseDetails()
+                }
+            }
         }
+
+        // Initialize visual selection to match currentTab and our stateful selectors
+        updateTabSelection()
 
         // Add a button to create new topics
         val addTopicButton = view.findViewById<Button>(R.id.addTopicButton)
@@ -199,21 +214,21 @@ class CourseDetailFragment : Fragment() {
 
         backButton.setOnClickListener {
             findNavController().navigateUp()
-        }        // Set up subscribe button click listener
-        subscribeButton.setOnClickListener {
-            handleSubscription()
-        }
+        }        // Set up subscribe button click listener - Moved to ExploreFragment cards
+        // subscribeButton.setOnClickListener {
+        //     handleSubscription()
+        // }
 
-        // Set up creator username click listener to navigate to user profile view
-        creatorUsernameTextView.setOnClickListener {
-            val username = creatorUsernameTextView.text.toString()
-            if (username.isNotEmpty()) {
-                val bundle = Bundle().apply {
-                    putString("username", username)
-                }
-                findNavController().navigate(R.id.action_courseDetailFragment_to_userProfileViewFragment, bundle)
-            }
-        }
+        // Set up creator username click listener to navigate to user profile view - Moved to ExploreFragment cards  
+        // creatorUsernameTextView.setOnClickListener {
+        //     val username = creatorUsernameTextView.text.toString()
+        //     if (username.isNotEmpty()) {
+        //         val bundle = Bundle().apply {
+        //             putString("username", username)
+        //         }
+        //         findNavController().navigate(R.id.action_courseDetailFragment_to_userProfileViewFragment, bundle)
+        //     }
+        // }
 
         if (courseId != -1L) {
             loadCourseDetails()
@@ -366,123 +381,123 @@ class CourseDetailFragment : Fragment() {
         // Load course details
         courseViewModel.getCourseById(courseId)
 
-        // Set up subscribe button click listener
-        subscribeButton.setOnClickListener {
-        lifecycleScope.launch {
-            try {
-                val remoteCourse = syncRepository.fetchCourseById(courseId)
-                val remoteCreator = remoteCourse?.creatorUsername?.trim()
-                val currentUser = sessionManager.getUsername()?.trim()
-                val isOwner = !remoteCreator.isNullOrBlank() && !currentUser.isNullOrBlank() && remoteCreator.equals(currentUser, ignoreCase = true)
-
-                withContext(Dispatchers.Main) {
-                    if (isOwner) {
-                        editCourseButton.visibility = View.VISIBLE
-                        courseTitleTextView.isClickable = true
-                    } else {
-                        editCourseButton.visibility = View.GONE
-                        courseTitleTextView.isClickable = false
-                    }
-                }
-            } catch (e: Exception) {
-                // On error, fall back to local check: show edit only if session username equals local course creator
-                try {
-                    val localCourse = AppDatabase.getDatabase(requireContext()).courseDao().getCourseById(courseId)
-                    val localCreator = localCourse?.creatorUsername?.trim()
-                    val currentUser = sessionManager.getUsername()?.trim()
-                    val isOwnerLocal = !localCreator.isNullOrBlank() && !currentUser.isNullOrBlank() && localCreator.equals(currentUser, ignoreCase = true)
-                    withContext(Dispatchers.Main) {
-                        if (isOwnerLocal) {
-                            editCourseButton.visibility = View.VISIBLE
-                            courseTitleTextView.isClickable = true
-                        } else {
-                            editCourseButton.visibility = View.GONE
-                            courseTitleTextView.isClickable = false
-                        }
-                    }
-                } catch (ex: Exception) {
-                    // If even local check fails, keep edit hidden
-                    withContext(Dispatchers.Main) {
-                        editCourseButton.visibility = View.GONE
-                        courseTitleTextView.isClickable = false
-                    }
-                }
-            }
-        }
-            if (!sessionManager.isLoggedIn()) {
-                Toast.makeText(requireContext(), "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
-                findNavController().navigate(R.id.loginFragment)
-                return@setOnClickListener
-            }
-
-            lifecycleScope.launch {
-                val username = sessionManager.getUsername() ?: return@launch
-                val creator = courseCreatorUsername ?: return@launch
-
-                // Check remote subscription state first
-                var remoteSubscribed = false
-                try {
-                    val act = requireActivity()
-                    if (act is MainActivity) {
-                        remoteSubscribed = withContext(Dispatchers.IO) { act.syncRepository.isSubscribedRemote(username, creator) }
-                    }
-                } catch (e: Exception) {
-                    Log.w("CourseDetailFragment", "Remote isSubscribed check failed", e)
-                }
-
-                if (!remoteSubscribed) {
-                    // Subscribe remotely
-                    val sub = Subscription(subscriberUsername = username, creatorUsername = creator, subscriptionDate = System.currentTimeMillis())
-                    var ok = false
-                    try {
-                        val act = requireActivity()
-                        if (act is MainActivity) {
-                            ok = withContext(Dispatchers.IO) { act.syncRepository.insertSubscriptionRemote(sub) }
-                        }
-                    } catch (e: Exception) {
-                        Log.w("CourseDetailFragment", "Remote subscribe failed", e)
-                    }
-
-                    if (ok) {
-                        // Persist locally as well
-                        withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().insertSubscription(sub) }
-                        isSubscribed = true
-                        // Increase UI count by 1
-                        val currentCount = try { Integer.parseInt(subscriberCountTextView.text.toString().filter { it.isDigit() }) } catch (t: Exception) { -1 }
-                        // We will re-fetch accurate count below; update UI state
-                        updateSubscribeButtonState(true)
-                        Toast.makeText(requireContext(), "Te has suscrito al curso exitosamente", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(requireContext(), "No se pudo suscribir (error de red)", Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    // Already subscribed remotely -> unsubscribe
-                    var ok = false
-                    try {
-                        val act = requireActivity()
-                        if (act is MainActivity) {
-                            ok = withContext(Dispatchers.IO) { act.syncRepository.deleteSubscriptionRemote(username, creator) }
-                        }
-                    } catch (e: Exception) {
-                        Log.w("CourseDetailFragment", "Remote unsubscribe failed", e)
-                    }
-
-                    if (ok) {
-                        // Remove local record
-                        withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().deleteSubscription(username, creator) }
-                        isSubscribed = false
-                        updateSubscribeButtonState(false)
-                        Toast.makeText(requireContext(), "Se ha desuscrito del curso", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(requireContext(), "No se pudo desuscribir (error de red)", Toast.LENGTH_SHORT).show()
-                    }
-                }
-
-                // Refresh subscriber count from local DAO (or optionally from Supabase)
-                val newCount = withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().getSubscriptionCountForCreator(creator) }
-                subscriberCountTextView.text = formatSubscriberCount(newCount)
-            }
-        }
+        // Set up subscribe button click listener - Moved to ExploreFragment cards
+        // subscribeButton.setOnClickListener {
+        // lifecycleScope.launch {
+        //     try {
+        //         val remoteCourse = syncRepository.fetchCourseById(courseId)
+        //         val remoteCreator = remoteCourse?.creatorUsername?.trim()
+        //         val currentUser = sessionManager.getUsername()?.trim()
+        //         val isOwner = !remoteCreator.isNullOrBlank() && !currentUser.isNullOrBlank() && remoteCreator.equals(currentUser, ignoreCase = true)
+        //
+        //         withContext(Dispatchers.Main) {
+        //             if (isOwner) {
+        //                 editCourseButton.visibility = View.VISIBLE
+        //                 courseTitleTextView.isClickable = true
+        //             } else {
+        //                 editCourseButton.visibility = View.GONE
+        //                 courseTitleTextView.isClickable = false
+        //             }
+        //         }
+        //     } catch (e: Exception) {
+        //         // On error, fall back to local check: show edit only if session username equals local course creator
+        //         try {
+        //             val localCourse = AppDatabase.getDatabase(requireContext()).courseDao().getCourseById(courseId)
+        //             val localCreator = localCourse?.creatorUsername?.trim()
+        //             val currentUser = sessionManager.getUsername()?.trim()
+        //             val isOwnerLocal = !localCreator.isNullOrBlank() && !currentUser.isNullOrBlank() && localCreator.equals(currentUser, ignoreCase = true)
+        //             withContext(Dispatchers.Main) {
+        //                 if (isOwnerLocal) {
+        //                     editCourseButton.visibility = View.VISIBLE
+        //                     courseTitleTextView.isClickable = true
+        //                 } else {
+        //                     editCourseButton.visibility = View.GONE
+        //                     courseTitleTextView.isClickable = false
+        //                 }
+        //             }
+        //         } catch (ex: Exception) {
+        //             // If even local check fails, keep edit hidden
+        //             withContext(Dispatchers.Main) {
+        //                 editCourseButton.visibility = View.GONE
+        //                 courseTitleTextView.isClickable = false
+        //             }
+        //         }
+        //     }
+        // }
+        //     if (!sessionManager.isLoggedIn()) {
+        //         Toast.makeText(requireContext(), "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
+        //         findNavController().navigate(R.id.loginFragment)
+        //         return@setOnClickListener
+        //     }
+        //
+        //     lifecycleScope.launch {
+        //         val username = sessionManager.getUsername() ?: return@launch
+        //         val creator = courseCreatorUsername ?: return@launch
+        //
+        //         // Check remote subscription state first
+        //         var remoteSubscribed = false
+        //         try {
+        //             val act = requireActivity()
+        //             if (act is MainActivity) {
+        //                 remoteSubscribed = withContext(Dispatchers.IO) { act.syncRepository.isSubscribedRemote(username, creator) }
+        //             }
+        //         } catch (e: Exception) {
+        //             Log.w("CourseDetailFragment", "Remote isSubscribed check failed", e)
+        //         }
+        //
+        //         if (!remoteSubscribed) {
+        //             // Subscribe remotely
+        //             val sub = Subscription(subscriberUsername = username, creatorUsername = creator, subscriptionDate = System.currentTimeMillis())
+        //             var ok = false
+        //             try {
+        //                 val act = requireActivity()
+        //                 if (act is MainActivity) {
+        //                     ok = withContext(Dispatchers.IO) { act.syncRepository.insertSubscriptionRemote(sub) }
+        //                 }
+        //             } catch (e: Exception) {
+        //                 Log.w("CourseDetailFragment", "Remote subscribe failed", e)
+        //             }
+        //
+        //             if (ok) {
+        //                 // Persist locally as well
+        //                 withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().insertSubscription(sub) }
+        //                 isSubscribed = true
+        //                 // Increase UI count by 1
+        //                 // val currentCount = try { Integer.parseInt(subscriberCountTextView.text.toString().filter { it.isDigit() }) } catch (t: Exception) { -1 }
+        //                 // We will re-fetch accurate count below; update UI state
+        //                 // updateSubscribeButtonState(true)
+        //                 Toast.makeText(requireContext(), "Te has suscrito al curso exitosamente", Toast.LENGTH_SHORT).show()
+        //             } else {
+        //                 Toast.makeText(requireContext(), "No se pudo suscribir (error de red)", Toast.LENGTH_SHORT).show()
+        //             }
+        //         } else {
+        //             // Already subscribed remotely -> unsubscribe
+        //             var ok = false
+        //             try {
+        //                 val act = requireActivity()
+        //                 if (act is MainActivity) {
+        //                     ok = withContext(Dispatchers.IO) { act.syncRepository.deleteSubscriptionRemote(username, creator) }
+        //                 }
+        //             } catch (e: Exception) {
+        //                 Log.w("CourseDetailFragment", "Remote unsubscribe failed", e)
+        //             }
+        //
+        //             if (ok) {
+        //                 // Remove local record
+        //                 withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().deleteSubscription(username, creator) }
+        //                 isSubscribed = false
+        //                 // updateSubscribeButtonState(false)
+        //                 Toast.makeText(requireContext(), "Se ha desuscrito del curso", Toast.LENGTH_SHORT).show()
+        //             } else {
+        //                 Toast.makeText(requireContext(), "No se pudo desuscribir (error de red)", Toast.LENGTH_SHORT).show()
+        //             }
+        //         }
+        //
+        //         // Refresh subscriber count from local DAO (or optionally from Supabase)
+        //         // val newCount = withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().getSubscriptionCountForCreator(creator) }
+        //         // subscriberCountTextView.text = formatSubscriberCount(newCount)
+        //     }
+        // }
         
         // Setup bottom navigation
         setupBottomNavigation(view)
@@ -703,7 +718,7 @@ class CourseDetailFragment : Fragment() {
                             isSubscribed = isSubscribed
                         )
 
-                        creatorInfoContainer.visibility = View.VISIBLE
+                        // creatorInfoContainer.visibility = View.VISIBLE // Moved to ExploreFragment cards
                         Log.d("CourseDetailFragment", "Initializing student progress: courseId=$effectiveCourseId username=$currentUsername isCreator=$isCurrentUserCreator")
                         initializeAndLoadCourseProgress(
                             courseId = effectiveCourseId,
@@ -711,7 +726,7 @@ class CourseDetailFragment : Fragment() {
                             isCurrentUserCreator = isCurrentUserCreator
                         )
                     } else {
-                        creatorInfoContainer.visibility = View.GONE
+                        // creatorInfoContainer.visibility = View.GONE // Moved to ExploreFragment cards
                     }
                 } else {
                     // Fallback: load local course info from courseDao
@@ -750,7 +765,7 @@ class CourseDetailFragment : Fragment() {
                             isSubscribed = isSubscribed
                         )
 
-                        creatorInfoContainer.visibility = View.VISIBLE
+                        // creatorInfoContainer.visibility = View.VISIBLE // Moved to ExploreFragment cards
 
                         // Initialize and load course progress for non-creator users
                         Log.d("CourseDetailFragment", "Initializing student progress (local fallback): courseId=$courseId username=$currentUsername isCreator=$isCurrentUserCreator")
@@ -760,7 +775,7 @@ class CourseDetailFragment : Fragment() {
                             isCurrentUserCreator = isCurrentUserCreator
                         )
                     } else {
-                        creatorInfoContainer.visibility = View.GONE
+                        // creatorInfoContainer.visibility = View.GONE // Moved to ExploreFragment cards
                     }
                 }
 
@@ -898,31 +913,31 @@ class CourseDetailFragment : Fragment() {
             }
 
             if (personaFromRemote != null || usuarioFromRemote != null) {
-                // Build UI using remote data (persona preferred for avatar)
+                // Build UI using remote data (persona preferred for avatar) - Moved to ExploreFragment cards
                 withContext(Dispatchers.Main) {
-                    creatorUsernameTextView.text = creatorUsername
+                    // creatorUsernameTextView.text = creatorUsername
 
-                    if (personaFromRemote?.avatar.isNullOrEmpty()) {
-                        creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
-                    } else {
-                        try {
-                            Glide.with(requireContext())
-                                .load(Uri.parse(personaFromRemote!!.avatar))
-                                .placeholder(R.drawable.default_avatar)
-                                .error(R.drawable.default_avatar)
-                                .into(creatorAvatarImageView)
-                        } catch (e: Exception) {
-                            Log.e("CourseDetailFragment", "Error loading remote avatar", e)
-                            creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
-                        }
-                    }
+                    // if (personaFromRemote?.avatar.isNullOrEmpty()) {
+                    //     creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                    // } else {
+                    //     try {
+                    //         Glide.with(requireContext())
+                    //             .load(Uri.parse(personaFromRemote!!.avatar))
+                    //             .placeholder(R.drawable.default_avatar)
+                    //             .error(R.drawable.default_avatar)
+                    //             .into(creatorAvatarImageView)
+                    //     } catch (e: Exception) {
+                    //         Log.e("CourseDetailFragment", "Error loading remote avatar", e)
+                    //         creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                    //     }
+                    // }
 
-                    subscriberCountTextView.text = formatSubscriberCount(subscriptionCount)
-                    this@CourseDetailFragment.isSubscribed = isSubscribed
-                    updateSubscribeButtonState(isSubscribed)
+                    // subscriberCountTextView.text = formatSubscriberCount(subscriptionCount) - Moved to ExploreFragment cards
+                    // this@CourseDetailFragment.isSubscribed = isSubscribed
+                    // updateSubscribeButtonState(isSubscribed)
 
-                    subscribeButton.visibility = if (currentUsername == creatorUsername) View.GONE else View.VISIBLE
-                    creatorInfoContainer.visibility = View.VISIBLE
+                    // subscribeButton.visibility = if (currentUsername == creatorUsername) View.GONE else View.VISIBLE // Moved to ExploreFragment cards
+                    // creatorInfoContainer.visibility = View.VISIBLE // Moved to ExploreFragment cards
                 }
                 return
             }
@@ -939,60 +954,61 @@ class CourseDetailFragment : Fragment() {
 
                 if (persona != null) {
                     withContext(Dispatchers.Main) {
-                        creatorUsernameTextView.text = creatorUsername
-                        if (!persona.avatar.isNullOrEmpty()) {
-                            try {
-                                Glide.with(requireContext())
-                                    .load(Uri.parse(persona.avatar))
-                                    .placeholder(R.drawable.default_avatar)
-                                    .error(R.drawable.default_avatar)
-                                    .into(creatorAvatarImageView)
-                            } catch (e: Exception) {
-                                Log.e("CourseDetailFragment", "Error loading avatar", e)
-                                creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
-                            }
-                        } else {
-                            creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
-                        }
+                        // creatorUsernameTextView.text = creatorUsername - Moved to ExploreFragment cards
+                        // if (!persona.avatar.isNullOrEmpty()) {
+                        //     try {
+                        //         Glide.with(requireContext())
+                        //             .load(Uri.parse(persona.avatar))
+                        //             .placeholder(R.drawable.default_avatar)
+                        //             .error(R.drawable.default_avatar)
+                        //             .into(creatorAvatarImageView)
+                        //     } catch (e: Exception) {
+                        //         Log.e("CourseDetailFragment", "Error loading avatar", e)
+                        //         creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                        //     }
+                        // } else {
+                        //     creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                        // }
 
-                        subscriberCountTextView.text = formatSubscriberCount(subscriptionCount)
-                        this@CourseDetailFragment.isSubscribed = isSubscribed
-                        updateSubscribeButtonState(isSubscribed)
+                        // subscriberCountTextView.text = formatSubscriberCount(subscriptionCount) - Moved to ExploreFragment cards
+                        // this@CourseDetailFragment.isSubscribed = isSubscribed
+                        // updateSubscribeButtonState(isSubscribed)
 
-                        subscribeButton.visibility = if (currentUsername == creatorUsername) View.GONE else View.VISIBLE
-                        creatorInfoContainer.visibility = View.VISIBLE
+                        // subscribeButton.visibility = if (currentUsername == creatorUsername) View.GONE else View.VISIBLE
+                        // creatorInfoContainer.visibility = View.VISIBLE // Moved to ExploreFragment cards
                     }
                 } else {
                     Log.e("CourseDetailFragment", "Persona not found for user: $creatorUsername")
-                    withContext(Dispatchers.Main) { creatorInfoContainer.visibility = View.GONE }
+                    // withContext(Dispatchers.Main) { creatorInfoContainer.visibility = View.GONE } // Moved to ExploreFragment cards
                     // Resolved id remains the local id in fallback case
                     resolvedCourseId = courseId
                 }
             } else {
                 Log.e("CourseDetailFragment", "Usuario not found locally: $creatorUsername")
-                withContext(Dispatchers.Main) { creatorInfoContainer.visibility = View.GONE }
+                // withContext(Dispatchers.Main) { creatorInfoContainer.visibility = View.GONE } // Moved to ExploreFragment cards
             }
         } catch (e: Exception) {
             Log.e("CourseDetailFragment", "Error loading creator info", e)
-            withContext(Dispatchers.Main) {
-                creatorInfoContainer.visibility = View.GONE
-                Toast.makeText(context, "Error al cargar información del creador", Toast.LENGTH_SHORT).show()
-            }
+            // withContext(Dispatchers.Main) {
+            //     creatorInfoContainer.visibility = View.GONE
+            //     Toast.makeText(context, "Error al cargar información del creador", Toast.LENGTH_SHORT).show()
+            // }
         }
     }
 
     // New method to update subscribe button state
-    private fun updateSubscribeButtonState(isSubscribed: Boolean) {
-        subscribeButton.apply {
-            if (isSubscribed) {
-                text = "SUSCRITO"
-                setBackgroundResource(R.drawable.rounded_button_subscribed_background)
-            } else {
-                text = "SUSCRIBIRSE"
-                setBackgroundResource(R.drawable.rounded_button_background)
-            }
-        }
-    }
+    // Subscription button state management - Moved to ExploreFragment cards
+    // private fun updateSubscribeButtonState(isSubscribed: Boolean) {
+    //     subscribeButton.apply {
+    //         if (isSubscribed) {
+    //             text = "SUSCRITO"
+    //             setBackgroundResource(R.drawable.rounded_button_subscribed_background)
+    //         } else {
+    //             text = "SUSCRIBIRSE"
+    //             setBackgroundResource(R.drawable.rounded_button_background)
+    //         }
+    //     }
+    // }
 
     // Format subscriber count (e.g., 1.25M, 450K, etc.)
     private fun formatSubscriberCount(count: Int): String {
@@ -1038,13 +1054,13 @@ class CourseDetailFragment : Fragment() {
                     isSubscribed = false
 
                     // Actualizar UI del botón
-                    updateSubscribeButtonState(false)
+                    // updateSubscribeButtonState(false) // Moved to ExploreFragment cards
 
                     // Actualizar contador de suscriptores
-                    val newCount = withContext(Dispatchers.IO) {
-                        subscriptionDao.getSubscriptionCountForCreator(creatorUser)
-                    }
-                    subscriberCountTextView.text = formatSubscriberCount(newCount)
+                    // val newCount = withContext(Dispatchers.IO) {
+                    //     subscriptionDao.getSubscriptionCountForCreator(creatorUser)
+                    // }
+                    // subscriberCountTextView.text = formatSubscriberCount(newCount) // Moved to ExploreFragment cards
 
                     Toast.makeText(context, "Te has desuscrito de $creatorUser", Toast.LENGTH_SHORT).show()
                 } else {
@@ -1061,13 +1077,13 @@ class CourseDetailFragment : Fragment() {
                     isSubscribed = true
 
                     // Actualizar UI del botón
-                    updateSubscribeButtonState(true)
+                    // updateSubscribeButtonState(true) // Moved to ExploreFragment cards
 
                     // Actualizar contador de suscriptores
-                    val newCount = withContext(Dispatchers.IO) {
-                        subscriptionDao.getSubscriptionCountForCreator(creatorUser)
-                    }
-                    subscriberCountTextView.text = formatSubscriberCount(newCount)
+                    // val newCount = withContext(Dispatchers.IO) {
+                    //     subscriptionDao.getSubscriptionCountForCreator(creatorUser)
+                    // }
+                    // subscriberCountTextView.text = formatSubscriberCount(newCount) // Moved to ExploreFragment cards
 
                     Toast.makeText(context, "Te has suscrito a $creatorUser", Toast.LENGTH_SHORT).show()
                 }
@@ -1081,17 +1097,223 @@ class CourseDetailFragment : Fragment() {
 
     // Add this method to update tab visual selection
     private fun updateTabSelection() {
-        if (currentTab == "documentos") {
-            tabDocumentos.setBackgroundResource(R.drawable.tab_selected_background)
-            tabDocumentos.setTextColor(resources.getColor(android.R.color.black, null))
-            tabTareas.background = null
-            tabTareas.setTextColor(resources.getColor(android.R.color.darker_gray, null))
-        } else { // currentTab == "tareas"
-            tabTareas.setBackgroundResource(R.drawable.tab_selected_background)
-            tabTareas.setTextColor(resources.getColor(android.R.color.black, null))
-            tabDocumentos.background = null
-            tabDocumentos.setTextColor(resources.getColor(android.R.color.darker_gray, null))
+        val isDocs = currentTab == "documentos"
+        // Rely on stateful backgrounds and text color selectors from XML
+        tabDocumentos.isSelected = isDocs
+        tabTareas.isSelected = !isDocs
+    }
+
+    // Fast content filtering without full reload
+    private fun filterContentQuickly() {
+        // Animate out existing content first (fast fade)
+        topicsContainer.animate()
+            .alpha(0f)
+            .setDuration(100) // Very fast fade out
+            .withEndAction {
+                // Filter and show content immediately
+                for (i in 0 until topicsContainer.childCount) {
+                    val topicView = topicsContainer.getChildAt(i)
+                    val contentContainer = topicView.findViewById<LinearLayout>(R.id.topicContentContainer)
+                    val tasksContainer = topicView.findViewById<LinearLayout>(R.id.tasksDetailContainer)
+                    
+                    when (currentTab) {
+                        "documentos" -> {
+                            contentContainer?.visibility = View.VISIBLE
+                            tasksContainer?.visibility = View.GONE
+                        }
+                        "tareas" -> {
+                            contentContainer?.visibility = View.GONE
+                            tasksContainer?.visibility = View.VISIBLE
+                        }
+                    }
+                }
+                
+                // Fast fade in
+                topicsContainer.animate()
+                    .alpha(1f)
+                    .setDuration(150) // Quick fade in
+                    .start()
+            }
+            .start()
+    }
+
+    // Ultra-fast content filtering using cached data
+    private fun filterContentUltraFast() {
+        // No fade animation - instant switching
+        for (i in 0 until topicsContainer.childCount) {
+            val topicView = topicsContainer.getChildAt(i)
+            val contentContainer = topicView.findViewById<LinearLayout>(R.id.topicContentContainer)
+            val tasksContainer = topicView.findViewById<LinearLayout>(R.id.tasksDetailContainer)
+            
+            // Instant visibility switching
+            when (currentTab) {
+                "documentos" -> {
+                    contentContainer?.visibility = View.VISIBLE
+                    tasksContainer?.visibility = View.GONE
+                }
+                "tareas" -> {
+                    contentContainer?.visibility = View.GONE
+                    tasksContainer?.visibility = View.VISIBLE
+                }
+            }
         }
+    }
+
+    // Cache data structures for faster filtering
+    private var cachedTopicsData: MutableList<Triple<Topic, List<ContentItem>, List<Task>>> = mutableListOf()
+
+    // Pre-load and cache all content for ultra-fast filtering
+    private fun cacheTopicData(topics: List<Topic>, allContentItems: List<ContentItem>, allTasks: List<Task>) {
+        cachedTopicsData.clear()
+        for (topic in topics) {
+            val topicContent = allContentItems.filter { it.topicId == topic.id }
+            val topicTasks = allTasks.filter { it.topicId == topic.id }
+            cachedTopicsData.add(Triple(topic, topicContent, topicTasks))
+        }
+    }
+
+    // Render topics with pre-cached data
+    private fun renderCachedTopics() {
+        topicsContainer.removeAllViews()
+        for ((topic, contentItems, tasks) in cachedTopicsData) {
+            addOptimizedTopicView(topic, contentItems, tasks)
+        }
+    }
+
+    // Optimized topic view creation with immediate rendering
+    private fun addOptimizedTopicView(topic: Topic, contentItems: List<ContentItem>, tasks: List<Task>) {
+        val inflater = LayoutInflater.from(context)
+        val topicView = inflater.inflate(R.layout.item_course_topic_detail, topicsContainer, false)
+
+        val topicTitleTextView = topicView.findViewById<TextView>(R.id.topicNameTextView)
+        val topicDescriptionTextView = topicView.findViewById<TextView>(R.id.topicDescriptionTextView)
+        val topicContentContainer = topicView.findViewById<LinearLayout>(R.id.topicContentContainer)
+        val tasksContainer = topicView.findViewById<LinearLayout>(R.id.tasksDetailContainer)
+
+        // Set basic info immediately
+        topicTitleTextView.text = topic.name
+        topicDescriptionTextView.text = topic.description
+
+        // Setup containers based on current filter
+        when (currentTab) {
+            "documentos" -> {
+                setupContentContainerFast(topicContentContainer, contentItems)
+                tasksContainer.visibility = View.GONE
+                topicContentContainer.visibility = View.VISIBLE
+            }
+            "tareas" -> {
+                setupTasksContainerFast(tasksContainer, tasks, topic)
+                topicContentContainer.visibility = View.GONE
+                tasksContainer.visibility = View.VISIBLE
+            }
+        }
+
+        topicsContainer.addView(topicView)
+    }
+
+    // Fast content container setup
+    private fun setupContentContainerFast(container: LinearLayout, contentItems: List<ContentItem>) {
+        container.removeAllViews()
+        
+        if (contentItems.isNotEmpty()) {
+            val sortedItems = contentItems.sortedBy { it.orderIndex }
+            for (item in sortedItems) {
+                addContentViewFast(item, container)
+            }
+        } else {
+            val noContentMsg = TextView(context).apply { 
+                text = "Sin contenido para este tema"
+                setTextColor(resources.getColor(android.R.color.darker_gray, null))
+                setPadding(16, 16, 16, 16)
+                textSize = 14f
+            }
+            container.addView(noContentMsg)
+        }
+    }
+
+    // Fast tasks container setup
+    private fun setupTasksContainerFast(container: LinearLayout, tasks: List<Task>, topic: Topic) {
+        container.removeAllViews()
+        
+        if (tasks.isNotEmpty()) {
+            val sortedTasks = tasks.sortedBy { it.orderIndex }
+            for (task in sortedTasks) {
+                addTaskViewFast(task, container)
+            }
+        } else {
+            val noTasksMsg = TextView(context).apply { 
+                text = "Sin tareas para este tema"
+                setTextColor(resources.getColor(android.R.color.darker_gray, null))
+                setPadding(16, 16, 16, 16)
+                textSize = 14f
+            }
+            container.addView(noTasksMsg)
+        }
+
+        // Add "Agregar Tarea" button for creators
+        if (isCurrentUserCreator) {
+            val addTaskBtn = Button(context).apply {
+                text = "Agregar Tarea"
+                textSize = 12f
+                val params = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = 12
+                    gravity = android.view.Gravity.CENTER_HORIZONTAL
+                }
+                layoutParams = params
+                setBackgroundResource(R.drawable.button_premium)
+                setPadding(24, 12, 24, 12)
+                setOnClickListener {
+                    navigateToAddTask(topic.id, topic.courseId)
+                }
+            }
+            container.addView(addTaskBtn)
+        }
+    }
+
+    // Fast content view creation (simplified)
+    private fun addContentViewFast(item: ContentItem, container: LinearLayout) {
+        val contentView = TextView(context).apply {
+            text = "📄 ${item.name ?: "Contenido sin título"}"
+            textSize = 14f
+            setPadding(16, 8, 16, 8)
+            setTextColor(resources.getColor(android.R.color.white, null))
+            setOnClickListener { openContent(item) }
+            background = resources.getDrawable(R.drawable.bg_card_premium, null)
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = 8
+            }
+            layoutParams = params
+        }
+        container.addView(contentView)
+    }
+
+    // Fast task view creation (simplified)
+    private fun addTaskViewFast(task: Task, container: LinearLayout) {
+        val taskView = TextView(context).apply {
+            text = "📋 ${task.name ?: "Tarea sin título"}"
+            textSize = 14f
+            setPadding(16, 12, 16, 12)
+            setTextColor(resources.getColor(android.R.color.white, null))
+            setOnClickListener { 
+                // Simple task interaction
+                Toast.makeText(context, "Tarea: ${task.name}", Toast.LENGTH_SHORT).show()
+            }
+            background = resources.getDrawable(R.drawable.bg_card_premium, null)
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = 8
+            }
+            layoutParams = params
+        }
+        container.addView(taskView)
     }
 
     // Modify addTopicView to include tasks with better visual distinction and handle filtering

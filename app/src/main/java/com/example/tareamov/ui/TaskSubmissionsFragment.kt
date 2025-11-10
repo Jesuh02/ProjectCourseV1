@@ -1280,7 +1280,8 @@ class TaskSubmissionsFragment : Fragment() {
                 
                 // Manejar calificación IA - solo mostrar si hay calificación real del usuario (mayor a 0)
                 if (submission.grade != null && submission.grade > 0) {
-                    val aiGrade = (submission.grade * 10).toInt() // Convertir de 0-10 a 0-100
+                    // Asegurar que la calificación esté en el rango 0-10
+                    val aiGrade = submission.grade.coerceIn(0f, 10f)
                     
                     // Mostrar elementos de calificación
                     aiGradeTextView.visibility = View.VISIBLE
@@ -1288,15 +1289,22 @@ class TaskSubmissionsFragment : Fragment() {
                     gradeProgressBar.visibility = View.VISIBLE
                     noGradeTextView.visibility = View.GONE
                     
-                    aiGradeTextView.text = aiGrade.toString()
-                    gradeProgressBar.progress = aiGrade
+                    // Mostrar calificación con 1 decimal si es necesario
+                    aiGradeTextView.text = if (aiGrade % 1 == 0f) {
+                        aiGrade.toInt().toString()
+                    } else {
+                        String.format("%.1f", aiGrade)
+                    }
                     
-                    // Determinar calidad basada en la calificación
+                    // Configurar progress bar (convertir 0-10 a 0-100 para la barra)
+                    gradeProgressBar.progress = (aiGrade * 10).toInt()
+                    
+                    // Determinar calidad basada en la calificación (escala 0-10)
                     val qualityLabel = when {
-                        aiGrade >= 90 -> "⭐ Excelente"
-                        aiGrade >= 80 -> "⭐ Muy Bueno"
-                        aiGrade >= 70 -> "⭐ Bueno"
-                        aiGrade >= 60 -> "⭐ Regular"
+                        aiGrade >= 9.0 -> "⭐ Excelente"
+                        aiGrade >= 8.0 -> "⭐ Muy Bueno"
+                        aiGrade >= 7.0 -> "⭐ Bueno"
+                        aiGrade >= 6.0 -> "⭐ Regular"
                         else -> "⭐ Necesita Mejora"
                     }
                     qualityLabelTextView.text = qualityLabel
@@ -1461,72 +1469,159 @@ class TaskSubmissionsFragment : Fragment() {
     private fun getFileName(uri: Uri): String? {
         val contentResolver = requireContext().contentResolver
         
-        // Estrategia 1: Intentar obtener DISPLAY_NAME del cursor
+        Log.d("TaskSubmissionsFragment", "🔍 Obteniendo nombre para URI: $uri")
+        Log.d("TaskSubmissionsFragment", "🔍 URI scheme: ${uri.scheme}, authority: ${uri.authority}")
+        
+        // Estrategia 1: Query usando OpenableColumns (estándar para URIs de documentos)
         try {
-            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            contentResolver.query(
+                uri,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE),
+                null,
+                null,
+                null
+            )?.use { cursor ->
                 if (cursor.moveToFirst()) {
-                    // Intentar obtener DISPLAY_NAME
-                    val displayNameIndex = cursor.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
-                    if (displayNameIndex != -1) {
-                        val displayName = cursor.getString(displayNameIndex)
-                        if (!displayName.isNullOrEmpty()) {
-                            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via DISPLAY_NAME: $displayName")
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex != -1) {
+                        val displayName = cursor.getString(nameIndex)
+                        if (!displayName.isNullOrEmpty() && !displayName.startsWith("msf:") && 
+                            !displayName.startsWith("content:") && !displayName.matches(Regex("^[0-9]+$"))) {
+                            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via OpenableColumns.DISPLAY_NAME: $displayName")
                             return displayName
                         }
                     }
-                    
-                    // Intentar obtener _DISPLAY_NAME (alternativa)
-                    val displayNameIndex2 = cursor.getColumnIndex("_display_name")
-                    if (displayNameIndex2 != -1) {
-                        val displayName = cursor.getString(displayNameIndex2)
-                        if (!displayName.isNullOrEmpty()) {
-                            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via _display_name: $displayName")
-                            return displayName
-                        }
-                    }
-                    
-                    // Log todas las columnas disponibles para debugging
-                    Log.d("TaskSubmissionsFragment", "📋 Columnas disponibles en cursor: ${cursor.columnNames.joinToString()}")
                 }
             }
         } catch (e: Exception) {
-            Log.e("TaskSubmissionsFragment", "Error obteniendo nombre via cursor: ${e.message}")
+            Log.e("TaskSubmissionsFragment", "Error obteniendo nombre via OpenableColumns: ${e.message}")
         }
         
-        // Estrategia 2: Usar el path del URI
+        // Estrategia 2: Query con todas las columnas para obtener DISPLAY_NAME
+        try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    // Log todas las columnas para debugging
+                    Log.d("TaskSubmissionsFragment", "📋 Columnas disponibles: ${cursor.columnNames.joinToString()}")
+                    
+                    // Intentar diferentes variantes de nombres de columnas
+                    val possibleColumns = listOf(
+                        android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
+                        "_display_name",
+                        "title",
+                        "_data"
+                    )
+                    
+                    for (columnName in possibleColumns) {
+                        try {
+                            val columnIndex = cursor.getColumnIndex(columnName)
+                            if (columnIndex != -1) {
+                                val value = cursor.getString(columnIndex)
+                                if (!value.isNullOrEmpty()) {
+                                    // Extraer solo el nombre del archivo si es una ruta completa
+                                    val fileName = if (value.contains("/")) {
+                                        value.substringAfterLast('/')
+                                    } else {
+                                        value
+                                    }
+                                    
+                                    // Validar que no sea un ID o esquema raro
+                                    if (!fileName.startsWith("msf:") && 
+                                        !fileName.startsWith("content:") && 
+                                        !fileName.matches(Regex("^[0-9]+$")) &&
+                                        fileName.contains('.')) {
+                                        Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via columna '$columnName': $fileName")
+                                        return fileName
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.d("TaskSubmissionsFragment", "No se pudo leer columna $columnName: ${e.message}")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("TaskSubmissionsFragment", "Error obteniendo nombre via cursor genérico: ${e.message}")
+        }
+        
+        // Estrategia 3: Parsear el path del URI
         val path = uri.path
         if (!path.isNullOrEmpty()) {
-            val fileName = path.substringAfterLast('/')
-            if (fileName.isNotEmpty() && fileName.contains('.')) {
-                Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via URI path: $fileName")
-                return fileName
+            Log.d("TaskSubmissionsFragment", "🔍 URI path: $path")
+            
+            // Buscar el nombre del archivo en el path
+            val segments = path.split('/')
+            for (segment in segments.reversed()) {
+                if (segment.isNotEmpty() && segment.contains('.') && 
+                    !segment.startsWith("msf:") && !segment.matches(Regex("^[0-9]+$"))) {
+                    // Decodificar URL encoding si existe
+                    val decodedName = try {
+                        java.net.URLDecoder.decode(segment, "UTF-8")
+                    } catch (e: Exception) {
+                        segment
+                    }
+                    Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via URI path: $decodedName")
+                    return decodedName
+                }
             }
         }
         
-        // Estrategia 3: lastPathSegment
+        // Estrategia 4: lastPathSegment (decodificado)
         val lastSegment = uri.lastPathSegment
-        if (!lastSegment.isNullOrEmpty() && lastSegment.contains('.')) {
-            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via lastPathSegment: $lastSegment")
-            return lastSegment
+        if (!lastSegment.isNullOrEmpty() && !lastSegment.startsWith("msf:") && 
+            !lastSegment.matches(Regex("^[0-9]+$"))) {
+            
+            // Intentar extraer nombre si hay separadores de path en el segment
+            val cleanSegment = if (lastSegment.contains('/')) {
+                lastSegment.substringAfterLast('/')
+            } else if (lastSegment.contains(':')) {
+                // Para casos como "msf:1004/document/primary:Download/archivo.pdf"
+                lastSegment.substringAfterLast(':')
+            } else {
+                lastSegment
+            }
+            
+            // Decodificar URL encoding
+            val decodedSegment = try {
+                java.net.URLDecoder.decode(cleanSegment, "UTF-8")
+            } catch (e: Exception) {
+                cleanSegment
+            }
+            
+            if (decodedSegment.contains('.')) {
+                Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via lastPathSegment: $decodedSegment")
+                return decodedSegment
+            }
         }
         
-        // Estrategia 4: Intentar obtener el tipo MIME y generar un nombre
+        // Estrategia 5: Generar nombre usando MIME type
         try {
             val mimeType = contentResolver.getType(uri)
+            Log.d("TaskSubmissionsFragment", "🔍 MIME type detectado: $mimeType")
+            
             if (!mimeType.isNullOrEmpty()) {
                 val extension = when {
                     mimeType.contains("pdf") -> "pdf"
+                    mimeType.contains("wordprocessingml") || mimeType.contains("msword") -> "docx"
+                    mimeType.contains("spreadsheetml") || mimeType.contains("excel") -> "xlsx"
+                    mimeType.contains("presentationml") || mimeType.contains("powerpoint") -> "pptx"
+                    mimeType.contains("image/jpeg") -> "jpg"
+                    mimeType.contains("image/png") -> "png"
                     mimeType.contains("image") -> "jpg"
-                    mimeType.contains("text") -> "txt"
-                    mimeType.contains("sql") -> "sql"
-                    mimeType.contains("json") -> "json"
-                    mimeType.contains("xml") -> "xml"
-                    mimeType.contains("python") -> "py"
-                    mimeType.contains("java") -> "java"
+                    mimeType.contains("text/plain") -> "txt"
+                    mimeType.contains("text/sql") || mimeType.contains("sql") -> "sql"
+                    mimeType.contains("application/json") || mimeType.contains("json") -> "json"
+                    mimeType.contains("application/xml") || mimeType.contains("xml") -> "xml"
+                    mimeType.contains("text/x-python") || mimeType.contains("python") -> "py"
+                    mimeType.contains("text/x-java") || mimeType.contains("java") -> "java"
                     mimeType.contains("javascript") -> "js"
+                    mimeType.contains("text/") -> "txt"
                     else -> mimeType.substringAfterLast('/').takeIf { it.length <= 5 } ?: "dat"
                 }
-                val generatedName = "archivo_${System.currentTimeMillis()}.$extension"
+                
+                val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(java.util.Date())
+                val generatedName = "documento_${timestamp}.$extension"
                 Log.d("TaskSubmissionsFragment", "⚠️ Nombre generado desde MIME type ($mimeType): $generatedName")
                 return generatedName
             }
@@ -1534,10 +1629,11 @@ class TaskSubmissionsFragment : Fragment() {
             Log.e("TaskSubmissionsFragment", "Error obteniendo MIME type: ${e.message}")
         }
         
-        // Fallback final: nombre genérico con timestamp
-        val fallbackName = "archivo_${System.currentTimeMillis()}.dat"
+        // Fallback final: nombre descriptivo con timestamp
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(java.util.Date())
+        val fallbackName = "archivo_${timestamp}.dat"
         Log.w("TaskSubmissionsFragment", "⚠️ No se pudo obtener nombre real, usando fallback: $fallbackName")
-        Log.w("TaskSubmissionsFragment", "⚠️ URI problemático: $uri")
+        Log.w("TaskSubmissionsFragment", "⚠️ URI completo: $uri")
         return fallbackName
     }
 }

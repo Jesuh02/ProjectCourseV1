@@ -1211,6 +1211,27 @@ object SupabaseClient {
             return@withContext com.google.gson.JsonArray()
         }
     }
+
+    /**
+     * Fetch a generic snapshot from any table and return it as a list of key/value maps.
+     * This is convenient for dynamically generated queries (e.g., LLM tooling).
+     */
+    suspend fun fetchTableSnapshot(table: String, limit: Int = 50): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+        val safeLimit = if (limit <= 0) 50 else limit
+        val path = if (safeLimit > 0) "$table?limit=$safeLimit" else table
+        val jsonArray = fetchTableJson(path)
+        val results = mutableListOf<Map<String, Any?>>()
+
+        for (element in jsonArray) {
+            if (element.isJsonObject) {
+                @Suppress("UNCHECKED_CAST")
+                val map = underscoredGson.fromJson(element, Map::class.java) as Map<String, Any?>
+                results.add(map)
+            }
+        }
+
+        results
+    }
     suspend fun fetchTopics(): List<Topic> = fetchList("topics", Array<Topic>::class.java)
     
     /**
@@ -2067,6 +2088,70 @@ object SupabaseClient {
             }
         } catch (e: Exception) {
             Log.e("SupabaseClient", "updateVideo exception", e)
+            return@withContext false
+        }
+    }
+
+    /**
+     * Insert a subscription to Supabase
+     */
+    suspend fun subscribeToCreator(subscriberUsername: String, creatorUsername: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val subscription = Subscription(
+                subscriberUsername = subscriberUsername,
+                creatorUsername = creatorUsername,
+                subscriptionDate = System.currentTimeMillis()
+            )
+            
+            val json = underscoredGson.toJson(subscription)
+            val body = json.toRequestBody("application/json".toMediaType())
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/subscriptions")
+                .post(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=minimal")
+                .build()
+
+            requestListener?.invoke("POST $baseUrl/rest/v1/subscriptions")
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                Log.d("SupabaseClient", "Subscription inserted successfully")
+                return@withContext true
+            } else {
+                Log.e("SupabaseClient", "Failed to insert subscription: ${response.code} ${response.message}")
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "subscribeToCreator exception", e)
+            return@withContext false
+        }
+    }
+
+    /**
+     * Delete a subscription from Supabase
+     */
+    suspend fun unsubscribeFromCreator(subscriberUsername: String, creatorUsername: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/subscriptions?subscriber_username=eq.$subscriberUsername&creator_username=eq.$creatorUsername")
+                .delete()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .build()
+
+            requestListener?.invoke("DELETE $baseUrl/rest/v1/subscriptions")
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                Log.d("SupabaseClient", "Subscription deleted successfully")
+                return@withContext true
+            } else {
+                Log.e("SupabaseClient", "Failed to delete subscription: ${response.code} ${response.message}")
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "unsubscribeFromCreator exception", e)
             return@withContext false
         }
     }

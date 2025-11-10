@@ -7,16 +7,18 @@
     android:layout_marginBottom="12dp"
     android:layout_marginLeft="8dp"
     android:layout_marginRight="8dp"
-    app:cardCornerRadius="12dp"
-    app:cardElevation="2dp"
-    app:cardBackgroundColor="#181C27">
+    app:cardCornerRadius="16dp"
+    app:cardElevation="6dp"
+    app:cardUseCompatPadding="true"
+    app:cardBackgroundColor="@android:color/transparent">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:padding="0dp"
-        android:background="@android:color/transparent">
+        android:background="@drawable/bg_card_premium"
+        android:animateLayoutChanges="true">
 
         <TextView
             android:id="@+id/topicNameTextView"
@@ -25,18 +27,23 @@
             android:textSize="18sp"
             android:textStyle="bold"
             android:textColor="#FFFFFF"
-            android:padding="16dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="6dp"
+            android:letterSpacing="0.03"
             android:text="Introducción" />
 
         <TextView
             android:id="@+id/topicDescriptionTextView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="15sp"
-            android:textColor="#B39DDB"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="8dp"
+            android:textSize="14sp"
+            android:textColor="#C2B8FF"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:paddingBottom="10dp"
+            android:lineSpacingExtra="3dp"
             android:text="Descripción del tema" />
 
         <LinearLayout
@@ -44,14 +51,16 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:paddingBottom="8dp" />
+            android:paddingBottom="12dp"
+            android:layoutAnimation="@anim/layout_fall_down_fast" />
 
         <LinearLayout
             android:id="@+id/tasksDetailContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:paddingBottom="8dp" />
+            android:paddingBottom="12dp"
+            android:layoutAnimation="@anim/layout_fall_down_fast" />
 
         <!-- Add this button for non-creators to submit to a task -->
         <Button
@@ -59,7 +68,12 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Subir entrega"
-            android:layout_margin="12dp"
+            android:layout_marginStart="18dp"
+            android:layout_marginEnd="18dp"
+            android:layout_marginBottom="18dp"
+            android:background="@drawable/button_premium"
+            android:textColor="#FFFFFF"
+            android:fontFamily="sans-serif-medium"
             android:visibility="gone" />
     </LinearLayout>
 </androidx.cardview.widget.CardView>

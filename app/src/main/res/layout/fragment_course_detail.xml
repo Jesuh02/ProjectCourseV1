@@ -4,7 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#11101A"
+    android:background="@drawable/bg_app_gradient"
     tools:context=".ui.CourseDetailFragment">
 
     <!-- Top AppBar (dark, with back and title) -->
@@ -12,8 +12,8 @@
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
-        android:background="#2D1457"
-        android:elevation="4dp"
+        android:background="@drawable/bg_toolbar_gradient"
+        android:elevation="8dp"
         android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
         app:layout_constraintTop_toTopOf="parent"
         app:popupTheme="@style/ThemeOverlay.AppCompat.Light">
@@ -38,7 +38,8 @@
             android:text="Detalles del Curso"
             android:textColor="@android:color/white"
             android:textSize="20sp"
-            android:textStyle="bold" />
+            android:textStyle="bold"
+            android:letterSpacing="0.05" />
     </androidx.appcompat.widget.Toolbar>    <!-- Main Scrollable Content -->
     <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
@@ -59,9 +60,9 @@
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:paddingTop="24dp"
-                android:paddingBottom="4dp"
-                android:paddingStart="24dp"
-                android:paddingEnd="24dp"
+                android:paddingBottom="8dp"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
                 android:gravity="center_vertical">
 
                 <TextView
@@ -69,9 +70,15 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:textSize="28sp"
+                    android:textSize="26sp"
                     android:textStyle="bold"
                     android:textColor="#FFFFFF"
+                    android:fontFamily="sans-serif-medium"
+                    android:lineSpacingExtra="4dp"
+                    android:shadowColor="#66000000"
+                    android:shadowDx="0"
+                    android:shadowDy="2"
+                    android:shadowRadius="3"
                     tools:text="¿Quién nació primero?" />
 
                 <ImageButton
@@ -81,7 +88,7 @@
                     android:src="@android:drawable/ic_menu_edit"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:contentDescription="Editar curso"
-                    android:tint="#8F3FFF"
+                    android:tint="#D0B2FF"
                     android:layout_marginStart="8dp" />
             </LinearLayout>
 
@@ -89,85 +96,15 @@
                 android:id="@+id/courseDescriptionTextView"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textSize="16sp"
-                android:textColor="#D1C4E9"
-                android:paddingStart="24dp"
-                android:paddingEnd="24dp"
-                android:paddingBottom="16dp"
+                android:textSize="15sp"
+                android:textColor="#D6C6FF"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingBottom="20dp"
+                android:lineSpacingExtra="4dp"
                 tools:text="¿El huevo o la gallina?" />
 
-            <!-- Creator Info Row -->
-            <LinearLayout
-                android:id="@+id/creatorInfoContainer"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingStart="24dp"
-                android:paddingEnd="24dp"
-                android:paddingBottom="16dp"
-                android:background="@android:color/transparent">
 
-                <de.hdodenhof.circleimageview.CircleImageView
-                    android:id="@+id/creatorAvatarImageView"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:src="@drawable/default_avatar" />
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:layout_marginStart="12dp">                    <TextView
-                        android:id="@+id/creatorUsernameTextView"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="#FFFFFF"
-                        android:textStyle="bold"
-                        android:textSize="16sp"
-                        android:background="?attr/selectableItemBackground"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:padding="4dp"
-                        tools:text="jesus" />
-
-                    <TextView
-                        android:id="@+id/subscriberCountTextView"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="#B39DDB"
-                        android:textSize="14sp"
-                        tools:text="1 suscriptores" />
-                </LinearLayout>
-
-                <Button
-                    android:id="@+id/subscribeButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:text="Suscribirse"
-                    android:textColor="#FFFFFF"
-                    android:background="@drawable/rounded_subscribe_button"
-                    android:paddingStart="16dp"
-                    android:paddingEnd="16dp"
-                    android:layout_marginStart="8dp"
-                    android:minHeight="40dp"
-                    android:includeFontPadding="false"
-                    android:gravity="center" />
-
-                <!-- Add the PSE payment button here -->
-                <ImageView
-                    android:id="@+id/psePaymentButton"
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:src="@drawable/ic_pse"
-                    android:contentDescription="Pagar con PSE"
-                    android:layout_marginStart="8dp"
-                    android:adjustViewBounds="true"
-                    android:scaleType="centerInside"
-                    android:background="@drawable/rounded_icon_background"
-                    android:tint="@color/white" />
-            </LinearLayout>
 
             <!-- Add this after the creator info container and before the tabs -->
             <LinearLayout
@@ -176,7 +113,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:padding="16dp"
-                android:background="#1E1E2E"
+                android:background="@drawable/bg_card_premium"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="8dp"
                 android:visibility="gone">
@@ -253,9 +190,13 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:background="#181828"
-                android:paddingTop="8dp"
-                android:paddingBottom="8dp"
+                android:background="@drawable/bg_tab_container"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:layout_marginStart="16dp"
+                android:layout_marginEnd="16dp"
                 android:elevation="2dp">
 
                 <TextView
@@ -267,8 +208,11 @@
                     android:textStyle="bold"
                     android:gravity="center"
                     android:padding="12dp"
-                    android:textColor="#FFFFFF"
-                    android:background="@drawable/tab_selector_left" />
+                    android:textColor="@color/premium_tab_text_selector"
+                    android:background="@drawable/tab_selector_left"
+                    android:foreground="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true" />
 
                 <TextView
                     android:id="@+id/tabTareas"
@@ -279,8 +223,11 @@
                     android:textStyle="bold"
                     android:gravity="center"
                     android:padding="12dp"
-                    android:textColor="#B39DDB"
-                    android:background="@drawable/tab_selector_right" />
+                    android:textColor="@color/premium_tab_text_selector"
+                    android:background="@drawable/tab_selector_right"
+                    android:foreground="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true" />
             </LinearLayout>
 
             <!-- Section Title -->
@@ -291,9 +238,9 @@
                 android:textSize="18sp"
                 android:textStyle="bold"
                 android:textColor="#FFFFFF"
-                android:paddingStart="24dp"
+                android:paddingStart="20dp"
                 android:paddingTop="20dp"
-                android:paddingEnd="24dp"
+                android:paddingEnd="20dp"
                 android:paddingBottom="8dp"
                 android:background="@android:color/transparent" />
 
@@ -306,7 +253,9 @@
                 android:paddingStart="8dp"
                 android:paddingEnd="8dp"
                 android:paddingBottom="16dp"
-                android:background="@android:color/transparent">
+                android:background="@android:color/transparent"
+                android:animateLayoutChanges="true"
+                android:layoutAnimation="@anim/layout_fall_down">
                 <!-- Dynamically added: item_course_topic_detail.xml, item_course_task_detail.xml, etc. -->
             </LinearLayout>
 
@@ -315,7 +264,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Este curso aún no tiene temas."
-                android:textColor="#B39DDB"
+                android:textColor="#C2B8FF"
                 android:gravity="center"
                 android:visibility="gone"
                 android:padding="24dp"
@@ -326,7 +275,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="No hay tareas en este curso."
-                android:textColor="#B39DDB"
+                android:textColor="#C2B8FF"
                 android:gravity="center"
                 android:visibility="gone"
                 android:padding="24dp"
@@ -338,11 +287,12 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="#181828"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
+        android:background="@drawable/bg_card_premium"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:elevation="6dp"
         app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -350,24 +300,30 @@
         <Button
             android:id="@+id/addTopicButton"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="36dp"
             android:layout_weight="1"
-            android:text="Agregar Tema"
+            android:text="+ Tema"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#8F3FFF"
-            android:background="@drawable/rounded_button_purple"
-            android:layout_marginEnd="8dp" />
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="@drawable/button_premium"
+            android:layout_marginEnd="6dp"
+            android:includeFontPadding="false"
+            android:letterSpacing="0.03" />
 
         <Button
             android:id="@+id/addTaskButton"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="36dp"
             android:layout_weight="1"
-            android:text="Crear Tarea"
+            android:text="+ Tarea"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#8F3FFF"
-            android:background="@drawable/rounded_button_purple"
-            android:layout_marginStart="8dp" />
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="@drawable/button_premium"
+            android:layout_marginStart="6dp"
+            android:includeFontPadding="false"
+            android:letterSpacing="0.03" />
     </LinearLayout>
 
     <!-- Bottom Navigation using the component -->
@@ -399,7 +355,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
         android:layout_marginBottom="8dp"
-        android:background="#1E1E2E"
+        android:background="@drawable/bg_card_premium"
         android:padding="16dp"
         android:visibility="gone">
 
@@ -436,7 +392,7 @@
                 android:textStyle="bold"
                 android:paddingStart="16dp"
                 android:paddingEnd="16dp"
-                android:background="@drawable/button_background"
+                android:background="@drawable/button_premium"
                 android:gravity="center" />
 
             <!-- NUEVO BOTÓN PARA PAGAR CON PSE -->
@@ -449,7 +405,7 @@
                 android:textStyle="bold"
                 android:paddingStart="16dp"
                 android:paddingEnd="16dp"
-                android:background="@drawable/button_background"
+                android:background="@drawable/button_premium"
                 android:gravity="center"
                 android:layout_marginTop="8dp"/>
         </LinearLayout>

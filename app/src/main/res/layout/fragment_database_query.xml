@@ -24,8 +24,8 @@
 
             <ImageView
                 android:id="@+id/brainIcon"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
                 android:layout_gravity="center_vertical"
                 android:src="@drawable/ic_brain"
                 android:tint="#10A37F" />
@@ -37,7 +37,7 @@
                 android:layout_marginStart="8dp"
                 android:text="Sistema MCP"
                 android:textColor="#FFFFFF"
-                android:textSize="20sp"
+                android:textSize="18sp"
                 android:textStyle="bold" />
         </LinearLayout>
 
@@ -54,8 +54,8 @@
 
             <View
                 android:id="@+id/connectionIndicator"
-                android:layout_width="8dp"
-                android:layout_height="8dp"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
                 android:background="@drawable/circle_shape"
                 android:backgroundTint="#4CAF50" />
 
@@ -63,10 +63,10 @@
                 android:id="@+id/connectionStatus"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="6dp"
                 android:text="Conectado"
                 android:textColor="#FFFFFF"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
         </LinearLayout>
     </LinearLayout>
 
@@ -90,7 +90,7 @@
             android:layout_weight="1"
             android:text="Consulta de Base de Datos"
             android:textColor="#FFFFFF"
-            android:textSize="16sp" />
+            android:textSize="14sp" />
 
         <LinearLayout
             android:id="@+id/userIndicatorLayout"
@@ -98,18 +98,18 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:background="@drawable/bg_user_indicator"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:paddingTop="4dp"
-            android:paddingBottom="4dp"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp"
             android:gravity="center_vertical">
 
             <ImageView
-                android:layout_width="12dp"
-                android:layout_height="12dp"
+                android:layout_width="10dp"
+                android:layout_height="10dp"
                 android:src="@drawable/ic_person"
                 android:tint="#10A37F"
-                android:layout_marginEnd="4dp" />
+                android:layout_marginEnd="3dp" />
 
             <TextView
                 android:id="@+id/currentUserText"
@@ -117,7 +117,7 @@
                 android:layout_height="wrap_content"
                 android:text="Usuario"
                 android:textColor="#FFFFFF"
-                android:textSize="12sp"
+                android:textSize="11sp"
                 android:textStyle="bold" />
         </LinearLayout>
     </LinearLayout>    <!-- Chat history header -->
@@ -133,8 +133,8 @@
         app:layout_constraintTop_toBottomOf="@id/subtitleLayout">
 
         <ImageView
-            android:layout_width="16dp"
-            android:layout_height="16dp"
+            android:layout_width="14dp"
+            android:layout_height="14dp"
             android:src="@drawable/ic_history"
             android:tint="#10A37F" />
 
@@ -143,22 +143,22 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="8dp"
+            android:layout_marginStart="6dp"
             android:text="Conversaciones anteriores"
             android:textColor="#FFFFFF"
-            android:textSize="14sp" />
+            android:textSize="13sp" />
 
         <ImageButton
             android:id="@+id/clearHistoryButton"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
             android:src="@drawable/ic_delete"
             android:background="?android:attr/selectableItemBackgroundBorderless"
             android:tint="#80FFFFFF"
             android:contentDescription="Limpiar historial" />
     </LinearLayout>
 
-    <!-- MCP Tools Toolbar (collapsible) -->
+    <!-- MCP Tools Toolbar (collapsible) - Minimalist compact version -->
     <LinearLayout
         android:id="@+id/mcpToolbar"
         android:layout_width="match_parent"
@@ -166,32 +166,32 @@
         android:orientation="vertical"
         android:background="#0A0A0A"
         android:visibility="gone"
-        android:elevation="4dp"
+        android:elevation="2dp"
         app:layout_constraintTop_toBottomOf="@id/chatHistoryHeader">
 
-        <!-- Toolbar Header -->
+        <!-- Toolbar Header - Compact -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:padding="12dp"
+            android:padding="8dp"
             android:gravity="center_vertical"
             android:background="#1A1A1A">
 
             <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
                 android:src="@drawable/ic_tool"
                 android:tint="#10A37F"
-                android:layout_marginEnd="8dp" />
+                android:layout_marginEnd="6dp" />
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="MCP Tools"
+                android:text="Tools"
                 android:textColor="#FFFFFF"
-                android:textSize="16sp"
+                android:textSize="14sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -200,32 +200,32 @@
                 android:layout_height="wrap_content"
                 android:text="2"
                 android:textColor="#10A37F"
-                android:textSize="12sp"
+                android:textSize="11sp"
                 android:background="@drawable/bg_tools_count_badge"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:paddingTop="4dp"
-                android:paddingBottom="4dp"
-                android:layout_marginEnd="8dp" />
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:layout_marginEnd="6dp" />
 
             <ImageButton
                 android:id="@+id/btnToggleToolbar"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
                 android:src="@drawable/ic_expand_less"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:tint="#FFFFFF"
                 android:contentDescription="Toggle toolbar" />
         </LinearLayout>
 
-        <!-- Tools RecyclerView -->
+        <!-- Tools RecyclerView - Compact -->
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/mcpToolsRecyclerView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:maxHeight="300dp"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp"
+            android:maxHeight="200dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
             android:clipToPadding="false" />
     </LinearLayout>
 
@@ -244,35 +244,36 @@
         app:layout_constraintTop_toBottomOf="@id/mcpToolbar"
         app:layout_constraintBottom_toTopOf="@id/typingIndicator" />
 
-    <!-- Enhanced typing indicator with LLM branding -->
+    <!-- Enhanced typing indicator with LLM branding - More compact and animated -->
     <LinearLayout
         android:id="@+id/typingIndicator"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:padding="16dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
+        android:padding="12dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
         android:background="@drawable/bg_typing_indicator"
         android:gravity="start|center_vertical"
         android:visibility="gone"
         android:elevation="2dp"
+        android:alpha="0"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintBottom_toTopOf="@id/queryInputLayout">
 
         <ImageView
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
             android:src="@drawable/ic_brain"
             android:tint="#10A37F"
-            android:padding="4dp"
+            android:padding="3dp"
             android:background="@drawable/circle_bg_purple" />
 
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="12dp"
+            android:layout_marginStart="10dp"
             android:orientation="vertical">
 
             <TextView
@@ -280,7 +281,7 @@
                 android:layout_height="wrap_content"
                 android:text="Llama 3.3 70B"
                 android:textColor="#FFFFFF"
-                android:textSize="14sp"
+                android:textSize="13sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -288,26 +289,26 @@
                 android:layout_height="wrap_content"
                 android:text="está pensando..."
                 android:textColor="#B0B0B0"
-                android:textSize="12sp"
+                android:textSize="11sp"
                 android:textStyle="italic" />
         </LinearLayout>
 
         <ProgressBar
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:layout_marginEnd="8dp"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_marginEnd="6dp"
             style="?android:attr/progressBarStyleSmall"
             android:indeterminateTint="#10A37F" />
     </LinearLayout>
 
-    <!-- Brain Icon in the center - shown when chat is empty -->
+    <!-- Brain Icon in the center - shown when chat is empty - Smaller and more minimalist -->
     <ImageView
         android:id="@+id/centerBrainIcon"
-        android:layout_width="100dp"
-        android:layout_height="100dp"
+        android:layout_width="80dp"
+        android:layout_height="80dp"
         android:src="@drawable/ic_brain"
         android:tint="#10A37F"
-        android:alpha="0.8"
+        android:alpha="0.6"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@id/queryInputLayout"
         app:layout_constraintStart_toStartOf="parent"
@@ -379,52 +380,34 @@
             android:layout_height="wrap_content"
             android:text="Reiniciar"
             android:backgroundTint="#10A37F" />
-    </LinearLayout>    <!-- Floating action button for chat history -->
+    </LinearLayout>    <!-- Floating action button for chat history - Minimalist version -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabChatHistory"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_margin="16dp"
+        android:layout_margin="8dp"
         android:src="@drawable/ic_history"
         app:tint="#FFFFFF"
         app:backgroundTint="#888888"
-        app:elevation="6dp"
+        app:elevation="4dp"
         app:borderWidth="0dp"
         android:contentDescription="Ver historial de chat"
         app:fabSize="mini"
         android:visibility="visible"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/fabMCPTools" />
-
-    <!-- MCP Tools toggle button -->
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/fabMCPTools"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="16dp"
-        android:src="@drawable/ic_tool"
-        app:tint="#FFFFFF"
-        app:backgroundTint="#10A37F"
-        app:elevation="6dp"
-        app:borderWidth="0dp"
-        android:contentDescription="MCP Tools"
-        app:fabSize="normal"
-        android:visibility="visible"
-        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toTopOf="@id/queryInputLayout" />
 
-    <!-- Scroll to bottom button -->
+    <!-- Scroll to bottom button - Minimalist version -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabScrollToBottom"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="80dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginBottom="60dp"
         android:src="@drawable/ic_keyboard_arrow_down"
         app:tint="#FFFFFF"
         app:backgroundTint="#10A37F"
-        app:elevation="6dp"
+        app:elevation="4dp"
         app:borderWidth="0dp"
         android:contentDescription="Ir al final del chat"
         app:fabSize="mini"
@@ -442,15 +425,15 @@
         android:elevation="12dp"
         app:layout_constraintBottom_toBottomOf="parent">
 
-        <!-- Message counter and info bar -->
+        <!-- Message counter and info bar - Hidden by default for minimalist design -->
         <LinearLayout
             android:id="@+id/messageInfoBar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:paddingTop="8dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="4dp"
             android:paddingBottom="4dp"
             android:gravity="center_vertical"
             android:visibility="gone">
@@ -460,14 +443,14 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="0 mensajes en esta conversación"
+                android:text="0 mensajes"
                 android:textColor="#80FFFFFF"
-                android:textSize="12sp" />
+                android:textSize="11sp" />
 
             <ImageButton
                 android:id="@+id/exportChatButton"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
                 android:src="@drawable/ic_share"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:tint="#80FFFFFF"
@@ -475,20 +458,20 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <!-- Input row -->
+        <!-- Input row - Compact design -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:padding="16dp"
+            android:padding="12dp"
             android:gravity="center_vertical">
 
-            <!-- Attachment button (for future features) -->
+            <!-- Attachment button (for future features) - Smaller -->
             <ImageButton
                 android:id="@+id/attachButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="8dp"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginEnd="6dp"
                 android:src="@drawable/ic_attach"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:tint="#80FFFFFF"
@@ -500,16 +483,16 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginEnd="12dp"
+                android:layout_marginEnd="8dp"
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                 app:boxStrokeColor="#10A37F"
                 app:boxStrokeWidth="2dp"
                 app:hintTextColor="#888888"
                 app:boxBackgroundColor="#000000"
-                app:boxCornerRadiusTopStart="24dp"
-                app:boxCornerRadiusTopEnd="24dp"
-                app:boxCornerRadiusBottomStart="24dp"
-                app:boxCornerRadiusBottomEnd="24dp"
+                app:boxCornerRadiusTopStart="20dp"
+                app:boxCornerRadiusTopEnd="20dp"
+                app:boxCornerRadiusBottomStart="20dp"
+                app:boxCornerRadiusBottomEnd="20dp"
                 app:hintAnimationEnabled="true">
 
                 <com.google.android.material.textfield.TextInputEditText
@@ -521,22 +504,22 @@
                     android:textColor="#FFFFFF"
                     android:inputType="textMultiLine|textCapSentences"
                     android:minLines="1"
-                    android:maxLines="6"
-                    android:textSize="16sp"
-                    android:padding="16dp"
+                    android:maxLines="5"
+                    android:textSize="15sp"
+                    android:padding="12dp"
                     android:background="@android:color/transparent"
                     android:lineSpacingExtra="2dp" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <!-- Enhanced send button -->
+            <!-- Enhanced send button - Smaller -->
             <com.google.android.material.floatingactionbutton.FloatingActionButton
                 android:id="@+id/sendButton"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:src="@drawable/ic_send"
                 app:tint="#FFFFFF"
                 app:backgroundTint="#10A37F"
-                app:elevation="4dp"
+                app:elevation="3dp"
                 app:borderWidth="0dp"
                 android:contentDescription="Enviar consulta"
                 app:fabSize="mini" />
@@ -587,41 +570,41 @@
     </LinearLayout>
 
 
-    <!-- Enhanced model info with better styling -->
+    <!-- Enhanced model info with better styling - Compact version -->
     <LinearLayout
         android:id="@+id/modelInfoLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingTop="4dp"
-        android:paddingBottom="8dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="3dp"
+        android:paddingBottom="6dp"
         android:background="@drawable/bg_model_info"
         app:layout_constraintBottom_toTopOf="@id/queryInputLayout">
 
         <ImageView
-            android:layout_width="16dp"
-            android:layout_height="16dp"
+            android:layout_width="14dp"
+            android:layout_height="14dp"
             android:src="@drawable/ic_cpu"
             android:tint="#10A37F"
-            android:layout_marginEnd="8dp" />
+            android:layout_marginEnd="6dp" />
 
         <TextView
             android:id="@+id/modelInfo"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Potenciado por Llama 3.3 70B • Conversacional • RAG Habilitado"
+            android:text="Llama 3.3 70B • RAG"
             android:textColor="#888888"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textStyle="italic"
             android:gravity="center" />
 
         <View
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:layout_marginStart="12dp"
+            android:layout_width="6dp"
+            android:layout_height="6dp"
+            android:layout_marginStart="8dp"
             android:background="@drawable/circle_shape"
             android:backgroundTint="#4CAF50" />
     </LinearLayout>

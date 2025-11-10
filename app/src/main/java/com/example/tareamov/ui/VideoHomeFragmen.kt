@@ -143,14 +143,22 @@ class VideoHomeFragment : Fragment() {
                             putLong("courseId", targetId)
                             putString("courseName", course?.title ?: currentVideo.title)
                         }
-                        findNavController().navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                        // Check if current destination is still VideoHomeFragment before navigating
+                        val navController = findNavController()
+                        if (navController.currentDestination?.id == R.id.videoHomeFragment) {
+                            navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                        }
                     } catch (e: Exception) {
                         Log.e("VideoHomeFragment", "Error resolving course for profile click", e)
                         val bundle = Bundle().apply {
                             putLong("courseId", currentVideo.id)
                             putString("courseName", currentVideo.title)
                         }
-                        findNavController().navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                        // Check if current destination is still VideoHomeFragment before navigating
+                        val navController = findNavController()
+                        if (navController.currentDestination?.id == R.id.videoHomeFragment) {
+                            navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                        }
                     }
                 }
             } else {
@@ -340,14 +348,22 @@ class VideoHomeFragment : Fragment() {
                             }
                         }
 
-                        findNavController().navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                        // Check if current destination is still VideoHomeFragment before navigating
+                        val navController = findNavController()
+                        if (navController.currentDestination?.id == R.id.videoHomeFragment) {
+                            navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                        }
                     } catch (e: Exception) {
                         Log.e("VideoHomeFragment", "Error navigating to CourseDetailFragment for video ${videoData.id}", e)
                         val bundle = Bundle().apply {
                             putLong("courseId", -1L)
                             putString("courseName", videoData.title)
                         }
-                        findNavController().navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                        // Check if current destination is still VideoHomeFragment before navigating
+                        val navController = findNavController()
+                        if (navController.currentDestination?.id == R.id.videoHomeFragment) {
+                            navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                        }
                     }
                 }
             }

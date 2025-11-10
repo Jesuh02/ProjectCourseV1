@@ -5,7 +5,7 @@
     android:layout_height="wrap_content"
     android:layout_marginBottom="16dp"
     app:cardBackgroundColor="#242424"
-    app:cardCornerRadius="8dp">
+    app:cardCornerRadius="24dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -13,7 +13,9 @@
         android:orientation="vertical">        <!-- Container para miniatura y video -->
         <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="260dp">
+            android:layout_height="260dp"
+            android:background="@drawable/rounded_image_background"
+            android:clipToOutline="true">
 
             <!-- Miniatura del video -->
             <ImageView
@@ -172,12 +174,12 @@
             <!-- Menú de opciones del curso (3 puntos) -->
             <ImageView
                 android:id="@+id/courseOptionsMenuButton"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:src="@drawable/ic_more_vert"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Opciones del curso"
-                android:padding="6dp"
+                android:padding="8dp"
                 android:scaleType="centerInside"
                 android:clickable="true"
                 android:focusable="true"

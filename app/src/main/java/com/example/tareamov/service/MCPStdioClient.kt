@@ -147,10 +147,15 @@ class MCPStdioClient(private val context: Context) {
                     // Parse the response to extract data and SQL
                     val jsonData = JSONObject(textContent)
                     
+                    val formattedSummary = jsonData.optString("formatted_summary", "").takeIf { it.isNotBlank() }
+                    val metadata = jsonData.optJSONObject("metadata")
+
                     return@withContext MCPQueryResult(
                         success = true,
                         data = jsonData.opt("data"),
-                        sqlScript = jsonData.optString("sql", null)
+                        sqlScript = jsonData.optString("sql_script", null) ?: jsonData.optString("sql", null),
+                        formattedSummary = formattedSummary,
+                        metadata = metadata
                     )
                 }
             }
@@ -259,6 +264,8 @@ class MCPStdioClient(private val context: Context) {
         val success: Boolean,
         val data: Any? = null,
         val sqlScript: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        val formattedSummary: String? = null,
+        val metadata: JSONObject? = null
     )
 }

@@ -1,22 +1,21 @@
 package com.example.tareamov.service
 
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONArray
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.ConnectException
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.Socket
-import java.net.InetSocketAddress
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import java.util.LinkedHashSet
 
 /**
  * Client for interacting with the Model Serving Platform (MSP)
@@ -32,42 +31,11 @@ class MSPClient(private val context: Context) {
     // Dynamic context cache for better performance
     private val contextCache = mutableMapOf<String, Pair<String, Long>>()
     private val cacheTimeoutMs = 5 * 60 * 1000L // 5 minutes
-    
-    // Lista de IPs posibles (ordenadas por prioridad)
-    // Lista de IPs posibles (ordenadas por prioridad - EMULADOR PRIMERO)
-    private val possibleBaseUrls = listOf(
-        "http://10.0.2.2:11435",        // 🎯 EMULADOR -> HOST (MÁXIMA PRIORIDAD) - La única IP que funciona en emuladores
-        "http://192.168.1.16:11435",    // IP Wi-Fi ACTUAL (ipconfig - Oct 10, 2025) - Funciona en dispositivos físicos
-        "http://192.168.1.1:11435",     // Gateway predeterminado (ipconfig - Oct 10, 2025)
-        "http://localhost:11435",       // Localhost - High priority
-        "http://127.0.0.1:11435",       // Loopback - High priority
-        "http://192.168.1.10:11435",    // IP Wi-Fi anterior (Oct 6, 2025)
-        "http://10.218.57.181:11435",   // IP Wi-Fi anterior
-        // IPs adicionales añadidas desde ipconfig de Windows (WSL, Ethernet, Wi‑Fi)
-        "http://10.111.202.181:11435",  // Wi‑Fi actual (ipconfig)
-        "http://10.111.202.15:11435",   // Wi‑Fi gateway (ipconfig)
-        "http://108.168.41.26:11435",   // Ethernet IPv4 (ipconfig)
-        "http://10.218.57.109:11435",   // Gateway predeterminado anterior
-        "http://172.17.112.1:11435",    // WSL IP from ipconfig
-        "http://192.168.1.224:11435",   // IP Wi-Fi anterior
-        "http://192.168.1.254:11435",   // Gateway predeterminado anterior
-        "http://192.168.1.17:11435",    // Anterior IP Wi-Fi
-        "http://192.168.1.158:11435",   // Previous IP from ipconfig
-        "http://0.0.0.0:11435"          // Bind address from Ollama logs
-    )
-    private val emulatorUrl = "http://10.0.2.2:11435" // Kept for backward compatibility
     private val modelName = "llama3"
-    // Possible MCP (HTTP) server URLs (MCP server runs on port 3000 in this workspace)
-    private val possibleMcpUrls = listOf(
-        "http://10.0.2.2:3000",   // emulator -> host
-        // Agregadas IPs del ipconfig (Wi‑Fi y WSL) para intentar conectar al MCP en la red local
-        "http://10.111.202.181:3000", // Wi‑Fi actual
-        "http://10.111.202.15:3000",  // Wi‑Fi gateway
-        "http://172.17.112.1:3000",   // WSL (Hyper‑V) host
-        "http://127.0.0.1:3000",
-        "http://localhost:3000",
-        "http://192.168.1.16:3000"
-    )
+
+    init {
+        ServerEndpointResolver.initialize(context.applicationContext)
+    }
 
     // Enhanced OkHttpClient with better timeout handling for large payloads
     // Increased timeouts to handle Ollama's model loading time (7+ seconds)
@@ -80,146 +48,120 @@ class MSPClient(private val context: Context) {
             .build()
     }
 
-    private fun getBaseUrl(): String {
-        // Prefer MCP HTTP server if available (acts as official MCP bridge)
-        for (mcp in possibleMcpUrls) {
-            try {
-                if (isPortOpen(mcp, 1500)) {
-                    Log.d(tag, "Using MCP HTTP server at $mcp")
-                    return mcp // return MCP base (will be used specially)
-                }
-            } catch (e: Exception) {
-                Log.d(tag, "MCP port check failed for $mcp: ${e.message}")
-            }
-        }
-        if (isEmulator()) {
-            Log.d(tag, "Using emulator URL: $emulatorUrl")
-            return emulatorUrl
-        }
-
-        // Prefer known LAN IPs first (from possibleBaseUrls)
-        for (url in possibleBaseUrls) {
-            try {
-                if (isPortOpen(url, 3000)) { // 3s timeout for socket check
-                    Log.d(tag, "Connected to Ollama at URL (port open): $url")
-                    return url
-                }
-            } catch (e: Exception) {
-                Log.d(tag, "Port check failed for $url: ${e.message}")
-            }
-        }
-
-        // Fallback to the first candidate even if unreachable (will be retried later)
-        Log.w(tag, "No Ollama server detected on candidates, returning first candidate as fallback: ${possibleBaseUrls.first()}" )
-        return possibleBaseUrls.first()
+    private suspend fun resolveOllamaBaseUrl(forceDiscovery: Boolean = false): String? {
+        return ServerEndpointResolver.getOllamaBaseUrl(forceDiscovery)
     }
 
-    // Check whether TCP port at the host:port is accepting connections
-    private fun isPortOpen(urlString: String, timeoutMs: Int = 3000): Boolean {
-        return try {
-            val u = URL(urlString)
-            val host = u.host
-            val port = if (u.port != -1) u.port else u.defaultPort
-            val socket = Socket()
-            socket.connect(InetSocketAddress(host, port), timeoutMs)
-            socket.close()
-            Log.d(tag, "Socket connect succeeded to $host:$port")
-            true
-        } catch (e: Exception) {
-            Log.d(tag, "Socket connect failed for $urlString: ${e.message}")
-            false
+    private suspend fun resolveMcpBaseUrl(forceDiscovery: Boolean = false): String? {
+        return ServerEndpointResolver.getMcpBaseUrl(forceDiscovery)
+    }
+
+    private fun peekOllamaBaseUrl(): String? = ServerEndpointResolver.peekOllamaBaseUrl()
+    private fun peekMcpBaseUrl(): String? = ServerEndpointResolver.peekMcpBaseUrl()
+
+    suspend fun isServerRunning(urlToCheck: String? = null): Boolean {
+        return if (!urlToCheck.isNullOrBlank()) {
+            ServerEndpointResolver.isServiceReachable(urlToCheck, "/api/tags")
+        } else {
+            resolveOllamaBaseUrl() != null
         }
     }
 
-    // Preserve previous public API for callers that expect isServerRunning
-    fun isServerRunning(urlToCheck: String? = null): Boolean {
-        val url = urlToCheck ?: getBaseUrl()
-        return try {
-            // Try socket connect first
-            isPortOpen(url, 3000)
-        } catch (e: Exception) {
-            Log.d(tag, "isServerRunning: exception checking $url: ${e.message}")
-            false
+    private fun performOllamaRequest(baseUrl: String, jsonPayload: String): String {
+        val connection = (URL("$baseUrl/api/generate").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "application/json")
+            connectTimeout = 60000  // 60 seconds for connection
+            readTimeout = 300000    // 300 seconds (5 minutes) for reading response
+            doOutput = true
         }
+
+        return try {
+            OutputStreamWriter(connection.outputStream).use { writer ->
+                writer.write(jsonPayload)
+                writer.flush()
+            }
+
+            val responseCode = connection.responseCode
+            val body = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+
+            if (responseCode in 200..299) {
+                body ?: ""
+            } else {
+                val message = body?.takeIf { it.isNotBlank() } ?: "sin detalles"
+                throw IOException("HTTP $responseCode desde $baseUrl: $message")
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private suspend fun collectOllamaCandidates(includeDiagnostics: Boolean = true): LinkedHashSet<String> {
+        val candidates = LinkedHashSet<String>()
+        resolveOllamaBaseUrl()?.let { candidates.add(it) }
+        resolveOllamaBaseUrl(forceDiscovery = true)?.let { candidates.add(it) }
+        peekOllamaBaseUrl()?.let { candidates.add(it) }
+        if (includeDiagnostics) {
+            ServerEndpointResolver.collectOllamaDiagnostics().keys.forEach { candidates.add(it) }
+        }
+        return candidates
+    }
+
+    private suspend fun collectMcpCandidates(): LinkedHashSet<String> {
+        val candidates = LinkedHashSet<String>()
+        resolveMcpBaseUrl()?.let { candidates.add(it) }
+        resolveMcpBaseUrl(forceDiscovery = true)?.let { candidates.add(it) }
+        peekMcpBaseUrl()?.let { candidates.add(it) }
+        ServerEndpointResolver.collectMcpDiagnostics().keys.forEach { candidates.add(it) }
+        return candidates
     }
 
     /**
-     * Test all possible Ollama URLs and return diagnostic information
-     * Useful for debugging LLM connection issues
+     * Run diagnostics across discovered endpoints for Ollama.
      */
-    suspend fun testAllConnections(): Map<String, Boolean> = withContext(Dispatchers.IO) {
-        val results = mutableMapOf<String, Boolean>()
-        
-        Log.d(tag, "=== TESTING ALL OLLAMA CONNECTIONS ===")
-        
-        for (url in possibleBaseUrls) {
-            try {
-                val isReachable = isPortOpen(url, 2000)
-                results[url] = isReachable
-                Log.d(tag, "  $url: ${if (isReachable) "✓ REACHABLE" else "✗ UNREACHABLE"}")
-            } catch (e: Exception) {
-                results[url] = false
-                Log.e(tag, "  $url: ✗ ERROR - ${e.message}")
-            }
+    suspend fun testAllConnections(): Map<String, Boolean> {
+        val results = ServerEndpointResolver.collectOllamaDiagnostics()
+        Log.d(tag, "=== TESTING OLLAMA CONNECTIONS (${results.size}) ===")
+        results.forEach { (endpoint, reachable) ->
+            Log.d(tag, "  $endpoint: ${if (reachable) "✓" else "✗"}")
         }
-        
-        Log.d(tag, "===================================")
-        return@withContext results
+        Log.d(tag, "========================================")
+        return results
     }
 
     /**
-     * Get detailed connection status for debugging
+     * Provide a human-readable status summary for the UI.
      */
-    suspend fun getConnectionStatus(): String = withContext(Dispatchers.IO) {
-        val results = testAllConnections()
-        val reachable = results.filter { it.value }
-        
-        if (reachable.isEmpty()) {
-            return@withContext """
+    suspend fun getConnectionStatus(): String {
+        val results = ServerEndpointResolver.collectOllamaDiagnostics()
+        val reachable = results.filterValues { it }
+
+        return if (reachable.isEmpty()) {
+            """
                 ❌ NO SE PUDO CONECTAR AL SERVIDOR OLLAMA
-                
-                URLs probadas (${results.size}):
+
+                Endpoints evaluados (${results.size}):
                 ${results.entries.joinToString("\n") { "  • ${it.key}: ${if (it.value) "✓" else "✗"}" }}
-                
-                Posibles soluciones:
-                1. Verifica que Ollama esté ejecutándose en tu PC
-                2. Ejecuta: ollama serve
-                3. Verifica que tu PC y dispositivo estén en la misma red
-                4. Verifica el firewall de Windows
-                5. Usa la IP correcta de tu adaptador Wi-Fi
-                
-                Para obtener tu IP: ipconfig (Windows) o ifconfig (Mac/Linux)
+
+                Sugerencias rápidas:
+                1. Asegúrate de que Ollama esté ejecutándose en tu computadora
+                2. Confirma que el dispositivo esté en la misma red local
+                3. Revisa reglas de firewall/antivirus que bloqueen el puerto 11435
+                4. Si usas un emulador, verifica que 10.0.2.2 sea accesible
             """.trimIndent()
         } else {
-            return@withContext """
+            """
                 ✓ SERVIDOR OLLAMA CONECTADO
-                
-                URLs disponibles:
-                ${reachable.entries.joinToString("\n") { "  ✓ ${it.key}" }}
-                
-                El LLM debería funcionar correctamente.
+
+                Endpoints disponibles:
+                ${reachable.keys.joinToString("\n") { "  ✓ $it" }}
+
+                El modelo local debería responder con normalidad.
             """.trimIndent()
         }
-    }
-
-    private fun isEmulator(): Boolean {
-        return (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic")
-                || Build.FINGERPRINT.startsWith("generic")
-                || Build.FINGERPRINT.startsWith("unknown")
-                || Build.HARDWARE.contains("goldfish")
-                || Build.HARDWARE.contains("ranchu")
-                || Build.MODEL.contains("google_sdk")
-                || Build.MODEL.contains("Emulator")
-                || Build.MODEL.contains("Android SDK built for x86")
-                || Build.MANUFACTURER.contains("Genymotion")
-                || Build.PRODUCT.contains("sdk_google")
-                || Build.PRODUCT.contains("google_sdk")
-                || Build.PRODUCT.contains("sdk")
-                || Build.PRODUCT.contains("sdk_x86")
-                || Build.PRODUCT.contains("sdk_gphone64_arm64")
-                || Build.PRODUCT.contains("vbox86p")
-                || Build.PRODUCT.contains("emulator")
-                || Build.PRODUCT.contains("simulator"))
     }
 
     suspend fun preloadLocalModel() = withContext(Dispatchers.IO) {
@@ -309,150 +251,118 @@ $prompt
             simplePrompt
         }
     
-        var currentBaseUrl = ""
-        var response = ""
-        var success = false
+        val attemptedEndpoints = mutableListOf<String>()
         var lastError: Exception? = null
 
-        // Prefer MCP HTTP bridge first (port 3000) - try each candidate
-        for (mcp in possibleMcpUrls) {
+        // Try MCP bridge first if available
+        resolveMcpBaseUrl()?.let { mcpUrl ->
+            attemptedEndpoints.add("$mcpUrl/tools/call")
             try {
-                if (isPortOpen(mcp, 1500)) {
-                    Log.d(tag, "Attempting to send prompt via MCP bridge at $mcp")
-                    val r = sendPromptViaMcp(mcp, enhancedPrompt)
-                    if (!r.isNullOrEmpty()) {
-                        Log.d(tag, "Received response via MCP bridge at $mcp")
-                        return@withContext r
-                    } else {
-                        Log.d(tag, "MCP bridge at $mcp returned empty response")
-                    }
+                val viaMcp = sendPromptViaMcp(mcpUrl, enhancedPrompt)
+                if (!viaMcp.isNullOrEmpty()) {
+                    Log.d(tag, "Prompt served via MCP bridge at $mcpUrl")
+                    return@withContext viaMcp
+                } else {
+                    Log.d(tag, "MCP bridge returned empty response")
                 }
             } catch (e: Exception) {
-                Log.d(tag, "MCP bridge attempt failed for $mcp: ${e.message}")
+                lastError = e
+                Log.w(tag, "Failed sending prompt via MCP bridge", e)
             }
         }
-    
-        // Try each possible base URL until one works
-        for (baseUrl in possibleBaseUrls) {
-            currentBaseUrl = baseUrl
-            try {
-                Log.d(tag, "Trying to connect to $baseUrl...")
-                
-                // Construct the request URL
-                val url = URL("$baseUrl/api/generate")
-                val connection = url.openConnection() as HttpURLConnection
-    
-                // Set up the connection with increased timeouts
-                connection.requestMethod = "POST"
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.setRequestProperty("Accept", "application/json")
-                connection.connectTimeout = 15000  // 15 seconds
-                connection.readTimeout = 60000    // 60 seconds
-                connection.doOutput = true
-    
-                // Create the request body
-                val requestBody = JSONObject().apply {
-                    put("model", modelName)
-                    put("prompt", enhancedPrompt)
-                    put("stream", false)
-    
-                    // Add options for context handling
-                    val options = JSONObject().apply {
-                        put("include_history", includeHistory)
-                        put("include_database_context", false)  // We've already added it if needed
-                    }
-                    put("options", options)
+
+        val requestPayload = JSONObject().apply {
+            put("model", modelName)
+            put("prompt", enhancedPrompt)
+            put("stream", false)
+            put("options", JSONObject().apply {
+                put("include_history", includeHistory)
+                put("include_database_context", false)
+                put("num_predict", 512)        // Limit response tokens to prevent long generation times
+                put("temperature", 0.7)        // Reasonable creativity balance
+                put("top_k", 40)               // Sampling parameter
+                put("top_p", 0.9)              // Nucleus sampling
+            })
+        }.toString()
+
+        suspend fun tryDirect(baseUrl: String): String? {
+            return try {
+                val raw = performOllamaRequest(baseUrl, requestPayload)
+                val responseJson = JSONObject(raw)
+                val reply = responseJson.optString("response")
+
+                if (reply.isNullOrBlank()) {
+                    Log.w(tag, "Respuesta vacía desde $baseUrl")
+                    null
+                } else {
+                    Log.d(tag, "=== OLLAMA RESPONSE LOG ===")
+                    Log.d(tag, "Server URL: $baseUrl")
+                    Log.d(tag, "Response Length: ${reply.length} characters")
+                    Log.d(tag, "=========================")
+                    reply
                 }
-    
-                try {
-                    // Send the request
-                    val outputStream = OutputStreamWriter(connection.outputStream)
-                    outputStream.write(requestBody.toString())
-                    outputStream.flush()
-                    outputStream.close()
-        
-                    // Get the response
-                    val responseCode = connection.responseCode
-                    if (responseCode == HttpURLConnection.HTTP_OK) {
-                        val reader = BufferedReader(InputStreamReader(connection.inputStream))
-                        val responseJson = JSONObject(reader.readText())
-                        response = responseJson.getString("response")
-                        
-                        Log.d(tag, "=== OLLAMA RESPONSE LOG ===")
-                        Log.d(tag, "Server URL: $baseUrl")
-                        Log.d(tag, "Response Code: $responseCode")
-                        Log.d(tag, "Response Length: ${response.length} characters")
-                        Log.d(tag, "Response Content: $response")
-                        Log.d(tag, "=========================")
-                        
-                        success = true
-                        connection.disconnect()
-                        break
-                    } else {
-                        Log.e(tag, "Error response from $baseUrl: $responseCode")
-                        // Try to read error message if available
-                        try {
-                            val errorReader = BufferedReader(InputStreamReader(connection.errorStream))
-                            val errorResponse = errorReader.readText()
-                            Log.e(tag, "Error details: $errorResponse")
-                        } catch (e: Exception) {
-                            Log.e(tag, "Could not read error details", e)
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(tag, "Error sending request to $baseUrl", e)
-                    lastError = e
-                } finally {
-                    connection.disconnect()
-                }
-            } catch (e: ConnectException) {
-                Log.e(tag, "Failed to connect to $baseUrl", e)
-                lastError = e
             } catch (e: Exception) {
-                Log.e(tag, "Error sending prompt to $baseUrl", e)
                 lastError = e
+                Log.e(tag, "Direct Ollama request failed for $baseUrl", e)
+                null
             }
         }
-        
-        if (!success) {
-            Log.e(tag, "=== OLLAMA CONNECTION FAILED ===")
-            Log.e(tag, "All ${possibleBaseUrls.size} base URLs failed to connect")
-            Log.e(tag, "Last error: ${lastError?.javaClass?.simpleName} - ${lastError?.message}")
-            Log.e(tag, "Attempted URLs: ${possibleBaseUrls.joinToString(", ")}")
-            Log.e(tag, "==============================")
-            
-            // Return a detailed error message with actionable advice
-            val errorDetails = lastError?.let { 
-                when (it) {
-                    is ConnectException -> "No se pudo conectar (verifica que Ollama esté ejecutándose)"
-                    is java.net.SocketTimeoutException -> "Tiempo de espera agotado (el servidor está muy lento)"
-                    else -> it.message ?: "Error desconocido"
-                }
-            } ?: "No se pudo establecer conexión"
-            
-            return@withContext """
-                Error: No se pudo conectar al servidor LLM Ollama.
-                
-                Detalles: $errorDetails
-                
-                URLs intentadas (${possibleBaseUrls.size}):
-                ${possibleBaseUrls.take(3).joinToString("\n") { "  • $it" }}
-                ${if (possibleBaseUrls.size > 3) "  • ... y ${possibleBaseUrls.size - 3} más" else ""}
-                
-                Soluciones:
-                1. Verifica que Ollama esté ejecutándose: ollama serve
-                2. Confirma tu IP con: ipconfig (Windows)
-                3. Asegúrate de estar en la misma red Wi-Fi
-                4. Revisa el firewall de Windows
-            """.trimIndent()
+
+        val primaryBase = resolveOllamaBaseUrl()
+        primaryBase?.let { attemptedEndpoints.add("$it/api/generate") }
+        val primaryResponse = primaryBase?.let { tryDirect(it) }
+        if (!primaryResponse.isNullOrEmpty()) {
+            Log.d(tag, "=== OLLAMA PROCESSING COMPLETE ===")
+            Log.d(tag, "Final response length: ${primaryResponse.length} characters")
+            Log.d(tag, "=================================")
+            return@withContext primaryResponse
         }
-        
-        Log.d(tag, "=== OLLAMA PROCESSING COMPLETE ===")
-        Log.d(tag, "Final response delivered successfully")
-        Log.d(tag, "Final response length: ${response.length} characters")
-        Log.d(tag, "=================================")
-        
-        return@withContext response
+
+        val fallbackBase = resolveOllamaBaseUrl(forceDiscovery = true)?.takeIf { it != primaryBase }
+        fallbackBase?.let { attemptedEndpoints.add("$it/api/generate") }
+        val fallbackResponse = fallbackBase?.let { tryDirect(it) }
+        if (!fallbackResponse.isNullOrEmpty()) {
+            Log.d(tag, "=== OLLAMA PROCESSING COMPLETE ===")
+            Log.d(tag, "Final response length: ${fallbackResponse.length} characters")
+            Log.d(tag, "=================================")
+            return@withContext fallbackResponse
+        }
+
+        val diagnostics = ServerEndpointResolver.collectOllamaDiagnostics()
+        val attemptSummary = if (attemptedEndpoints.isEmpty()) {
+            "  • Sin endpoints detectados"
+        } else {
+            attemptedEndpoints.joinToString("\n") { "  • $it" }
+        }
+
+        val diagSummary = diagnostics.entries.joinToString("\n") { (endpoint, ok) ->
+            "  • $endpoint -> ${if (ok) "✓" else "✗"}"
+        }
+
+        val detailMessage = lastError?.let { err ->
+            when (err) {
+                is ConnectException -> "No se pudo establecer conexión con el servidor"
+                is java.net.SocketTimeoutException -> "Tiempo de espera agotado al solicitar respuesta"
+                else -> err.message ?: "Error desconocido"
+            }
+        } ?: "No se detectó ningún servidor accesible"
+
+        return@withContext """
+            Error: No se pudo conectar al servidor LLM.
+
+            Intentos realizados:
+$attemptSummary
+
+            Diagnóstico de red:
+$diagSummary
+
+            Detalles: $detailMessage
+
+            Sugerencias:
+            1. Asegúrate de que Ollama esté ejecutándose (ollama serve)
+            2. Verifica que el dispositivo esté en la misma red que el servidor
+            3. Revisa reglas de firewall o antivirus que bloqueen los puertos 11435 y 3000
+        """.trimIndent()
     }
 
     // Helper: send prompt via MCP HTTP bridge (/tools/call). Returns response text or null.
@@ -540,75 +450,56 @@ $prompt
             ${originalPrompt.take(2000)}
         """.trimIndent()
         
-        // Now send this truncated prompt
-        var response = ""
-        var success = false
-        var lastError: Exception? = null
-        
-        // Try each possible base URL until one works
-        for (baseUrl in possibleBaseUrls) {
-            try {
-                Log.d(tag, "Trying truncated prompt on $baseUrl...")
-                val url = URL("$baseUrl/api/generate")
-                val connection = url.openConnection() as HttpURLConnection
-                
-                connection.requestMethod = "POST"
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.connectTimeout = 15000
-                connection.readTimeout = 30000
-                connection.doOutput = true
-                
-                val requestBody = JSONObject().apply {
-                    put("model", modelName)
-                    put("prompt", truncatedPrompt)
-                    put("stream", false)
-                    
-                    val options = JSONObject().apply {
-                        put("include_history", includeHistory)
-                        put("include_database_context", false)
-                    }
-                    put("options", options)
-                }
-                
-                try {
-                    OutputStreamWriter(connection.outputStream).use { writer ->
-                        writer.write(requestBody.toString())
-                        writer.flush()
-                    }
-                    
-                    val responseCode = connection.responseCode
-                    if (responseCode == HttpURLConnection.HTTP_OK) {
-                        val reader = BufferedReader(InputStreamReader(connection.inputStream))
-                        val responseJson = JSONObject(reader.readText())
-                        response = responseJson.optString("response", "")
-                        
-                        // Add a note about truncation
-                        response = """
-                            [Nota: Debido al tamaño de la consulta, se utilizó una versión resumida del contexto]
-                            
-                            $response
-                        """.trimIndent()
-                        
-                        success = true
-                        break
-                    }
-                } catch (e: Exception) {
-                    Log.e(tag, "Error in request to $baseUrl: ${e.message}")
-                    lastError = e
-                } finally {
-                    connection.disconnect()
+        val payload = JSONObject().apply {
+            put("model", modelName)
+            put("prompt", truncatedPrompt)
+            put("stream", false)
+            put("options", JSONObject().apply {
+                put("include_history", includeHistory)
+                put("include_database_context", false)
+            })
+        }.toString()
+
+        suspend fun attempt(baseUrl: String): String? {
+            return try {
+                val raw = performOllamaRequest(baseUrl, payload)
+                val responseJson = JSONObject(raw)
+                val reply = responseJson.optString("response")
+                if (reply.isNullOrBlank()) {
+                    null
+                } else {
+                    """
+                        [Nota: Debido al tamaño de la consulta, se utilizó una versión resumida del contexto]
+
+$reply
+                    """.trimIndent()
                 }
             } catch (e: Exception) {
-                Log.e(tag, "Error sending truncated prompt to $baseUrl", e)
-                lastError = e
+                Log.e(tag, "Truncated prompt failed on $baseUrl", e)
+                null
             }
         }
-        
-        if (!success) {
-            return@withContext "Error: La consulta es demasiado grande para procesar. Por favor, simplifica tu pregunta o especifica exactamente qué información necesitas. ${lastError?.message ?: ""}"
+
+        val primaryBase = resolveOllamaBaseUrl()
+        val primaryResponse = primaryBase?.let { attempt(it) }
+        if (!primaryResponse.isNullOrBlank()) {
+            return@withContext primaryResponse
         }
-        
-        return@withContext response
+
+        val fallbackBase = resolveOllamaBaseUrl(forceDiscovery = true)?.takeIf { it != primaryBase }
+        val fallbackResponse = fallbackBase?.let { attempt(it) }
+        if (!fallbackResponse.isNullOrBlank()) {
+            return@withContext fallbackResponse
+        }
+
+        val lastBase = fallbackBase ?: primaryBase ?: peekOllamaBaseUrl()
+        val detail = if (lastBase == null) {
+            "No se detectó ningún endpoint accesible."
+        } else {
+            "No se pudo obtener respuesta de $lastBase."
+        }
+
+        return@withContext "Error: La consulta es demasiado grande para procesar. $detail"
     }
 
     /**
@@ -1096,55 +987,34 @@ Datos: ${formatMCPData(data)}
      * Used by preloadLocalModel for warmup and other internal operations
      */
     private suspend fun sendPromptInternal(prompt: String, isWarmup: Boolean = false): String = withContext(Dispatchers.IO) {
-        // Don't log the full prompt if it's a warmup to avoid log spam
         if (isWarmup) {
             Log.d(tag, "Sending internal warmup prompt")
         } else {
             Log.d(tag, "Sending internal prompt: ${prompt.take(50)}...")
         }
-        
-        for (baseUrl in possibleBaseUrls) {
+
+        val payload = JSONObject().apply {
+            put("model", modelName)
+            put("prompt", prompt)
+            put("stream", false)
+        }.toString()
+
+        val candidates = collectOllamaCandidates()
+
+        for (candidate in candidates) {
             try {
-                Log.d(tag, "Trying internal prompt on $baseUrl...")
-                val url = URL("$baseUrl/api/generate")
-                val connection = url.openConnection() as HttpURLConnection
-                
-                connection.requestMethod = "POST"
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.connectTimeout = 5000   // Shorter timeout for warmup
-                connection.readTimeout = 10000     // Shorter timeout for warmup
-                connection.doOutput = true
-                
-                val requestBody = JSONObject().apply {
-                    put("model", modelName)
-                    put("prompt", prompt)
-                    put("stream", false)
-                }
-                
-                try {
-                    OutputStreamWriter(connection.outputStream).use { writer ->
-                        writer.write(requestBody.toString())
-                        writer.flush()
-                    }
-                    
-                    val responseCode = connection.responseCode
-                    if (responseCode == HttpURLConnection.HTTP_OK) {
-                        val reader = BufferedReader(InputStreamReader(connection.inputStream))
-                        val responseJson = JSONObject(reader.readText())
-                        Log.d(tag, "Internal prompt successful on $baseUrl")
-                        return@withContext responseJson.optString("response", "")
-                    }
-                } catch (e: Exception) {
-                    Log.e(tag, "Error in internal request to $baseUrl: ${e.message}")
-                } finally {
-                    connection.disconnect()
+                val raw = performOllamaRequest(candidate, payload)
+                val response = JSONObject(raw).optString("response", "")
+                if (response.isNotBlank()) {
+                    Log.d(tag, "Internal prompt successful on $candidate")
+                    return@withContext response
                 }
             } catch (e: Exception) {
-                Log.e(tag, "Error sending internal prompt to $baseUrl: ${e.message}")
+                Log.d(tag, "Internal prompt failed for $candidate", e)
             }
         }
-        
-        return@withContext "Error: No se pudo conectar a ningún servidor disponible."
+
+        "Error: No se pudo conectar a ningún servidor disponible."
     }
 
     /**
@@ -1360,58 +1230,33 @@ Datos: ${formatMCPData(data)}
      * Send optimized prompt with better error handling
      */
     private suspend fun sendOptimizedPrompt(prompt: String): String {
-        var response = ""
-        var success = false
+        val payload = JSONObject().apply {
+            put("model", modelName)
+            put("prompt", prompt)
+            put("stream", false)
+            put("options", JSONObject().apply {
+                put("temperature", 0.7)
+                put("max_tokens", 1024)
+            })
+        }.toString()
+
+        val candidates = collectOllamaCandidates()
+
         var lastError: Exception? = null
-        
-        for (baseUrl in possibleBaseUrls) {
-            if (success) break
-            
+
+        for (candidate in candidates) {
             try {
-                val urlObj = URL("$baseUrl/api/generate")
-                val connection = urlObj.openConnection() as HttpURLConnection
-                
-                connection.requestMethod = "POST"
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.doOutput = true
-                connection.connectTimeout = 20000
-                connection.readTimeout = 120000
-                
-                val requestBody = JSONObject().apply {
-                    put("model", modelName)
-                    put("prompt", prompt)
-                    put("stream", false)
-                    put("options", JSONObject().apply {
-                        put("temperature", 0.7)
-                        put("max_tokens", 1024)
-                    })
+                val raw = performOllamaRequest(candidate, payload)
+                val response = JSONObject(raw).optString("response")
+                if (!response.isNullOrBlank()) {
+                    return response
                 }
-                
-                OutputStreamWriter(connection.outputStream).use { writer ->
-                    writer.write(requestBody.toString())
-                    writer.flush()
-                }
-                
-                val responseCode = connection.responseCode
-                if (responseCode == HttpURLConnection.HTTP_OK) {
-                    BufferedReader(InputStreamReader(connection.inputStream)).use { reader ->
-                        val responseText = reader.readText()
-                        val jsonResponse = JSONObject(responseText)
-                        response = jsonResponse.getString("response")
-                        success = true
-                    }
-                }
-                
             } catch (e: Exception) {
                 lastError = e
             }
         }
-        
-        if (!success) {
-            return "Error en optimización RAG: ${lastError?.message}"
-        }
-        
-        return response
+
+        return "Error en optimización RAG: ${lastError?.message ?: "No se encontraron endpoints accesibles"}"
     }
 
     /**
@@ -1796,4 +1641,301 @@ NOTA: Error al obtener estadísticas en tiempo real, pero el esquema está dispo
             """.trimIndent()
         }
     }
+    
+    // ==================== MCP OFFICIAL PROTOCOL METHODS ====================
+    
+    /**
+     * MCP Protocol Version
+     */
+    private val MCP_PROTOCOL_VERSION = "2024-11-05"
+    private var mcpInitialized = false
+    private var mcpServerCapabilities: JSONObject? = null
+    
+    /**
+     * Initialize MCP connection with server (JSON-RPC 2.0)
+     * Must be called before using MCP tools
+     */
+    suspend fun initializeMCP(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d(tag, "🔌 Initializing MCP connection...")
+            
+            for (mcpUrl in collectMcpCandidates()) {
+                try {
+                    val request = buildMCPRequest(
+                        method = "initialize",
+                        params = JSONObject().apply {
+                            put("protocolVersion", MCP_PROTOCOL_VERSION)
+                            put("capabilities", JSONObject().apply {
+                                put("roots", JSONObject().apply {
+                                    put("listChanged", false)
+                                })
+                                put("sampling", JSONObject())
+                            })
+                            put("clientInfo", JSONObject().apply {
+                                put("name", "TareaMov-Android")
+                                put("version", "1.0.0")
+                            })
+                        }
+                    )
+                    
+                    val response = sendMCPRequest("${mcpUrl.trimEnd('/')}/initialize", request)
+                    
+                    if (!response.has("error")) {
+                        val result = response.getJSONObject("result")
+                        mcpServerCapabilities = result.optJSONObject("capabilities")
+                        mcpInitialized = true
+                        
+                        Log.d(tag, "✅ MCP initialized successfully at $mcpUrl")
+                        Log.d(tag, "   Protocol: ${result.optString("protocolVersion")}")
+                        Log.d(tag, "   Server: ${result.optJSONObject("serverInfo")?.optString("name")}")
+                        
+                        return@withContext true
+                    }
+                } catch (e: Exception) {
+                    Log.w(tag, "Failed to initialize MCP at $mcpUrl: ${e.message}")
+                    continue
+                }
+            }
+            
+            Log.e(tag, "❌ Failed to initialize MCP on any server")
+            return@withContext false
+            
+        } catch (e: Exception) {
+            Log.e(tag, "❌ MCP initialization error", e)
+            return@withContext false
+        }
+    }
+    
+    /**
+     * List available MCP tools (JSON-RPC 2.0)
+     */
+    suspend fun listMCPTools(): List<MCPTool> = withContext(Dispatchers.IO) {
+        try {
+            if (!mcpInitialized) {
+                Log.w(tag, "⚠️ MCP not initialized, attempting to initialize...")
+                if (!initializeMCP()) {
+                    return@withContext emptyList()
+                }
+            }
+            
+            Log.d(tag, "📋 Listing MCP tools...")
+            
+            val request = buildMCPRequest(
+                method = "tools/list",
+                params = JSONObject()
+            )
+            
+            for (mcpUrl in collectMcpCandidates()) {
+                try {
+                    val response = sendMCPRequest("${mcpUrl.trimEnd('/')}/tools/list", request)
+                    
+                    if (!response.has("error")) {
+                        val result = response.getJSONObject("result")
+                        val toolsArray = result.getJSONArray("tools")
+                        
+                        val tools = mutableListOf<MCPTool>()
+                        for (i in 0 until toolsArray.length()) {
+                            val toolObj = toolsArray.getJSONObject(i)
+                            tools.add(
+                                MCPTool(
+                                    name = toolObj.getString("name"),
+                                    description = toolObj.optString("description", ""),
+                                    inputSchema = toolObj.getJSONObject("inputSchema")
+                                )
+                            )
+                        }
+                        
+                        Log.d(tag, "✅ Found ${tools.size} MCP tools")
+                        return@withContext tools
+                    }
+                } catch (e: Exception) {
+                    Log.w(tag, "Failed to list tools at $mcpUrl: ${e.message}")
+                    continue
+                }
+            }
+            
+            return@withContext emptyList()
+            
+        } catch (e: Exception) {
+            Log.e(tag, "❌ Error listing MCP tools", e)
+            return@withContext emptyList()
+        }
+    }
+    
+    /**
+     * Call an MCP tool (JSON-RPC 2.0)
+     */
+    suspend fun callMCPTool(
+        toolName: String,
+        arguments: Map<String, Any> = emptyMap()
+    ): MCPToolResult = withContext(Dispatchers.IO) {
+        try {
+            if (!mcpInitialized) {
+                Log.w(tag, "⚠️ MCP not initialized, attempting to initialize...")
+                if (!initializeMCP()) {
+                    return@withContext MCPToolResult(
+                        content = listOf(MCPContent(type = "text", text = "MCP not initialized")),
+                        isError = true
+                    )
+                }
+            }
+            
+            Log.d(tag, "🛠️ Calling MCP tool: $toolName")
+            Log.d(tag, "   Arguments: $arguments")
+            
+            val request = buildMCPRequest(
+                method = "tools/call",
+                params = JSONObject().apply {
+                    put("name", toolName)
+                    put("arguments", JSONObject(arguments))
+                }
+            )
+            
+            for (mcpUrl in collectMcpCandidates()) {
+                try {
+                    val response = sendMCPRequest("${mcpUrl.trimEnd('/')}/tools/call", request)
+                    
+                    if (response.has("error")) {
+                        val error = response.getJSONObject("error")
+                        Log.e(tag, "❌ Tool call failed: ${error.optString("message")}")
+                        continue
+                    }
+                    
+                    val result = response.getJSONObject("result")
+                    val contentArray = result.getJSONArray("content")
+                    
+                    val contents = mutableListOf<MCPContent>()
+                    for (i in 0 until contentArray.length()) {
+                        val contentObj = contentArray.getJSONObject(i)
+                        contents.add(
+                            MCPContent(
+                                type = contentObj.getString("type"),
+                                text = contentObj.optString("text", null),
+                                data = contentObj.optString("data", null),
+                                mimeType = contentObj.optString("mimeType", null)
+                            )
+                        )
+                    }
+                    
+                    Log.d(tag, "✅ Tool executed successfully")
+                    return@withContext MCPToolResult(content = contents, isError = false)
+                    
+                } catch (e: Exception) {
+                    Log.w(tag, "Failed to call tool at $mcpUrl: ${e.message}")
+                    continue
+                }
+            }
+            
+            return@withContext MCPToolResult(
+                content = listOf(MCPContent(type = "text", text = "Failed to call tool on any MCP server")),
+                isError = true
+            )
+            
+        } catch (e: Exception) {
+            Log.e(tag, "❌ Error calling MCP tool", e)
+            return@withContext MCPToolResult(
+                content = listOf(MCPContent(type = "text", text = "Error: ${e.message}")),
+                isError = true
+            )
+        }
+    }
+    
+    /**
+     * Get database schema using MCP
+     */
+    suspend fun getMCPDatabaseSchema(): String = withContext(Dispatchers.IO) {
+        val result = callMCPTool("get_database_schema")
+        if (result.isError) {
+            return@withContext result.content.firstOrNull()?.text ?: "Error getting schema"
+        }
+        result.content.filter { it.type == "text" }.joinToString("\n") { it.text ?: "" }
+    }
+    
+    /**
+     * Query database using MCP
+     */
+    suspend fun queryMCPDatabase(query: String): String = withContext(Dispatchers.IO) {
+        val result = callMCPTool("query_database", mapOf("query" to query))
+        if (result.isError) {
+            return@withContext result.content.firstOrNull()?.text ?: "Error querying database"
+        }
+        result.content.filter { it.type == "text" }.joinToString("\n") { it.text ?: "" }
+    }
+    
+    // ==================== MCP Helper Methods ====================
+    
+    /**
+     * Build JSON-RPC 2.0 request for MCP
+     */
+    private fun buildMCPRequest(method: String, params: JSONObject): JSONObject {
+        return JSONObject().apply {
+            put("jsonrpc", "2.0")
+            put("id", System.currentTimeMillis())
+            put("method", method)
+            put("params", params)
+        }
+    }
+    
+    /**
+     * Send JSON-RPC request to MCP server
+     */
+    private fun sendMCPRequest(mcpUrl: String, jsonRpcRequest: JSONObject): JSONObject {
+        val url = URL(mcpUrl)
+        val conn = url.openConnection() as HttpURLConnection
+        
+        try {
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+            conn.doInput = true
+            conn.connectTimeout = 30000
+            conn.readTimeout = 60000
+            
+            // Send request
+            OutputStreamWriter(conn.outputStream).use { writer ->
+                writer.write(jsonRpcRequest.toString())
+                writer.flush()
+            }
+            
+            // Read response
+            val responseCode = conn.responseCode
+            val responseBody = if (responseCode == HttpURLConnection.HTTP_OK) {
+                BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+            } else {
+                BufferedReader(InputStreamReader(conn.errorStream)).use { it.readText() }
+            }
+            
+            return JSONObject(responseBody)
+            
+        } finally {
+            conn.disconnect()
+        }
+    }
+    
+    /**
+     * MCP Tool definition
+     */
+    data class MCPTool(
+        val name: String,
+        val description: String,
+        val inputSchema: JSONObject
+    )
+    
+    /**
+     * MCP Tool result
+     */
+    data class MCPToolResult(
+        val content: List<MCPContent>,
+        val isError: Boolean = false
+    )
+    
+    /**
+     * MCP Content (text, image, resource, etc.)
+     */
+    data class MCPContent(
+        val type: String,
+        val text: String? = null,
+        val data: String? = null,
+        val mimeType: String? = null
+    )
 }

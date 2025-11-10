@@ -137,7 +137,10 @@ class OllamaService : Service() {
                     broadcastIntent.putExtra("message", "Modelo Llama3 inicializado correctamente")
                     sendBroadcast(broadcastIntent)
                     
-                    // Now that we know the model works, build the database context in background
+                    // REMOVED: No longer building database context in background
+                    // This was causing prompt truncation (exceeding 4096 tokens)
+                    // Database context should only be sent AFTER LLM requests data via MCP tools
+                    /*
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
                             Log.d(TAG, "Building database context in background...")
@@ -147,6 +150,7 @@ class OllamaService : Service() {
                             Log.e(TAG, "Error building database context in background", e)
                         }
                     }
+                    */
                 } catch (e: Exception) {
                     Log.e(TAG, "Error during model initialization", e)
                     connected = false
@@ -177,7 +181,28 @@ class OllamaService : Service() {
         return try {
             // Use the MSPClient to get the context directly
             val mspClient = MSPClient(this@OllamaService)
-            mspClient.buildDatabaseContext()
+            val baseContext = mspClient.buildDatabaseContext()
+
+            val snapshotBuilder = StringBuilder()
+            snapshotBuilder.append("\n\n// --- Supabase snapshots generados automáticamente ---\n")
+            val snapshotTables = listOf("usuarios", "personas", "courses", "videos", "subscriptions", "task_submissions")
+
+            for (table in snapshotTables) {
+                try {
+                    val records = SupabaseClient.fetchTableSnapshot(table, 3)
+                    if (records.isNotEmpty()) {
+                        snapshotBuilder.append("Tabla $table (primeros ${records.size} registros): \n")
+                        records.forEach { record ->
+                            snapshotBuilder.append("  · ${record}\n")
+                        }
+                        snapshotBuilder.append("\n")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "No se pudo obtener snapshot para $table", e)
+                }
+            }
+
+            baseContext + snapshotBuilder.toString()
         } catch (e: Exception) {
             Log.e(TAG, "Error building enhanced database context", e)
             "Error al obtener contexto de base de datos: ${e.message}"

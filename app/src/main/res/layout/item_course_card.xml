@@ -4,32 +4,55 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="8dp"
+    android:layout_marginStart="12dp"
+    android:layout_marginEnd="12dp"
+    android:layout_marginTop="8dp"
+    android:layout_marginBottom="8dp"
     android:background="@color/dark_card_background"
-    app:cardCornerRadius="12dp"
-    app:cardElevation="8dp"
-    app:cardUseCompatPadding="true">
+    app:cardUseCompatPadding="false"
+    app:cardCornerRadius="24dp"
+    app:cardElevation="4dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@color/dark_card_background"
+        android:background="@drawable/course_card_background"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="0dp">
 
         <!-- Thumbnail and Premium Badge Container -->
         <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="180dp"
-            android:layout_marginBottom="12dp">
+            android:layout_height="200dp"
+            android:layout_marginStart="0dp"
+            android:layout_marginTop="0dp"
+            android:layout_marginEnd="0dp"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/rounded_image_background"
+            android:clipToOutline="true">
 
             <ImageView
                 android:id="@+id/courseThumbnailImageView"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:background="@color/dark_image_background"
                 android:scaleType="centerCrop"
                 tools:src="@android:drawable/ic_menu_gallery" />
+
+            <!-- Overlay text like in the image -->
+            <TextView
+                android:id="@+id/overlayText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:shadowColor="#80000000"
+                android:shadowDx="1"
+                android:shadowDy="1"
+                android:shadowRadius="3"
+                android:text="SI CREES EN"
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:visibility="visible" />
 
             <!-- Premium Badge -->
             <View
@@ -59,40 +82,105 @@
             android:id="@+id/courseTitleTextView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
             android:layout_marginBottom="8dp"
             android:ellipsize="end"
             android:maxLines="2"
-            android:textColor="@color/dark_primary_text"
-            android:textSize="18sp"
+            android:textColor="@color/white"
+            android:textSize="20sp"
             android:textStyle="bold"
-            tools:text="Título del Curso" />
+            tools:text="Inteligencia Artificial Práctica" />
 
         <!-- Course Description -->
         <TextView
             android:id="@+id/courseDescriptionTextView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="12dp"
             android:ellipsize="end"
-            android:maxLines="3"
-            android:textColor="@color/dark_secondary_text"
+            android:lineSpacingExtra="2dp"
+            android:maxLines="2"
+            android:textColor="#CCCCCC"
             android:textSize="14sp"
-            tools:text="Descripción del curso que puede ser un poco larga..." />
+            tools:text="Aprende IA desde cero con proyectos reales y casos de uso" />
 
-        <!-- Creator Info -->
-        <TextView
-            android:id="@+id/courseCreatorTextView"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            android:textColor="@color/dark_secondary_text"
-            android:textSize="12sp"
-            tools:text="Por: NombreCreador" />
+        <!-- Creator Info with Subscription -->
 
         <!-- Course Info Row -->
+
+        <LinearLayout
+            android:id="@+id/creatorInfoContainer"
+            android:layout_width="251dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="8dp"
+            android:background="@drawable/bg_card_premium"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="8dp">
+
+            <de.hdodenhof.circleimageview.CircleImageView
+                android:id="@+id/creatorAvatarImageView"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@drawable/default_avatar" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/courseCreatorTextView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:letterSpacing="0.02"
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    tools:text="jesus" />
+
+                <TextView
+                    android:id="@+id/subscriberCountTextView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#C2B8FF"
+                    android:textSize="11sp"
+                    tools:text="1 suscriptores" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/subscribeButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/button_premium"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:minHeight="28dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:text="Suscribirse"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp" />
+
+        </LinearLayout>
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
             android:layout_marginBottom="8dp"
             android:orientation="horizontal">
 
@@ -110,15 +198,31 @@
                 tools:text="Programación" />
 
             <!-- Rating -->
-            <TextView
-                android:id="@+id/courseRatingTextView"
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
-                android:textColor="@color/rating_color"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                tools:text="★ 4.5" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/courseRatingTextView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:textColor="@color/rating_color"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    tools:text="4.7" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="★"
+                    android:textColor="@color/rating_color"
+                    android:textSize="14sp" />
+
+            </LinearLayout>
 
         </LinearLayout>
 
@@ -126,6 +230,8 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
             android:orientation="horizontal">
 
             <!-- Enrollment Count -->
@@ -136,17 +242,88 @@
                 android:layout_weight="1"
                 android:textColor="@color/dark_secondary_text"
                 android:textSize="12sp"
-                tools:text="120 estudiantes" />
+                tools:text="892 estudiantes" />
 
-            <!-- Price -->
-            <TextView
-                android:id="@+id/coursePriceTextView"
+            <!-- Price Container -->
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="@color/purple_500"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                tools:text="$29.99" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!-- Current Price -->
+                <TextView
+                    android:id="@+id/coursePriceTextView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:textColor="@color/white"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    tools:text="$129.99" />
+
+                <!-- Original Price (Strikethrough) -->
+                <TextView
+                    android:id="@+id/originalPriceTextView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/dark_secondary_text"
+                    android:textSize="14sp"
+                    android:visibility="gone"
+                    tools:text="$199.99" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- CRUD Action Buttons Container (Only visible for course creators) -->
+        <LinearLayout
+            android:id="@+id/actionButtonsContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="12dp"
+            android:gravity="end"
+            android:orientation="horizontal"
+            android:paddingTop="4dp"
+            android:visibility="gone">
+
+            <!-- Edit Button -->
+            <ImageButton
+                android:id="@+id/editButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/button_action_edit"
+                android:contentDescription="Editar curso"
+                android:padding="6dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_edit" />
+
+            <!-- Change Thumbnail Button -->
+            <ImageButton
+                android:id="@+id/changeThumbnailButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/button_action_thumbnail"
+                android:contentDescription="Cambiar miniatura"
+                android:padding="6dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_image" />
+
+            <!-- Delete Button -->
+            <ImageButton
+                android:id="@+id/deleteButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="@drawable/button_action_delete"
+                android:contentDescription="Eliminar curso"
+                android:padding="6dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_delete" />
 
         </LinearLayout>
 

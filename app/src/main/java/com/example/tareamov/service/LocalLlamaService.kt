@@ -22,7 +22,7 @@ class LocalLlamaService(private val context: Context) {
     companion object {
         // Fallback host addresses - EMULADOR PRIMERO (Oct 10, 2025)
         val FALLBACK_LLAMA_URLS = listOf(
-            "http://10.0.2.2:11435",       // 🎯 EMULADOR -> HOST (MÁXIMA PRIORIDAD)
+            "http://10.0.2.2:11435",       // ?? EMULADOR -> HOST (M�XIMA PRIORIDAD)
             "http://192.168.1.16:11435",   // Wi-Fi IP ACTUAL (ipconfig - Oct 10, 2025)
             "http://192.168.1.1:11435",    // Gateway predeterminado (ipconfig - Oct 10, 2025)
             "http://127.0.0.1:11435",      // Localhost
@@ -44,13 +44,13 @@ class LocalLlamaService(private val context: Context) {
             val modelFile = File(context.filesDir, modelFileName)
 
             if (!modelFile.exists()) {
-                Log.e(TAG, "Modelo no encontrado. Debe copiarse el archivo $modelFileName al directorio de la aplicación")
+                Log.e(TAG, "Modelo no encontrado. Debe copiarse el archivo $modelFileName al directorio de la aplicaci�n")
                 return@withContext false
             }
 
-            // Aquí iría la inicialización real del modelo con llama.cpp
-            // Por ahora, simulamos que el modelo se cargó correctamente
-            Log.d(TAG, "Simulando inicialización del modelo Llama 3")
+            // Aqu� ir�a la inicializaci�n real del modelo con llama.cpp
+            // Por ahora, simulamos que el modelo se carg� correctamente
+            Log.d(TAG, "Simulando inicializaci�n del modelo Llama 3")
             isModelLoaded.set(true)
 
             return@withContext true
@@ -68,16 +68,14 @@ class LocalLlamaService(private val context: Context) {
 
     /**
      * Set the database context for better LLM responses with RAG optimization
+     * IMPORTANT: Database context should NOT be sent in initial prompts to avoid truncation
+     * It should only be included AFTER the LLM requests data via MCP tools
      */
     fun setDatabaseContext(context: String) {
-        // Optimize context size for local model limitations
-        databaseContext = if (context.length > 4096) {
-            // Extract key schema information and recent data only
-            extractKeyContext(context)
-        } else {
-            context
-        }
-        Log.d(TAG, "Database context set for LocalLlamaService (${databaseContext.length} chars)")
+        // NO longer setting database context here to avoid prompt truncation
+        // Database context will be sent only when LLM executes query_database tool
+        Log.d(TAG, "Database context received (${context.length} chars) but NOT stored to avoid prompt truncation")
+        databaseContext = "" // Keep empty to reduce prompt size
     }
 
     /**
@@ -112,13 +110,14 @@ class LocalLlamaService(private val context: Context) {
 
     /**
      * Generate a response using the local Llama model with RAG optimization
-     * Now attempts to connect to local Ollama instance before falling back to simulation
-     * Enhanced with MCP tool calling capability
+     * ENFORCED MCP MODE: All data queries MUST be backed by Supabase via MCP
+     * 
+     * MODE: LLM responses are ALWAYS backed by real Supabase data when applicable
      */
     suspend fun generateResponse(
         prompt: String, 
         mcpHttpClient: MCPHttpClient? = null,
-        maxToolIterations: Int = 3
+        maxToolIterations: Int = 5  // Increased for complex queries like VS Code
     ): String = withContext(Dispatchers.IO) {
         if (!isModelLoaded.get()) {
             val initialized = initializeModel()
@@ -128,77 +127,139 @@ class LocalLlamaService(private val context: Context) {
         }
 
         try {
+            // If maxToolIterations is 0, skip tool calling entirely and use direct response
+            if (maxToolIterations == 0) {
+                Log.d(TAG, "⚡ Direct response mode - no tool calling")
+                val maxPromptSize = 2 * 1024
+                val optimizedPrompt = optimizePromptForLocalModel(prompt, maxPromptSize)
+                
+                // Try Ollama first, fallback to intelligent response
+                val ollamaResponse = tryLocalOllamaConnection(optimizedPrompt)
+                return@withContext if (ollamaResponse != null && ollamaResponse.isNotBlank() && !ollamaResponse.startsWith("Error:")) {
+                    Log.d(TAG, "✓ Got direct response from Ollama (${ollamaResponse.length} chars)")
+                    ollamaResponse
+                } else {
+                    Log.d(TAG, "⚡ Using intelligent fallback for direct response")
+                    generateIntelligentResponse(optimizedPrompt)
+                }
+            }
+
             // Optimize prompt size for local model limitations
-            val maxPromptSize = 6 * 1024  // 6KB for local model
+            // Ollama has a limit of 4096 tokens (~3000-3500 characters in Spanish)
+            // Reducing to 2KB to stay well under the limit
+            val maxPromptSize = 2 * 1024  // 2KB for local model (conservative limit)
             val optimizedPrompt = optimizePromptForLocalModel(prompt, maxPromptSize)
 
-            // Detect if this query REQUIRES schema (BI queries, analysis, etc.)
-            val requiresSchema = detectIfRequiresSchema(optimizedPrompt)
+            // CRITICAL: Detect if query requires data
+            val requiresData = detectIfQueryRequiresData(optimizedPrompt)
+            Log.d(TAG, "Query requires data from Supabase: $requiresData")
             
-            // Enrich prompt with any previously set database context so RAG works better
-            var enrichedPrompt = createEnhancedPromptWithToolCapability(optimizedPrompt, mcpHttpClient != null)
+            // Detect if this is a BI query that already has a schema embedded
+            val schemaProvided = optimizedPrompt.contains("ESQUEMA DE BASE DE DATOS", ignoreCase = true) ||
+                    optimizedPrompt.contains("ESQUEMA", ignoreCase = true) ||
+                    optimizedPrompt.contains("=== ESQUEMA", ignoreCase = true) ||
+                    optimizedPrompt.contains("YA EJECUTADO", ignoreCase = true)
+
+            Log.d(TAG, "Schema provided in prompt: $schemaProvided")
+
+            // If no MCP client available but data is required, return error
+            if (requiresData && mcpHttpClient == null) {
+                return@withContext "⚠ Esta consulta requiere datos de Supabase, pero el servidor MCP no está disponible. Por favor verifica la conexión."
+            }
+
+            // If schema is already present, limit tool iterations to avoid re-requesting schema
+            val effectiveMaxToolIterations = if (schemaProvided) minOf(maxToolIterations, 1) else maxToolIterations
+
+            // Create a flexible prompt that lets LLM decide what context it needs
+            // For BI queries with schema, discourage get_database_schema calls
+            var enrichedPrompt = if (schemaProvided) {
+                // Schema already provided - just pass through
+                optimizedPrompt
+            } else {
+                createDynamicPromptWithMCPCapability(optimizedPrompt, mcpHttpClient != null, requiresData)
+            }
+            val toolExecutionHistory = StringBuilder()
 
             Log.d(TAG, "Attempting to generate response with LocalLlama")
             Log.d(TAG, "  Optimized prompt size: ${optimizedPrompt.length} chars")
             Log.d(TAG, "  Enriched prompt size: ${enrichedPrompt.length} chars")
             Log.d(TAG, "  MCP Tools available: ${mcpHttpClient != null}")
-            Log.d(TAG, "  Requires schema: $requiresSchema")
+            Log.d(TAG, "  Force data validation: $requiresData")
 
-            // If query requires schema and we have MCP, force schema fetch first
-            if (requiresSchema && mcpHttpClient != null) {
-                Log.d(TAG, "🎯 Query requires schema - forcing get_database_schema() call")
-                try {
-                    val schemaResult = mcpHttpClient.getDatabaseSchema()
-                    if (schemaResult.success && schemaResult.schema != null) {
-                        Log.d(TAG, "✅ Schema obtained (${schemaResult.schema.length} chars)")
-                        // Add schema to prompt context
-                        enrichedPrompt = """
-$enrichedPrompt
-
-📊 ESQUEMA DE BASE DE DATOS OBTENIDO:
-${schemaResult.schema}
-
-Ahora responde la consulta del usuario usando este esquema.
-                        """.trimIndent()
-                        
-                        // Set as database context for future use
-                        setDatabaseContext(schemaResult.schema)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error fetching schema proactively", e)
-                }
-            }
-
-            // Tool calling loop - allow LLM to use MCP tools
+            // Tool calling loop - allow LLM to use MCP tools only if needed
             var iteration = 0
             var finalResponse: String? = null
-            val toolExecutionHistory = StringBuilder()
             
-            while (iteration < maxToolIterations && finalResponse == null) {
-                Log.d(TAG, "🔄 Tool calling iteration ${iteration + 1}/$maxToolIterations")
+            while (iteration < effectiveMaxToolIterations && finalResponse == null) {
+                Log.d(TAG, "?? Tool calling iteration ${iteration + 1}/$effectiveMaxToolIterations")
                 
                 // Try to connect to local Ollama instance first using enriched prompt
                 val ollamaResponse = tryLocalOllamaConnection(enrichedPrompt)
                 val response = if (ollamaResponse != null && ollamaResponse.isNotBlank() && !ollamaResponse.startsWith("Error:")) {
-                    Log.d(TAG, "✓ Got response from local Ollama instance")
+                    Log.d(TAG, "✓ Got response from local Ollama instance (${ollamaResponse.length} chars)")
+                    Log.d(TAG, "Response preview (first 300 chars): ${ollamaResponse.take(300)}")
                     ollamaResponse
                 } else {
-                    Log.w(TAG, "Local Ollama not available, using intelligent fallback")
+                    Log.w(TAG, "Local Ollama not available; using intelligent fallback")
+                    // Generate intelligent response when Ollama is not available
                     generateIntelligentResponse(enrichedPrompt)
+                }
+                
+                // CRITICAL: Detect if LLM is faking tool execution
+                if (requiresData && (response.contains("Ran `") || response.contains("Completed with input") || 
+                    response.contains("SQL generado:") || response.contains("Datos obtenidos:") ||
+                    response.contains("## Resultados �") || response.contains("**SQL usado:**"))) {
+                    Log.e(TAG, "? LLM est� fingiendo ejecuci�n de herramienta! Rechazando respuesta.")
+                    Log.e(TAG, "Detected fake execution markers in response:")
+                    if (response.contains("Ran `")) Log.e(TAG, "  - Contains 'Ran `'")
+                    if (response.contains("Completed with input")) Log.e(TAG, "  - Contains 'Completed with input'")
+                    if (response.contains("SQL generado:")) Log.e(TAG, "  - Contains 'SQL generado:'")
+                    if (response.contains("Datos obtenidos:")) Log.e(TAG, "  - Contains 'Datos obtenidos:'")
+                    if (response.contains("## Resultados �")) Log.e(TAG, "  - Contains '## Resultados �'")
+                    if (response.contains("**SQL usado:**")) Log.e(TAG, "  - Contains '**SQL usado:**'")
+                    
+                    // Force the LLM to use the correct format
+                    enrichedPrompt = """
+$enrichedPrompt
+
+? ? ? ERROR CR�TICO: Tu respuesta anterior fue RECHAZADA
+
+Detectamos que escribiste texto como:
+- "Ran `query_database`"
+- "Completed with input"
+- "SQL generado:"
+- "Datos obtenidos:"
+- "## Resultados �"
+
+? ESTO EST� PROHIBIDO. Est�s FINGIENDO haber ejecutado la herramienta.
+
+? LA �NICA respuesta v�lida es:
+TOOL_CALL: query_database(query="tu consulta detallada aqu�")
+
+NO escribas NADA m�s. Solo esa l�nea. El sistema ejecutar� la herramienta y te dar� los resultados REALES.
+
+INTENTA DE NUEVO AHORA:
+                    """.trimIndent()
+                    iteration++
+                    continue
                 }
                 
                 // Check if LLM wants to use a tool
                 val toolCall = parseToolCall(response)
                 
                 if (toolCall != null && mcpHttpClient != null) {
-                    Log.d(TAG, "🛠️ LLM requested tool: ${toolCall.toolName}")
+                    Log.d(TAG, "??? LLM requested tool: ${toolCall.toolName}")
+                    
+                    // Build "Ran tool" message
+                    val toolCallArgs = toolCall.arguments.entries.joinToString(", ") { 
+                        "\"${it.key}\": \"${it.value}\"" 
+                    }
+                    toolExecutionHistory.append("\n\nRan `${toolCall.toolName}`\n")
+                    toolExecutionHistory.append("Completed with input: {\n  $toolCallArgs\n}\n")
                     
                     // Execute the tool via MCP
                     val toolResult = executeToolViaMCP(toolCall, mcpHttpClient)
-                    toolExecutionHistory.append("\n\n---\n")
-                    toolExecutionHistory.append("TOOL: ${toolCall.toolName}\n")
-                    toolExecutionHistory.append("ARGUMENTS: ${toolCall.arguments}\n")
-                    toolExecutionHistory.append("RESULT: $toolResult\n")
+                    toolExecutionHistory.append("\n**Resultado:**\n$toolResult\n")
                     
                     // Update prompt with tool result
                     enrichedPrompt = """
@@ -209,45 +270,78 @@ ARGUMENTOS: ${toolCall.arguments}
 RESULTADO:
 $toolResult
 
-Con esta información, proporciona tu respuesta final al usuario.
-Si necesitas usar otra herramienta, especifícalo usando el formato TOOL_CALL.
+Con esta informaci�n, proporciona tu respuesta final al usuario siguiendo el formato:
+
+Completed (1/1) *Nombre de la tarea*
+
+## Resultados � [t�tulo descriptivo]
+
+[Presenta los datos de forma clara y estructurada]
                     """.trimIndent()
                     
                     iteration++
                 } else {
-                    // No tool call or no MCP client - this is the final response
+                    // No tool call or no MCP client - validate response quality before accepting
+                    if (isRawSnapshotResponse(response) && iteration + 1 < effectiveMaxToolIterations) {
+                        Log.w(TAG, "LLM devolvi� un snapshot sin an�lisis; reforzando instrucciones")
+                        enrichedPrompt = reinforcePromptForAnalysis(enrichedPrompt, response)
+                        iteration++
+                        continue
+                    }
+
                     finalResponse = response
                 }
             }
             
             // Return final response with tool execution history if applicable
-            val result = finalResponse ?: "Error: Se alcanzó el límite de iteraciones de herramientas"
+            val result = finalResponse ?: "? Error: Se alcanz� el l�mite de iteraciones de herramientas"
+            
+            // CRITICAL: Validate that data queries have MCP backing
+            if (requiresData && toolExecutionHistory.isEmpty()) {
+                Log.e(TAG, "? Data query completed without MCP tool execution!")
+                return@withContext buildString {
+                    append("? ERROR DE VALIDACI�N\n\n")
+                    append("Esta consulta requiere datos de Supabase, pero no se ejecut� ninguna herramienta MCP.\n\n")
+                    append("**Consulta original:** $optimizedPrompt\n\n")
+                    append("Por favor verifica:\n")
+                    append("1. El servidor MCP est� ejecut�ndose\n")
+                    append("2. La conexi�n a Supabase es v�lida\n")
+                    append("3. El modelo LLM est� respondiendo correctamente\n\n")
+                    append("**Respuesta del modelo (sin validar):**\n$result")
+                }
+            }
             
             return@withContext if (toolExecutionHistory.isNotEmpty()) {
-                "$result\n\n--- Historial de ejecución de herramientas ---$toolExecutionHistory"
+                // Format response VS Code style with data validation badge
+                val enhancedResult = buildString {
+                    // Show tool execution history first
+                    append(toolExecutionHistory.toString().trim())
+                    append("\n\n")
+                    // Then show the final LLM analysis/response
+                    append(result)
+                    // Add data validation footer
+                    if (requiresData) {
+                        append("\n\n---\n")
+                        append("? **Datos validados:** Esta respuesta est� sustentada por consultas reales a Supabase")
+                    }
+                }
+                
+                enhancedResult
             } else {
-                result
+                // No tools were used
+                if (requiresData) {
+                    "?? ADVERTENCIA: Esta consulta requer�a datos pero no se ejecutaron herramientas MCP.\n\n$result"
+                } else if (isRawSnapshotResponse(result)) {
+                    "$result\n\n?? El modelo no gener� un an�lisis completo."
+                } else {
+                    result
+                }
             }
             
         } catch (e: Exception) {
             Log.e(TAG, "Error generating response", e)
-            return@withContext "Error: No se pudo generar respuesta. El servidor LLM no está disponible. Detalles: ${e.message}"
+            return@withContext "Error: No se pudo generar respuesta. El servidor LLM no est� disponible. Detalles: ${e.message}"
         }
-    }
-    
-    /**
-     * Detect if a query requires database schema (BI, analysis, decisions, KPIs)
-     */
-    private fun detectIfRequiresSchema(query: String): Boolean {
-        val lowerQuery = query.lowercase()
-        val keywords = listOf(
-            "decisiones", "critical", "criticas", "empresarial", "business",
-            "kpi", "indicador", "metrica", "analisis", "analysis",
-            "inteligencia", "intelligence", "bi", "dashboard",
-            "arquitectura", "estrategia", "plan", "implementacion",
-            "esquema", "schema", "estructura", "tablas", "base de datos"
-        )
-        return keywords.any { lowerQuery.contains(it) }
     }
     
     /**
@@ -265,7 +359,7 @@ Si necesitas usar otra herramienta, especifícalo usando el formato TOOL_CALL.
      */
     private fun parseToolCall(response: String): ToolCall? {
         try {
-            Log.d(TAG, "🔍 Parsing response for tool calls (first 500 chars):")
+            Log.d(TAG, "?? Parsing response for tool calls (first 500 chars):")
             Log.d(TAG, response.take(500))
             
             // Try multiple patterns to be more flexible
@@ -282,7 +376,7 @@ Si necesitas usar otra herramienta, especifícalo usando el formato TOOL_CALL.
                     val toolName = match.groupValues[1]
                     val argsString = if (match.groupValues.size > 2) match.groupValues[2] else ""
                     
-                    Log.d(TAG, "✅ Tool call detected: $toolName with args: '$argsString'")
+                    Log.d(TAG, "? Tool call detected: $toolName with args: '$argsString'")
                     
                     // Parse arguments
                     val arguments = mutableMapOf<String, String>()
@@ -292,7 +386,7 @@ Si necesitas usar otra herramienta, especifícalo usando el formato TOOL_CALL.
                             val key = argMatch.groupValues[1]
                             val value = argMatch.groupValues[2].trim()
                             arguments[key] = value
-                            Log.d(TAG, "  📌 Argument: $key = $value")
+                            Log.d(TAG, "  ?? Argument: $key = $value")
                         }
                     }
                     
@@ -300,7 +394,7 @@ Si necesitas usar otra herramienta, especifícalo usando el formato TOOL_CALL.
                 }
             }
             
-            Log.d(TAG, "❌ No tool call pattern matched in response")
+            Log.d(TAG, "? No tool call pattern matched in response")
             return null
             
         } catch (e: Exception) {
@@ -310,63 +404,486 @@ Si necesitas usar otra herramienta, especifícalo usando el formato TOOL_CALL.
     }
     
     /**
-     * Execute tool via MCP HTTP client
+     * Execute tool via MCP HTTP client - VS Code Copilot style formatting
      */
     private suspend fun executeToolViaMCP(toolCall: ToolCall, mcpClient: MCPHttpClient): String = withContext(Dispatchers.IO) {
         try {
-            return@withContext when (toolCall.toolName.lowercase()) {
+            Log.d(TAG, "??? Executing MCP tool: ${toolCall.toolName}")
+            
+            val result = when (toolCall.toolName) {
                 "query_database" -> {
-                    val query = toolCall.arguments["query"] ?: return@withContext "Error: falta argumento 'query'"
-                    val result = mcpClient.queryDatabase(query)
+                    val query = toolCall.arguments["query"] ?: return@withContext "? Error: falta el par�metro 'query'"
                     
-                    if (result.success) {
-                        val data = result.data
-                        val sql = result.sqlScript ?: "N/A"
+                    Log.d(TAG, "?? Querying database: $query")
+                    val queryResult = mcpClient.queryDatabase(query)
+
+                    if (queryResult.success) {
+                        val sql = queryResult.sqlScript ?: "N/A"
+                        val formattedSummary = queryResult.formattedSummary?.let { truncateForPrompt(it, 3000) }
                         
-                        """
-Consulta ejecutada exitosamente.
-SQL: $sql
-Datos: ${formatMCPData(data)}
-                        """.trimIndent()
+                        // VS Code style: Detect if result is a generic snapshot when specific data was requested
+                        val isGenericSnapshot = isGenericSnapshotResult(queryResult.data, query)
+                        
+                        buildString {
+                            append("? Consulta ejecutada exitosamente\n\n")
+                            append("**SQL generado:**\n")
+                            append("```sql\n$sql\n```\n\n")
+                            append("**Datos obtenidos:**\n")
+                            append(formatMCPData(queryResult.data))
+                            
+                            if (!formattedSummary.isNullOrBlank()) {
+                                append("\n\n**An�lisis adicional:**\n")
+                                append(formattedSummary)
+                            }
+                            
+                            // VS Code behavior: If snapshot is generic but query was specific, suggest precise SQL
+                            if (isGenericSnapshot) {
+                                append("\n\n?? **Nota:** El resultado es un snapshot gen�rico. ")
+                                val preciseSql = generatePreciseSqlForQuery(query)
+                                if (preciseSql != null) {
+                                    append("Para obtener la fila exacta, ejecuta:\n\n")
+                                    append("```sql\n$preciseSql\n```\n")
+                                }
+                            }
+                        }.trim()
                     } else {
-                        "Error: ${result.error}"
+                        "? Error en la consulta: ${queryResult.error}"
                     }
                 }
-                
+
                 "get_database_schema" -> {
-                    val schema = mcpClient.getDatabaseSchema()
-                    
-                    if (schema.success) {
-                        "Esquema obtenido:\n${schema.schema}"
+                    Log.d(TAG, "?? Getting database schema")
+                    val schemaResult = mcpClient.getDatabaseSchema()
+
+                    if (schemaResult.success) {
+                        "? Esquema obtenido exitosamente:\n\n${schemaResult.schema}"
                     } else {
-                        "Error: ${schema.error}"
+                        "? Error obteniendo esquema: ${schemaResult.error}"
                     }
                 }
-                
-                else -> "Error: Herramienta desconocida '${toolCall.toolName}'"
+
+                else -> "? Error: Herramienta desconocida '${toolCall.toolName}'"
             }
+
+            Log.d(TAG, "? Tool execution completed: ${toolCall.toolName}")
+            return@withContext result
+            
         } catch (e: Exception) {
-            Log.e(TAG, "Error executing tool via MCP", e)
-            return@withContext "Error ejecutando herramienta: ${e.message}"
+            Log.e(TAG, "? Error executing tool via MCP", e)
+            return@withContext "? Error ejecutando herramienta ${toolCall.toolName}: ${e.message}"
         }
     }
-    
+
+    private fun buildToolQuery(originalPrompt: String): String {
+        val trimmed = originalPrompt.trim()
+
+        if (trimmed.startsWith("Pregunta de Business Intelligence:", ignoreCase = true)) {
+            val after = trimmed.substringAfter(":").trim()
+            val firstLine = after.lineSequence().firstOrNull { it.isNotBlank() } ?: after
+            return firstLine.take(512)
+        }
+
+        val queryMarkers = listOf("Consulta del Usuario", "CONSULTA DEL USUARIO", "Usuario pregunta", "Pregunta", "Query")
+        var baseQuery = ""
+        queryMarkers.forEach { marker ->
+            val line = trimmed.lineSequence().firstOrNull { it.contains(marker, ignoreCase = true) }
+            if (line != null) {
+                val extracted = line.substringAfter(":", line).trim()
+                if (extracted.isNotBlank()) {
+                    baseQuery = extracted.take(512)
+                    return@forEach
+                }
+            }
+        }
+        
+        if (baseQuery.isEmpty()) {
+            baseQuery = trimmed.lines().firstOrNull { it.isNotBlank() }?.take(512) ?: trimmed.take(512)
+        }
+        
+        // VS Code style: Enrich query with explicit JOIN/detail instructions
+        return buildString {
+            append(baseQuery)
+            
+            // Detect role query -> force JOIN with roles table
+            if (baseQuery.contains(Regex("rol|role", RegexOption.IGNORE_CASE)) && 
+                baseQuery.contains(Regex("usuario|user|username", RegexOption.IGNORE_CASE))) {
+                append(". IMPORTANTE: Devu�lveme la fila exacta del usuario con LEFT JOIN a la tabla 'roles' para incluir el nombre del rol. ")
+                append("Campos requeridos: usuarios.id, usuarios.usuario, usuarios.persona_id, usuarios.rol_id, roles.name AS rol_nombre, usuarios.created_at. ")
+                append("NO devuelvas solo un snapshot gen�rico, ejecuta el JOIN espec�fico.")
+            } 
+            // Detect "users without courses" query
+            else if (baseQuery.contains(Regex("usuario.*nunca|usuario.*sin|users.*never|without.*course", RegexOption.IGNORE_CASE))) {
+                append(". IMPORTANTE: Ejecuta LEFT JOIN usuarios con courses WHERE courses.creator_username IS NULL. ")
+                append("Devuelve filas exactas, no solo conteos.")
+            }
+        }.take(768) // Increased limit for enriched queries
+    }
+
+    private fun detectBusinessIntent(text: String): Boolean {
+        val keywords = listOf(
+            "inteligencia", "business intelligence", "bi ", "kpi", "indicador", "indicadores",
+            "marketing", "growth", "ventas", "retencion", "retenci�n", "estrategia", "funnel",
+            "conversion", "conversi�n", "campana", "campa�a", "churn", "retention"
+        )
+        val lower = text.lowercase()
+        return keywords.any { lower.contains(it) }
+    }
+
     /**
-     * Format MCP data for LLM consumption
+     * Detect if a query requires data from the database
+     * Returns true if the query is asking for information that needs Supabase data
+     */
+    private fun detectIfQueryRequiresData(query: String): Boolean {
+        val lower = query.lowercase().trim()
+        
+        // Conversational queries that DON'T need data
+        val conversationalPatterns = listOf(
+            "hola", "hi", "hello", "buenos d�as", "buenas tardes",
+            "qu� puedes hacer", "ayuda", "help", "c�mo funciona",
+            "explica", "qu� es", "gracias", "thanks"
+        )
+        
+        // If it's a simple greeting/help, don't require data
+        if (conversationalPatterns.any { lower.startsWith(it) || lower == it }) {
+            return false
+        }
+        
+        // Data query indicators - these ALWAYS need database access
+        val dataIndicators = listOf(
+            "cu�ntos", "cuantos", "how many", "count",
+            "usuarios", "users", "cursos", "courses", "videos",
+            "lista", "list", "dame", "give me", "show", "muestra",
+            "todos", "all", "qu�", "que", "what", "which",
+            "estad�stica", "statistics", "an�lisis", "analysis",
+            "nunca", "never", "sin", "without", "no tienen",
+            "top", "mejor", "best", "m�s", "mas", "most",
+            "total", "suma", "sum", "promedio", "average"
+        )
+        
+        // If query contains data indicators, it requires database access
+        return dataIndicators.any { lower.contains(it) }
+    }
+
+    private fun buildFallbackQuery(originalQuery: String, isBusiness: Boolean): String {
+        val cleanedQuestion = originalQuery.trim().replace("\n", " ")
+        return if (isBusiness) {
+            "Genera un snapshot de inteligencia de negocio y marketing para la plataforma TareaMov basado en datos reales: conteos de usuarios, cursos, videos, suscripciones, tareas; top creadores y usuarios m�s activos; m�tricas de retenci�n/churn si existen; insights y acciones recomendadas."
+        } else {
+            "${cleanedQuestion} - Adem�s, proporciona un resumen general de la base de datos TareaMov con conteos por tabla principal (usuarios, courses, videos, subscriptions, task_submissions) y muestras representativas para entender el contexto."
+        }
+    }
+
+    private fun truncateForPrompt(text: String, limit: Int = 4000): String {
+        if (text.length <= limit) return text
+        return buildString {
+            append(text.take(limit))
+            append("\n... [contenido truncado, total ${text.length} caracteres]")
+        }
+    }
+
+    /**
+     * Format MCP data for LLM consumption - VS Code style
      */
     private fun formatMCPData(data: Any?): String {
         return when (data) {
             is org.json.JSONArray -> {
-                val items = mutableListOf<String>()
-                for (i in 0 until data.length()) {
-                    items.add(data.getJSONObject(i).toString())
+                if (data.length() == 0) {
+                    "[]  (sin registros)"
+                } else {
+                    val items = mutableListOf<String>()
+                    for (i in 0 until minOf(data.length(), 50)) {  // Limit to 50 records
+                        val obj = data.getJSONObject(i)
+                        items.add("  - ${obj.toString()}")
+                    }
+                    val result = StringBuilder()
+                    result.append("${data.length()} registro(s) encontrado(s):\n")
+                    result.append(items.joinToString("\n"))
+                    if (data.length() > 50) {
+                        result.append("\n  ... (${data.length() - 50} registros adicionales omitidos)")
+                    }
+                    result.toString()
                 }
-                items.joinToString("\n")
             }
-            is org.json.JSONObject -> data.toString(2)
-            is List<*> -> data.joinToString("\n")
-            is Map<*, *> -> data.entries.joinToString("\n") { "${it.key}: ${it.value}" }
+            is org.json.JSONObject -> {
+                "Objeto JSON:\n${data.toString(2)}"
+            }
+            is List<*> -> {
+                if (data.isEmpty()) {
+                    "[]  (sin registros)"
+                } else {
+                    "${data.size} registro(s):\n" + data.take(50).joinToString("\n") { "  - $it" }
+                }
+            }
+            is Map<*, *> -> {
+                if (data.isEmpty()) {
+                    "{} (sin datos)"
+                } else {
+                    data.entries.joinToString("\n") { "  ${it.key}: ${it.value}" }
+                }
+            }
+            null -> "null (sin datos)"
             else -> data.toString()
+        }
+    }
+
+    private fun isRawSnapshotResponse(response: String?): Boolean {
+        if (response.isNullOrBlank()) return false
+        val normalized = response.lowercase()
+        val hasReason = normalized.contains("reason:")
+        val hasSqlDump = normalized.contains("select ") && normalized.contains("from ") && normalized.contains("consulta sql ejecutada")
+        val hasResultado = normalized.contains("**resultado:**")
+        return hasReason || hasSqlDump || hasResultado
+    }
+
+    /**
+     * VS Code style: Detect if MCP returned a generic snapshot when a specific entity was requested
+     */
+    private fun isGenericSnapshotResult(data: Any?, query: String): Boolean {
+        if (data !is org.json.JSONObject) return false
+        
+        val hasReason = data.has("reason")
+        val hasMetrics = data.has("metrics")
+        val hasSamples = data.has("samples")
+        val isSnapshot = hasReason && (hasMetrics || hasSamples)
+        
+        if (!isSnapshot) return false
+        
+        // Check if query was asking for specific entity (username, id, specific user)
+        val lowerQuery = query.lowercase()
+        val isSpecificQuery = lowerQuery.contains(Regex("username\\s*=|usuario\\s*=|user.*with.*id|id\\s*=|espec�fico|specific"))
+        
+        return isSpecificQuery
+    }
+
+    /**
+     * VS Code style: Generate precise SQL for common query patterns
+     */
+    private fun generatePreciseSqlForQuery(query: String): String? {
+        val lowerQuery = query.lowercase()
+        
+        // Pattern: role of user with username = X
+        if (lowerQuery.contains(Regex("rol|role")) && lowerQuery.contains(Regex("username|usuario"))) {
+            val usernameMatch = Regex("""username\s*[=:]\s*["']?(\w+)["']?|usuario\s*[=:]\s*["']?(\w+)["']?""").find(lowerQuery)
+            val username = usernameMatch?.groupValues?.firstOrNull { !it.isNullOrBlank() && it.length > 1 } ?: "nuevo"
+            
+            return """
+SELECT u.id, u.usuario, u.persona_id, u.rol_id, r.name AS rol_nombre, u.created_at
+FROM usuarios u
+LEFT JOIN roles r ON u.rol_id = r.id
+WHERE u.usuario = '$username';
+            """.trimIndent()
+        }
+        
+        // Pattern: users without courses
+        if (lowerQuery.contains(Regex("usuario.*sin|usuario.*nunca|users.*without|users.*never"))) {
+            return """
+SELECT u.id, u.usuario, u.email, u.persona_id, u.rol_id, u.created_at
+FROM usuarios u
+LEFT JOIN courses c ON u.usuario = c.creator_username
+WHERE c.creator_username IS NULL;
+            """.trimIndent()
+        }
+        
+        return null
+    }
+
+    private fun reinforcePromptForAnalysis(currentPrompt: String, rawResponse: String): String {
+        val trimmedResponse = rawResponse.trim().take(2000)
+        return buildString {
+            append(currentPrompt)
+            append("\n\n---\nLa respuesta anterior fue un volcado de datos sin análisis narrativo:\n")
+            append(trimmedResponse)
+            append("\n\nGenera ahora un informe estratégico completo siguiendo las instrucciones iniciales.\n")
+            append("- No repitas el bloque que inicia con '**Resultado:**' ni copies literalmente las consultas SQL.\n")
+            append("- Integra los conteos y métricas en párrafos explicativos y listas accionables.\n")
+            append("- Presenta KPIs, riesgos, tácticas y próximas consultas adicionales.\n")
+            append("- Mantén títulos con '##' y el snippet de Kotlin solicitado.\n")
+        }
+    }
+
+    /**
+     * Generate intelligent response when Ollama is not available
+     * Detects Business Intelligence queries and generates VS Code style responses
+     */
+    private fun generateIntelligentResponse(prompt: String): String {
+        Log.d(TAG, "Generating intelligent fallback response")
+        
+        val normalizedPrompt = prompt.lowercase().trim()
+        
+        // Detect if this is a Business Intelligence query
+        if (normalizedPrompt.contains("inteligencia") || normalizedPrompt.contains("kpi") || 
+            normalizedPrompt.contains("business intelligence") || normalizedPrompt.contains("indicador") ||
+            normalizedPrompt.contains("decisiones críticas") || normalizedPrompt.contains("empresarial") ||
+            normalizedPrompt.contains("opciones empresariales")) {
+            
+            Log.d(TAG, "BI query detected - generating VS Code style response")
+            
+            // Extract database schema if available
+            val schemaTables = mutableListOf<String>()
+            try {
+                val schemaJson = org.json.JSONObject(databaseContext)
+                if (schemaJson.has("tables")) {
+                    val tablesArray = schemaJson.getJSONArray("tables")
+                    for (i in 0 until tablesArray.length()) {
+                        val table = tablesArray.getJSONObject(i)
+                        if (table.has("name")) {
+                            schemaTables.add(table.getString("name"))
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not parse database schema, using default tables")
+                schemaTables.addAll(listOf("usuarios", "personas", "videos", "courses", "topics", 
+                    "content_items", "tasks", "task_submissions", "subscriptions", "chat_messages"))
+            }
+            
+            val tablesStr = if (schemaTables.isNotEmpty()) schemaTables.joinToString(", ") else "usuarios, videos, courses, subscriptions, tasks"
+            
+            // Generate comprehensive VS Code style BI response
+            return buildString {
+                append("## Resumen ejecutivo — Objetivo\n\n")
+                append("- **Objetivo:** Habilitar decisiones empresariales basadas en datos mediante KPIs priorizados y pipelines reproducibles ")
+                append("que permitan medir adquisición, retención, engagement y monetización.\n")
+                append("- **Resultado esperado:** Dashboard inicial (Metabase/Looker/Redash) con 6 KPIs críticos y ")
+                append("vistas/materialized views para refresco diario.\n\n")
+                
+                append("## Decisiones críticas a tomar ahora\n\n")
+                append("1. **Priorizar métricas de negocio (no todo a la vez)**\n")
+                append("   - Definir 3 KPIs de alto impacto: DAU/MAU, conversión a suscripción, tasa de finalización de cursos.\n")
+                append("2. **Fuente de verdad y cadencia**\n")
+                append("   - Unificar supabase → crear vistas/materialized views para KPIs y refrescarlas nightly o hourly según SLA.\n")
+                append("3. **Instrumentación de eventos**\n")
+                append("   - Garantizar timestamps y user_id en eventos clave para cálculos de cohortes.\n")
+                append("4. **Gobernanza de datos**\n")
+                append("   - Definir propietarios de métricas, SLAs de calidad y catálogos.\n")
+                append("5. **Monitoreo y alertas**\n")
+                append("   - Alertas para drops >20% en DAU/Conversion en ventana semanal.\n")
+                append("6. **Roadmap mínimo viable**\n")
+                append("   - Dashboard de métricas + 3 queries paramétricas + export CSV/endpoint.\n\n")
+                
+                append("## Mapeo tablas → métricas (heurístico según esquema)\n\n")
+                append("- **usuarios/personas** → adquisición, churn, cohortes, usuarios activos.\n")
+                append("- **subscriptions** → nuevas suscripciones, churn, MRR (si hay precio).\n")
+                append("- **videos, content_items** → engagement por contenido (views, avg_duration), riqueza de contenido.\n")
+                append("- **courses** → enrollments, completion_rate, top performing courses.\n")
+                append("- **tasks / task_submissions** → actividad estudiantil, tasa de entrega, correlación con retención.\n")
+                append("- **chat_messages** → soporte y engagement; volumen de interacciones.\n\n")
+                
+                append("## KPIs priorizados (top 6)\n\n")
+                append("1. **Usuarios activos diarios (DAU) y ratio DAU/MAU** (engagement)\n")
+                append("   - Fórmula: `COUNT(DISTINCT user_id WHERE activity_date >= CURRENT_DATE - 1)`\n")
+                append("   - Target: >50% DAU/MAU ratio\n")
+                append("2. **Nuevas suscripciones por semana** (adquisición)\n")
+                append("   - Fórmula: `COUNT(*) FROM subscriptions WHERE created_at >= week_start`\n")
+                append("   - Target: Crecimiento 10-15% WoW\n")
+                append("3. **Conversion rate: usuarios activos → suscriptores** (funnel)\n")
+                append("   - Fórmula: `(suscriptores activos / usuarios activos) * 100`\n")
+                append("   - Target: >5% conversion\n")
+                append("4. **Tasa de finalización de curso** (quality/retention signal)\n")
+                append("   - Fórmula: `SUM(completed_tasks) / COUNT(total_tasks)`\n")
+                append("   - Target: >70% completion rate\n")
+                append("5. **Tiempo medio de sesión / duración promedio de video** (engagement depth)\n")
+                append("   - Fórmula: `AVG(session_duration) FROM user_sessions`\n")
+                append("   - Target: >15 minutos por sesión\n")
+                append("6. **Churn rate mensual de suscripciones** (retención monetaria)\n")
+                append("   - Fórmula: `(canceled_subs / total_subs_at_month_start) * 100`\n")
+                append("   - Target: <5% mensual\n\n")
+                
+                append("## Arquitectura BI sugerida (MVP)\n\n")
+                append("- **Ingest:** Supabase (directo) → transform layer (DB views/materialized views in Supabase or Postgres).\n")
+                append("- **Storage/Layer:**\n")
+                append("  - Create materialized views for heavy aggregations (daily_user_activity, daily_subscriptions, video_metrics).\n")
+                append("  - If scale grows: replicate to a read-optimized analytics DB (e.g., a dedicated Postgres/BigQuery).\n")
+                append("- **Orchestration:** cron/Cloud Function / Airflow simple to refresh MVs nightly (or hourly if required).\n")
+                append("- **Visualization:** Metabase / Redash connected to Supabase (or analytics DB).\n")
+                append("- **Access:** Dashboards + CSV/REST endpoints for exec reporting.\n\n")
+                
+                append("## Ejemplos de SQL (ajusta nombres si cambian)\n\n")
+                append("```sql\n")
+                append("-- DAU (último día)\n")
+                append("SELECT COUNT(DISTINCT user_id) AS dau\n")
+                if (schemaTables.contains("chat_messages")) {
+                    append("FROM chat_messages\n")
+                } else {
+                    append("FROM usuarios\n")
+                }
+                append("WHERE created_at >= CURRENT_DATE - INTERVAL '1 day';\n\n")
+                
+                if (schemaTables.contains("usuarios")) {
+                    append("-- Usuarios por rol\n")
+                    append("SELECT rol_id, COUNT(*) AS users \n")
+                    append("FROM usuarios \n")
+                    append("GROUP BY rol_id \n")
+                    append("ORDER BY users DESC;\n\n")
+                }
+                
+                if (schemaTables.contains("subscriptions")) {
+                    append("-- Nuevas suscripciones por semana\n")
+                    append("SELECT date_trunc('week', created_at) AS week, COUNT(*) AS new_subs\n")
+                    append("FROM subscriptions\n")
+                    append("GROUP BY 1 ORDER BY 1 DESC;\n\n")
+                }
+                
+                if (schemaTables.contains("courses") && schemaTables.contains("task_submissions")) {
+                    append("-- Tasa de finalización de cursos (por curso)\n")
+                    append("SELECT c.id, c.title,\n")
+                    append("       SUM(CASE WHEN ts.completed = true THEN 1 ELSE 0 END)::float / NULLIF(COUNT(ts.id),0) AS completion_rate\n")
+                    append("FROM courses c\n")
+                    append("LEFT JOIN task_submissions ts ON ts.course_id = c.id\n")
+                    append("GROUP BY c.id, c.title\n")
+                    append("ORDER BY completion_rate DESC;\n\n")
+                }
+                
+                if (schemaTables.contains("videos")) {
+                    append("-- Top videos por vistas\n")
+                    append("SELECT v.id, v.title, COUNT(*) AS views\n")
+                    append("FROM videos v\n")
+                    append("LEFT JOIN video_views vv ON vv.video_id = v.id\n")
+                    append("GROUP BY v.id, v.title\n")
+                    append("ORDER BY views DESC LIMIT 10;\n")
+                }
+                
+                append("```\n\n")
+                
+                append("## Plan corto de implementación (2–4 semanas)\n\n")
+                append("1. **Semana 0–1:** Definir KPIs y propietarios; obtener esquema definitivo (`get_database_schema`) y confirmar columnas clave.\n")
+                append("2. **Semana 1:** Implementar materialized views para DAU, nuevas suscripciones, video metrics; crear refresh job nightly.\n")
+                append("3. **Semana 1–2:** Crear dashboards en Metabase con filtros (fecha, curso, creador).\n")
+                append("4. **Semana 2–3:** Añadir alertas (email/Slack) para drops anómalos.\n")
+                append("5. **Semana 3–4:** Refinar, validar con stakeholders, exponer endpoints para informes recurrentes.\n\n")
+                
+                append("## Riesgos y mitigaciones\n\n")
+                append("- **Datos incompletos** (falta timestamps / user_id): Mitigar añadiendo eventos instrumentados y retrofilling donde sea posible.\n")
+                append("- **Costos por consultas pesadas:** usar MVs/ETL para precalcular.\n")
+                append("- **Consistencia entre producción y analytics:** mantener owners y tests de integridad (row counts).\n")
+                append("- **Dependencia de herramientas externas:** evaluar opciones open-source (Metabase) vs comerciales (Looker).\n\n")
+                
+                append("## Acción inmediata sugerida\n\n")
+                append("- Ejecutar `get_database_schema` en el MCP para obtener conteos y nombres exactos de columnas.\n")
+                append("- Ejecutar `query_database` para obtener muestras (p. ej., top 10 cursos por suscripciones) si quieres números reales.\n")
+                append("- Priorizar implementación de 2-3 KPIs críticos antes de construir dashboard completo.\n\n")
+                
+                append("---\n")
+                append("💡 **Nota:** Esta respuesta fue generada sin conexión al servidor LLM. ")
+                append("Para análisis más precisos con datos reales, asegúrate de que el servidor MCP esté ejecutándose.\n")
+            }
+        }
+        
+        // For non-BI queries, provide a simpler response
+        return buildString {
+            append("## Respuesta del sistema\n\n")
+            append("Actualmente el servidor LLM (Ollama) no está disponible. ")
+            append("Para obtener respuestas completas y análisis detallados, por favor:\n\n")
+            append("1. Verifica que el servidor Ollama esté ejecutándose\n")
+            append("2. Asegúrate de que el modelo llama3 esté disponible\n")
+            append("3. Comprueba la conexión de red entre el emulador/dispositivo y el servidor\n\n")
+            append("**Direcciones probadas:**\n")
+            FALLBACK_LLAMA_URLS.forEach { url ->
+                append("- $url\n")
+            }
+            append("\n")
+            append("Mientras tanto, puedes usar las herramientas MCP directamente desde el botón 🔧 ")
+            append("para ejecutar consultas a la base de datos.\n")
         }
     }
 
@@ -383,14 +900,20 @@ Datos: ${formatMCPData(data)}
                 
                 connection.requestMethod = "POST"
                 connection.setRequestProperty("Content-Type", "application/json")
-                connection.connectTimeout = 5000  // 5 seconds
-                connection.readTimeout = 30000    // 30 seconds
+                connection.connectTimeout = 60000   // 60 seconds for connection
+                connection.readTimeout = 300000     // 300 seconds (5 minutes) for reading response
                 connection.doOutput = true
                 
                 val requestBody = org.json.JSONObject().apply {
                     put("model", "llama3")
                     put("prompt", prompt)
                     put("stream", false)
+                    put("options", org.json.JSONObject().apply {
+                        put("num_predict", 512)        // Limit response tokens
+                        put("temperature", 0.7)
+                        put("top_k", 40)
+                        put("top_p", 0.9)
+                    })
                 }
                 
                 val writer = java.io.OutputStreamWriter(connection.outputStream)
@@ -406,7 +929,7 @@ Datos: ${formatMCPData(data)}
                     connection.disconnect()
                     
                     if (response.isNotBlank()) {
-                        Log.d(TAG, "✓ Successfully connected to local Ollama at $url")
+                        Log.d(TAG, "? Successfully connected to local Ollama at $url")
                         return@withContext response
                     }
                 }
@@ -488,380 +1011,39 @@ Datos: ${formatMCPData(data)}
     }
 
     /**
-     * Create enhanced prompt with optimized context and tool calling capability
+     * Create flexible prompt that ENFORCES data validation via MCP
+     * All responses with data MUST be backed by Supabase queries
      */
-    private fun createEnhancedPromptWithToolCapability(optimizedPrompt: String, hasToolAccess: Boolean): String {
-        // Add tool calling instructions if MCP tools are available
+    private fun createDynamicPromptWithMCPCapability(optimizedPrompt: String, hasToolAccess: Boolean, requiresData: Boolean = false): String {
         return if (hasToolAccess) {
             """
-Eres un asistente con acceso a herramientas para consultar una base de datos.
+Asistente DB con MCP. BD: TareaMov.
+${if (requiresData) "?? REQUIERE DATOS: TOOL_CALL: query_database() primero." else ""}
 
-🛠️ HERRAMIENTAS DISPONIBLES:
+TOOLS: get_database_schema(), query_database(query="...")
 
-1. get_database_schema() - Obtiene el esquema completo de la base de datos
-   Para usarla, responde EXACTAMENTE:
-   TOOL_CALL: get_database_schema()
+CONSULTA: $optimizedPrompt
 
-2. query_database(query="consulta") - Ejecuta consultas en lenguaje natural
-   Para usarla, responde EXACTAMENTE:
-   TOOL_CALL: query_database(query="dame todos los usuarios")
-   TOOL_CALL: query_database(query="cuantos cursos hay")
-
-📋 CONSULTA DEL USUARIO:
-$optimizedPrompt
-
-⚠️ INSTRUCCIONES IMPORTANTES:
-1. Para preguntas de Business Intelligence, decisiones críticas, KPIs, o análisis empresarial:
-   - PRIMERO usa: TOOL_CALL: get_database_schema()
-   - ESPERA el resultado del esquema
-   - Luego analiza y genera tu respuesta completa
-
-2. Para consultas específicas de datos:
-   - Usa: TOOL_CALL: query_database(query="tu consulta aquí")
-   - ESPERA el resultado
-   - Luego presenta los datos al usuario
-
-3. Formato EXACTO requerido:
-   TOOL_CALL: nombre_herramienta(parametro="valor")
-   
-4. NO inventes datos. Si no tienes información, usa las herramientas.
-
-5. Después de recibir resultados de herramientas, proporciona una respuesta completa.
-
-¿Qué herramienta necesitas usar para responder esta consulta?
+${if (requiresData) "Tu respuesta DEBE ser: TOOL_CALL: query_database(query=\"...\")" else "Si necesitas datos: TOOL_CALL: query_database(query=\"...\")"}
+NO escribas "Ran"/"Completed". NO inventes datos.
             """.trimIndent()
         } else {
-            val contextualPrompt = if (databaseContext.isNotBlank() && !optimizedPrompt.contains("ESQUEMA")) {
-                """
-                Contexto de Base de Datos (optimizado):
-                $databaseContext
-                
-                Consulta del Usuario:
-                $optimizedPrompt
-                
-                Instrucciones:
-                - Responde de forma concisa y directa
-                - Usa solo la información proporcionada
-                - Si es una lista, presenta máximo 10 elementos
-                - Si es un conteo, da el número específico
-                """.trimIndent()
-            } else {
-                optimizedPrompt
-            }
-            contextualPrompt
+            "Asistente TareaMov sin MCP.\nCONSULTA: $optimizedPrompt"
         }
     }
 
     /**
-     * Create enhanced prompt with optimized context (legacy method for backward compatibility)
+     * Legacy method for compatibility - now delegates to dynamic prompt
+     */
+    private fun createEnhancedPromptWithToolCapability(optimizedPrompt: String, hasToolAccess: Boolean): String {
+        return createDynamicPromptWithMCPCapability(optimizedPrompt, hasToolAccess, false)
+    }
+
+    /**
+     * Create enhanced prompt (deprecated - use createDynamicPromptWithMCPCapability)
      */
     private fun createEnhancedPrompt(optimizedPrompt: String): String {
-        return createEnhancedPromptWithToolCapability(optimizedPrompt, false)
-    }
-
-    /**
-     * Generate intelligent response based on prompt analysis (for simulation)
-     */
-    private fun generateIntelligentResponse(prompt: String): String {
-        val normalizedPrompt = prompt.lowercase()
-        // If the user asks for BI-style analysis or KPIs, attempt to build a structured BI answer
-        if (normalizedPrompt.contains("inteligencia") || normalizedPrompt.contains("kpi") || normalizedPrompt.contains("business intelligence") || normalizedPrompt.contains("indicador") || normalizedPrompt.contains("decisiones críticas") || normalizedPrompt.contains("empresarial") || normalizedPrompt.contains("opciones empresariales")) {
-            val sb = StringBuilder()
-            
-            // Generate VS Code-style structured BI analysis
-            sb.append("## Resumen ejecutivo — Objetivo\n\n")
-            sb.append("- **Objetivo**: Mejorar la toma de decisiones empresariales basadas en datos de la plataforma educativa\n")
-            sb.append("- **Resultado esperado**: Dashboard ejecutivo con KPIs críticos y métricas de crecimiento, engagement y revenue\n\n")
-            
-            sb.append("## Decisiones críticas a tomar ahora\n\n")
-
-            // Try to parse the stored databaseContext (could be JSON schema)
-            var tableNames = listOf<String>()
-            try {
-                if (databaseContext.isNotBlank()) {
-                    try {
-                        val json = org.json.JSONObject(databaseContext)
-                        val schemaObj = if (json.has("schema")) json.getJSONObject("schema") else json
-                        tableNames = schemaObj.keys().asSequence().toList()
-                    } catch (je: Exception) {
-                        // Use fallback table names
-                        tableNames = listOf("usuarios", "personas", "videos", "courses", "topics", "content_items", "tasks", "task_submissions", "subscriptions", "chat_messages")
-                    }
-                }
-            } catch (e: Exception) {
-                tableNames = listOf("usuarios", "personas", "videos", "courses", "topics", "content_items", "tasks", "task_submissions", "subscriptions", "chat_messages")
-            }
-            
-            // Generate actionable decisions based on detected tables
-            sb.append("1. **Optimizar conversión de usuarios a suscriptores**\n")
-            sb.append("   - Analizar funnel: registro → curso gratuito → suscripción premium\n")
-            sb.append("   - Identificar puntos de abandono (churn)\n")
-            sb.append("   - Implementar métricas de conversión por cohorte\n\n")
-            
-            sb.append("2. **Mejorar engagement de contenido educativo**\n")
-            if (tableNames.any { it.contains("video") }) {
-                sb.append("   - Medir completion rate de videos por curso\n")
-            }
-            if (tableNames.any { it.contains("task") }) {
-                sb.append("   - Analizar tasa de completitud de tareas\n")
-            }
-            sb.append("   - Identificar cursos/videos de alto y bajo engagement\n")
-            sb.append("   - Correlacionar tiempo de visualización con retención\n\n")
-            
-            sb.append("3. **Establecer sistema de alertas tempranas (early warning)**\n")
-            sb.append("   - Detectar usuarios inactivos (7+ días sin actividad)\n")
-            sb.append("   - Identificar suscriptores en riesgo de cancelación\n")
-            sb.append("   - Monitorear drop-off en cursos populares\n\n")
-            
-            sb.append("4. **Implementar segmentación de usuarios**\n")
-            sb.append("   - Clasificar por nivel de engagement (alto/medio/bajo)\n")
-            sb.append("   - Segmentar por tipo de contenido preferido\n")
-            sb.append("   - Crear perfiles de comportamiento para personalización\n\n")
-            
-            sb.append("5. **Optimizar estrategia de creadores de contenido**\n")
-            if (tableNames.any { it.contains("course") }) {
-                sb.append("   - Identificar top creators por engagement y revenue\n")
-            }
-            sb.append("   - Analizar correlación entre calidad de contenido y suscripciones\n")
-            sb.append("   - Establecer incentivos basados en métricas de impacto\n\n")
-            
-            sb.append("6. **Desarrollar métricas de salud de negocio**\n")
-            sb.append("   - DAU/MAU ratio (Daily/Monthly Active Users)\n")
-            sb.append("   - MRR (Monthly Recurring Revenue) y growth rate\n")
-            sb.append("   - Customer Lifetime Value (CLV) vs Customer Acquisition Cost (CAC)\n\n")
-
-            sb.append("## Mapeo tablas → métricas (heurístico según esquema)\n\n")
-            
-            // Map tables to metrics
-            if (tableNames.any { it.contains("usuario") || it.contains("users") || it.contains("personas") }) {
-                sb.append("- **usuarios/personas** → DAU/MAU, tasa de registro, distribución por rol, usuarios activos por periodo\n")
-            }
-            if (tableNames.any { it.contains("course") }) {
-                sb.append("- **courses** → Engagement por curso, tasa de finalización, tiempo promedio de completitud, distribución de popularidad\n")
-            }
-            if (tableNames.any { it.contains("video") }) {
-                sb.append("- **videos** → Vistas totales/únicas, duración promedio de visualización, completion rate, videos más compartidos\n")
-            }
-            if (tableNames.any { it.contains("subscription") }) {
-                sb.append("- **subscriptions** → MRR, churn rate, nuevas suscripciones por periodo, LTV, distribución por plan\n")
-            }
-            if (tableNames.any { it.contains("task") }) {
-                sb.append("- **tasks/task_submissions** → Tasa de completitud, tiempo promedio de entrega, calidad de submissions, correlación con retención\n")
-            }
-            if (tableNames.any { it.contains("topic") || it.contains("content_items") }) {
-                sb.append("- **topics/content_items** → Popularidad por tema, path de aprendizaje más común, contenido con mejor engagement\n")
-            }
-            sb.append("\n")
-
-            sb.append("## KPIs priorizados (top 6)\n\n")
-            sb.append("1. **DAU/MAU Ratio (Daily/Monthly Active Users)**\n")
-            sb.append("   - Métrica: (Usuarios activos diarios / Usuarios activos mensuales) × 100\n")
-            sb.append("   - Target: >20% indica alta retención y engagement\n")
-            sb.append("   - Medición: Actividad = login, curso iniciado, video visto, tarea enviada\n\n")
-            
-            sb.append("2. **Conversion Rate (Free → Premium)**\n")
-            sb.append("   - Métrica: (Nuevas suscripciones / Total usuarios registrados) × 100\n")
-            sb.append("   - Target: >5% para plataformas educativas\n")
-            sb.append("   - Segmentar por canal de adquisición y cohorte temporal\n\n")
-            
-            sb.append("3. **Course Completion Rate**\n")
-            sb.append("   - Métrica: (Usuarios que finalizan curso / Usuarios que inician curso) × 100\n")
-            sb.append("   - Target: >30% (varía por tipo de curso)\n")
-            sb.append("   - Correlacionar con engagement, duración y dificultad\n\n")
-            
-            sb.append("4. **Churn Rate**\n")
-            sb.append("   - Métrica: (Suscripciones canceladas / Total suscripciones activas) × 100 (mensual)\n")
-            sb.append("   - Target: <5% mensual es excelente\n")
-            sb.append("   - Implementar análisis de cohortes para predecir churn\n\n")
-            
-            sb.append("5. **Monthly Recurring Revenue (MRR) Growth**\n")
-            sb.append("   - Métrica: ((MRR mes actual - MRR mes anterior) / MRR mes anterior) × 100\n")
-            sb.append("   - Target: >10% mensual en fase de crecimiento\n")
-            sb.append("   - Desglosar en new, expansion, contraction, churned MRR\n\n")
-            
-            sb.append("6. **Content Engagement Score**\n")
-            sb.append("   - Métrica: (Videos completados + Tareas enviadas + Interacciones chat) / Total usuarios activos\n")
-            sb.append("   - Target: >5 acciones por usuario activo semanal\n")
-            sb.append("   - Identificar patrones de usuarios altamente engaged\n\n")
-
-            sb.append("## Arquitectura BI sugerida (MVP)\n\n")
-            sb.append("**Ingest:**\n")
-            sb.append("- ETL desde Supabase → Data Warehouse (Postgres/BigQuery)\n")
-            sb.append("- Jobs incrementales cada 1-6 horas según tabla (ej: subscriptions cada hora, analytics cada 6h)\n")
-            sb.append("- CDC (Change Data Capture) para eventos en tiempo real si disponible\n\n")
-            
-            sb.append("**Storage/Layer:**\n")
-            sb.append("- Raw Layer: réplica 1:1 de tablas operacionales\n")
-            sb.append("- Staging Layer: limpieza de datos, deduplicación\n")
-            sb.append("- Analytics Layer: vistas materializadas para KPIs, tablas agregadas por día/semana/mes\n")
-            sb.append("- Ejemplos: mv_daily_active_users, mv_course_engagement_metrics, mv_subscription_funnel\n\n")
-            
-            sb.append("**Orchestración:**\n")
-            sb.append("- Airflow o cron jobs para refresco de materialized views\n")
-            sb.append("- Pipeline: extract → transform → load → refresh MVs → actualizar dashboards\n")
-            sb.append("- Alertas automáticas si métricas críticas caen fuera de rango\n\n")
-            
-            sb.append("**Visualization:**\n")
-            sb.append("- Metabase, Superset o Tableau para dashboards ejecutivos\n")
-            sb.append("- Dashboard 1: Overview (DAU/MAU, MRR, churn)\n")
-            sb.append("- Dashboard 2: Content Performance (engagement por curso/video)\n")
-            sb.append("- Dashboard 3: User Cohorts (retención, conversión)\n\n")
-            
-            sb.append("**Access:**\n")
-            sb.append("- API REST para exponer métricas a aplicación móvil/web\n")
-            sb.append("- Endpoints: /metrics/overview, /metrics/user/:id, /metrics/course/:id\n")
-            sb.append("- Autenticación por rol (admin, creator, analyst)\n\n")
-
-            sb.append("## Ejemplos de SQL (usando tablas del esquema)\n\n")
-            
-            // Generate SQL examples based on detected tables
-            sb.append("```sql\n")
-            sb.append("-- 1. DAU/MAU ratio (últimos 30 días)\n")
-            if (tableNames.any { it.contains("usuario") }) {
-                sb.append("WITH daily_active AS (\n")
-                sb.append("  SELECT DATE(created_at) as date, COUNT(DISTINCT id) as dau\n")
-                sb.append("  FROM usuarios\n")
-                sb.append("  WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'\n")
-                sb.append("  GROUP BY date\n")
-                sb.append("),\n")
-                sb.append("monthly_active AS (\n")
-                sb.append("  SELECT COUNT(DISTINCT id) as mau FROM usuarios\n")
-                sb.append("  WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'\n")
-                sb.append(")\n")
-                sb.append("SELECT d.date, d.dau, m.mau, (d.dau::float / m.mau * 100) as dau_mau_ratio\n")
-                sb.append("FROM daily_active d CROSS JOIN monthly_active m;\n\n")
-            }
-            
-            if (tableNames.any { it.contains("course") }) {
-                sb.append("-- 2. Top 10 cursos por engagement\n")
-                sb.append("SELECT \n")
-                sb.append("  id, title, creator_username,\n")
-                sb.append("  COUNT(DISTINCT user_id) as unique_students,\n")
-                sb.append("  AVG(completion_pct) as avg_completion\n")
-                sb.append("FROM courses\n")
-                sb.append("LEFT JOIN course_enrollments ON courses.id = course_enrollments.course_id\n")
-                sb.append("GROUP BY id, title, creator_username\n")
-                sb.append("ORDER BY unique_students DESC, avg_completion DESC\n")
-                sb.append("LIMIT 10;\n\n")
-            }
-            
-            if (tableNames.any { it.contains("subscription") }) {
-                sb.append("-- 3. Churn rate mensual\n")
-                sb.append("WITH subscriptions_by_month AS (\n")
-                sb.append("  SELECT \n")
-                sb.append("    DATE_TRUNC('month', created_at) as month,\n")
-                sb.append("    COUNT(*) as active_subs,\n")
-                sb.append("    SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as churned\n")
-                sb.append("  FROM subscriptions\n")
-                sb.append("  GROUP BY month\n")
-                sb.append(")\n")
-                sb.append("SELECT month, active_subs, churned, (churned::float / active_subs * 100) as churn_rate\n")
-                sb.append("FROM subscriptions_by_month\n")
-                sb.append("ORDER BY month DESC;\n\n")
-            }
-            
-            if (tableNames.any { it.contains("video") }) {
-                sb.append("-- 4. Videos con mayor completion rate\n")
-                sb.append("SELECT \n")
-                sb.append("  v.id, v.title, v.creator_id,\n")
-                sb.append("  COUNT(vv.user_id) as total_views,\n")
-                sb.append("  AVG(vv.watch_time / v.duration * 100) as avg_completion_pct\n")
-                sb.append("FROM videos v\n")
-                sb.append("LEFT JOIN video_views vv ON v.id = vv.video_id\n")
-                sb.append("GROUP BY v.id, v.title, v.creator_id\n")
-                sb.append("HAVING COUNT(vv.user_id) > 10\n")
-                sb.append("ORDER BY avg_completion_pct DESC\n")
-                sb.append("LIMIT 20;\n\n")
-            }
-            
-            if (tableNames.any { it.contains("task") }) {
-                sb.append("-- 5. Tasa de completitud de tareas por curso\n")
-                sb.append("SELECT \n")
-                sb.append("  c.id as course_id, c.title,\n")
-                sb.append("  COUNT(DISTINCT t.id) as total_tasks,\n")
-                sb.append("  COUNT(ts.id) as submissions,\n")
-                sb.append("  (COUNT(ts.id)::float / NULLIF(COUNT(DISTINCT t.id), 0) * 100) as completion_rate\n")
-                sb.append("FROM courses c\n")
-                sb.append("LEFT JOIN tasks t ON c.id = t.course_id\n")
-                sb.append("LEFT JOIN task_submissions ts ON t.id = ts.task_id\n")
-                sb.append("GROUP BY c.id, c.title\n")
-                sb.append("ORDER BY completion_rate DESC;\n")
-            }
-            
-            sb.append("```\n\n")
-
-            sb.append("## Plan corto de implementación (2-4 semanas)\n\n")
-            sb.append("**Semana 0-1: Setup y Discovery**\n")
-            sb.append("- Auditar esquema completo de Supabase (columnas exactas, índices, relaciones)\n")
-            sb.append("- Documentar KPIs prioritarios con stakeholders\n")
-            sb.append("- Setup básico de data warehouse (Postgres o BigQuery)\n")
-            sb.append("- Crear repo Git para queries SQL y scripts ETL\n\n")
-            
-            sb.append("**Semana 1-2: Core Metrics**\n")
-            sb.append("- Implementar ETL para tablas críticas (usuarios, courses, subscriptions)\n")
-            sb.append("- Crear materialized views para KPIs top 3 (DAU/MAU, conversion, churn)\n")
-            sb.append("- Setup Airflow/cron para refresco automático cada 6 horas\n")
-            sb.append("- Validar datos con queries manuales\n\n")
-            
-            sb.append("**Semana 2-3: Dashboards MVP**\n")
-            sb.append("- Setup Metabase/Superset y conectar a data warehouse\n")
-            sb.append("- Crear Dashboard 1: Executive Overview (DAU/MAU, MRR, churn)\n")
-            sb.append("- Crear Dashboard 2: Content Performance (top courses/videos)\n")
-            sb.append("- Compartir con stakeholders para feedback\n\n")
-            
-            sb.append("**Semana 3-4: Iteración y Alertas**\n")
-            sb.append("- Implementar alertas por email/Slack si métricas críticas caen\n")
-            sb.append("- Agregar métricas secundarias (engagement, cohort analysis)\n")
-            sb.append("- Documentar procesos y crear runbook para equipo\n")
-            sb.append("- Planificar roadmap para Q siguiente (ML predictions, A/B testing framework)\n\n")
-
-            sb.append("## Riesgos y mitigaciones\n\n")
-            sb.append("- **Riesgo**: Datos incompletos o inconsistentes en tablas operacionales\n")
-            sb.append("  - **Mitigación**: Implementar validación de datos en ETL, logs detallados de calidad de datos\n\n")
-            
-            sb.append("- **Riesgo**: Performance degradation por queries pesadas en prod\n")
-            sb.append("  - **Mitigación**: Usar réplica read-only de Supabase, crear índices apropiados, limitar ventana temporal\n\n")
-            
-            sb.append("- **Riesgo**: Stakeholders piden métricas personalizadas constantemente\n")
-            sb.append("  - **Mitigación**: Priorizar KPIs core primero, crear self-service BI layer con Metabase, documentar guía de uso\n\n")
-            
-            sb.append("- **Riesgo**: Materialized views desactualizadas (stale data)\n")
-            sb.append("  - **Mitigación**: Configurar refresco frecuente (1-6h), mostrar timestamp de última actualización en dashboards\n\n")
-
-            sb.append("## Acción inmediata sugerida\n\n")
-            sb.append("**🎯 Próximo paso (1-2 días):**\n")
-            sb.append("1. Ejecutar `get_database_schema` completo para obtener columnas exactas de cada tabla\n")
-            sb.append("2. Validar que existen índices en columnas críticas (created_at, user_id, course_id)\n")
-            sb.append("3. Correr queries SQL de ejemplo manualmente en Supabase para verificar datos disponibles\n")
-            sb.append("4. Agendar reunión con stakeholders (30 min) para priorizar top 3 KPIs iniciales\n")
-            sb.append("5. Setup repositorio Git para documentar todo el proceso de BI\n\n")
-            
-            sb.append("**📊 Quick Win (esta semana):**\n")
-            sb.append("Crear query manual para calcular DAU/MAU de últimos 30 días y compartir resultado con equipo para generar tracción.\n")
-
-            return sb.toString()
-        }
-
-        return when {
-            normalizedPrompt.contains("usuarios") && (normalizedPrompt.contains("todos") || normalizedPrompt.contains("listar")) -> {
-                "Simulación: Lista de usuarios encontrados en la base de datos. El modelo local procesaría los datos de usuarios disponibles."
-            }
-            normalizedPrompt.contains("videos") && normalizedPrompt.contains("creador") -> {
-                "Simulación: Videos del creador especificado. El modelo local buscaría videos por creador en la base de datos."
-            }
-            normalizedPrompt.contains("cuántos") || normalizedPrompt.contains("cantidad") -> {
-                "Simulación: Conteo de registros. El modelo local calcularía el número de elementos solicitados."
-            }
-            normalizedPrompt.contains("tareas") || normalizedPrompt.contains("tasks") -> {
-                "Simulación: Información sobre tareas. El modelo local procesaría las tareas y sus relaciones con temas."
-            }
-            normalizedPrompt.contains("suscripciones") || normalizedPrompt.contains("subscriptions") -> {
-                "Simulación: Datos de suscripciones. El modelo local mostraría las relaciones entre usuarios suscriptores y creadores."
-            }
-            else -> {
-                "Simulación del modelo Llama 3 local: Procesando consulta '${prompt.take(50)}...' con contexto de base de datos optimizado."
-            }
-        }
+        return optimizedPrompt
     }
 
     /**
@@ -870,7 +1052,7 @@ $optimizedPrompt
     fun releaseModel() {
         if (isModelLoaded.get()) {
             try {
-                // Aquí iría la liberación real de recursos
+                // Aqu� ir�a la liberaci�n real de recursos
                 isModelLoaded.set(false)
                 Log.d(TAG, "Modelo Llama 3 liberado correctamente")
             } catch (e: Exception) {

@@ -23,7 +23,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
-import com.example.tareamov.adapter.CreatedCourseAdapter
+import com.example.tareamov.adapter.CourseAdapter
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Course
@@ -38,16 +38,14 @@ import android.widget.EditText
 
 class ExploreFragment : Fragment() {
     private lateinit var videoManager: VideoManager
-    private lateinit var coursesAdapter: CreatedCourseAdapter
-    private val coursesList = mutableListOf<VideoData>()
+    private lateinit var coursesAdapter: CourseAdapter
+    private val coursesList = mutableListOf<Course>()
     private var currentUsername: String? = null
     private lateinit var searchEditText: EditText
-    private var allCoursesList = mutableListOf<VideoData>() // Store all courses for filtering
     private lateinit var courseRepository: com.example.tareamov.repository.CourseRepository
 
-    // New lists for Course entities
-    private val coursesFromTableList = mutableListOf<Course>()
-    private var allCoursesFromTableList = mutableListOf<Course>()
+    // Store all courses for filtering and search
+    private var allCoursesList = mutableListOf<Course>()
     
     // Paginación
     private var currentPage = 0
@@ -184,17 +182,8 @@ class ExploreFragment : Fragment() {
                 Log.d("ExploreFragment", "Observed ${courses.size} courses from Course table")
                 // Keep Course table list sorted newest -> oldest
                 val sortedCourses = courses.sortedByDescending { it.timestamp }
-                allCoursesFromTableList.clear()
-                allCoursesFromTableList.addAll(sortedCourses)
-
-                // Convert Course entities to VideoData for adapter compatibility and keep sorted
-                val videoDataList = sortedCourses.map { convertCourseToVideoData(it) }
-                val sortedVideoData = videoDataList.sortedByDescending { it.timestamp }
                 allCoursesList.clear()
-                allCoursesList.addAll(sortedVideoData)
-
-                // Generate thumbnails preventively for courses without them
-                generatePreventiveThumbnails(videoDataList)
+                allCoursesList.addAll(sortedCourses)
 
                 // Filter courses and update stats
                 filterCourses(searchEditText.text.toString())
@@ -220,7 +209,7 @@ class ExploreFragment : Fragment() {
                                 val thumbnailPath = thumbnailManager.ensureThumbnailExists(videoUri, videoData.id)
                                 if (thumbnailPath != null) {
                                     // Update the corresponding course with thumbnail
-                                    val correspondingCourse = allCoursesFromTableList.find { it.id == videoData.id }
+                                    val correspondingCourse = allCoursesList.find { it.id == videoData.id }
                                     if (correspondingCourse != null && canUserModifyCourse(correspondingCourse)) {
                                         val updatedCourse = correspondingCourse.copy(thumbnailUri = "file://$thumbnailPath")
                                         courseRepository.updateCourse(updatedCourse)
@@ -279,6 +268,54 @@ class ExploreFragment : Fragment() {
             setPadding(32, 16, 32, 16)
         }
         toast.show()
+    }
+
+    /**
+     * Handle subscription/unsubscription clicks
+     */
+    private fun handleSubscriptionClick(course: Course, isCurrentlySubscribed: Boolean) {
+        if (currentUsername == null) {
+            showDarkToast("⚠️ Debes iniciar sesión para suscribirte")
+            return
+        }
+
+        if (currentUsername == course.creatorUsername) {
+            showDarkToast("❌ No puedes suscribirte a tu propio curso")
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val db = AppDatabase.getDatabase(requireContext())
+                
+                if (isCurrentlySubscribed) {
+                    // Unsubscribe
+                    db.subscriptionDao().unsubscribeFromCreator(currentUsername!!, course.creatorUsername ?: "")
+                    
+                    // Also sync to Supabase
+                    syncUnsubscriptionToSupabase(currentUsername!!, course.creatorUsername ?: "")
+                    
+                    showDarkToast("✅ Te has desuscrito de ${course.creatorUsername}")
+                    Log.d("ExploreFragment", "User $currentUsername unsubscribed from ${course.creatorUsername}")
+                } else {
+                    // Subscribe
+                    db.subscriptionDao().subscribeToCreator(currentUsername!!, course.creatorUsername ?: "")
+                    
+                    // Also sync to Supabase
+                    syncSubscriptionToSupabase(currentUsername!!, course.creatorUsername ?: "")
+                    
+                    showDarkToast("🎉 Te has suscrito a ${course.creatorUsername}")
+                    Log.d("ExploreFragment", "User $currentUsername subscribed to ${course.creatorUsername}")
+                }
+                
+                // Refresh the adapter to update subscription states
+                coursesAdapter.notifyDataSetChanged()
+                
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error handling subscription", e)
+                showDarkToast("❌ Error al procesar la suscripción")
+            }
+        }
     }    private fun setupRecyclerViews(view: View) {
         // Setup for "My Courses" RecyclerView
         val coursesRecyclerView = view.findViewById<RecyclerView>(R.id.coursesRecyclerView)
@@ -286,25 +323,25 @@ class ExploreFragment : Fragment() {
 
         Log.d("ExploreFragment", "Setting up adapter with currentUsername: $currentUsername")
 
-        coursesAdapter = CreatedCourseAdapter(
+        coursesAdapter = CourseAdapter(
             requireContext(),
             coursesList,
             onCourseClickListener = { course ->
-                Log.d("ExploreFragment", "Course clicked: ${course.title} by ${course.username}")
+                Log.d("ExploreFragment", "Course clicked: ${course.title} by ${course.creatorUsername}")
                 navigateToCourseDetail(course)
             },
-            currentUsername = currentUsername, // Pass current username to adapter for permission checks
-            onEditCourseListener = { course ->
-                Log.d("ExploreFragment", "Edit course requested: ${course.title}")
-                editCourse(course)
+            currentUsername = currentUsername, // Pass current username for subscription logic
+            onSubscriptionClickListener = { course, isCurrentlySubscribed ->
+                handleSubscriptionClick(course, isCurrentlySubscribed)
             },
-            onDeleteCourseListener = { course ->
-                Log.d("ExploreFragment", "Delete course requested: ${course.title}")
-                deleteCourseFromTable(course.id, course.username)
+            onEditClickListener = { course ->
+                editCourse(convertCourseToVideoData(course))
             },
-            onChangeThumbnailListener = { course ->
-                Log.d("ExploreFragment", "Change thumbnail requested: ${course.title}")
-                showThumbnailChangeOptions(course)
+            onDeleteClickListener = { course ->
+                deleteCourseFromTable(course.id, course.creatorUsername ?: "")
+            },
+            onThumbnailChangeClickListener = { course ->
+                showThumbnailChangeOptions(convertCourseToVideoData(course))
             }
         )
         coursesRecyclerView.adapter = coursesAdapter
@@ -346,9 +383,9 @@ class ExploreFragment : Fragment() {
         })
     }
 
-    private fun navigateToCourseDetail(course: VideoData) {
+    private fun navigateToCourseDetail(course: Course) {
         // Check if current user is the course creator
-        val isCreator = currentUsername != null && currentUsername == course.username
+        val isCreator = currentUsername != null && currentUsername == course.creatorUsername
 
         val bundle = Bundle().apply {
             putLong("courseId", course.id)
@@ -543,15 +580,16 @@ class ExploreFragment : Fragment() {
                 // Immediately update in-memory lists and adapter so UI reflects the change without reload
                 try {
                     // Update allCoursesList entries
+                    val courseFromVideoData = courseRepository.convertVideoDataToCoursePublic(updatedCourse)
                     val idxAll = allCoursesList.indexOfFirst { it.id == updatedCourse.id }
                     if (idxAll >= 0) {
-                        allCoursesList[idxAll] = convertCourseToVideoData(courseRepository.convertVideoDataToCoursePublic(updatedCourse))
+                        allCoursesList[idxAll] = courseFromVideoData
                     }
 
                     // Update coursesList (filtered list currently shown)
                     val idxFiltered = coursesList.indexOfFirst { it.id == updatedCourse.id }
                     if (idxFiltered >= 0) {
-                        coursesList[idxFiltered] = updatedCourse
+                        coursesList[idxFiltered] = courseFromVideoData
                     }
 
                     // Notify adapter of the immediate change
@@ -600,18 +638,18 @@ class ExploreFragment : Fragment() {
     }
 
     // Get courses created by current user only
-    private fun getUserOwnedCourses(): List<VideoData> {
+    private fun getUserOwnedCourses(): List<Course> {
         return if (currentUsername != null) {
-            allCoursesList.filter { it.username == currentUsername }
+            allCoursesList.filter { it.creatorUsername == currentUsername }
         } else {
             emptyList()
         }
     }
 
     // Get courses NOT created by current user (for viewing only)
-    private fun getOtherUsersCourses(): List<VideoData> {
+    private fun getOtherUsersCourses(): List<Course> {
         return if (currentUsername != null) {
-            allCoursesList.filter { it.username != currentUsername }
+            allCoursesList.filter { it.creatorUsername != currentUsername }
         } else {
             allCoursesList
         }
@@ -642,7 +680,7 @@ class ExploreFragment : Fragment() {
                         val userCourses = getUserOwnedCourses()
                         userCourses.forEach { course ->
                             if (canUserModifyCourse(course)) {
-                                updateCourseInTable(course)
+                                courseRepository.updateCourse(course)
                             }
                         }
                     }
@@ -661,7 +699,7 @@ class ExploreFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    allCoursesFromTableList.forEach { course ->
+                    allCoursesList.forEach { course ->
                         try {
                             // Only regenerate thumbnails for courses owned by current user
                             if (canUserModifyCourse(course)) {
@@ -725,13 +763,12 @@ class ExploreFragment : Fragment() {
                     // Immediately update UI lists and adapter so the new thumbnail is visible
                     try {
                         val converted = courseRepository.convertVideoDataToCoursePublic(updatedCourse)
-                        val vd = convertCourseToVideoData(converted)
 
                         val idxAll = allCoursesList.indexOfFirst { it.id == updatedCourse.id }
-                        if (idxAll >= 0) allCoursesList[idxAll] = vd
+                        if (idxAll >= 0) allCoursesList[idxAll] = converted
 
                         val idxFiltered = coursesList.indexOfFirst { it.id == updatedCourse.id }
-                        if (idxFiltered >= 0) coursesList[idxFiltered] = updatedCourse
+                        if (idxFiltered >= 0) coursesList[idxFiltered] = converted
 
                         if (::coursesAdapter.isInitialized) {
                             coursesAdapter.updateCourses(coursesList)
@@ -891,15 +928,11 @@ class ExploreFragment : Fragment() {
                 hasTriggeredLoadAtPosition5 = false // Resetear flag al cargar inicial
                 
                 withContext(Dispatchers.Main) {
-                    allCoursesFromTableList.clear()
-                    allCoursesFromTableList.addAll(courses)
-                    
-                    val videoDataList = courses.map { convertCourseToVideoData(it) }
                     allCoursesList.clear()
-                    allCoursesList.addAll(videoDataList)
+                    allCoursesList.addAll(courses)
                     
                     coursesList.clear()
-                    coursesList.addAll(videoDataList)
+                    coursesList.addAll(courses)
                     
                     if (::coursesAdapter.isInitialized) {
                         coursesAdapter.updateCourses(coursesList)
@@ -948,16 +981,13 @@ class ExploreFragment : Fragment() {
                     currentPage = nextPage
                     
                     withContext(Dispatchers.Main) {
-                        allCoursesFromTableList.addAll(courses)
-                        
-                        val videoDataList = courses.map { convertCourseToVideoData(it) }
-                        allCoursesList.addAll(videoDataList)
+                        allCoursesList.addAll(courses)
                         
                         val oldSize = coursesList.size
-                        coursesList.addAll(videoDataList)
+                        coursesList.addAll(courses)
                         
                         if (::coursesAdapter.isInitialized) {
-                            coursesAdapter.notifyItemRangeInserted(oldSize, videoDataList.size)
+                            coursesAdapter.notifyItemRangeInserted(oldSize, courses.size)
                         }
                         
                         Log.d("ExploreFragment", "Loaded ${courses.size} more courses (total now: ${coursesList.size}/$totalCourses)")
@@ -982,42 +1012,18 @@ class ExploreFragment : Fragment() {
         // Sort by timestamp DESC (most recent first)
         val sortedCourses = courses.sortedByDescending { it.timestamp }
         
-        allCoursesFromTableList.clear()
-        allCoursesFromTableList.addAll(sortedCourses)
-        
-        // Convert to VideoData for adapter
-        val videoDataList = sortedCourses.map { course ->
-            try {
-                convertCourseToVideoData(course)
-            } catch (e: Exception) {
-                Log.w("ExploreFragment", "displayCourses: Failed to convert course id=${course.id}: ${e.message}")
-                VideoData(
-                    id = course.id,
-                    username = course.creatorUsername ?: "",
-                    title = course.title ?: "Untitled Course",
-                    description = course.description ?: "",
-                    videoUriString = course.videoUri ?: "",
-                    localFilePath = course.localFilePath,
-                    timestamp = course.timestamp,
-                    isPaid = course.isPremium,
-                    thumbnailUri = course.thumbnailUri,
-                    price = if (course.price > 0.0) course.price else null
-                )
-            }
-        }
-        
         // Store ALL courses for search
         allCoursesList.clear()
-        allCoursesList.addAll(videoDataList)
+        allCoursesList.addAll(sortedCourses)
         
         // Show ALL loaded courses (no limit)
         coursesList.clear()
-        coursesList.addAll(videoDataList)
+        coursesList.addAll(sortedCourses)
         
         // Update adapter
         if (::coursesAdapter.isInitialized) {
-            coursesAdapter.updateCourses(videoDataList)
-            Log.d("ExploreFragment", "displayCourses: Updated adapter with ${videoDataList.size} courses (Total in Supabase: $totalCourses)")
+            coursesAdapter.updateCourses(sortedCourses)
+            Log.d("ExploreFragment", "displayCourses: Updated adapter with ${sortedCourses.size} courses (Total in Supabase: $totalCourses)")
         }
         
         // Update stats
@@ -1043,8 +1049,8 @@ class ExploreFragment : Fragment() {
             // When searching, search in ALL courses (not just top 10)
             allCoursesList.filter { course ->
                 course.title.contains(query, ignoreCase = true) ||
-                        course.description.contains(query, ignoreCase = true) ||
-                        course.username.contains(query, ignoreCase = true)
+                        course.description?.contains(query, ignoreCase = true) == true ||
+                        course.creatorUsername?.contains(query, ignoreCase = true) == true
             }
         }
         coursesList.clear()
@@ -1095,7 +1101,7 @@ class ExploreFragment : Fragment() {
 
     // Filter premium courses
     private fun filterPremiumCourses() {
-        val premiumCourses = allCoursesList.filter { it.isPaid == true }
+        val premiumCourses = allCoursesList.filter { it.isPremium == true }
         coursesList.clear()
         coursesList.addAll(premiumCourses)
         if (::coursesAdapter.isInitialized) {
@@ -1109,7 +1115,7 @@ class ExploreFragment : Fragment() {
 
     // Filter free courses
     private fun filterFreeCourses() {
-        val freeCourses = allCoursesList.filter { it.isPaid != true }
+        val freeCourses = allCoursesList.filter { it.isPremium != true }
         coursesList.clear()
         coursesList.addAll(freeCourses)
         if (::coursesAdapter.isInitialized) {
@@ -1134,7 +1140,7 @@ class ExploreFragment : Fragment() {
             totalCoursesCount?.text = totalCourses.toString()
             
             // Count premium courses from loaded courses as "popular"
-            val premiumCount = allCoursesList.count { it.isPaid == true }
+            val premiumCount = allCoursesList.count { it.isPremium == true }
             popularCoursesCount?.text = premiumCount.toString()
             Log.d("ExploreFragment", "Premium courses count: $premiumCount")
             
@@ -1216,23 +1222,42 @@ class ExploreFragment : Fragment() {
 
     override fun onPause() {
         super.onPause()
-        // Stop any video playback when fragment is paused
-        if (::coursesAdapter.isInitialized) {
-            coursesAdapter.stopAllVideos()
-        } else {
-            Log.w("ExploreFragment", "coursesAdapter not initialized onPause")
-        }
+        // No video playback to stop in course cards
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
-        // Clean up any resources
-        if (::coursesAdapter.isInitialized) {
-            coursesAdapter.stopAllVideos()
-        } else {
-            Log.w("ExploreFragment", "coursesAdapter not initialized onDestroyView")
+        // Clean up any resources - no video playback to stop in course cards
+    }
+
+    /**
+     * Sync subscription to Supabase
+     */
+    private suspend fun syncSubscriptionToSupabase(subscriberUsername: String, creatorUsername: String) {
+        try {
+            val supabaseClient = com.example.tareamov.service.SupabaseClient
+            supabaseClient.subscribeToCreator(subscriberUsername, creatorUsername)
+            Log.d("ExploreFragment", "Subscription synced to Supabase: $subscriberUsername -> $creatorUsername")
+        } catch (e: Exception) {
+            Log.e("ExploreFragment", "Error syncing subscription to Supabase", e)
+            // Don't throw - local subscription is more important
         }
     }
+
+    /**
+     * Sync unsubscription to Supabase
+     */
+    private suspend fun syncUnsubscriptionToSupabase(subscriberUsername: String, creatorUsername: String) {
+        try {
+            val supabaseClient = com.example.tareamov.service.SupabaseClient
+            supabaseClient.unsubscribeFromCreator(subscriberUsername, creatorUsername)
+            Log.d("ExploreFragment", "Unsubscription synced to Supabase: $subscriberUsername -> $creatorUsername")
+        } catch (e: Exception) {
+            Log.e("ExploreFragment", "Error syncing unsubscription to Supabase", e)
+            // Don't throw - local unsubscription is more important
+        }
+    }
+    
     // Debug function to show detailed stats info - remove in production
     private fun showDebugStatsInfo() {
         val currentTime = System.currentTimeMillis()
@@ -1241,15 +1266,15 @@ class ExploreFragment : Fragment() {
         val debugInfo = StringBuilder()
         debugInfo.append("📊 ESTADÍSTICAS DE CURSOS\n\n")
         debugInfo.append("🔢 Total de cursos: ${allCoursesList.size}\n")
-        debugInfo.append("💎 Cursos premium: ${allCoursesList.count { it.isPaid == true }}\n")
-        debugInfo.append("🆓 Cursos gratuitos: ${allCoursesList.count { it.isPaid != true }}\n")
+        debugInfo.append("💎 Cursos premium: ${allCoursesList.count { it.isPremium }}\n")
+        debugInfo.append("🆓 Cursos gratuitos: ${allCoursesList.count { !it.isPremium }}\n")
         debugInfo.append("🆕 Cursos nuevos (7 días): ${allCoursesList.count { it.timestamp > sevenDaysAgo }}\n\n")
         
         if (allCoursesList.isNotEmpty()) {
             debugInfo.append("📋 DETALLES DE CURSOS:\n")
             allCoursesList.take(5).forEach { course ->
                 val daysDiff = (currentTime - course.timestamp) / (24 * 60 * 60 * 1000)
-                val isPremium = if (course.isPaid == true) "💎" else "🆓"
+                val isPremium = if (course.isPremium) "💎" else "🆓"
                 debugInfo.append("$isPremium ${course.title} (${daysDiff} días)\n")
             }
         } else {

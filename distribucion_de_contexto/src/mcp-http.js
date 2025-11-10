@@ -156,7 +156,7 @@ app.post('/tools/call', async (req, res) => {
     const { name, arguments: args } = params;
     
     if (name === 'query_database') {
-      const result = await mcpService.processQuery(args.query);
+      const result = await mcpService.processQuery(args.query, { includeSchema: true });
       res.json({
         jsonrpc: '2.0',
         id: req.body.id,
