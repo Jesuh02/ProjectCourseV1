@@ -67,7 +67,7 @@ fun Fragment.initializeAndLoadCourseProgress(
     val certificateButtonContainer = view.findViewById<FrameLayout>(R.id.certificateButtonContainer)
     val certificateButton = view.findViewById<Button>(R.id.certificateButton)
 
-    // Only show progress for students (non-creators)
+    // Only show progress for students (non-creators) who are logged in
     if (isCurrentUserCreator || username == null) {
         progressContainer.visibility = View.GONE
         return
@@ -87,15 +87,36 @@ fun Fragment.initializeAndLoadCourseProgress(
             progressStatusTextView = progressStatusTextView
         )
 
+        if (progressContainer.visibility == View.VISIBLE) {
+            val offset = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
+            progressContainer.alpha = 0f
+            progressContainer.translationY = offset
+            progressContainer.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(520)
+                .setInterpolator(android.view.animation.DecelerateInterpolator(1.8f))
+                .start()
+        }
+
         // Show certificate button if student passed the course (grade >= 6)
         if (averageGrade >= 6.0f) {
             certificateButtonContainer?.visibility = View.VISIBLE
+            certificateButtonContainer?.alpha = 0f
+            certificateButtonContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
+            certificateButtonContainer?.animate()
+                ?.alpha(1f)
+                ?.translationY(0f)
+                ?.setDuration(480)
+                ?.setInterpolator(android.view.animation.DecelerateInterpolator(1.6f))
+                ?.start()
             certificateButton?.setOnClickListener {
                 // Show dialog to choose certificate type
                 showCertificateTypeDialog(requireContext(), courseId.toInt(), username, averageGrade)
             }
         } else {
             certificateButtonContainer?.visibility = View.GONE
+            certificateButtonContainer?.alpha = 0f
         }
     }
 }

@@ -253,9 +253,12 @@ class CourseDetailFragment : Fragment() {
         courseDescriptionTextView = view.findViewById(R.id.courseDescriptionTextView)
         editCourseButton = view.findViewById(R.id.editCourseButton)
 
-    // Initially hide edit controls until we verify creator ownership remotely
-    editCourseButton.visibility = View.GONE
-    courseTitleTextView.isClickable = false
+        // Animate title and description with iPhone-style entrance
+        animateCourseTitleEntrance()
+
+        // Initially hide edit controls until we verify creator ownership remotely
+        editCourseButton.visibility = View.GONE
+        courseTitleTextView.isClickable = false
 
         val courseTitle = view.findViewById<TextView>(R.id.courseTitleTextView)
         val courseDescription = view.findViewById<TextView>(R.id.courseDescriptionTextView)
@@ -264,8 +267,16 @@ class CourseDetailFragment : Fragment() {
         // Observe course details
         courseViewModel.course.observe(viewLifecycleOwner) { course ->
             course?.let {
-                courseTitle.text = it.title
-                courseDescription.text = it.description
+                // Animate title and description updates
+                if (courseTitle.text.toString() != it.title) {
+                    courseTitle.text = it.title
+                    animateTitleUpdate()
+                }
+                if (courseDescription.text.toString() != it.description) {
+                    courseDescription.text = it.description
+                    animateDescriptionUpdate()
+                }
+                
                 courseTitleTextView = view.findViewById(R.id.courseTitleTextView)
                 courseDescriptionTextView = view.findViewById(R.id.courseDescriptionTextView)
                 editCourseButton = view.findViewById(R.id.editCourseButton)
@@ -294,6 +305,22 @@ class CourseDetailFragment : Fragment() {
                             showEdit = (localUsername == it.creatorUsername)
                         }
                         editCourseButton.visibility = if (showEdit) View.VISIBLE else View.GONE
+
+                        // Animate edit button entrance if it becomes visible
+                        if (showEdit) {
+                            editCourseButton.alpha = 0f
+                            editCourseButton.scaleX = 0.8f
+                            editCourseButton.scaleY = 0.8f
+                            editCourseButton.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
+                            editCourseButton.animate()
+                                .alpha(1f)
+                                .scaleX(1f)
+                                .scaleY(1f)
+                                .translationY(0f)
+                                .setDuration(350)
+                                .setInterpolator(android.view.animation.OvershootInterpolator(1.2f))
+                                .start()
+                        }
                     }
                 }
             }
@@ -621,6 +648,7 @@ class CourseDetailFragment : Fragment() {
         val courseTitleTextView = view?.findViewById<TextView>(R.id.courseTitleTextView)
         // Add a TextView for when tasks are filtered and none are found
         val noTasksTextView = view?.findViewById<TextView>(R.id.noTasksTextView) // Make sure this ID exists in your layout or create it
+    val paymentContainer = view?.findViewById<FrameLayout>(R.id.paymentButtonContainer)
 
         CoroutineScope(Dispatchers.Main).launch {
             try { // Start of the main try block
@@ -672,12 +700,20 @@ class CourseDetailFragment : Fragment() {
                     courseCreatorUsername = remoteCourse.creatorUsername
                     isCurrentUserCreator = courseCreatorUsername == currentUsername
                     courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+                    if (courseActionBar.visibility == View.VISIBLE) {
+                        animateViewIfVisible(courseActionBar, 360)
+                    } else {
+                        courseActionBar.alpha = 0f
+                        courseActionBar.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
+                    }
 
                     // Show payment container if course is premium and viewer is not the creator
-                    val paymentContainer = view?.findViewById<FrameLayout>(R.id.paymentButtonContainer)
                     if (remoteCourse.isPremium == true && !isCurrentUserCreator) {
                         paymentContainer?.visibility = View.VISIBLE
+                        animateViewIfVisible(paymentContainer, 180)
                     } else {
+                        paymentContainer?.alpha = 0f
+                        paymentContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
                         paymentContainer?.visibility = View.GONE
                     }
 
@@ -742,6 +778,21 @@ class CourseDetailFragment : Fragment() {
 
                     // Control visibility of the bottom action bar based on creator status
                     courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+                    if (courseActionBar.visibility == View.VISIBLE) {
+                        animateViewIfVisible(courseActionBar, 360)
+                    } else {
+                        courseActionBar.alpha = 0f
+                        courseActionBar.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
+                    }
+
+                    if (course?.isPremium == true && !isCurrentUserCreator) {
+                        paymentContainer?.visibility = View.VISIBLE
+                        animateViewIfVisible(paymentContainer, 180)
+                    } else {
+                        paymentContainer?.alpha = 0f
+                        paymentContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
+                        paymentContainer?.visibility = View.GONE
+                    }
 
                     // Load creator info if the current user is not the creator
                     if (!isCurrentUserCreator && courseCreatorUsername != null) {
@@ -804,14 +855,20 @@ class CourseDetailFragment : Fragment() {
                     // topics become visible without requiring local Room inserts. Show a friendly message.
                     noTopicsTextView?.text = "Este curso aún no tiene temas." // Set specific message
                     noTopicsTextView?.visibility = View.VISIBLE
+                    noTopicsTextView?.alpha = 0f
                     topicsContainer.removeAllViews()
                     topicsContainer.visibility = View.VISIBLE
+                    animateViewIfVisible(noTopicsTextView, 320)
+                    animateViewIfVisible(topicsContainer, 300)
                     noTasksTextView?.visibility = View.GONE
+                    noTasksTextView?.alpha = 0f
                 } else {
                     // Clear previous views and reset messages
                     topicsContainer.removeAllViews()
                     noTopicsTextView?.visibility = View.GONE
+                    noTopicsTextView?.alpha = 0f
                     noTasksTextView?.visibility = View.GONE
+                    noTasksTextView?.alpha = 0f
 
                     // Debug: log topic list before rendering
                     Log.d("CourseDetailFragment", "Debug: topics.size=${topics.size}, currentTab=$currentTab")
@@ -868,17 +925,26 @@ class CourseDetailFragment : Fragment() {
                         if (currentTab == "documentos") {
                             noTopicsTextView?.text = "No hay documentos en este curso."
                             noTopicsTextView?.visibility = View.VISIBLE
+                            noTopicsTextView?.alpha = 0f
+                            animateViewIfVisible(noTopicsTextView, 320)
                         } else {
                             noTasksTextView?.text = "No hay tareas en este curso."
                             noTasksTextView?.visibility = View.VISIBLE
+                            noTasksTextView?.alpha = 0f
+                            animateViewIfVisible(noTasksTextView, 320)
                         }
                     }
+                    animateViewIfVisible(topicsContainer, 300)
                 }
+
+                animateContentSections()
             } catch (e: Exception) { // This is the correct catch block for the main try
                 Log.e("CourseDetailFragment", "Error loading course details", e)
                 Toast.makeText(context, "Error al cargar detalles del curso", Toast.LENGTH_SHORT).show()
                 noTopicsTextView?.text = "Error al cargar datos." // Generic error message
                 noTopicsTextView?.visibility = View.VISIBLE
+                noTopicsTextView?.alpha = 0f
+                animateViewIfVisible(noTopicsTextView, 320)
                 noTasksTextView?.visibility = View.GONE // Ensure no tasks message is hidden on error
                 topicsContainer.visibility = View.GONE
             } // Closes the main catch block
@@ -1982,5 +2048,133 @@ class CourseDetailFragment : Fragment() {
                 callback(false)
             }
         }
+    }
+
+    // iPhone-style entrance animation for course title and description
+    private fun animateCourseTitleEntrance() {
+        val root = view ?: return
+        val titleContainer = root.findViewById<LinearLayout>(R.id.courseTitleContainer)
+        val accentBar = root.findViewById<View>(R.id.courseTitleAccent)
+        val metaLabel = root.findViewById<TextView>(R.id.courseMetaLabel)
+
+        titleContainer?.animate()?.apply {
+            alpha(1f)
+            translationY(0f)
+            duration = 620
+            interpolator = android.view.animation.DecelerateInterpolator(2.1f)
+        }?.start()
+
+        accentBar?.animate()?.apply {
+            startDelay = 120
+            alpha(1f)
+            scaleY(1f)
+            translationY(0f)
+            duration = 520
+            interpolator = android.view.animation.DecelerateInterpolator(1.9f)
+        }?.start()
+
+        metaLabel?.animate()?.apply {
+            startDelay = 160
+            alpha(1f)
+            translationY(0f)
+            duration = 520
+            interpolator = android.view.animation.DecelerateInterpolator(2f)
+        }?.start()
+
+        courseTitleTextView.animate()
+            .setStartDelay(200)
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(540)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(2.2f))
+            .start()
+
+        // Animate description slightly after title for cascading effect
+        courseDescriptionTextView.animate()
+            .setStartDelay(280)
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(520)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(2.0f))
+            .start()
+
+        // Subtle scale animation on edit button when visible
+        editCourseButton.postDelayed({
+            if (editCourseButton.visibility == View.VISIBLE) {
+                editCourseButton.scaleX = 0.8f
+                editCourseButton.scaleY = 0.8f
+                editCourseButton.alpha = 0f
+                editCourseButton.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
+                editCourseButton.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(380)
+                    .setInterpolator(android.view.animation.OvershootInterpolator(1.18f))
+                    .start()
+            }
+        }, 320)
+
+        // Begin animating secondary sections a moment later
+        root.postDelayed({ animateContentSections() }, 420)
+    }
+
+    // Add subtle bounce animation when title is updated
+    private fun animateTitleUpdate() {
+        courseTitleTextView.animate()
+            .scaleX(1.05f)
+            .scaleY(1.05f)
+            .setDuration(150)
+            .withEndAction {
+                courseTitleTextView.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(150)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .start()
+            }
+            .start()
+    }
+
+    // Add subtle fade animation when description is updated
+    private fun animateDescriptionUpdate() {
+        courseDescriptionTextView.animate()
+            .alpha(0.7f)
+            .setDuration(100)
+            .withEndAction {
+                courseDescriptionTextView.animate()
+                    .alpha(1f)
+                    .setDuration(200)
+                    .start()
+            }
+            .start()
+    }
+
+    private fun animateContentSections() {
+        val root = view ?: return
+        // Containers that should float in once data arrives
+        animateViewIfVisible(root.findViewById(R.id.courseProgressContainer), 120)
+        animateViewIfVisible(root.findViewById(R.id.paymentButtonContainer), 180)
+        animateViewIfVisible(root.findViewById(R.id.courseTabStrip), 220)
+        animateViewIfVisible(root.findViewById(R.id.sectionHeadingRow), 260)
+        animateViewIfVisible(topicsContainer, 300)
+        animateViewIfVisible(root.findViewById(R.id.noTopicsTextView), 300)
+        animateViewIfVisible(root.findViewById(R.id.noTasksTextView), 300)
+        animateViewIfVisible(courseActionBar, 360)
+    }
+
+    private fun animateViewIfVisible(target: View?, delay: Long = 0L) {
+        target ?: return
+        if (target.visibility != View.VISIBLE) return
+        if (target.alpha >= 0.95f && target.translationY == 0f) return
+        target.alpha = target.alpha.coerceAtMost(0f)
+        target.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(delay)
+            .setDuration(520)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.8f))
+            .start()
     }
 }
