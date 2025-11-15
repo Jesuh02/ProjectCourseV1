@@ -29,7 +29,8 @@ class CourseAdapter(
     private val onSubscriptionClickListener: ((Course, Boolean) -> Unit)? = null, // Subscription callback
     private val onEditClickListener: ((Course) -> Unit)? = null, // Edit callback
     private val onDeleteClickListener: ((Course) -> Unit)? = null, // Delete callback
-    private val onThumbnailChangeClickListener: ((Course) -> Unit)? = null // Thumbnail change callback
+    private val onThumbnailChangeClickListener: ((Course) -> Unit)? = null, // Thumbnail change callback
+    private val onEnrollClickListener: ((Course) -> Unit)? = null // Enrollment callback
 ) : RecyclerView.Adapter<CourseAdapter.CourseViewHolder>() {
 
     class CourseViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -48,6 +49,11 @@ class CourseAdapter(
         val creatorAvatarImageView: de.hdodenhof.circleimageview.CircleImageView = itemView.findViewById(R.id.creatorAvatarImageView)
         val subscriberCountTextView: TextView = itemView.findViewById(R.id.subscriberCountTextView)
         val subscribeButton: Button = itemView.findViewById(R.id.subscribeButton)
+        // Enrollment elements
+        val enrollButtonContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.enrollButtonContainer)
+        val enrollButton: Button? = itemView.findViewById(R.id.enrollButton)
+        // Enrolled status elements
+        val enrolledStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.enrolledStatusContainer)
         // CRUD action elements
         val actionButtonsContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.actionButtonsContainer)
         val editButton: android.widget.ImageButton? = itemView.findViewById(R.id.editButton)
@@ -74,7 +80,9 @@ class CourseAdapter(
         holder.creatorTextView.text = course.creatorUsername
         holder.categoryTextView.text = course.category ?: "General"
         holder.ratingTextView.text = String.format("%.1f", course.rating)
-        holder.enrollmentTextView.text = "${course.enrollmentCount} estudiantes"
+        
+        // Load real enrollment count from progreso_estudiante table
+        loadEnrollmentCount(holder, course)
 
         // Handle subscription elements and CRUD actions based on user permissions
         val isCreator = canUserModifyCourse(course)
@@ -83,6 +91,9 @@ class CourseAdapter(
         if (isCreator) {
             // Hide subscription info for course creators
             creatorInfoContainer?.visibility = View.GONE
+            
+            // Hide enrollment button for creators
+            holder.enrollButtonContainer?.visibility = View.GONE
             
             // Show CRUD action buttons for creators
             holder.actionButtonsContainer?.visibility = View.VISIBLE
@@ -114,6 +125,12 @@ class CourseAdapter(
             
             // Load subscription data asynchronously
             loadSubscriptionData(holder, course)
+            
+            // Show enrollment button for non-creators
+            holder.enrollButtonContainer?.visibility = View.VISIBLE
+            
+            // Check enrollment status and configure button
+            checkEnrollmentStatus(holder, course)
         }
 
         // Set price without discount logic
@@ -134,13 +151,14 @@ class CourseAdapter(
             Glide.with(context)
                 .load(course.thumbnailUri)
                 .apply(RequestOptions().transform(RoundedCorners(16)))
-                .placeholder(android.R.drawable.ic_menu_gallery)
-                .error(android.R.drawable.ic_menu_gallery)
+                .placeholder(R.drawable.bg_course_placeholder_card)
+                .error(R.drawable.bg_course_placeholder_card)
+                .centerCrop()
                 .into(holder.thumbnailImageView)
         } else {
-            // Show overlay text when using default placeholder
-            holder.overlayText.visibility = View.VISIBLE
-            holder.thumbnailImageView.setImageResource(android.R.drawable.ic_menu_gallery)
+            // Show placeholder image when no thumbnail is available (YouTube style)
+            holder.overlayText.visibility = View.GONE
+            holder.thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
         }
 
         // Apply dark mode colors to text views
@@ -165,6 +183,30 @@ class CourseAdapter(
     private fun canUserModifyCourse(course: Course): Boolean {
         val canModify = currentUsername != null && currentUsername == course.creatorUsername
         return canModify
+    }
+
+    /**
+     * Load real enrollment count from progreso_estudiante table
+     */
+    private fun loadEnrollmentCount(holder: CourseViewHolder, course: Course) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                
+                // Count real enrolled students from progreso_estudiante table
+                val enrolledCount = db.progresoEstudianteDao().contarEstudiantes(course.id)
+                
+                withContext(Dispatchers.Main) {
+                    val studentsText = if (enrolledCount == 1) "1 estudiante" else "$enrolledCount estudiantes"
+                    holder.enrollmentTextView.text = studentsText
+                }
+            } catch (e: Exception) {
+                Log.e("CourseAdapter", "Error loading enrollment count", e)
+                withContext(Dispatchers.Main) {
+                    holder.enrollmentTextView.text = "0 estudiantes"
+                }
+            }
+        }
     }
 
     /**
@@ -216,6 +258,62 @@ class CourseAdapter(
                     holder.subscriberCountTextView.text = "0 suscriptores"
                     holder.subscribeButton.text = "Suscribirse"
                     holder.subscribeButton.isEnabled = true
+                }
+            }
+        }
+    }
+    
+    /**
+     * Check if user is enrolled in the course and configure button accordingly
+     */
+    private fun checkEnrollmentStatus(holder: CourseViewHolder, course: Course) {
+        if (currentUsername == null) {
+            holder.enrollButton?.text = "Iniciar sesión para inscribirse"
+            holder.enrollButton?.isEnabled = false
+            holder.enrollButton?.alpha = 0.6f
+            return
+        }
+        
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                
+                // Check if user is already enrolled (has progreso record)
+                val progreso = db.progresoEstudianteDao().getProgreso(currentUsername!!, course.id)
+                
+                withContext(Dispatchers.Main) {
+                    if (progreso != null) {
+                        // Already enrolled - Show enrolled status, hide enrollment container
+                        holder.enrollButtonContainer?.visibility = View.GONE
+                        holder.enrolledStatusContainer?.visibility = View.VISIBLE
+                        
+                        Log.d("CourseAdapter", "User already enrolled in course ${course.id}, showing enrolled status")
+                    } else {
+                        // Not enrolled yet - Show enrollment section, hide enrolled status
+                        holder.enrolledStatusContainer?.visibility = View.GONE
+                        holder.enrollButtonContainer?.visibility = View.VISIBLE
+                        holder.enrollButton?.text = "Inscribirse al curso"
+                        holder.enrollButton?.isEnabled = true
+                        holder.enrollButton?.alpha = 1.0f
+                        holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
+                        
+                        // Set click listener for enrollment (only once)
+                        holder.enrollButton?.setOnClickListener {
+                            // Disable button immediately to prevent double-clicks
+                            holder.enrollButton?.isEnabled = false
+                            holder.enrollButton?.alpha = 0.6f
+                            holder.enrollButton?.text = "Inscribiendo..."
+                            
+                            onEnrollClickListener?.invoke(course)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseAdapter", "Error checking enrollment status", e)
+                withContext(Dispatchers.Main) {
+                    holder.enrollButton?.text = "Inscribirse al curso"
+                    holder.enrollButton?.isEnabled = true
+                    holder.enrollButton?.alpha = 1.0f
                 }
             }
         }

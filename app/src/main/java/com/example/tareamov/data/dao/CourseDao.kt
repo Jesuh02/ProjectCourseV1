@@ -8,12 +8,18 @@ import kotlinx.coroutines.flow.Flow
 interface CourseDao {
     @Query("SELECT * FROM courses ORDER BY creationDate DESC")
     suspend fun getAllCourses(): List<Course>
+    
+    @Query("SELECT * FROM courses ORDER BY creationDate DESC")
+    fun getAllCoursesSync(): List<Course>
 
     @Query("SELECT * FROM courses WHERE creatorUsername = :username ORDER BY creationDate DESC")
     suspend fun getCoursesByCreator(username: String): List<Course>
 
     @Query("SELECT * FROM courses WHERE id = :courseId")
     suspend fun getCourseById(courseId: Long): Course?
+
+    @Query("SELECT * FROM courses WHERE title = :title LIMIT 1")
+    suspend fun getCourseByTitle(title: String): Course?
 
     @Query("SELECT * FROM courses WHERE isPublished = 1 ORDER BY creationDate DESC")
     suspend fun getPublishedCourses(): List<Course>

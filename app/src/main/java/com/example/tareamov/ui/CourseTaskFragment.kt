@@ -55,7 +55,8 @@ class CourseTaskFragment : Fragment() {
             AppDatabase.getDatabase(requireContext()).recursoDao(),
             AppDatabase.getDatabase(requireContext()).rolRecursoDao(),
             AppDatabase.getDatabase(requireContext()).chatMessageDao(),
-            AppDatabase.getDatabase(requireContext()).fileContextDao()
+            AppDatabase.getDatabase(requireContext()).fileContextDao(),
+            AppDatabase.getDatabase(requireContext()).progresoEstudianteDao()
         )
     }
 
@@ -243,7 +244,8 @@ class CourseTaskFragment : Fragment() {
                         AppDatabase.getDatabase(requireContext()).recursoDao(),
                         AppDatabase.getDatabase(requireContext()).rolRecursoDao(),
                         AppDatabase.getDatabase(requireContext()).chatMessageDao(),
-                        AppDatabase.getDatabase(requireContext()).fileContextDao()
+                        AppDatabase.getDatabase(requireContext()).fileContextDao(),
+                        AppDatabase.getDatabase(requireContext()).progresoEstudianteDao()
                     )
                     if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
                         val remote = withContext(Dispatchers.IO) { syncRepo.fetchTaskByIdFromSupabase(taskId) }
@@ -347,7 +349,7 @@ class CourseTaskFragment : Fragment() {
                             appDatabase.contentItemDao(), appDatabase.taskDao(), appDatabase.subscriptionDao(),
                             appDatabase.taskSubmissionDao(), appDatabase.videoDao(), appDatabase.courseDao(),
                             appDatabase.rolDao(), appDatabase.recursoDao(), appDatabase.rolRecursoDao(),
-                            appDatabase.chatMessageDao(), appDatabase.fileContextDao()
+                            appDatabase.chatMessageDao(), appDatabase.fileContextDao(), appDatabase.progresoEstudianteDao()
                         )
                     
                     // Fetch the topic to get the courseId
@@ -381,7 +383,7 @@ class CourseTaskFragment : Fragment() {
                         appDatabase.contentItemDao(), appDatabase.taskDao(), appDatabase.subscriptionDao(),
                         appDatabase.taskSubmissionDao(), appDatabase.videoDao(), appDatabase.courseDao(),
                         appDatabase.rolDao(), appDatabase.recursoDao(), appDatabase.rolRecursoDao(),
-                        appDatabase.chatMessageDao(), appDatabase.fileContextDao()
+                        appDatabase.chatMessageDao(), appDatabase.fileContextDao(), appDatabase.progresoEstudianteDao()
                     )
 
                 val resolvedCourseId = withContext(Dispatchers.IO) {
@@ -550,6 +552,24 @@ class CourseTaskFragment : Fragment() {
                     }
                 } else {
                     Toast.makeText(context, "Tarea guardada exitosamente", Toast.LENGTH_SHORT).show()
+                }
+
+                // NUEVO: Crear submissions automáticas con calificación 0 para todos los estudiantes inscritos
+                if (taskId <= 0 && courseId > 0) { // Solo para tareas nuevas
+                    Log.d("CourseTaskFragment", "Creating default submissions for new task $savedTaskId in course $courseId")
+                    val createdCount = withContext(Dispatchers.IO) {
+                        syncRepo.createDefaultSubmissionsForTask(savedTaskId, courseId)
+                    }
+                    Log.i("CourseTaskFragment", "Created $createdCount default submissions with grade 0")
+                }
+                
+                // IMPORTANTE: Recalcular progreso de todos los estudiantes después de agregar/editar tarea
+                if (courseId > 0) {
+                    Log.d("CourseTaskFragment", "🔄 Recalculating student progress for course $courseId")
+                    val updatedStudents = withContext(Dispatchers.IO) {
+                        syncRepo.recalculateAllStudentProgressForCourse(courseId)
+                    }
+                    Log.i("CourseTaskFragment", "✅ Updated progress for $updatedStudents students")
                 }
 
                 // Notify CourseDetailFragment to refresh from Supabase

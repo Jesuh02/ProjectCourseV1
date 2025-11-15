@@ -34,6 +34,7 @@ class StudentProgressManager(private val context: Context) {
         // Certificate button container
         val certificateButtonContainer = progressContainer.findViewById<FrameLayout?>(R.id.certificateButtonContainer)
         val certificateButton = progressContainer.findViewById<Button?>(R.id.certificateButton)
+        val certificateIssuedDateTextView = progressContainer.findViewById<TextView?>(R.id.certificateIssuedDateTextView)
 
         CoroutineScope(Dispatchers.Main).launch {
             Log.d("StudentProgressManager", "loadStudentProgress called: courseId=$courseId username=$username SupabaseConfigured=${com.example.tareamov.service.SupabaseClient.isConfigured()}")
@@ -127,6 +128,23 @@ class StudentProgressManager(private val context: Context) {
                         // Show certificate button only if the student passed the course
                         certificateButtonContainer?.visibility = View.VISIBLE
 
+                        // Check if certificate was already issued
+                        val progreso = withContext(Dispatchers.IO) {
+                            db.progresoEstudianteDao().getProgresoByUsuarioAndCurso(username, courseId)
+                        }
+                        
+                        progreso?.certificadoEmitidoEn?.let { timestamp ->
+                            // Show certificate issued date
+                            val dateFormat = java.text.SimpleDateFormat("dd 'de' MMMM 'de' yyyy", java.util.Locale("es", "ES"))
+                            val date = dateFormat.format(java.util.Date(timestamp))
+                            certificateIssuedDateTextView?.text = "✓ Certificado emitido el $date"
+                            certificateIssuedDateTextView?.visibility = View.VISIBLE
+                            certificateButton?.text = "Regenerar Certificado"
+                        } ?: run {
+                            certificateIssuedDateTextView?.visibility = View.GONE
+                            certificateButton?.text = "Generar Certificado"
+                        }
+
                         // Get course and user details for certificate
                         val courseDetails = withContext(Dispatchers.IO) {
                             db.videoDao().getVideoById(courseId)
@@ -153,7 +171,8 @@ class StudentProgressManager(private val context: Context) {
                                             creatorUsername,
                                             courseName,
                                             courseTopic,
-                                            df.format(weightedGrade).toString()
+                                            df.format(weightedGrade).toString(),
+                                            courseId
                                         )
                                     }
                                 } catch (e: Exception) {
@@ -166,7 +185,8 @@ class StudentProgressManager(private val context: Context) {
                                             creatorUsername,
                                             courseName,
                                             "General",
-                                            df.format(weightedGrade).toString()
+                                            df.format(weightedGrade).toString(),
+                                            courseId
                                         )
                                     }
                                 }
@@ -201,12 +221,22 @@ class StudentProgressManager(private val context: Context) {
 
     // Calculate the weighted average grade based on completed tasks
     private fun calculateWeightedAverageGrade(tasks: List<Task>, submissions: List<TaskSubmission>): Float {
-        // Per requirement: average = sum of grades in the course / number of grades in the course
-        val grades = submissions.mapNotNull { it.grade }
-        if (grades.isEmpty()) return 0f
-        val sum = grades.sum()
-        val avg = sum / grades.size
-        Log.d("StudentProgressManager", "Calculated average grade from ${grades.size} grades: $avg (sum=$sum)")
+        // IMPORTANTE: El promedio debe incluir TODAS las tareas
+        // Las tareas sin calificación cuentan como 0
+        if (tasks.isEmpty()) return 0f
+        
+        // Crear mapa de entregas por taskId
+        val submissionMap = submissions.associateBy { it.taskId }
+        
+        // Calcular promedio incluyendo todas las tareas (ungraded = 0)
+        var totalGrade = 0f
+        for (task in tasks) {
+            val grade = submissionMap[task.id]?.grade ?: 0f
+            totalGrade += grade
+        }
+        
+        val avg = totalGrade / tasks.size
+        Log.d("StudentProgressManager", "Calculated average grade: $avg (totalGrade=$totalGrade, totalTasks=${tasks.size})")
         return avg
     }
 }

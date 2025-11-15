@@ -36,9 +36,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:scaleType="centerCrop"
-                tools:src="@android:drawable/ic_menu_gallery" />
+                android:src="@drawable/bg_course_placeholder_card"
+                tools:src="@drawable/bg_course_placeholder_card" />
 
-            <!-- Overlay text like in the image -->
+            <!-- Overlay text like in the image (hidden by default, YouTube style) -->
             <TextView
                 android:id="@+id/overlayText"
                 android:layout_width="wrap_content"
@@ -52,7 +53,7 @@
                 android:textColor="@color/white"
                 android:textSize="16sp"
                 android:textStyle="bold"
-                android:visibility="visible" />
+                android:visibility="gone" />
 
             <!-- Premium Badge -->
             <View
@@ -108,34 +109,31 @@
             tools:text="Aprende IA desde cero con proyectos reales y casos de uso" />
 
         <!-- Creator Info with Subscription -->
-
-        <!-- Course Info Row -->
-
         <LinearLayout
             android:id="@+id/creatorInfoContainer"
-            android:layout_width="251dp"
-            android:layout_height="48dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
-            android:layout_marginBottom="8dp"
+            android:layout_marginBottom="12dp"
             android:background="@drawable/bg_card_premium"
-            android:gravity="center_vertical"
+            android:gravity="start|center_vertical"
             android:orientation="horizontal"
             android:paddingStart="16dp"
-            android:paddingTop="8dp"
+            android:paddingTop="10dp"
             android:paddingEnd="16dp"
-            android:paddingBottom="8dp">
+            android:paddingBottom="10dp">
 
             <de.hdodenhof.circleimageview.CircleImageView
                 android:id="@+id/creatorAvatarImageView"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
                 android:src="@drawable/default_avatar" />
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="10dp"
                 android:layout_weight="1"
                 android:orientation="vertical">
 
@@ -145,7 +143,7 @@
                     android:layout_height="wrap_content"
                     android:letterSpacing="0.02"
                     android:textColor="#FFFFFF"
-                    android:textSize="13sp"
+                    android:textSize="14sp"
                     android:textStyle="bold"
                     tools:text="jesus" />
 
@@ -153,6 +151,7 @@
                     android:id="@+id/subscriberCountTextView"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
                     android:textColor="#C2B8FF"
                     android:textSize="11sp"
                     tools:text="1 suscriptores" />
@@ -161,47 +160,181 @@
             <Button
                 android:id="@+id/subscribeButton"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="8dp"
                 android:background="@drawable/button_premium"
                 android:fontFamily="sans-serif-medium"
                 android:gravity="center"
                 android:includeFontPadding="false"
-                android:minHeight="28dp"
-                android:paddingStart="10dp"
-                android:paddingEnd="10dp"
+                android:minHeight="32dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
                 android:text="Suscribirse"
                 android:textColor="#FFFFFF"
-                android:textSize="10sp" />
+                android:textSize="11sp" />
+
+        </LinearLayout>
+        
+        <!-- Enrolled Status Indicator (Only visible when user is already enrolled) -->
+        <LinearLayout
+            android:id="@+id/enrolledStatusContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp"
+            android:gravity="start|center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            android:background="@drawable/bg_card_premium"
+            android:padding="14dp">
+
+            <!-- Check Icon -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="✓"
+                android:textColor="#4CAF50"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:layout_marginEnd="12dp" />
+
+            <!-- Enrolled Info -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Ya estás inscrito"
+                    android:textColor="#4CAF50"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.02" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Puedes acceder a todo el contenido del curso"
+                    android:textColor="#90CAF9"
+                    android:textSize="11sp"
+                    android:layout_marginTop="2dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+        
+        <!-- Enroll Button Container (Only visible for non-creators and not enrolled) -->
+        <LinearLayout
+            android:id="@+id/enrollButtonContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp"
+            android:gravity="start"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:background="@drawable/bg_card_premium"
+            android:padding="12dp">
+
+            <!-- Enrollment Info Text -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📚 Inscripción al Curso"
+                android:textColor="#C2B8FF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.05"
+                android:layout_marginBottom="8dp" />
+
+            <!-- Enroll Button -->
+            <Button
+                android:id="@+id/enrollButton"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:background="@drawable/button_premium"
+                android:drawableStart="@drawable/ic_add_circle"
+                android:drawablePadding="10dp"
+                android:elevation="3dp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:paddingStart="18dp"
+                android:paddingEnd="18dp"
+                android:text="Inscribirse al curso"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.02" />
+
+            <!-- Benefits Info -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp"
+                android:gravity="start">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="✓ Acceso completo"
+                    android:textColor="#90CAF9"
+                    android:textSize="11sp"
+                    android:layout_marginEnd="12dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="✓ Certificado"
+                    android:textColor="#90CAF9"
+                    android:textSize="11sp"
+                    android:layout_marginEnd="12dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="✓ Progreso guardado"
+                    android:textColor="#90CAF9"
+                    android:textSize="11sp" />
+
+            </LinearLayout>
 
         </LinearLayout>
 
+        <!-- Course Info Row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
-            android:layout_marginBottom="8dp"
+            android:layout_marginBottom="10dp"
+            android:gravity="start"
             android:orientation="horizontal">
 
             <!-- Category -->
             <TextView
                 android:id="@+id/courseCategoryTextView"
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
                 android:background="@drawable/category_tag_background"
-                android:padding="4dp"
+                android:padding="6dp"
                 android:textColor="@color/purple_500"
                 android:textSize="12sp"
                 android:textStyle="bold"
+                android:layout_marginEnd="12dp"
                 tools:text="Programación" />
 
             <!-- Rating -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -224,25 +357,40 @@
 
             </LinearLayout>
 
-        </LinearLayout>
-
-        <!-- Bottom Row: Enrollment and Price -->
+        </LinearLayout>        <!-- Bottom Row: Enrollment and Price -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
+            android:layout_marginBottom="8dp"
+            android:gravity="start"
             android:orientation="horizontal">
 
             <!-- Enrollment Count -->
-            <TextView
-                android:id="@+id/courseEnrollmentTextView"
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:textColor="@color/dark_secondary_text"
-                android:textSize="12sp"
-                tools:text="892 estudiantes" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginEnd="16dp">
+                
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="👥 "
+                    android:textSize="14sp"
+                    android:layout_marginEnd="4dp" />
+                
+                <TextView
+                    android:id="@+id/courseEnrollmentTextView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/dark_secondary_text"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    tools:text="892 estudiantes" />
+            </LinearLayout>
 
             <!-- Price Container -->
             <LinearLayout

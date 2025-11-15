@@ -31,7 +31,8 @@ object CertificateGenerator {
         creatorUsername: String,
         courseName: String,
         courseTopic: String,
-        grade: String
+        grade: String,
+        courseId: Long
     ) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
@@ -122,6 +123,9 @@ object CertificateGenerator {
 
                 pdfDocument.close()
 
+                // Update certificate issued date in Supabase
+                updateCertificateIssuedDate(context, studentUsername, courseId)
+
                 // Share the PDF
                 sharePdf(context, file)
 
@@ -137,8 +141,74 @@ object CertificateGenerator {
                 ).show()
             }
         }
-        
-    }    private fun drawCertificateBackground(canvas: Canvas) {
+    }
+    
+    /**
+     * Actualiza la fecha de emisión del certificado en Supabase y localmente
+     */
+    fun updateCertificateIssuedDate(
+        context: Context,
+        studentUsername: String,
+        courseId: Long
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                
+                Log.d(TAG, "📝 Actualizando certificado para usuario=$studentUsername curso=$courseId")
+                
+                // Primero verificar si existe el registro de progreso
+                var progreso = db.progresoEstudianteDao().getProgresoByUsuarioAndCurso(
+                    studentUsername,
+                    courseId
+                )
+                
+                // Si no existe, crear uno básico (esto no debería pasar si el estudiante aprobó)
+                if (progreso == null) {
+                    Log.w(TAG, "⚠️ No existe progreso para $studentUsername en curso $courseId, creando...")
+                    
+                    // Crear progreso básico
+                    progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                        usuarioEstudiante = studentUsername,
+                        cursoId = courseId,
+                        tareasCompletadas = 0,
+                        tareasTotales = 0,
+                        porcentajeProgreso = 0f,
+                        calificacionPonderada = null,
+                        promedio = null,
+                        estado = "Ganado",
+                        ultimaCalculadaEn = System.currentTimeMillis(),
+                        certificadoEmitidoEn = null,
+                        creadoEn = System.currentTimeMillis()
+                    )
+                    
+                    // Guardar localmente
+                    db.progresoEstudianteDao().upsert(progreso)
+                    Log.d(TAG, "✅ Progreso creado localmente")
+                }
+                
+                // Actualizar localmente con la fecha del certificado
+                val timestamp = System.currentTimeMillis()
+                val updated = progreso.copy(certificadoEmitidoEn = timestamp)
+                db.progresoEstudianteDao().upsert(updated)
+                Log.d(TAG, "✅ Certificado guardado localmente")
+                
+                // Sincronizar a Supabase usando upsert completo
+                val syncSuccess = com.example.tareamov.service.SupabaseClient.upsertProgresoEstudiante(updated)
+                
+                if (syncSuccess) {
+                    Log.i(TAG, "✅ Certificado sincronizado a Supabase para $studentUsername en curso $courseId")
+                } else {
+                    Log.w(TAG, "⚠️ No se pudo sincronizar certificado a Supabase (el registro local fue actualizado)")
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error actualizando fecha de certificado", e)
+            }
+        }
+    }
+    
+    private fun drawCertificateBackground(canvas: Canvas) {
         val paint = Paint()
         // Solid dark purple background, similar to the image
         paint.color = Color.parseColor("#3A1F5F") // A deep purple, adjust if needed

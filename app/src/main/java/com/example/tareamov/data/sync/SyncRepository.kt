@@ -48,6 +48,7 @@ class SyncRepository(
     private val rolRecursoDao: RolRecursoDao,
     private val chatMessageDao: com.example.tareamov.data.dao.ChatMessageDao,
     private val fileContextDao: com.example.tareamov.data.dao.FileContextDao,
+    private val progresoEstudianteDao: com.example.tareamov.data.dao.ProgresoEstudianteDao
 ) {
     // SharedPreferences-based cache to store last remote 'updated_at' per table
     private val prefs by lazy {
@@ -1277,6 +1278,18 @@ class SyncRepository(
     }
 
     // --- Sincronización de Firebase a Room para todas las entidades ---
+    
+    /**
+     * Obtiene todos los progresos de un curso desde Supabase
+     */
+    suspend fun fetchProgresosByCursoFromSupabase(courseId: Long): List<com.example.tareamov.data.entity.ProgresoEstudiante> {
+        return try {
+            supabaseClient.fetchProgresosByCurso(courseId)
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error fetching progresos by curso from Supabase", e)
+            emptyList()
+        }
+    }
 
     companion object {
         // Lightweight wrapper so UI code can update a TaskSubmission remotely without
@@ -1290,6 +1303,522 @@ class SyncRepository(
                 Log.e("SyncRepository", "updateTaskSubmissionToSupabase failed: ${e.message}")
                 false
             }
+        }
+    }
+    
+    /**
+     * Sincroniza un ProgresoEstudiante a Supabase
+     */
+    suspend fun syncProgresoToSupabase(progreso: com.example.tareamov.data.entity.ProgresoEstudiante): Boolean {
+        return try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "Supabase not configured, skipping progreso sync")
+                return false
+            }
+            supabaseClient.upsertProgresoEstudiante(progreso)
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error syncing progreso to Supabase", e)
+            false
+        }
+    }
+    
+    /**
+     * Obtiene progreso desde Supabase
+     */
+    suspend fun fetchProgresoFromSupabase(username: String, courseId: Long): com.example.tareamov.data.entity.ProgresoEstudiante? {
+        return try {
+            if (!supabaseClient.isConfigured()) return null
+            supabaseClient.fetchProgresoEstudiante(username, courseId)
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error fetching progreso from Supabase", e)
+            null
+        }
+    }
+    
+    /**
+     * Migración masiva: calcula y sube el progreso de todos los estudiantes en todos los cursos
+     * Este método debe ser llamado una vez para migrar datos históricos
+     */
+    suspend fun migrateAllStudentProgressToSupabase(): Int = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        var migratedCount = 0
+        try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "Supabase not configured, skipping migration")
+                return@withContext 0
+            }
+            
+            Log.d("SyncRepository", "Starting student progress migration...")
+            
+            // Obtener todos los cursos
+            val courses = courseDao.getAllCoursesSync()
+            Log.d("SyncRepository", "Found ${courses.size} courses to process")
+            
+            // Obtener todas las task submissions (para identificar estudiantes únicos)
+            val allSubmissions = taskSubmissionDao.getAllSubmissionsSync()
+            val uniqueStudents = allSubmissions.map { it.studentUsername }.distinct()
+            Log.d("SyncRepository", "Found ${uniqueStudents.size} unique students with submissions")
+            
+            // Por cada combinación curso-estudiante, calcular y subir progreso
+            for (course in courses) {
+                val topics = topicDao.getTopicsByCourse(course.id)
+                if (topics.isEmpty()) continue
+                
+                val topicIds = topics.map { it.id }
+                val courseTasks = taskDao.getTasksByTopicIds(topicIds)
+                if (courseTasks.isEmpty()) continue
+                
+                val courseTaskIds = courseTasks.map { it.id }
+                
+                // Filtrar estudiantes que tienen submissions en este curso
+                val courseSubmissions = allSubmissions.filter { it.taskId in courseTaskIds }
+                val courseStudents = courseSubmissions.map { it.studentUsername }.distinct()
+                
+                for (student in courseStudents) {
+                    try {
+                        val studentSubmissions = courseSubmissions.filter { it.studentUsername == student }
+                        
+                        // Calcular progreso
+                        val completedTasks = courseTasks.count { task ->
+                            studentSubmissions.any { it.taskId == task.id && it.grade != null }
+                        }
+                        
+                        val totalTasks = courseTasks.size
+                        val porcentaje = if (totalTasks > 0) {
+                            (completedTasks.toFloat() / totalTasks.toFloat()) * 100f
+                        } else {
+                            0f
+                        }
+                        
+                        val calificaciones = studentSubmissions.mapNotNull { it.grade }
+                        val calificacionPonderada = if (calificaciones.isNotEmpty()) {
+                            calificaciones.average().toFloat()
+                        } else {
+                            null
+                        }
+                        
+                        val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                            usuarioEstudiante = student,
+                            cursoId = course.id,
+                            tareasCompletadas = completedTasks,
+                            tareasTotales = totalTasks,
+                            porcentajeProgreso = porcentaje,
+                            calificacionPonderada = calificacionPonderada,
+                            estado = if (calificacionPonderada != null && calificacionPonderada >= 6f) "Ganado" else "Perdido",
+                            ultimaCalculadaEn = System.currentTimeMillis()
+                        )
+                        
+                        // Guardar localmente
+                        progresoEstudianteDao.insertProgreso(progreso)
+                        
+                        // Sincronizar con Supabase
+                        val success = supabaseClient.upsertProgresoEstudiante(progreso)
+                        if (success) {
+                            migratedCount++
+                            Log.d("SyncRepository", "Migrated progress: $student in course ${course.title} (${course.id})")
+                        } else {
+                            Log.w("SyncRepository", "Failed to migrate progress: $student in course ${course.id}")
+                        }
+                        
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Error migrating progress for $student in course ${course.id}", e)
+                    }
+                }
+            }
+            
+            Log.d("SyncRepository", "Migration completed: $migratedCount progreso records migrated")
+            return@withContext migratedCount
+            
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error in migration process", e)
+            return@withContext migratedCount
+        }
+    }
+
+    /**
+     * Crea automáticamente submissions con calificación 0 para todos los estudiantes
+     * inscritos en el curso cuando se crea una nueva tarea.
+     * Esto asegura que todas las tareas aparezcan en el cálculo de progreso desde el inicio.
+     */
+    suspend fun createDefaultSubmissionsForTask(taskId: Long, courseId: Long): Int = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            Log.d("SyncRepository", "Creating default submissions for task=$taskId in course=$courseId")
+            
+            // Obtener todos los estudiantes inscritos en el curso
+            val enrolledStudents = progresoEstudianteDao.getProgresosByCurso(courseId)
+            Log.d("SyncRepository", "Found ${enrolledStudents.size} enrolled students")
+            
+            if (enrolledStudents.isEmpty()) {
+                Log.w("SyncRepository", "No enrolled students found for course $courseId")
+                return@withContext 0
+            }
+            
+            var successCount = 0
+            
+            for (progreso in enrolledStudents) {
+                val username = progreso.usuarioEstudiante
+                
+                // Verificar si ya existe una submission para este estudiante y tarea
+                val existingSubmission = taskSubmissionDao.getUserSubmissionForTask(taskId, username)
+                
+                if (existingSubmission == null) {
+                    // Crear submission con calificación 0 por defecto
+                    val defaultSubmission = TaskSubmission(
+                        id = 0,
+                        taskId = taskId,
+                        studentUsername = username,
+                        submissionDate = System.currentTimeMillis(),
+                        fileUri = "", // Sin archivo adjunto inicialmente
+                        fileName = "", // Sin nombre de archivo inicialmente
+                        grade = 0f, // Calificación inicial de 0
+                        feedback = "Tarea pendiente de entrega"
+                    )
+                    
+                    try {
+                        // Insertar en base de datos local
+                        val localId = taskSubmissionDao.insertSubmission(defaultSubmission)
+                        Log.d("SyncRepository", "Created local submission id=$localId for student=$username")
+                        
+                        // Intentar sincronizar con Supabase
+                        if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                            try {
+                                val remoteSuccess = supabaseRepo.upsert("task_submissions", defaultSubmission.copy(id = localId))
+                                if (remoteSuccess) {
+                                    Log.d("SyncRepository", "Synced submission to Supabase for student=$username")
+                                } else {
+                                    Log.w("SyncRepository", "Failed to sync submission to Supabase for student=$username")
+                                }
+                            } catch (e: Exception) {
+                                Log.w("SyncRepository", "Error syncing submission to Supabase", e)
+                            }
+                        }
+                        
+                        successCount++
+                        
+                        // Actualizar el progreso del estudiante
+                        updateStudentProgressAfterTaskCreation(username, courseId)
+                        
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Error creating submission for student=$username", e)
+                    }
+                } else {
+                    Log.d("SyncRepository", "Submission already exists for student=$username, task=$taskId")
+                }
+            }
+            
+            Log.i("SyncRepository", "Created $successCount default submissions for task $taskId")
+            
+            // Recalcular el progreso de todos los estudiantes en Supabase
+            if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                try {
+                    val recalcSuccess = supabaseRepo.recalculateAllStudentProgressForCourse(courseId)
+                    if (recalcSuccess) {
+                        Log.i("SyncRepository", "Successfully recalculated progress in Supabase for course $courseId")
+                    } else {
+                        Log.w("SyncRepository", "Failed to recalculate progress in Supabase")
+                    }
+                } catch (e: Exception) {
+                    Log.w("SyncRepository", "Error recalculating progress in Supabase", e)
+                }
+            }
+            
+            return@withContext successCount
+            
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error creating default submissions for task", e)
+            return@withContext 0
+        }
+    }
+    
+    /**
+     * Actualiza el progreso del estudiante después de crear una nueva tarea.
+     * Recalcula el promedio, tareas totales, completadas y porcentaje de progreso.
+     */
+    private suspend fun updateStudentProgressAfterTaskCreation(username: String, courseId: Long) {
+        try {
+            val progreso = progresoEstudianteDao.getProgreso(username, courseId)
+            if (progreso != null) {
+                // Obtener todas las submissions del estudiante en el curso
+                val submissions = taskSubmissionDao.getStudentSubmissionsForCourse(username, courseId)
+                
+                // Obtener todas las tareas del curso (a través de topics)
+                val topics = topicDao.getTopicsByCourse(courseId)
+                val topicIds = topics.map { it.id }
+                val allTasks = if (topicIds.isNotEmpty()) {
+                    taskDao.getTasksByTopicIds(topicIds)
+                } else {
+                    emptyList()
+                }
+                
+                // Calcular tareas totales
+                val tareasTotales = allTasks.size
+                
+                // Calcular tareas completadas (submissions con grade > 0)
+                val tareasCompletadas = submissions.count { (it.grade ?: 0f) > 0f }
+                
+                // Calcular porcentaje de progreso
+                val porcentajeProgreso = if (tareasTotales > 0) {
+                    (tareasCompletadas.toFloat() / tareasTotales.toFloat()) * 100f
+                } else {
+                    0f
+                }
+                
+                // Calcular nuevo promedio incluyendo todas las tareas (incluso las de calificación 0)
+                val totalGrade = submissions.mapNotNull { it.grade }.sum()
+                val taskCount = submissions.size
+                val newPromedio = if (taskCount > 0) totalGrade / taskCount else 0f
+                
+                // Actualizar progreso con todos los campos
+                val updatedProgreso = progreso.copy(
+                    tareasTotales = tareasTotales,
+                    tareasCompletadas = tareasCompletadas,
+                    porcentajeProgreso = porcentajeProgreso,
+                    promedio = newPromedio,
+                    calificacionPonderada = newPromedio,
+                    ultimaCalculadaEn = System.currentTimeMillis()
+                )
+                
+                progresoEstudianteDao.updateProgreso(updatedProgreso)
+                
+                // Sincronizar con Supabase
+                syncProgresoToSupabase(updatedProgreso)
+                
+                Log.d("SyncRepository", "Updated progress for student=$username: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$newPromedio")
+            }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error updating student progress", e)
+        }
+    }
+
+    /**
+     * Recalcula y sincroniza el progreso de TODOS los estudiantes inscritos en un curso.
+     * Este método debe ser llamado después de cualquier CRUD en tareas.
+     * 
+     * @param courseId ID del curso
+     * @return número de estudiantes actualizados
+     */
+    suspend fun recalculateAllStudentProgressForCourse(courseId: Long): Int = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            Log.d("SyncRepository", "🔄 Recalculating progress for all students in course $courseId")
+            
+            // Obtener todos los estudiantes inscritos en el curso
+            val enrolledStudents = progresoEstudianteDao.getProgresosByCurso(courseId)
+            if (enrolledStudents.isEmpty()) {
+                Log.w("SyncRepository", "No students enrolled in course $courseId")
+                return@withContext 0
+            }
+            
+            // Obtener todas las tareas del curso desde Supabase
+            val topics = try {
+                supabaseClient.fetchTopicsByCourse(courseId)
+            } catch (e: Exception) {
+                Log.e("SyncRepository", "Error fetching topics", e)
+                emptyList()
+            }
+            
+            val topicIds = topics.map { it.id }
+            val allTasks = if (topicIds.isNotEmpty()) {
+                try {
+                    supabaseClient.fetchTasksByTopicIds(topicIds)
+                } catch (e: Exception) {
+                    Log.e("SyncRepository", "Error fetching tasks", e)
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+            
+            val tareasTotales = allTasks.size
+            if (tareasTotales == 0) {
+                Log.w("SyncRepository", "No tasks found in course $courseId")
+                return@withContext 0
+            }
+            
+            Log.d("SyncRepository", "📚 Found $tareasTotales tasks in course")
+            
+            // Obtener todas las submissions del curso desde Supabase
+            val allSubmissions = try {
+                val submissions = supabaseClient.fetchTaskSubmissions()
+                val taskIds = allTasks.map { it.id }.toSet()
+                submissions.filter { it.taskId in taskIds }
+            } catch (e: Exception) {
+                Log.e("SyncRepository", "Error fetching submissions", e)
+                emptyList()
+            }
+            
+            var updatedCount = 0
+            
+            // Recalcular para cada estudiante
+            for (student in enrolledStudents) {
+                try {
+                    val studentUsername = student.usuarioEstudiante
+                    
+                    // Filtrar submissions del estudiante
+                    val studentSubmissions = allSubmissions.filter { 
+                        it.studentUsername.equals(studentUsername, ignoreCase = true)
+                    }
+                    
+                    // Calcular métricas
+                    val tareasCompletadas = studentSubmissions.count { (it.grade ?: 0f) > 0f }
+                    val porcentajeProgreso = if (tareasTotales > 0) {
+                        (tareasCompletadas.toFloat() / tareasTotales.toFloat()) * 100f
+                    } else {
+                        0f
+                    }
+                    
+                    // IMPORTANTE: Calcular promedio considerando TODAS las tareas
+                    // Las tareas sin submission cuentan como 0
+                    val submissionMap = studentSubmissions.associateBy { it.taskId }
+                    var totalGrade = 0f
+                    for (task in allTasks) {
+                        val grade = submissionMap[task.id]?.grade ?: 0f
+                        totalGrade += grade
+                    }
+                    val promedio = totalGrade / tareasTotales
+                    
+                    Log.d("SyncRepository", "📊 Student=$studentUsername: total=$tareasTotales, completed=$tareasCompletadas, avg=$promedio")
+                    
+                    // Actualizar progreso
+                    val updatedProgreso = student.copy(
+                        tareasTotales = tareasTotales,
+                        tareasCompletadas = tareasCompletadas,
+                        porcentajeProgreso = porcentajeProgreso,
+                        promedio = promedio,
+                        calificacionPonderada = promedio, // Esto determina el estado
+                        ultimaCalculadaEn = System.currentTimeMillis()
+                    )
+                    
+                    // Guardar localmente
+                    progresoEstudianteDao.updateProgreso(updatedProgreso)
+                    
+                    // Sincronizar a Supabase
+                    val synced = try {
+                        supabaseClient.upsertProgresoEstudiante(updatedProgreso)
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Error syncing to Supabase for student=$studentUsername", e)
+                        false
+                    }
+                    
+                    if (synced) {
+                        updatedCount++
+                        Log.d("SyncRepository", "✅ Updated progress for student=$studentUsername")
+                    }
+                } catch (e: Exception) {
+                    Log.e("SyncRepository", "Error updating progress for student=${student.usuarioEstudiante}", e)
+                }
+            }
+            
+            Log.i("SyncRepository", "✅ Updated progress for $updatedCount/${enrolledStudents.size} students")
+            return@withContext updatedCount
+            
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error recalculating student progress", e)
+            return@withContext 0
+        }
+    }
+
+    /**
+     * Elimina una tarea y recalcula el progreso de todos los estudiantes inscritos en el curso.
+     * Este método debe ser llamado cuando se elimina una tarea para mantener el progreso actualizado.
+     * 
+     * @param taskId ID de la tarea a eliminar
+     * @return true si la eliminación fue exitosa
+     */
+    suspend fun deleteTaskAndUpdateProgress(taskId: Long): Boolean = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            // Obtener información de la tarea antes de eliminarla
+            val task = taskDao.getTaskById(taskId)
+            if (task == null) {
+                Log.w("SyncRepository", "Task not found: taskId=$taskId")
+                return@withContext false
+            }
+            
+            val topic = topicDao.getTopicById(task.topicId)
+            if (topic == null) {
+                Log.w("SyncRepository", "Topic not found for task: taskId=$taskId, topicId=${task.topicId}")
+                return@withContext false
+            }
+            
+            val courseId = topic.courseId
+            
+            // Obtener lista de estudiantes inscritos antes de eliminar la tarea
+            val enrolledStudents = progresoEstudianteDao.getProgresosByCurso(courseId)
+            val studentUsernames = enrolledStudents.map { it.usuarioEstudiante }
+            
+            Log.d("SyncRepository", "Deleting task $taskId from course $courseId. Will update progress for ${studentUsernames.size} students")
+            
+            // Eliminar tarea de la base de datos local (CASCADE debería eliminar submissions relacionadas)
+            taskDao.deleteTask(taskId)
+            
+            // Intentar eliminar de Supabase si está configurado
+            if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                try {
+                    // Supabase debería tener trigger para actualizar progreso automáticamente
+                    val deleteSql = "DELETE FROM tasks WHERE id = $taskId"
+                    val result = supabaseRepo.executeRawQuery(deleteSql)
+                    Log.d("SyncRepository", "Deleted task from Supabase: taskId=$taskId, result=${result.size}")
+                } catch (e: Exception) {
+                    Log.w("SyncRepository", "Error deleting task from Supabase", e)
+                }
+            }
+            
+            // Recalcular y sincronizar progreso para cada estudiante inscrito
+            for (username in studentUsernames) {
+                try {
+                    // Obtener todas las submissions del estudiante en el curso (ya no incluye la tarea eliminada)
+                    val submissions = taskSubmissionDao.getStudentSubmissionsForCourse(username, courseId)
+                    
+                    // Obtener todas las tareas restantes del curso
+                    val topics = topicDao.getTopicsByCourse(courseId)
+                    val topicIds = topics.map { it.id }
+                    val allTasks = if (topicIds.isNotEmpty()) {
+                        taskDao.getTasksByTopicIds(topicIds)
+                    } else {
+                        emptyList()
+                    }
+                    
+                    // Calcular métricas actualizadas
+                    val tareasTotales = allTasks.size
+                    val tareasCompletadas = submissions.count { (it.grade ?: 0f) > 0f }
+                    val porcentajeProgreso = if (tareasTotales > 0) {
+                        (tareasCompletadas.toFloat() / tareasTotales.toFloat()) * 100f
+                    } else {
+                        0f
+                    }
+                    
+                    val totalGrade = submissions.mapNotNull { it.grade }.sum()
+                    val taskCount = submissions.size
+                    val promedio = if (taskCount > 0) totalGrade / taskCount else 0f
+                    
+                    // Actualizar progreso local
+                    val existingProgreso = progresoEstudianteDao.getProgreso(username, courseId)
+                    if (existingProgreso != null) {
+                        val updatedProgreso = existingProgreso.copy(
+                            tareasTotales = tareasTotales,
+                            tareasCompletadas = tareasCompletadas,
+                            porcentajeProgreso = porcentajeProgreso,
+                            promedio = promedio,
+                            calificacionPonderada = promedio,
+                            ultimaCalculadaEn = System.currentTimeMillis()
+                        )
+                        
+                        progresoEstudianteDao.updateProgreso(updatedProgreso)
+                        
+                        // Sincronizar con Supabase
+                        syncProgresoToSupabase(updatedProgreso)
+                        
+                        Log.d("SyncRepository", "Updated progress after task deletion for student=$username: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$promedio")
+                    }
+                } catch (e: Exception) {
+                    Log.e("SyncRepository", "Error updating progress for student=$username after task deletion", e)
+                }
+            }
+            
+            Log.i("SyncRepository", "Successfully deleted task $taskId and updated progress for ${studentUsernames.size} students")
+            return@withContext true
+            
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error deleting task and updating progress", e)
+            return@withContext false
         }
     }
 

@@ -9,48 +9,86 @@
 
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/toolbar"
-        android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
+        android:layout_width="407dp"
+        android:layout_height="77dp"
+        android:layout_marginStart="0dp"
+        android:layout_marginTop="1dp"
+        android:layout_marginEnd="1dp"
+        android:animateLayoutChanges="true"
         android:background="@drawable/bg_toolbar_gradient"
-        android:elevation="8dp"
-        android:contentInsetStartWithNavigation="0dp"
+        android:clipToPadding="false"
         android:contentInsetLeft="0dp"
         android:contentInsetRight="0dp"
+        android:contentInsetStartWithNavigation="0dp"
+        android:elevation="0dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp"
         android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
         app:popupTheme="@style/ThemeOverlay.AppCompat.Light">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:animateLayoutChanges="true"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="12dp"
+            android:paddingStart="16dp"
             android:paddingEnd="20dp">
 
             <ImageButton
                 android:id="@+id/backButton"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
                 android:background="@drawable/bg_nav_button"
                 android:contentDescription="@string/back_button_desc"
-                android:padding="10dp"
+                android:padding="12dp"
                 android:scaleType="centerInside"
                 android:src="@drawable/ic_arrow_back"
                 android:tint="@android:color/white" />
 
-            <TextView
-                android:id="@+id/toolbarTitle"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="14dp"
-                android:includeFontPadding="false"
-                android:text="Panel del Curso"
-                android:textColor="@android:color/white"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:fontFamily="sans-serif-medium"
-                android:letterSpacing="-0.015" />
+                android:layout_marginStart="18dp"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/toolbarSubtitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:alpha="0.85"
+                    android:fontFamily="@font/sf_pro_display_regular"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="0.12"
+                    android:text="Panel maestro"
+                    android:textColor="#C7D5FF"
+                    android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/toolbarTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/sf_pro_display_semibold"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="-0.02"
+                    android:text="Control del curso"
+                    android:textColor="@android:color/white"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:translationY="2dp" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:alpha="0.0"
+                android:background="@drawable/bg_nav_button"
+                android:visibility="invisible" />
         </LinearLayout>
     </androidx.appcompat.widget.Toolbar>
 
@@ -69,107 +107,171 @@
             android:padding="0dp">
 
             <!-- Course Title & Hero Section -->
-            <LinearLayout
+            <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/courseTitleContainer"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
+                android:layout_height="181dp"
                 android:layout_marginStart="24dp"
+                android:layout_marginTop="24dp"
                 android:layout_marginEnd="24dp"
-                android:layout_marginTop="28dp"
-                android:layout_marginBottom="18dp"
-                android:paddingStart="28dp"
-                android:paddingEnd="26dp"
-                android:paddingTop="28dp"
-                android:paddingBottom="26dp"
-                android:gravity="center_vertical"
-                android:background="@drawable/bg_course_title_pill"
-                android:elevation="8dp"
+                android:layout_marginBottom="20dp"
                 android:alpha="0"
-                android:translationY="-24dp">
+                android:animateLayoutChanges="true"
+                android:background="@drawable/bg_course_title_pill"
+                android:clipToPadding="false"
+                android:elevation="12dp"
+                android:paddingStart="26dp"
+                android:paddingTop="30dp"
+                android:paddingEnd="26dp"
+                android:paddingBottom="30dp"
+                android:stateListAnimator="@animator/glass_card_state_list"
+                android:transitionName="hero_course_header"
+                android:translationY="-20dp">
 
                 <View
-                    android:id="@+id/courseTitleAccent"
-                    android:layout_width="4dp"
-                    android:layout_height="match_parent"
-                    android:layout_marginEnd="18dp"
-                    android:background="@drawable/course_title_accent"
-                    android:alpha="0"
-                    android:scaleY="0.4"
-                    android:translationY="12dp" />
+                    android:id="@+id/heroAmbientGlow"
+                    android:layout_width="310dp"
+                    android:layout_height="248dp"
+                    android:alpha="0.30"
+                    android:background="@drawable/bg_course_header_glow"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toTopOf="parent" />
+
+                <View
+                    android:id="@+id/heroLightSweep"
+                    android:layout_width="200dp"
+                    android:layout_height="200dp"
+                    android:layout_marginTop="-72dp"
+                    android:layout_marginEnd="-52dp"
+                    android:alpha="0.55"
+                    android:animation="@anim/hero_light_sweep_motion"
+                    android:background="@drawable/bg_hero_light_sweep"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintTop_toTopOf="parent" />
 
                 <LinearLayout
+                    android:id="@+id/heroHeaderRow"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center_vertical">
+                    android:animateLayoutChanges="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toTopOf="parent">
+
+                    <ImageView
+                        android:id="@+id/courseHeroIcon"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:alpha="0.86"
+                        android:background="@drawable/bg_stat_icon_circle"
+                        android:contentDescription="Sello del curso"
+                        android:padding="8dp"
+                        android:src="@drawable/ic_sparkle"
+                        android:tint="#FFFFFF" />
 
                     <TextView
                         android:id="@+id/courseMetaLabel"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Panel del Curso"
-                        android:textAllCaps="true"
-                        android:textColor="#D8CFFF"
-                        android:textSize="12sp"
+                        android:layout_marginStart="10dp"
+                        android:alpha="0"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
                         android:letterSpacing="0.18"
-                        android:fontFamily="sans-serif-medium"
-                        android:includeFontPadding="false"
-                        android:layout_marginBottom="6dp"
-                        android:alpha="0"
-                        android:translationY="-8dp" />
+                        android:text="Instantánea"
+                        android:textAllCaps="false"
+                        android:textColor="#D7E2FF"
+                        android:textSize="12sp"
+                        android:translationY="-6dp" />
 
-                    <TextView
-                        android:id="@+id/courseTitleTextView"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:textSize="32sp"
-                        android:textStyle="bold"
-                        android:textColor="#FFFFFF"
-                        android:fontFamily="sans-serif"
-                        android:textFontWeight="700"
-                        android:lineSpacingMultiplier="1.14"
-                        android:letterSpacing="-0.02"
-                        android:shadowColor="#99000000"
-                        android:shadowDx="0"
-                        android:shadowDy="3"
-                        android:shadowRadius="8"
-                        android:includeFontPadding="false"
-                        android:alpha="0"
-                        android:translationY="12dp"
-                        tools:text="¿Quién nació primero?" />
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:layout_marginStart="14dp"
+                        android:layout_weight="1" />
 
-                    <TextView
-                        android:id="@+id/courseDescriptionTextView"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
-                        android:textSize="16sp"
-                        android:textColor="#EFE1FF"
-                        android:fontFamily="sans-serif"
-                        android:lineSpacingMultiplier="1.35"
-                        android:letterSpacing="0.01"
-                        android:alpha="0"
-                        android:translationY="18dp"
-                        android:includeFontPadding="false"
-                        tools:text="¿El huevo o la gallina?" />
+                    <ImageButton
+                        android:id="@+id/editCourseButton"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:alpha="0.0"
+                        android:background="@drawable/bg_nav_button"
+                        android:contentDescription="Editar curso"
+                        android:padding="12dp"
+                        android:scaleType="centerInside"
+                        android:src="@android:drawable/ic_menu_edit"
+                        android:tint="#F0E7FF"
+                        android:translationY="6dp" />
                 </LinearLayout>
 
-                <ImageButton
-                    android:id="@+id/editCourseButton"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:src="@android:drawable/ic_menu_edit"
-                    android:background="@drawable/bg_nav_button"
-                    android:contentDescription="Editar curso"
-                    android:tint="#F0E7FF"
-                    android:layout_marginStart="14dp"
-                    android:scaleType="centerInside"
-                    android:padding="12dp"
-                    android:alpha="0.0"
-                    android:translationY="12dp" />
-            </LinearLayout>
+                <View
+                    android:id="@+id/courseMetaDivider"
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="12dp"
+                    android:alpha="0.4"
+                    android:background="@drawable/course_title_accent"
+                    app:layout_constraintEnd_toEndOf="@id/heroHeaderRow"
+                    app:layout_constraintStart_toStartOf="@id/heroHeaderRow"
+                    app:layout_constraintTop_toBottomOf="@id/heroHeaderRow" />
+
+                <TextView
+                    android:id="@+id/courseTitleTextView"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:alpha="0"
+                    android:fontFamily="@font/sf_pro_display_semibold"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="-0.024"
+                    android:lineSpacingMultiplier="1.18"
+                    android:shadowColor="#66151930"
+                    android:shadowDx="0"
+                    android:shadowDy="6"
+                    android:shadowRadius="12"
+                    android:textColor="#FFFFFF"
+                    android:textSize="32sp"
+                    android:textStyle="bold"
+                    android:translationY="10dp"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toBottomOf="@id/courseMetaDivider"
+                    tools:text="¿Quién nació primero?" />
+
+                <TextView
+                    android:id="@+id/courseDescriptionTextView"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:alpha="0"
+                    android:fontFamily="@font/sf_pro_display_regular"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="0.01"
+                    android:lineSpacingMultiplier="1.4"
+                    android:textColor="#F3EEFF"
+                    android:textSize="15sp"
+                    android:translationY="16dp"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toBottomOf="@id/courseTitleTextView"
+                    tools:text="Explora contenido premium curado para tus estudiantes." />
+
+                <View
+                    android:id="@+id/courseAccentDivider"
+                    android:layout_width="88dp"
+                    android:layout_height="4dp"
+                    android:layout_marginTop="26dp"
+                    android:alpha="0"
+                    android:background="@drawable/course_title_accent"
+                    android:scaleX="0.64"
+                    android:translationY="10dp"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toBottomOf="@id/courseDescriptionTextView" />
+            </androidx.constraintlayout.widget.ConstraintLayout>
 
 
 
@@ -200,7 +302,7 @@
                     android:textStyle="bold"
                     android:layout_marginBottom="12dp"
                     android:letterSpacing="0.01"
-                    android:fontFamily="sans-serif" />
+                    android:fontFamily="@font/sf_pro_display_semibold" />
 
                 <ProgressBar
                     android:id="@+id/courseProgressBar"
@@ -227,7 +329,8 @@
                         android:text="0% completado"
                         android:textColor="#D7CCFF"
                         android:textSize="14sp"
-                        android:fontFamily="sans-serif-medium" />
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:textAllCaps="false" />
 
                     <TextView
                         android:id="@+id/progressStatusTextView"
@@ -236,7 +339,8 @@
                         android:text="Calificación: 0/10"
                         android:textColor="#D7CCFF"
                         android:textSize="14sp"
-                        android:fontFamily="sans-serif-medium" />
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:textAllCaps="false" />
                 </LinearLayout>
 
                 <!-- Certificate Button Container with Animation -->
@@ -261,6 +365,8 @@
                         android:paddingStart="16dp"
                         android:paddingEnd="16dp"
                         android:background="@drawable/certificate_button_background"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:textAllCaps="false"
                         android:gravity="center" />
                 </FrameLayout>
             </LinearLayout>
@@ -293,7 +399,7 @@
                         android:textColor="#FFFFFF"
                         android:textSize="18sp"
                         android:textStyle="bold"
-                        android:fontFamily="sans-serif"
+                        android:fontFamily="@font/sf_pro_display_semibold"
                         android:layout_marginBottom="6dp" />
 
                     <TextView
@@ -303,6 +409,7 @@
                         android:text="Para acceder al contenido completo de este curso, es necesario realizar un pago."
                         android:textColor="#D7CCFF"
                         android:textSize="14sp"
+                        android:fontFamily="@font/sf_pro_display_regular"
                         android:layout_marginBottom="16dp" />
 
                     <Button
@@ -310,24 +417,31 @@
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
                         android:text="Pagar Ahora"
-                        android:textColor="#FFFFFF"
-                        android:textStyle="bold"
+                        android:background="@drawable/bg_action_button_cupertino"
+                        android:drawableStart="@drawable/ic_plus_round"
+                        android:drawablePadding="10dp"
+                        android:drawableTint="#FFFFFFFF"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:gravity="center"
                         android:paddingStart="16dp"
                         android:paddingEnd="16dp"
-                        android:background="@drawable/button_premium"
-                        android:gravity="center" />
+                        android:textAllCaps="false"
+                        android:textColor="#FFFFFF"
+                        android:textStyle="bold" />
 
                     <Button
                         android:id="@+id/paymentPSEButton"
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
                         android:text="Pagar con PSE"
-                        android:textColor="#FFFFFF"
-                        android:textStyle="bold"
+                        android:background="@drawable/bg_action_button_pill_outline"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:gravity="center"
                         android:paddingStart="16dp"
                         android:paddingEnd="16dp"
-                        android:background="@drawable/button_premium"
-                        android:gravity="center"
+                        android:textAllCaps="false"
+                        android:textColor="#FFFFFF"
+                        android:textStyle="bold"
                         android:layout_marginTop="8dp" />
                 </LinearLayout>
             </FrameLayout>
@@ -365,7 +479,8 @@
                     android:clickable="true"
                     android:focusable="true"
                     android:includeFontPadding="false"
-                    android:fontFamily="sans-serif-medium" />
+                    android:fontFamily="@font/sf_pro_display_semibold"
+                    android:textAllCaps="false" />
 
                 <TextView
                     android:id="@+id/tabTareas"
@@ -382,7 +497,8 @@
                     android:clickable="true"
                     android:focusable="true"
                     android:includeFontPadding="false"
-                    android:fontFamily="sans-serif-medium" />
+                    android:fontFamily="@font/sf_pro_display_semibold"
+                    android:textAllCaps="false" />
             </LinearLayout>
 
             <!-- Section Title -->
@@ -408,7 +524,7 @@
                     android:textStyle="bold"
                     android:textColor="#FFFFFF"
                     android:includeFontPadding="false"
-                    android:fontFamily="sans-serif" />
+                    android:fontFamily="@font/sf_pro_display_semibold" />
 
                 <View
                     android:layout_width="40dp"
@@ -456,6 +572,7 @@
                 android:elevation="4dp"
                 android:alpha="0"
                 android:translationY="18dp"
+                android:fontFamily="@font/sf_pro_display_regular"
                 tools:visibility="visible"/>
 
             <TextView
@@ -477,6 +594,7 @@
                 android:elevation="4dp"
                 android:alpha="0"
                 android:translationY="18dp"
+                android:fontFamily="@font/sf_pro_display_regular"
                 tools:visibility="visible"/>
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>    <!-- Course Action Buttons (above bottom navigation) -->
@@ -505,28 +623,38 @@
             android:layout_width="0dp"
             android:layout_height="36dp"
             android:layout_weight="1"
+            android:background="@drawable/bg_action_button_cupertino"
+            android:drawableStart="@drawable/ic_plus_round"
+            android:drawablePadding="10dp"
+            android:drawableTint="#FFFFFFFF"
+            android:fontFamily="@font/sf_pro_display_semibold"
+            android:includeFontPadding="false"
+            android:letterSpacing="0.02"
             android:text="+ Tema"
+            android:textAllCaps="false"
             android:textColor="#FFFFFF"
             android:textSize="13sp"
-            android:fontFamily="sans-serif-medium"
-            android:background="@drawable/button_premium"
             android:layout_marginEnd="6dp"
-            android:includeFontPadding="false"
-            android:letterSpacing="0.03" />
+            android:stateListAnimator="@null" />
 
         <Button
             android:id="@+id/addTaskButton"
             android:layout_width="0dp"
             android:layout_height="36dp"
             android:layout_weight="1"
+            android:background="@drawable/bg_action_button_cupertino"
+            android:drawableStart="@drawable/ic_plus_round"
+            android:drawablePadding="10dp"
+            android:drawableTint="#FFFFFFFF"
+            android:fontFamily="@font/sf_pro_display_semibold"
+            android:includeFontPadding="false"
+            android:letterSpacing="0.02"
             android:text="+ Tarea"
+            android:textAllCaps="false"
             android:textColor="#FFFFFF"
             android:textSize="13sp"
-            android:fontFamily="sans-serif-medium"
-            android:background="@drawable/button_premium"
             android:layout_marginStart="6dp"
-            android:includeFontPadding="false"
-            android:letterSpacing="0.03" />
+            android:stateListAnimator="@null" />
     </LinearLayout>
 
     <!-- Bottom Navigation using the component -->

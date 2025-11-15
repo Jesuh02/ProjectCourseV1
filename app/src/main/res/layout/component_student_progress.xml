@@ -63,4 +63,42 @@
         android:textSize="16sp"
         android:layout_marginTop="8dp"
         android:visibility="gone"/>
+
+    <!-- Certificate section (only visible when student passed) -->
+    <FrameLayout
+        android:id="@+id/certificateButtonContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Certificate issued date (if certificate was already generated) -->
+            <TextView
+                android:id="@+id/certificateIssuedDateTextView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#4CAF50"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp"
+                android:visibility="gone"
+                tools:text="✓ Certificado emitido el 14 de noviembre de 2025" />
+
+            <!-- Certificate button -->
+            <Button
+                android:id="@+id/certificateButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Generar Certificado"
+                android:backgroundTint="#4CAF50"
+                android:textColor="#FFFFFF"
+                android:padding="12dp"
+                android:drawableLeft="@android:drawable/ic_menu_save"
+                android:drawablePadding="8dp" />
+        </LinearLayout>
+    </FrameLayout>
 </LinearLayout>

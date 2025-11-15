@@ -24,6 +24,7 @@ import com.example.tareamov.data.dao.CourseDao
 import com.example.tareamov.data.dao.RolDao
 import com.example.tareamov.data.dao.RecursoDao
 import com.example.tareamov.data.dao.RolRecursoDao
+import com.example.tareamov.data.dao.ProgresoEstudianteDao
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.VideoData
@@ -38,6 +39,7 @@ import com.example.tareamov.data.entity.Course
 import com.example.tareamov.data.entity.Rol
 import com.example.tareamov.data.entity.Recurso
 import com.example.tareamov.data.entity.RolRecurso
+import com.example.tareamov.data.entity.ProgresoEstudiante
 import com.example.tareamov.service.OllamaService
 import com.example.tareamov.service.MSPClient
 import kotlinx.coroutines.CoroutineScope
@@ -61,9 +63,10 @@ import com.example.tareamov.service.DatabaseContextHttpServer
         Course::class,
         Rol::class,
         Recurso::class,
-        RolRecurso::class
+        RolRecurso::class,
+        ProgresoEstudiante::class
     ],
-    version = 28, // <-- Update version to apply role name changes
+    version = 29, // <-- Update version to add ProgresoEstudiante table
     exportSchema = false
 )
 @TypeConverters(VideoDataConverters::class)
@@ -82,6 +85,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun rolDao(): RolDao  // Add RolDao
     abstract fun recursoDao(): RecursoDao  // Add RecursoDao
     abstract fun rolRecursoDao(): RolRecursoDao  // Add RolRecursoDao
+    abstract fun progresoEstudianteDao(): ProgresoEstudianteDao  // Add ProgresoEstudianteDao
 
     // Métodos para notificar cambios en la base de datos
     fun notifyDataChanged() {

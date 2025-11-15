@@ -65,8 +65,8 @@ class MainActivity : AppCompatActivity() {
             recursoDao,
             rolRecursoDao,
             appDb.chatMessageDao(),
-            appDb.fileContextDao()
-            // firestore eliminado, ya no se usa
+            appDb.fileContextDao(),
+            appDb.progresoEstudianteDao()
         )
 
         // Initialize SyncRepository cache helpers
@@ -126,6 +126,28 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (t: Throwable) {
                     t.printStackTrace()
+                }
+                
+                // MIGRACIÓN DE PROGRESO DE ESTUDIANTES
+                // Esta migración calcula y sincroniza el progreso histórico de todos los estudiantes
+                // Solo se ejecuta si hay una preferencia para indicar que es necesario
+                val prefs = getSharedPreferences("app_migration", MODE_PRIVATE)
+                val progressMigrated = prefs.getBoolean("student_progress_migrated", false)
+                if (!progressMigrated) {
+                    println("MainActivity: Starting student progress migration...")
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        try {
+                            val count = syncRepository.migrateAllStudentProgressToSupabase()
+                            println("MainActivity: Student progress migration completed: $count records migrated")
+                            // Marcar como completado
+                            prefs.edit().putBoolean("student_progress_migrated", true).apply()
+                        } catch (e: Exception) {
+                            println("MainActivity: Error during student progress migration: ${e.message}")
+                            e.printStackTrace()
+                        }
+                    }
+                } else {
+                    println("MainActivity: Student progress already migrated, skipping")
                 }
             } else {
                 println("MainActivity: Supabase NOT configured (check local.properties). Skipping immediate sync.")

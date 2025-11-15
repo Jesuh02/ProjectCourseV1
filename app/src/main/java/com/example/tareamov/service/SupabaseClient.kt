@@ -702,6 +702,22 @@ object SupabaseClient {
 
     suspend fun insertTaskSubmission(submission: com.example.tareamov.data.entity.TaskSubmission): Long? = withContext(Dispatchers.IO) {
         try {
+            if (!isConfigured()) {
+                android.util.Log.e("SupabaseClient", "❌ Supabase not configured, cannot insert task submission")
+                return@withContext null
+            }
+            
+            // Validate required fields
+            if (submission.taskId == 0L) {
+                android.util.Log.e("SupabaseClient", "❌ Invalid taskId (0) for task submission")
+                return@withContext null
+            }
+            
+            if (submission.studentUsername.isBlank()) {
+                android.util.Log.e("SupabaseClient", "❌ Empty studentUsername for task submission")
+                return@withContext null
+            }
+            
             // Do NOT send local 'id' to server - let Postgres sequence generate primary key
             val map = mutableMapOf<String, Any?>()
             if (submission.id != null && submission.id != 0L) {
@@ -712,12 +728,16 @@ object SupabaseClient {
             map["file_uri"] = submission.fileUri
             map["file_name"] = submission.fileName
             map["submission_date"] = submission.submissionDate
-            map["grade"] = submission.grade
-            map["feedback"] = submission.feedback
+            
+            // CRÍTICO: NO incluir grade ni feedback en el INSERT inicial
+            // El trigger de PostgreSQL intenta calcular progreso y usa round() que falla con double precision
+            // Al omitir grade completamente, evitamos que el trigger intente procesar ese campo
+            // La columna grade tiene DEFAULT NULL en la tabla, así que no es necesario enviarlo
+            // SOLO incluir grade cuando se actualice después con una calificación real
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
             // Log the outgoing payload for debugging FK errors (avoid logging secrets)
-            android.util.Log.d("SupabaseClient", "insertTaskSubmission payload: ${gson.toJson(map)}")
+            android.util.Log.d("SupabaseClient", "📤 insertTaskSubmission payload: ${gson.toJson(map)}")
             val url = "$baseUrl/rest/v1/task_submissions"
 
             val request = Request.Builder()
@@ -734,6 +754,8 @@ object SupabaseClient {
                 var respBody = resp.body?.string()
                 if (!resp.isSuccessful) {
                     val bodyStr = respBody ?: ""
+                    android.util.Log.e("SupabaseClient", "❌ insertTaskSubmission failed: code=${resp.code} message=${resp.message}")
+                    android.util.Log.e("SupabaseClient", "❌ Response body: $bodyStr")
 
                     // If Postgres sequence is out-of-sync, PostgREST may return 23505 duplicate key error.
                     if (bodyStr.contains("23505") || bodyStr.contains("duplicate key value violates unique constraint", ignoreCase = true)) {
@@ -793,21 +815,28 @@ object SupabaseClient {
                     throw Exception("Supabase insertTaskSubmission failed: ${resp.code} ${resp.message} body=$bodyStr")
                 }
 
-                if (respBody.isNullOrEmpty()) return@withContext null
+                if (respBody.isNullOrEmpty()) {
+                    android.util.Log.w("SupabaseClient", "⚠️ insertTaskSubmission succeeded but response body is empty")
+                    return@withContext null
+                }
 
                 try {
                     val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
                     if (jsonArray.size() > 0) {
                         val idElem = jsonArray[0].asJsonObject.get("id")
-                        return@withContext idElem?.asLong
+                        val insertedId = idElem?.asLong
+                        android.util.Log.i("SupabaseClient", "✅ Task submission inserted successfully with id=$insertedId")
+                        return@withContext insertedId
                     }
                 } catch (e: Exception) {
+                    android.util.Log.e("SupabaseClient", "❌ Failed to parse insertTaskSubmission response", e)
                     e.printStackTrace()
                 }
 
                 return@withContext null
             }
         } catch (e: Exception) {
+            android.util.Log.e("SupabaseClient", "❌ Exception in insertTaskSubmission", e)
             e.printStackTrace()
             return@withContext null
         }
@@ -873,7 +902,8 @@ object SupabaseClient {
     suspend fun updateTaskSubmissionRemote(submissionId: Long, grade: Float?, feedback: String?): Boolean = withContext(Dispatchers.IO) {
         try {
             val map = mutableMapOf<String, Any?>()
-            if (grade != null) map["grade"] = grade
+            // Convert grade to Double to avoid PostgreSQL type issues
+            if (grade != null) map["grade"] = grade.toDouble()
             if (feedback != null) map["feedback"] = feedback
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
@@ -937,7 +967,8 @@ object SupabaseClient {
             val grade = submission.grade
             val feedback = submission.feedback
             val map = mutableMapOf<String, Any?>()
-            if (grade != null) map["grade"] = grade
+            // Convert grade to Double to avoid PostgreSQL type issues
+            if (grade != null) map["grade"] = grade.toDouble()
             if (feedback != null) map["feedback"] = feedback
 
             if (map.isEmpty()) {
@@ -2152,6 +2183,216 @@ object SupabaseClient {
             }
         } catch (e: Exception) {
             Log.e("SupabaseClient", "unsubscribeFromCreator exception", e)
+            return@withContext false
+        }
+    }
+    
+    /**
+     * Upsert student progress to Supabase progreso_estudiante table
+     * Uses UPSERT (INSERT ... ON CONFLICT UPDATE) via Prefer header
+     */
+    suspend fun upsertProgresoEstudiante(progreso: com.example.tareamov.data.entity.ProgresoEstudiante): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.w("SupabaseClient", "Supabase not configured, cannot upsert progreso")
+                return@withContext false
+            }
+            
+            Log.d("SupabaseClient", "🔄 Upserting progreso: student=${progreso.usuarioEstudiante}, course=${progreso.cursoId}")
+            Log.d("SupabaseClient", "📊 Values: totales=${progreso.tareasTotales}, completadas=${progreso.tareasCompletadas}, progreso=${progreso.porcentajeProgreso}%, promedio=${progreso.promedio}")
+            
+            // Map entity to Supabase format (snake_case)
+            val payload = mapOf(
+                "usuario_estudiante" to progreso.usuarioEstudiante,
+                "curso_id" to progreso.cursoId,
+                "tareas_completadas" to progreso.tareasCompletadas,
+                "tareas_totales" to progreso.tareasTotales,
+                "porcentaje_progreso" to progreso.porcentajeProgreso,
+                "calificacion_ponderada" to progreso.calificacionPonderada,
+                "promedio" to (progreso.promedio ?: progreso.calificacionPonderada ?: 0f), // Usar promedio o calificacionPonderada
+                "ultima_calculada_en" to java.time.Instant.ofEpochMilli(progreso.ultimaCalculadaEn).toString(),
+                "certificado_emitido_en" to progreso.certificadoEmitidoEn?.let { 
+                    java.time.Instant.ofEpochMilli(it).toString() 
+                },
+                "creado_en" to java.time.Instant.ofEpochMilli(progreso.creadoEn).toString()
+            )
+            
+            val json = gson.toJson(payload)
+            Log.d("SupabaseClient", "📤 Sending payload: $json")
+            
+            val body = json.toRequestBody("application/json".toMediaType())
+            
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/progreso_estudiante")
+                .post(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "resolution=merge-duplicates")
+                .build()
+
+            requestListener?.invoke("POST $baseUrl/rest/v1/progreso_estudiante")
+            val response = client.newCall(request).execute()
+            
+            if (response.isSuccessful || response.code == 201) {
+                Log.d("SupabaseClient", "✅ Progreso upserted successfully for ${progreso.usuarioEstudiante} in course ${progreso.cursoId}")
+                return@withContext true
+            } else {
+                val errorBody = response.body?.string()
+                Log.e("SupabaseClient", "❌ Failed to upsert progreso: ${response.code} ${response.message} - $errorBody")
+                Log.e("SupabaseClient", "❌ Payload was: $json")
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "❌ upsertProgresoEstudiante exception", e)
+            return@withContext false
+        }
+    }
+    
+    /**
+     * Fetch student progress from Supabase
+     */
+    suspend fun fetchProgresoEstudiante(username: String, courseId: Long): com.example.tareamov.data.entity.ProgresoEstudiante? = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.w("SupabaseClient", "Supabase not configured")
+                return@withContext null
+            }
+            
+            val request = buildGetRequest("progreso_estudiante?usuario_estudiante=eq.$username&curso_id=eq.$courseId&limit=1")
+            val response = client.newCall(request).execute()
+            
+            if (!response.isSuccessful) {
+                Log.e("SupabaseClient", "Failed to fetch progreso: ${response.code}")
+                return@withContext null
+            }
+            
+            val json = response.body?.string() ?: return@withContext null
+            val jsonArray = gson.fromJson(json, com.google.gson.JsonArray::class.java)
+            
+            if (jsonArray.size() == 0) {
+                return@withContext null
+            }
+            
+            val obj = jsonArray[0].asJsonObject
+            
+            return@withContext com.example.tareamov.data.entity.ProgresoEstudiante(
+                usuarioEstudiante = obj.get("usuario_estudiante")?.asString ?: username,
+                cursoId = obj.get("curso_id")?.asLong ?: courseId,
+                tareasCompletadas = obj.get("tareas_completadas")?.asInt ?: 0,
+                tareasTotales = obj.get("tareas_totales")?.asInt ?: 0,
+                porcentajeProgreso = obj.get("porcentaje_progreso")?.asFloat ?: 0f,
+                calificacionPonderada = obj.get("calificacion_ponderada")?.asFloat,
+                promedio = obj.get("promedio")?.asFloat ?: obj.get("calificacion_ponderada")?.asFloat,
+                estado = obj.get("estado")?.asString,
+                ultimaCalculadaEn = parseTimestamp(obj.get("ultima_calculada_en")?.asString)
+                    ?: System.currentTimeMillis(),
+                certificadoEmitidoEn = parseTimestamp(obj.get("certificado_emitido_en")?.asString),
+                creadoEn = parseTimestamp(obj.get("creado_en")?.asString) ?: System.currentTimeMillis()
+            )
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "fetchProgresoEstudiante exception", e)
+            return@withContext null
+        }
+    }
+    
+    /**
+     * Fetch all student progress for a course from Supabase
+     */
+    suspend fun fetchProgresosByCurso(courseId: Long): List<com.example.tareamov.data.entity.ProgresoEstudiante> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                return@withContext emptyList()
+            }
+            
+            val request = buildGetRequest("progreso_estudiante?curso_id=eq.$courseId")
+            val response = client.newCall(request).execute()
+            
+            if (!response.isSuccessful) {
+                Log.e("SupabaseClient", "Failed to fetch progresos: ${response.code}")
+                return@withContext emptyList()
+            }
+            
+            val json = response.body?.string() ?: return@withContext emptyList()
+            val jsonArray = gson.fromJson(json, com.google.gson.JsonArray::class.java)
+            
+            return@withContext jsonArray.map { element ->
+                val obj = element.asJsonObject
+                com.example.tareamov.data.entity.ProgresoEstudiante(
+                    usuarioEstudiante = obj.get("usuario_estudiante")?.asString ?: "",
+                    cursoId = obj.get("curso_id")?.asLong ?: courseId,
+                    tareasCompletadas = obj.get("tareas_completadas")?.asInt ?: 0,
+                    tareasTotales = obj.get("tareas_totales")?.asInt ?: 0,
+                    porcentajeProgreso = obj.get("porcentaje_progreso")?.asFloat ?: 0f,
+                    calificacionPonderada = obj.get("calificacion_ponderada")?.asFloat,
+                    promedio = obj.get("promedio")?.asFloat ?: obj.get("calificacion_ponderada")?.asFloat,
+                    estado = obj.get("estado")?.asString,
+                    ultimaCalculadaEn = parseTimestamp(obj.get("ultima_calculada_en")?.asString)
+                        ?: System.currentTimeMillis(),
+                    certificadoEmitidoEn = parseTimestamp(obj.get("certificado_emitido_en")?.asString),
+                    creadoEn = parseTimestamp(obj.get("creado_en")?.asString) ?: System.currentTimeMillis()
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "fetchProgresosByCurso exception", e)
+            return@withContext emptyList()
+        }
+    }
+    
+    /**
+     * Helper to parse ISO timestamp to epoch millis
+     */
+    private fun parseTimestamp(timestampStr: String?): Long? {
+        if (timestampStr.isNullOrBlank()) return null
+        return try {
+            java.time.Instant.parse(timestampStr).toEpochMilli()
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "Failed to parse timestamp: $timestampStr", e)
+            null
+        }
+    }
+    
+    /**
+     * Actualiza el campo certificado_emitido_en cuando se genera un certificado
+     */
+    suspend fun updateCertificateIssuedDate(
+        studentUsername: String,
+        courseId: Long
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.e("SupabaseClient", "Supabase not configured, cannot update certificate date")
+                return@withContext false
+            }
+            
+            val now = java.time.Instant.now().toString()
+            val map = mapOf("certificado_emitido_en" to now)
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            
+            // PATCH usando composite key en query params
+            val url = "$baseUrl/rest/v1/progreso_estudiante?usuario_estudiante=eq.$studentUsername&curso_id=eq.$courseId"
+            
+            val request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+            
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val bodyStr = resp.body?.string() ?: ""
+                    Log.e("SupabaseClient", "Failed to update certificate date: ${resp.code} $bodyStr")
+                    return@withContext false
+                }
+                
+                Log.i("SupabaseClient", "✅ Certificate issued date updated for $studentUsername in course $courseId")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Exception updating certificate date", e)
             return@withContext false
         }
     }

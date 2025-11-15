@@ -421,13 +421,13 @@ class CreatedCourseAdapter(
                 try {
                     Glide.with(context)
                         .load(Uri.parse(course.thumbnailUri))
-                        .placeholder(R.drawable.course_placeholder_background)
-                        .error(R.drawable.course_placeholder_background)
+                        .placeholder(R.drawable.bg_course_placeholder_card)
+                        .error(R.drawable.bg_course_placeholder_card)
                         .centerCrop()
                         .into(thumbnailImageView)
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error loading custom thumbnail", e)
-                    thumbnailImageView.setImageResource(R.drawable.course_placeholder_background)
+                    thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
                 }
             } else {
                 // Generate thumbnail asynchronously
@@ -441,8 +441,8 @@ class CreatedCourseAdapter(
         private fun loadOrGenerateVideoThumbnail(course: VideoData) {
             CoroutineScope(Dispatchers.Main).launch {
                 try {
-                    // First, set purple book placeholder
-                    thumbnailImageView.setImageResource(R.drawable.course_placeholder_background)
+                    // First, set YouTube-style gray placeholder
+                    thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
 
                     // Check if thumbnail already exists
                     val existingThumbnailPath = withContext(Dispatchers.IO) {
@@ -490,8 +490,8 @@ class CreatedCourseAdapter(
         private fun loadThumbnailWithGlide(thumbnailUri: String, course: VideoData) {
             try {
                 val requestOptions = RequestOptions()
-                    .placeholder(R.drawable.course_placeholder_background)
-                    .error(R.drawable.course_placeholder_background)
+                    .placeholder(R.drawable.bg_course_placeholder_card)
+                    .error(R.drawable.bg_course_placeholder_card)
                     .centerCrop()
                     .diskCacheStrategy(DiskCacheStrategy.ALL)
 
@@ -529,7 +529,7 @@ class CreatedCourseAdapter(
             } catch (e: Exception) {
                 Log.e("CreatedCourseAdapter", "Error loading thumbnail with Glide", e)
                 // Fallback to placeholder
-                thumbnailImageView.setImageResource(R.drawable.course_placeholder_background)
+                thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
             }
         }
 
@@ -671,8 +671,8 @@ class CreatedCourseAdapter(
                             Log.d("CreatedCourseAdapter", "Using course thumbnailUri: ${course.thumbnailUri}")
                             Glide.with(context)
                                 .load(course.thumbnailUri)
-                                .placeholder(R.drawable.course_placeholder_background)
-                                .error(R.drawable.course_placeholder_background)
+                                .placeholder(R.drawable.bg_course_placeholder_card)
+                                .error(R.drawable.bg_course_placeholder_card)
                                 .centerCrop()
                                 .into(thumbnailImageView)
                         }
@@ -690,8 +690,8 @@ class CreatedCourseAdapter(
                                 // Si no se pudo extraer un frame, usar Glide para cargar directamente el video como thumbnail
                                 Glide.with(context)
                                     .load(uri)
-                                    .placeholder(R.drawable.course_placeholder_background)
-                                    .error(R.drawable.course_placeholder_background)
+                                    .placeholder(R.drawable.bg_course_placeholder_card)
+                                    .error(R.drawable.bg_course_placeholder_card)
                                     .centerCrop()
                                     .into(thumbnailImageView)
 
@@ -704,28 +704,28 @@ class CreatedCourseAdapter(
                             if (file.exists() && file.canRead()) {
                                 Glide.with(context)
                                     .load(file)
-                                    .placeholder(R.drawable.course_placeholder_background)
-                                    .error(R.drawable.course_placeholder_background)
+                                    .placeholder(R.drawable.bg_course_placeholder_card)
+                                    .error(R.drawable.bg_course_placeholder_card)
                                     .centerCrop()
                                     .into(thumbnailImageView)
 
                                 Log.d("CreatedCourseAdapter", "Using localFilePath as thumbnail: ${course.localFilePath}")
                             } else {
-                                thumbnailImageView.setImageResource(R.drawable.course_placeholder_background)
+                                thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
                                 Log.d("CreatedCourseAdapter", "Local file not found or not readable, using placeholder: ${course.localFilePath}")
                             }
                         }
                         // Si todo lo demás falla, usar el placeholder
                         else -> {
-                            thumbnailImageView.setImageResource(R.drawable.course_placeholder_background)
+                            thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
                             Log.d("CreatedCourseAdapter", "Using placeholder for course: ${course.title}")
                         }
                     }                } catch (e: SecurityException) {
                     Log.w("CreatedCourseAdapter", "Permission denied when loading thumbnail for course ${course.title}: ${e.message}")
-                    thumbnailImageView.setImageResource(R.drawable.course_placeholder_background)
+                    thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error loading thumbnail for course ${course.title}: ${e.message}")
-                    thumbnailImageView.setImageResource(R.drawable.course_placeholder_background)
+                    thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
                 }
             }
         }
