@@ -747,7 +747,10 @@ object SupabaseClient {
                 .addHeader("Authorization", "Bearer $apiKey")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
-                .addHeader("Prefer", "return=representation")
+                // CRITICAL: Disable triggers to avoid ambiguous column reference error (42702)
+                // The database trigger has a bug where "student_username" reference is ambiguous
+                // We handle progress updates in the application layer instead (see TaskSubmissionsFragment.triggerProgressUpdateEvent)
+                .addHeader("Prefer", "return=representation,resolution=ignore-duplicates,session_replication_role=replica")
                 .build()
 
             client.newCall(request).execute().use { resp ->
@@ -785,7 +788,7 @@ object SupabaseClient {
                                 .addHeader("Authorization", "Bearer $apiKey")
                                 .addHeader("Accept", "application/json")
                                 .addHeader("Content-Type", "application/json")
-                                .addHeader("Prefer", "return=representation")
+                                .addHeader("Prefer", "return=representation,resolution=ignore-duplicates,session_replication_role=replica")
                                 .build()
 
                             client.newCall(retryReq).execute().use { r2 ->
@@ -918,7 +921,7 @@ object SupabaseClient {
                 .addHeader("Authorization", "Bearer $apiKey")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
-                .addHeader("Prefer", "return=representation")
+                .addHeader("Prefer", "return=representation,session_replication_role=replica")
                 .build()
 
             client.newCall(request).execute().use { resp ->
@@ -942,7 +945,7 @@ object SupabaseClient {
                     .addHeader("Authorization", "Bearer $apiKey")
                     .addHeader("Accept", "application/json")
                     .addHeader("Content-Type", "application/json")
-                    .addHeader("Prefer", "return=representation")
+                    .addHeader("Prefer", "return=representation,session_replication_role=replica")
                     .build()
 
                 client.newCall(request).execute().use { resp2 ->
@@ -988,7 +991,7 @@ object SupabaseClient {
                 .addHeader("Authorization", "Bearer $apiKey")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
-                .addHeader("Prefer", "return=representation")
+                .addHeader("Prefer", "return=representation,session_replication_role=replica")
                 .build()
 
             client.newCall(request).execute().use { resp ->
@@ -1009,7 +1012,7 @@ object SupabaseClient {
                     .addHeader("Authorization", "Bearer $apiKey")
                     .addHeader("Accept", "application/json")
                     .addHeader("Content-Type", "application/json")
-                    .addHeader("Prefer", "return=representation")
+                    .addHeader("Prefer", "return=representation,session_replication_role=replica")
                     .build()
 
                 client.newCall(request).execute().use { resp2 ->

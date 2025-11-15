@@ -332,6 +332,12 @@ class ExploreFragment : Fragment() {
             return
         }
         
+        // Block enrollment for paid courses (price > 0)
+        if (course.price > 0) {
+            showDarkToast("❌ Este es un curso de pago. Debes realizar el pago para acceder.", Toast.LENGTH_LONG)
+            return
+        }
+        
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val db = AppDatabase.getDatabase(requireContext())

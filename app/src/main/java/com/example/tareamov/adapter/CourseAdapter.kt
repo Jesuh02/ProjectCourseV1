@@ -164,9 +164,111 @@ class CourseAdapter(
         // Apply dark mode colors to text views
         applyDarkModeTextColors(holder)
 
-        // Set click listener
+        // Set click listener with auto-enrollment for free courses
         holder.itemView.setOnClickListener {
-            onCourseClickListener(course)
+            // Check if user is logged in
+            if (currentUsername == null) {
+                android.widget.Toast.makeText(context, "¡Debes iniciar sesión para acceder al curso!", android.widget.Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            
+            // Block access to paid courses (price > 0) for non-creators
+            if (course.price > 0 && !canUserModifyCourse(course)) {
+                android.widget.Toast.makeText(context, "❌ Este es un curso de pago. Debes realizar el pago para acceder.", android.widget.Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            
+            // If it's a free course and user is not the creator, auto-enroll before navigating
+            if (!course.isPremium && course.price == 0.0 && !canUserModifyCourse(course)) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val db = AppDatabase.getDatabase(context)
+                        
+                        // Check if already enrolled
+                        val existingProgreso = db.progresoEstudianteDao().getProgreso(currentUsername!!, course.id)
+                        
+                        if (existingProgreso == null) {
+                            // Ensure course exists in local DB
+                            val existingCourse = db.courseDao().getCourseById(course.id)
+                            if (existingCourse == null) {
+                                Log.d("CourseAdapter", "Course not in local DB, inserting: ${course.title}")
+                                db.courseDao().insertCourse(course)
+                            }
+                            
+                            // Get total tasks for this course
+                            val topics = db.topicDao().getTopicsByCourse(course.id)
+                            val topicIds = topics.map { it.id }
+                            val totalTasks = if (topicIds.isNotEmpty()) {
+                                db.taskDao().getTasksByTopicIds(topicIds).size
+                            } else {
+                                0
+                            }
+                            
+                            // Create initial progress record
+                            val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                                usuarioEstudiante = currentUsername!!,
+                                cursoId = course.id,
+                                tareasCompletadas = 0,
+                                tareasTotales = totalTasks,
+                                porcentajeProgreso = 0f,
+                                calificacionPonderada = null,
+                                promedio = null,
+                                estado = "Perdido",
+                                ultimaCalculadaEn = System.currentTimeMillis()
+                            )
+                            
+                            // Save locally
+                            db.progresoEstudianteDao().insertProgreso(progreso)
+                            Log.d("CourseAdapter", "✅ Auto-enrolled $currentUsername in free course ${course.id}")
+                            
+                            // Sync to Supabase
+                            val syncRepo = com.example.tareamov.data.sync.SyncRepository(
+                                db.usuarioDao(),
+                                db.personaDao(),
+                                db.topicDao(),
+                                db.contentItemDao(),
+                                db.taskDao(),
+                                db.subscriptionDao(),
+                                db.taskSubmissionDao(),
+                                db.videoDao(),
+                                db.courseDao(),
+                                db.rolDao(),
+                                db.recursoDao(),
+                                db.rolRecursoDao(),
+                                db.chatMessageDao(),
+                                db.fileContextDao(),
+                                db.progresoEstudianteDao()
+                            )
+                            val syncSuccess = syncRepo.syncProgresoToSupabase(progreso)
+                            
+                            withContext(Dispatchers.Main) {
+                                if (syncSuccess) {
+                                    Log.d("CourseAdapter", "✅ Enrollment synced to Supabase")
+                                    android.widget.Toast.makeText(context, "✅ ¡Inscrito automáticamente en ${course.title}!", android.widget.Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Log.w("CourseAdapter", "⚠️ Failed to sync enrollment to Supabase")
+                                }
+                                
+                                // Navigate after enrollment
+                                onCourseClickListener(course)
+                            }
+                        } else {
+                            // Already enrolled, just navigate
+                            withContext(Dispatchers.Main) {
+                                onCourseClickListener(course)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("CourseAdapter", "❌ Error auto-enrolling in free course", e)
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(context, "❌ Error al inscribirse: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            } else {
+                // Premium course or user is creator, just navigate
+                onCourseClickListener(course)
+            }
         }
     }
 
@@ -289,22 +391,34 @@ class CourseAdapter(
                         
                         Log.d("CourseAdapter", "User already enrolled in course ${course.id}, showing enrolled status")
                     } else {
-                        // Not enrolled yet - Show enrollment section, hide enrolled status
-                        holder.enrolledStatusContainer?.visibility = View.GONE
-                        holder.enrollButtonContainer?.visibility = View.VISIBLE
-                        holder.enrollButton?.text = "Inscribirse al curso"
-                        holder.enrollButton?.isEnabled = true
-                        holder.enrollButton?.alpha = 1.0f
-                        holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
-                        
-                        // Set click listener for enrollment (only once)
-                        holder.enrollButton?.setOnClickListener {
-                            // Disable button immediately to prevent double-clicks
+                        // Not enrolled yet - Check if it's a paid course
+                        if (course.price > 0) {
+                            // Paid course - Block enrollment
+                            holder.enrolledStatusContainer?.visibility = View.GONE
+                            holder.enrollButtonContainer?.visibility = View.VISIBLE
+                            holder.enrollButton?.text = "Curso de pago - Requiere compra"
                             holder.enrollButton?.isEnabled = false
-                            holder.enrollButton?.alpha = 0.6f
-                            holder.enrollButton?.text = "Inscribiendo..."
+                            holder.enrollButton?.alpha = 0.5f
+                            holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
+                            Log.d("CourseAdapter", "Course ${course.id} is paid, enrollment blocked")
+                        } else {
+                            // Free course - Show enrollment section
+                            holder.enrolledStatusContainer?.visibility = View.GONE
+                            holder.enrollButtonContainer?.visibility = View.VISIBLE
+                            holder.enrollButton?.text = "Inscribirse al curso"
+                            holder.enrollButton?.isEnabled = true
+                            holder.enrollButton?.alpha = 1.0f
+                            holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
                             
-                            onEnrollClickListener?.invoke(course)
+                            // Set click listener for enrollment (only once)
+                            holder.enrollButton?.setOnClickListener {
+                                // Disable button immediately to prevent double-clicks
+                                holder.enrollButton?.isEnabled = false
+                                holder.enrollButton?.alpha = 0.6f
+                                holder.enrollButton?.text = "Inscribiendo..."
+                                
+                                onEnrollClickListener?.invoke(course)
+                            }
                         }
                     }
                 }

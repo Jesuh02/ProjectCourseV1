@@ -524,8 +524,11 @@ class TaskSubmissionsFragment : Fragment() {
                         SupabaseClient.updateTaskSubmissionRemote(updatedSubmission)
                     }
                     if (pushed) {
-                        Log.i("TaskSubmissionsFragment", "Updated submission pushed to Supabase.")
+                        Log.i("TaskSubmissionsFragment", "✅ Updated submission pushed to Supabase.")
                         Toast.makeText(context, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
+                        
+                        // Trigger progress update event for the graded student
+                        triggerProgressUpdateEvent(submission.studentUsername, taskId)
                         
                         // IMPORTANTE: Recalcular progreso de TODOS los estudiantes del curso
                         // No solo del estudiante actual, para mantener consistencia
@@ -819,8 +822,11 @@ class TaskSubmissionsFragment : Fragment() {
                         SupabaseClient.insertTaskSubmission(submission)
                     }
                     if (remoteId != null) {
-                        Log.i("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned remote id=$remoteId")
+                        Log.i("TaskSubmissionsFragment", "✅ Supabase insertTaskSubmission returned remote id=$remoteId")
                         Toast.makeText(context, "Tarea subida a servidor (id=$remoteId)", Toast.LENGTH_SHORT).show()
+
+                        // Trigger progress update event after successful submission
+                        triggerProgressUpdateEvent(username, taskId)
 
                         // Poll Supabase for the newly created submission (the backend may be eventually consistent)
                         val created = withContext(Dispatchers.IO) {
@@ -1044,6 +1050,89 @@ class TaskSubmissionsFragment : Fragment() {
             "${sanitizedBase}.$normalizedExtension"
         } else {
             sanitizedBase
+        }
+    }
+
+    /**
+     * Triggers an asynchronous event to recalculate student progress after submission
+     * This replaces the database trigger approach to avoid SQL ambiguity issues (error 42702)
+     */
+    private fun triggerProgressUpdateEvent(username: String, submittedTaskId: Long) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.d("TaskSubmissionsFragment", "🔄 Triggering progress update event for $username, task $submittedTaskId")
+                
+                // Get course ID from task
+                val task = database.taskDao().getTaskById(submittedTaskId)
+                if (task == null) {
+                    Log.e("TaskSubmissionsFragment", "❌ Task not found: $submittedTaskId")
+                    return@launch
+                }
+                
+                val topic = database.topicDao().getTopicById(task.topicId)
+                if (topic == null) {
+                    Log.e("TaskSubmissionsFragment", "❌ Topic not found: ${task.topicId}")
+                    return@launch
+                }
+                
+                val courseId = topic.courseId
+                
+                // Recalculate progress for this student
+                // Get all topics for this course, then all tasks for those topics
+                val allTopics = database.topicDao().getTopicsByCourse(courseId)
+                val topicIds = allTopics.map { it.id }
+                val allTasksInCourse = database.taskDao().getTasksByTopicIds(topicIds)
+                val totalTasks = allTasksInCourse.size
+                
+                // Get all submissions by this student
+                val allSubmissions = database.taskSubmissionDao()
+                    .getSubmissionsByStudent(username)
+                
+                // Filter submissions that belong to tasks in this course
+                val taskIdsInCourse = allTasksInCourse.map { it.id }.toSet()
+                val courseSubmissions = allSubmissions.filter { it.taskId in taskIdsInCourse }
+                
+                val completedTasks = courseSubmissions.count { (it.grade ?: 0f) > 0 }
+                
+                val progressPct = if (totalTasks > 0) {
+                    (completedTasks.toFloat() / totalTasks.toFloat()) * 100
+                } else 0f
+                
+                val gradesOnly = courseSubmissions.mapNotNull { it.grade }.filter { it > 0 }
+                val avgGrade = if (gradesOnly.isNotEmpty()) {
+                    gradesOnly.average().toFloat()
+                } else 0f
+                
+                // Update progress in database and Supabase
+                var progreso = database.progresoEstudianteDao()
+                    .getProgresoByUsuarioAndCurso(username, courseId)
+                
+                if (progreso != null) {
+                    // Create updated copy since properties are val
+                    val updatedProgreso = progreso.copy(
+                        tareasTotales = totalTasks,
+                        tareasCompletadas = completedTasks,
+                        porcentajeProgreso = progressPct,
+                        promedio = avgGrade,
+                        calificacionPonderada = avgGrade,
+                        ultimaCalculadaEn = System.currentTimeMillis()
+                    )
+                    
+                    database.progresoEstudianteDao().updateProgreso(updatedProgreso)
+                    
+                    // Sync to Supabase
+                    val synced = syncRepository.syncProgresoToSupabase(updatedProgreso)
+                    if (synced) {
+                        Log.i("TaskSubmissionsFragment", "✅ Progress synced: $completedTasks/$totalTasks tasks, ${progressPct.toInt()}%, avg=$avgGrade")
+                    } else {
+                        Log.w("TaskSubmissionsFragment", "⚠️ Progress updated locally but failed to sync to Supabase")
+                    }
+                } else {
+                    Log.w("TaskSubmissionsFragment", "⚠️ No progreso record found for $username in course $courseId")
+                }
+            } catch (e: Exception) {
+                Log.e("TaskSubmissionsFragment", "❌ Error in progress update event", e)
+            }
         }
     }
 

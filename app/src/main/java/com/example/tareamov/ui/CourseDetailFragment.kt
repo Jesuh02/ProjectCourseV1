@@ -595,6 +595,11 @@ class CourseDetailFragment : Fragment() {
 
         // Setup admin button visibility and functionality
         setupAdminButton()
+        
+        // Check enrollment status for non-creators
+        if (!isCurrentUserCreator && currentUsername != null) {
+            checkEnrollmentBeforeAccess()
+        }
     }
 
     // Add this function to navigate to CourseTopicFragment
@@ -633,6 +638,144 @@ class CourseDetailFragment : Fragment() {
         // For example, count existing topics + 1
         // Placeholder implementation:
         return (topicsContainer.childCount / 2) + 1 // Assuming pairs of topic view + divider
+    }
+    
+    /**
+     * Check if user is enrolled in the course before allowing access
+     * For premium courses, redirect back if not enrolled
+     */
+    private fun checkEnrollmentBeforeAccess() {
+        lifecycleScope.launch {
+            try {
+                val db = AppDatabase.getDatabase(requireContext())
+                val progreso = withContext(Dispatchers.IO) {
+                    db.progresoEstudianteDao().getProgreso(currentUsername!!, courseId)
+                }
+                
+                if (progreso == null) {
+                    // User is not enrolled
+                    // Check if course is premium or paid
+                    val course = withContext(Dispatchers.IO) {
+                        db.courseDao().getCourseById(courseId)
+                    }
+                    
+                    // Block access to paid courses (price > 0)
+                    if (course != null && course.price > 0) {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                requireContext(),
+                                "❌ Este es un curso de pago. Debes realizar el pago para acceder.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            findNavController().navigateUp()
+                        }
+                        return@launch
+                    }
+                    
+                    if (course?.isPremium == true) {
+                        // Premium course without enrollment - deny access
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                requireContext(),
+                                "❌ Debes inscribirte en este curso premium para acceder",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            findNavController().navigateUp()
+                        }
+                    } else {
+                        // Free course - auto-enroll
+                        Log.d("CourseDetailFragment", "Auto-enrolling user in free course $courseId")
+                        autoEnrollInFreeCourse(course)
+                    }
+                } else {
+                    Log.d("CourseDetailFragment", "User already enrolled in course $courseId")
+                }
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error checking enrollment status", e)
+            }
+        }
+    }
+    
+    /**
+     * Auto-enroll user in a free course
+     */
+    private fun autoEnrollInFreeCourse(course: com.example.tareamov.data.entity.Course?) {
+        if (course == null || currentUsername == null) return
+        
+        lifecycleScope.launch {
+            try {
+                val db = AppDatabase.getDatabase(requireContext())
+                
+                // Ensure course exists in local DB
+                withContext(Dispatchers.IO) {
+                    val existingCourse = db.courseDao().getCourseById(course.id)
+                    if (existingCourse == null) {
+                        db.courseDao().insertCourse(course)
+                    }
+                }
+                
+                // Get total tasks for this course
+                val topics = withContext(Dispatchers.IO) {
+                    db.topicDao().getTopicsByCourse(course.id)
+                }
+                
+                val topicIds = topics.map { it.id }
+                val totalTasks = if (topicIds.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        db.taskDao().getTasksByTopicIds(topicIds).size
+                    }
+                } else {
+                    0
+                }
+                
+                // Create initial progress record
+                val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                    usuarioEstudiante = currentUsername!!,
+                    cursoId = course.id,
+                    tareasCompletadas = 0,
+                    tareasTotales = totalTasks,
+                    porcentajeProgreso = 0f,
+                    calificacionPonderada = null,
+                    promedio = null,
+                    estado = "Perdido",
+                    ultimaCalculadaEn = System.currentTimeMillis()
+                )
+                
+                // Save locally
+                withContext(Dispatchers.IO) {
+                    db.progresoEstudianteDao().insertProgreso(progreso)
+                }
+                
+                Log.d("CourseDetailFragment", "✅ Auto-enrolled $currentUsername in free course ${course.id}")
+                
+                // Sync to Supabase
+                val syncSuccess = withContext(Dispatchers.IO) {
+                    syncRepository.syncProgresoToSupabase(progreso)
+                }
+                
+                withContext(Dispatchers.Main) {
+                    if (syncSuccess) {
+                        Log.d("CourseDetailFragment", "✅ Enrollment synced to Supabase")
+                        Toast.makeText(
+                            requireContext(),
+                            "✅ ¡Inscrito automáticamente en ${course.title}!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        Log.w("CourseDetailFragment", "⚠️ Failed to sync enrollment to Supabase")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error auto-enrolling in free course", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        requireContext(),
+                        "❌ Error al inscribirse: ${e.message}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
     }
 
     // In the loadCourseDetails() method, update to use SubscriptionDao
