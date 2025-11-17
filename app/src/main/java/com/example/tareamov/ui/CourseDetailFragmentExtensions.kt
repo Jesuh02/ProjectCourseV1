@@ -600,7 +600,8 @@ private fun generateCertificate(context: android.content.Context, courseId: Int,
                         creatorUsername,
                         courseName,
                         courseTopic,
-                        String.format("%.1f", averageGrade)
+                        String.format("%.1f", averageGrade),
+                        courseId.toLong()
                     )
                 } else {
                     CertificateGenerator.generateCertificate(
@@ -609,7 +610,8 @@ private fun generateCertificate(context: android.content.Context, courseId: Int,
                         creatorUsername,
                         courseName,
                         courseTopic,
-                        String.format("%.1f", averageGrade)
+                        String.format("%.1f", averageGrade),
+                        courseId.toLong()
                     )
                 }
             }

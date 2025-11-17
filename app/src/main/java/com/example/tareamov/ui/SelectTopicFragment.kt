@@ -95,7 +95,7 @@ class SelectTopicFragment : Fragment() {
                 val syncRepo = SyncRepository(
                     db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
                     db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-                    db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
+                    db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
                 )
 
                 if (com.example.tareamov.service.SupabaseClient.isConfigured()) {

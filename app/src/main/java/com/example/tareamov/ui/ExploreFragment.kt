@@ -316,7 +316,118 @@ class ExploreFragment : Fragment() {
                 showDarkToast("❌ Error al procesar la suscripción")
             }
         }
-    }    private fun setupRecyclerViews(view: View) {
+    }
+    
+    /**
+     * Handle enrollment click - Create initial progress record when student enrolls
+     */
+    private fun handleEnrollmentClick(course: Course) {
+        if (currentUsername == null) {
+            showDarkToast("¡Debes iniciar sesión para inscribirte!")
+            return
+        }
+        
+        if (currentUsername == course.creatorUsername) {
+            showDarkToast("No puedes inscribirte en tu propio curso")
+            return
+        }
+        
+        // Block enrollment for paid courses (price > 0)
+        if (course.price > 0) {
+            showDarkToast("❌ Este es un curso de pago. Debes realizar el pago para acceder.", Toast.LENGTH_LONG)
+            return
+        }
+        
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val db = AppDatabase.getDatabase(requireContext())
+                
+                // Check if already enrolled
+                val existingProgreso = withContext(Dispatchers.IO) {
+                    db.progresoEstudianteDao().getProgreso(currentUsername!!, course.id)
+                }
+                
+                if (existingProgreso != null) {
+                    showDarkToast("Ya estás inscrito en este curso")
+                    return@launch
+                }
+                
+                // Ensure course exists in local DB before creating progress
+                withContext(Dispatchers.IO) {
+                    val existingCourse = db.courseDao().getCourseById(course.id)
+                    if (existingCourse == null) {
+                        Log.d("ExploreFragment", "Course not in local DB, inserting: ${course.title}")
+                        db.courseDao().insertCourse(course)
+                    }
+                }
+                
+                // Get total tasks for this course
+                val topics = withContext(Dispatchers.IO) {
+                    db.topicDao().getTopicsByCourse(course.id)
+                }
+                
+                val topicIds = topics.map { it.id }
+                val totalTasks = if (topicIds.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        db.taskDao().getTasksByTopicIds(topicIds).size
+                    }
+                } else {
+                    0
+                }
+                
+                // Create initial progress record
+                val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                    usuarioEstudiante = currentUsername!!,
+                    cursoId = course.id,
+                    tareasCompletadas = 0,
+                    tareasTotales = totalTasks,
+                    porcentajeProgreso = 0f,
+                    calificacionPonderada = null,
+                    promedio = null,
+                    estado = "Perdido",
+                    ultimaCalculadaEn = System.currentTimeMillis()
+                )
+                
+                // Save locally
+                withContext(Dispatchers.IO) {
+                    db.progresoEstudianteDao().insertProgreso(progreso)
+                }
+                
+                Log.d("ExploreFragment", "✅ Progress record created locally for $currentUsername in course ${course.id}")
+                
+                // Sync to Supabase
+                val syncRepo = getSyncRepository()
+                val syncSuccess = withContext(Dispatchers.IO) {
+                    syncRepo.syncProgresoToSupabase(progreso)
+                }
+                
+                if (syncSuccess) {
+                    Log.d("ExploreFragment", "✅ Enrollment synced to Supabase for $currentUsername in course ${course.id}")
+                    showDarkToast("✅ ¡Inscrito exitosamente en ${course.title}!")
+                    
+                    // Update course enrollment count in local Course table
+                    withContext(Dispatchers.IO) {
+                        val db = AppDatabase.getDatabase(requireContext())
+                        val updatedCourse = course.copy(enrollmentCount = course.enrollmentCount + 1)
+                        db.courseDao().updateCourse(updatedCourse)
+                    }
+                    
+                    // Refresh the adapter to update button state and hide enrollment section
+                    coursesAdapter.notifyDataSetChanged()
+                } else {
+                    Log.w("ExploreFragment", "⚠️ Failed to sync enrollment to Supabase, but saved locally")
+                    showDarkToast("✅ ¡Inscrito localmente en ${course.title}!")
+                    coursesAdapter.notifyDataSetChanged()
+                }
+                
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "❌ Error enrolling in course", e)
+                showDarkToast("❌ Error al inscribirse: ${e.message}")
+            }
+        }
+    }
+
+    private fun setupRecyclerViews(view: View) {
         // Setup for "My Courses" RecyclerView
         val coursesRecyclerView = view.findViewById<RecyclerView>(R.id.coursesRecyclerView)
         coursesRecyclerView.layoutManager = LinearLayoutManager(requireContext(), RecyclerView.VERTICAL, false)
@@ -342,6 +453,9 @@ class ExploreFragment : Fragment() {
             },
             onThumbnailChangeClickListener = { course ->
                 showThumbnailChangeOptions(convertCourseToVideoData(course))
+            },
+            onEnrollClickListener = { course ->
+                handleEnrollmentClick(course)
             }
         )
         coursesRecyclerView.adapter = coursesAdapter
@@ -1036,7 +1150,7 @@ class ExploreFragment : Fragment() {
         return com.example.tareamov.data.sync.SyncRepository(
             db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
             db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-            db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
+            db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
         )
     }
 

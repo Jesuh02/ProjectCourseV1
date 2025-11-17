@@ -97,7 +97,8 @@ class CourseDetailFragment : Fragment() {
         AppDatabase.getDatabase(requireContext()).recursoDao(),
         AppDatabase.getDatabase(requireContext()).rolRecursoDao(),
         AppDatabase.getDatabase(requireContext()).chatMessageDao(),
-        AppDatabase.getDatabase(requireContext()).fileContextDao()
+        AppDatabase.getDatabase(requireContext()).fileContextDao(),
+        AppDatabase.getDatabase(requireContext()).progresoEstudianteDao()
     ) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -594,6 +595,11 @@ class CourseDetailFragment : Fragment() {
 
         // Setup admin button visibility and functionality
         setupAdminButton()
+        
+        // Check enrollment status for non-creators
+        if (!isCurrentUserCreator && currentUsername != null) {
+            checkEnrollmentBeforeAccess()
+        }
     }
 
     // Add this function to navigate to CourseTopicFragment
@@ -632,6 +638,144 @@ class CourseDetailFragment : Fragment() {
         // For example, count existing topics + 1
         // Placeholder implementation:
         return (topicsContainer.childCount / 2) + 1 // Assuming pairs of topic view + divider
+    }
+    
+    /**
+     * Check if user is enrolled in the course before allowing access
+     * For premium courses, redirect back if not enrolled
+     */
+    private fun checkEnrollmentBeforeAccess() {
+        lifecycleScope.launch {
+            try {
+                val db = AppDatabase.getDatabase(requireContext())
+                val progreso = withContext(Dispatchers.IO) {
+                    db.progresoEstudianteDao().getProgreso(currentUsername!!, courseId)
+                }
+                
+                if (progreso == null) {
+                    // User is not enrolled
+                    // Check if course is premium or paid
+                    val course = withContext(Dispatchers.IO) {
+                        db.courseDao().getCourseById(courseId)
+                    }
+                    
+                    // Block access to paid courses (price > 0)
+                    if (course != null && course.price > 0) {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                requireContext(),
+                                "❌ Este es un curso de pago. Debes realizar el pago para acceder.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            findNavController().navigateUp()
+                        }
+                        return@launch
+                    }
+                    
+                    if (course?.isPremium == true) {
+                        // Premium course without enrollment - deny access
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                requireContext(),
+                                "❌ Debes inscribirte en este curso premium para acceder",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            findNavController().navigateUp()
+                        }
+                    } else {
+                        // Free course - auto-enroll
+                        Log.d("CourseDetailFragment", "Auto-enrolling user in free course $courseId")
+                        autoEnrollInFreeCourse(course)
+                    }
+                } else {
+                    Log.d("CourseDetailFragment", "User already enrolled in course $courseId")
+                }
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error checking enrollment status", e)
+            }
+        }
+    }
+    
+    /**
+     * Auto-enroll user in a free course
+     */
+    private fun autoEnrollInFreeCourse(course: com.example.tareamov.data.entity.Course?) {
+        if (course == null || currentUsername == null) return
+        
+        lifecycleScope.launch {
+            try {
+                val db = AppDatabase.getDatabase(requireContext())
+                
+                // Ensure course exists in local DB
+                withContext(Dispatchers.IO) {
+                    val existingCourse = db.courseDao().getCourseById(course.id)
+                    if (existingCourse == null) {
+                        db.courseDao().insertCourse(course)
+                    }
+                }
+                
+                // Get total tasks for this course
+                val topics = withContext(Dispatchers.IO) {
+                    db.topicDao().getTopicsByCourse(course.id)
+                }
+                
+                val topicIds = topics.map { it.id }
+                val totalTasks = if (topicIds.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        db.taskDao().getTasksByTopicIds(topicIds).size
+                    }
+                } else {
+                    0
+                }
+                
+                // Create initial progress record
+                val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                    usuarioEstudiante = currentUsername!!,
+                    cursoId = course.id,
+                    tareasCompletadas = 0,
+                    tareasTotales = totalTasks,
+                    porcentajeProgreso = 0f,
+                    calificacionPonderada = null,
+                    promedio = null,
+                    estado = "Perdido",
+                    ultimaCalculadaEn = System.currentTimeMillis()
+                )
+                
+                // Save locally
+                withContext(Dispatchers.IO) {
+                    db.progresoEstudianteDao().insertProgreso(progreso)
+                }
+                
+                Log.d("CourseDetailFragment", "✅ Auto-enrolled $currentUsername in free course ${course.id}")
+                
+                // Sync to Supabase
+                val syncSuccess = withContext(Dispatchers.IO) {
+                    syncRepository.syncProgresoToSupabase(progreso)
+                }
+                
+                withContext(Dispatchers.Main) {
+                    if (syncSuccess) {
+                        Log.d("CourseDetailFragment", "✅ Enrollment synced to Supabase")
+                        Toast.makeText(
+                            requireContext(),
+                            "✅ ¡Inscrito automáticamente en ${course.title}!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        Log.w("CourseDetailFragment", "⚠️ Failed to sync enrollment to Supabase")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error auto-enrolling in free course", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        requireContext(),
+                        "❌ Error al inscribirse: ${e.message}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
     }
 
     // In the loadCourseDetails() method, update to use SubscriptionDao
@@ -700,6 +844,20 @@ class CourseDetailFragment : Fragment() {
                     courseCreatorUsername = remoteCourse.creatorUsername
                     isCurrentUserCreator = courseCreatorUsername == currentUsername
                     courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+                    
+                    // IMPORTANTE: Actualizar progreso del estudiante al ingresar al curso
+                    // Esto asegura que la información esté sincronizada sin usar triggers
+                    if (!isCurrentUserCreator && currentUsername != null) {
+                        Log.d("CourseDetailFragment", "🔄 Updating student progress on course entry: user=$currentUsername, course=$effectiveCourseId")
+                        recalculateStudentProgressOnEntry(effectiveCourseId)
+                    }
+                    
+                    // IMPORTANTE: Actualizar progreso del estudiante al ingresar al curso
+                    // Esto asegura que la información esté sincronizada sin usar triggers
+                    if (!isCurrentUserCreator && currentUsername != null) {
+                        Log.d("CourseDetailFragment", "🔄 Updating student progress on course entry: user=$currentUsername, course=$effectiveCourseId")
+                        recalculateStudentProgressOnEntry(effectiveCourseId)
+                    }
                     if (courseActionBar.visibility == View.VISIBLE) {
                         animateViewIfVisible(courseActionBar, 360)
                     } else {
@@ -1634,6 +1792,9 @@ class CourseDetailFragment : Fragment() {
                     val tasks = tasksByTopic[topic.id] ?: emptyList()
                     addTopicView(topic, emptyList(), tasks)
                 }
+                
+                // IMPORTANTE: Recalcular progreso de estudiantes después de refrescar
+                recalculateStudentProgress()
             } catch (e: Exception) {
                 Log.w("CourseDetailFragment", "refreshTopicsFromSupabase failed", e)
             }
@@ -1831,6 +1992,139 @@ class CourseDetailFragment : Fragment() {
         }
         // Use the correct action ID from nav_graph.xml
         findNavController().navigate(R.id.action_courseDetailFragment_to_courseTaskFragment, bundle)
+    }
+
+    /**
+     * Recalcula el progreso de todos los estudiantes del curso.
+     * Llamar después de cualquier CRUD en tareas.
+     */
+    private fun recalculateStudentProgress() {
+        if (resolvedCourseId <= 0) {
+            Log.w("CourseDetailFragment", "Cannot recalculate progress: invalid courseId")
+            return
+        }
+        
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                Log.d("CourseDetailFragment", "🔄 Recalculating student progress for course $resolvedCourseId")
+                val updatedCount = withContext(Dispatchers.IO) {
+                    syncRepository.recalculateAllStudentProgressForCourse(resolvedCourseId)
+                }
+                Log.i("CourseDetailFragment", "✅ Updated progress for $updatedCount students")
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error recalculating student progress", e)
+            }
+        }
+    }
+    
+    /**
+     * Recalcula el progreso del estudiante actual al entrar al curso.
+     * Solo actualiza el progreso del estudiante que está viendo el curso, no de todos.
+     * Esto evita sobrecarga innecesaria al abrir un curso.
+     */
+    private fun recalculateStudentProgressOnEntry(courseIdToUse: Long) {
+        val username = currentUsername ?: return
+        
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                Log.d("CourseDetailFragment", "🔄 Recalculating progress on entry: user=$username, course=$courseIdToUse")
+                
+                withContext(Dispatchers.IO) {
+                    try {
+                        // Obtener todas las tareas del curso desde Supabase
+                        val topics = syncRepository.fetchTopicsByCourseFromSupabase(courseIdToUse)
+                        val topicIds = topics.map { it.id }
+                        
+                        if (topicIds.isEmpty()) {
+                            Log.d("CourseDetailFragment", "⚠️ No topics found for course $courseIdToUse")
+                            return@withContext
+                        }
+                        
+                        val allTasks = syncRepository.fetchTasksByTopicIdsFromSupabase(topicIds)
+                        Log.d("CourseDetailFragment", "📚 Found ${allTasks.size} tasks in course")
+                        
+                        if (allTasks.isEmpty()) {
+                            Log.d("CourseDetailFragment", "⚠️ No tasks found for course $courseIdToUse")
+                            return@withContext
+                        }
+                        
+                        // Obtener todas las entregas del estudiante para este curso
+                        val allSubmissions = com.example.tareamov.service.SupabaseClient.fetchTaskSubmissions()
+                        val studentSubmissions = allSubmissions.filter { submission -> 
+                            submission.studentUsername.equals(username, ignoreCase = true) && 
+                            allTasks.any { task -> task.id == submission.taskId }
+                        }
+                        
+                        Log.d("CourseDetailFragment", "📊 Student has ${studentSubmissions.size} submissions")
+                        
+                        // Crear mapa de entregas por taskId
+                        val submissionMap = studentSubmissions.associateBy { it.taskId }
+                        
+                        // Calcular métricas
+                        val tareasTotales = allTasks.size
+                        var tareasCompletadas = 0
+                        var totalGrade = 0f
+                        
+                        for (task in allTasks) {
+                            val submission = submissionMap[task.id]
+                            val grade = submission?.grade ?: 0f
+                            
+                            if (grade > 0) {
+                                tareasCompletadas++
+                            }
+                            
+                            totalGrade += grade
+                        }
+                        
+                        val porcentajeProgreso = if (tareasTotales > 0) {
+                            (tareasCompletadas.toFloat() / tareasTotales.toFloat()) * 100f
+                        } else {
+                            0f
+                        }
+                        
+                        val promedio = if (tareasTotales > 0) {
+                            totalGrade / tareasTotales.toFloat()
+                        } else {
+                            0f
+                        }
+                        
+                        Log.d("CourseDetailFragment", "📈 Calculated metrics: totales=$tareasTotales, completadas=$tareasCompletadas, progreso=$porcentajeProgreso%, promedio=$promedio")
+                        
+                        // Actualizar en Supabase
+                        val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                            usuarioEstudiante = username,
+                            cursoId = courseIdToUse,
+                            tareasTotales = tareasTotales,
+                            tareasCompletadas = tareasCompletadas,
+                            porcentajeProgreso = porcentajeProgreso,
+                            promedio = promedio,
+                            calificacionPonderada = promedio,
+                            ultimaCalculadaEn = System.currentTimeMillis(),
+                            certificadoEmitidoEn = null,
+                            creadoEn = System.currentTimeMillis()
+                        )
+                        
+                        val success = com.example.tareamov.service.SupabaseClient.upsertProgresoEstudiante(progreso)
+                        
+                        if (success) {
+                            Log.i("CourseDetailFragment", "✅ Progress updated successfully for $username")
+                            
+                            // Actualizar también en base de datos local
+                            val db = AppDatabase.getDatabase(requireContext())
+                            db.progresoEstudianteDao().insertProgreso(progreso)
+                        } else {
+                            Log.w("CourseDetailFragment", "⚠️ Failed to update progress in Supabase")
+                        }
+                        
+                    } catch (e: Exception) {
+                        Log.e("CourseDetailFragment", "❌ Error calculating student progress", e)
+                    }
+                }
+                
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "❌ Error in recalculateStudentProgressOnEntry", e)
+            }
+        }
     }
 
     // Make sure we're properly handling content item clicks
@@ -2053,24 +2347,16 @@ class CourseDetailFragment : Fragment() {
     // iPhone-style entrance animation for course title and description
     private fun animateCourseTitleEntrance() {
         val root = view ?: return
-        val titleContainer = root.findViewById<LinearLayout>(R.id.courseTitleContainer)
-        val accentBar = root.findViewById<View>(R.id.courseTitleAccent)
+        val titleContainer = root.findViewById<View>(R.id.courseTitleContainer)
         val metaLabel = root.findViewById<TextView>(R.id.courseMetaLabel)
+        val insightRow: View? = null
+        val accentDivider = root.findViewById<View>(R.id.courseAccentDivider)
 
         titleContainer?.animate()?.apply {
             alpha(1f)
             translationY(0f)
             duration = 620
             interpolator = android.view.animation.DecelerateInterpolator(2.1f)
-        }?.start()
-
-        accentBar?.animate()?.apply {
-            startDelay = 120
-            alpha(1f)
-            scaleY(1f)
-            translationY(0f)
-            duration = 520
-            interpolator = android.view.animation.DecelerateInterpolator(1.9f)
         }?.start()
 
         metaLabel?.animate()?.apply {
@@ -2098,23 +2384,14 @@ class CourseDetailFragment : Fragment() {
             .setInterpolator(android.view.animation.DecelerateInterpolator(2.0f))
             .start()
 
-        // Subtle scale animation on edit button when visible
-        editCourseButton.postDelayed({
-            if (editCourseButton.visibility == View.VISIBLE) {
-                editCourseButton.scaleX = 0.8f
-                editCourseButton.scaleY = 0.8f
-                editCourseButton.alpha = 0f
-                editCourseButton.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
-                editCourseButton.animate()
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .alpha(1f)
-                    .translationY(0f)
-                    .setDuration(380)
-                    .setInterpolator(android.view.animation.OvershootInterpolator(1.18f))
-                    .start()
-            }
-        }, 320)
+        accentDivider?.animate()?.apply {
+            startDelay = 380
+            alpha(0.6f)
+            translationY(0f)
+            scaleX(1f)
+            duration = 520
+            interpolator = android.view.animation.DecelerateInterpolator(2.1f)
+        }?.start()
 
         // Begin animating secondary sections a moment later
         root.postDelayed({ animateContentSections() }, 420)

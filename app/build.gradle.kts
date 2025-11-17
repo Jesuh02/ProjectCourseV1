@@ -43,9 +43,9 @@ val supabaseProjectId = (project.findProperty("projectid") as? String)
     ?: localPropsMap["supabase_project_id"]
     ?: ""
 
-val supabaseUrl = if (supabaseUrlProp?.isNotBlank() == true) {
+val supabaseUrl = if (supabaseUrlProp.isNotBlank()) {
     supabaseUrlProp
-} else if (supabaseProjectId?.isNotBlank() == true) {
+} else if (supabaseProjectId.isNotBlank()) {
     "https://${supabaseProjectId}.supabase.co"
 } else ""
 
@@ -77,6 +77,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Provide a single authority string for FileProvider usage
+        manifestPlaceholders["fileProviderAuthority"] = "${applicationId}.fileprovider"
 
     // Exponer variables de Supabase y HOST_IP como BuildConfig
     buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")

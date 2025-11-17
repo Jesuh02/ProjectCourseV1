@@ -23,7 +23,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:scaleType="centerCrop"
-                android:src="@drawable/placeholder_image"
+                android:src="@drawable/bg_course_placeholder_card"
                 android:contentDescription="Miniatura del curso" />
 
             <!-- VideoView para reproducción automática -->

@@ -380,4 +380,130 @@ class SupabaseRepository(
             throw e
         }
     }
+    
+    /**
+     * Ejecuta una migración SQL desde un archivo
+     * Útil para aplicar triggers y funciones en Supabase
+     */
+    suspend fun executeMigrationFile(sqlContent: String): Boolean {
+        return try {
+            Log.d("SupabaseRepository", "Executing migration file...")
+            
+            // Dividir por statements individuales (separados por ;)
+            val statements = sqlContent.split(";")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("--") }
+            
+            var successCount = 0
+            for ((index, statement) in statements.withIndex()) {
+                try {
+                    if (statement.isNotBlank()) {
+                        executeRawQuery(statement)
+                        successCount++
+                        Log.d("SupabaseRepository", "Statement ${index + 1}/${statements.size} executed successfully")
+                    }
+                } catch (e: Exception) {
+                    Log.w("SupabaseRepository", "Statement ${index + 1} failed (may be expected for DROP IF EXISTS): ${e.message}")
+                }
+            }
+            
+            Log.i("SupabaseRepository", "Migration completed: $successCount/${statements.size} statements executed")
+            true
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error executing migration file", e)
+            false
+        }
+    }
+    
+    /**
+     * Recalcula el progreso (tareas_totales, tareas_completadas, porcentaje_progreso, promedio)
+     * para todos los estudiantes inscritos en un curso específico.
+     * Útil después de agregar o eliminar tareas.
+     */
+    suspend fun recalculateAllStudentProgressForCourse(courseId: Long): Boolean {
+        return try {
+            Log.d("SupabaseRepository", "Recalculating progress for all students in course $courseId")
+            
+            val sql = """
+                DO $$
+                DECLARE
+                    enrolled_student RECORD;
+                    total_tasks INTEGER;
+                    completed_tasks INTEGER;
+                    progress_pct REAL;
+                    total_grade NUMERIC;
+                    task_count INTEGER;
+                    avg_grade NUMERIC;
+                BEGIN
+                    -- Calcular total de tareas en el curso
+                    SELECT COUNT(*) INTO total_tasks
+                    FROM tasks tk
+                    JOIN topics t ON tk.topic_id = t.id
+                    WHERE t.course_id = $courseId;
+                    
+                    -- Para cada estudiante inscrito
+                    FOR enrolled_student IN 
+                        SELECT usuario_estudiante 
+                        FROM progreso_estudiante 
+                        WHERE curso_id = $courseId
+                    LOOP
+                        -- Calcular tareas completadas (grade > 0)
+                        SELECT COUNT(*) INTO completed_tasks
+                        FROM task_submissions ts
+                        JOIN tasks tk ON ts.task_id = tk.id
+                        JOIN topics t ON tk.topic_id = t.id
+                        WHERE ts.student_username = enrolled_student.usuario_estudiante
+                        AND t.course_id = $courseId
+                        AND ts.grade > 0;
+                        
+                        -- Calcular porcentaje de progreso
+                        IF total_tasks > 0 THEN
+                            progress_pct := (completed_tasks::REAL / total_tasks::REAL) * 100;
+                        ELSE
+                            progress_pct := 0;
+                        END IF;
+                        
+                        -- Calcular promedio
+                        SELECT 
+                            COALESCE(SUM(ts.grade), 0),
+                            COUNT(*)
+                        INTO total_grade, task_count
+                        FROM task_submissions ts
+                        JOIN tasks tk ON ts.task_id = tk.id
+                        JOIN topics t ON tk.topic_id = t.id
+                        WHERE ts.student_username = enrolled_student.usuario_estudiante
+                        AND t.course_id = $courseId;
+                        
+                        IF task_count > 0 THEN
+                            avg_grade := total_grade / task_count;
+                        ELSE
+                            avg_grade := 0;
+                        END IF;
+                        
+                        -- Actualizar progreso
+                        UPDATE progreso_estudiante
+                        SET 
+                            tareas_totales = total_tasks,
+                            tareas_completadas = completed_tasks,
+                            porcentaje_progreso = progress_pct,
+                            promedio = avg_grade,
+                            calificacion_ponderada = avg_grade,
+                            ultima_calculada_en = NOW()
+                        WHERE usuario_estudiante = enrolled_student.usuario_estudiante
+                        AND curso_id = $courseId;
+                        
+                        RAISE NOTICE 'Updated % - Tasks: %/%, Progress: %%, Avg: %',
+                            enrolled_student.usuario_estudiante, completed_tasks, total_tasks, progress_pct, avg_grade;
+                    END LOOP;
+                END $$;
+            """.trimIndent()
+            
+            executeRawQuery(sql)
+            Log.i("SupabaseRepository", "Successfully recalculated progress for course $courseId")
+            true
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error recalculating student progress", e)
+            false
+        }
+    }
 }

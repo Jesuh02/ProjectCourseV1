@@ -98,7 +98,7 @@
         </activity>        <!-- FileProvider configurations -->
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider;${applicationId}.service.provider;${applicationId}.service.fileprovider"
+            android:authorities="${fileProviderAuthority}"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data
