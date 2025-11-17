@@ -2,6 +2,7 @@
   "name": "@tareamov/mcp-server",
   "version": "2.0.0",
   "description": "Official MCP Server with RAG, Supabase integration and enterprise security",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

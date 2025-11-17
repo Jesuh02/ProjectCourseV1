@@ -1374,7 +1374,47 @@ IMPORTANTE: Si la evaluación previa NO detectó la incompatibilidad, CORREGIR y
   }
 });
 
+// Función para obtener la IP local del servidor automáticamente
+function getLocalIPAddress() {
+  const { networkInterfaces } = require('os');
+  const nets = networkInterfaces();
+  const results = [];
+
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]) {
+      // Ignorar direcciones internas (loopback) y no IPv4
+      const familyV4Value = typeof net.family === 'string' ? 'IPv4' : 4;
+      if (net.family === familyV4Value && !net.internal) {
+        results.push(net.address);
+      }
+    }
+  }
+  
+  return results;
+}
+
 // Listen on all interfaces so the service is reachable from other devices on the LAN
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Microservicio de distribución de contexto escuchando en puerto ${PORT} en 0.0.0.0`);
+  const localIPs = getLocalIPAddress();
+  console.log('='.repeat(60));
+  console.log('🚀 Microservicio de distribución de contexto iniciado');
+  console.log('='.repeat(60));
+  console.log(`📡 Puerto: ${PORT}`);
+  console.log(`🌐 Escuchando en todas las interfaces: 0.0.0.0`);
+  console.log('\n📍 Direcciones IP disponibles para conectar desde otros dispositivos:');
+  
+  if (localIPs.length > 0) {
+    localIPs.forEach((ip, index) => {
+      console.log(`   ${index + 1}. http://${ip}:${PORT}`);
+    });
+  } else {
+    console.log('   ⚠️  No se detectaron IPs locales (puede estar usando solo localhost)');
+  }
+  
+  console.log('\n🔗 Endpoints disponibles:');
+  console.log(`   • POST /analizar-entrega`);
+  console.log(`   • POST /feedback-entrega`);
+  console.log(`   • POST /procesar-prompt`);
+  console.log(`   • GET  / (health check)`);
+  console.log('='.repeat(60));
 });

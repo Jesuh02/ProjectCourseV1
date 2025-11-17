@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import com.example.tareamov.util.NetworkUtils
 
 /**
  * Servicio para ejecutar Llama 3 localmente en el dispositivo Android
@@ -20,17 +21,13 @@ class LocalLlamaService(private val context: Context) {
     private val modelFileName = "llama3-8b-q4_0.gguf"
 
     companion object {
-        // Fallback host addresses - EMULADOR PRIMERO (Oct 10, 2025)
-        val FALLBACK_LLAMA_URLS = listOf(
-            "http://10.0.2.2:11435",       // ?? EMULADOR -> HOST (M�XIMA PRIORIDAD)
-            "http://192.168.1.16:11435",   // Wi-Fi IP ACTUAL (ipconfig - Oct 10, 2025)
-            "http://192.168.1.1:11435",    // Gateway predeterminado (ipconfig - Oct 10, 2025)
-            "http://127.0.0.1:11435",      // Localhost
-            "http://localhost:11435",      // Localhost alternative
-            "http://10.218.57.181:11435",  // Wi-Fi IP anterior
-            "http://10.218.57.109:11435",  // Gateway predeterminado anterior
-            "http://172.17.112.1:11435"    // WSL / Hyper-V virtual adapter
-        )
+        /**
+         * Obtiene URLs de Ollama dinámicamente basadas en la IP del dispositivo
+         * Esta función debe ser llamada con un contexto válido
+         */
+        fun getFallbackLlamaUrls(context: Context): List<String> {
+            return NetworkUtils.buildServerUrls(context, 11435)
+        }
     }
 
     /**
@@ -878,7 +875,7 @@ WHERE c.creator_username IS NULL;
             append("2. Asegúrate de que el modelo llama3 esté disponible\n")
             append("3. Comprueba la conexión de red entre el emulador/dispositivo y el servidor\n\n")
             append("**Direcciones probadas:**\n")
-            FALLBACK_LLAMA_URLS.forEach { url ->
+            getFallbackLlamaUrls(context).forEach { url ->
                 append("- $url\n")
             }
             append("\n")
@@ -891,7 +888,8 @@ WHERE c.creator_username IS NULL;
      * Try to connect to a local Ollama instance
      */
     private suspend fun tryLocalOllamaConnection(prompt: String): String? = withContext(Dispatchers.IO) {
-        for (url in FALLBACK_LLAMA_URLS) {
+        val fallbackUrls = getFallbackLlamaUrls(context)
+        for (url in fallbackUrls) {
             try {
                 Log.d(TAG, "  Trying local Ollama at: $url")
                 
