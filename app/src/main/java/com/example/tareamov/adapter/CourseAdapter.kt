@@ -33,6 +33,16 @@ class CourseAdapter(
     private val onEnrollClickListener: ((Course) -> Unit)? = null // Enrollment callback
 ) : RecyclerView.Adapter<CourseAdapter.CourseViewHolder>() {
 
+    // Cache current user's id to avoid blocking lookups during bind
+    private var currentUserIdCached: Long? = null
+    fun setCurrentUserId(userId: Long?) {
+        currentUserIdCached = userId
+        notifyDataSetChanged()
+    }
+
+    // Cache for creator usernames by userId to reduce repeated network calls
+    private val creatorUsernameCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
+
     class CourseViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val thumbnailImageView: ImageView = itemView.findViewById(R.id.courseThumbnailImageView)
         val titleTextView: TextView = itemView.findViewById(R.id.courseTitleTextView)
@@ -77,9 +87,11 @@ class CourseAdapter(
         // Set course data
         holder.titleTextView.text = course.title
         holder.descriptionTextView.text = course.description
-        holder.creatorTextView.text = course.creatorUsername
+        // Don't set creatorTextView here - it will be set based on user permissions below
         holder.categoryTextView.text = course.category ?: "General"
         holder.ratingTextView.text = String.format("%.1f", course.rating)
+        
+        Log.d("CourseAdapter", "Binding course: ${course.title}, creatorUserId: ${course.creatorUserId}, currentUsername: $currentUsername")
         
         // Load real enrollment count from progreso_estudiante table
         loadEnrollmentCount(holder, course)
@@ -88,9 +100,34 @@ class CourseAdapter(
         val isCreator = canUserModifyCourse(course)
         val creatorInfoContainer = holder.itemView.findViewById<android.widget.LinearLayout>(R.id.creatorInfoContainer)
         
+        Log.d("CourseAdapter", "Is creator: $isCreator for course: ${course.title}")
+        
         if (isCreator) {
             // Hide subscription info for course creators
             creatorInfoContainer?.visibility = View.GONE
+            
+            // Set creator name for own courses - fetch username from user_id
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val creatorUsername = creatorUsernameCache[course.creatorUserId]
+                        ?: com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)?.also {
+                            creatorUsernameCache[course.creatorUserId] = it
+                        }
+                    withContext(Dispatchers.Main) {
+                        holder.creatorTextView.text = if (!creatorUsername.isNullOrBlank()) {
+                            "Por: $creatorUsername"
+                        } else {
+                            "Por: Tú"
+                        }
+                        Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
+                    }
+                } catch (e: Exception) {
+                    Log.e("CourseAdapter", "Error loading creator username for course ${course.id}", e)
+                    withContext(Dispatchers.Main) {
+                        holder.creatorTextView.text = "Por: Tú"
+                    }
+                }
+            }
             
             // Hide enrollment button for creators
             holder.enrollButtonContainer?.visibility = View.GONE
@@ -117,14 +154,32 @@ class CourseAdapter(
             // Show subscription info for other users' courses
             creatorInfoContainer?.visibility = View.VISIBLE
             
-            // Set creator info
-            holder.creatorTextView.text = course.creatorUsername ?: "Creador desconocido"
+            // Set creator info - fetch username from user_id
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val creatorUsername = creatorUsernameCache[course.creatorUserId]
+                        ?: com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)?.also {
+                            creatorUsernameCache[course.creatorUserId] = it
+                        }
+                    withContext(Dispatchers.Main) {
+                        holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"
+                        Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
+                        
+                        // Load subscription data with fetched username
+                        if (creatorUsername != null) {
+                            loadSubscriptionDataWithUsername(holder, course, creatorUsername)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("CourseAdapter", "Error loading creator username for course ${course.id}", e)
+                    withContext(Dispatchers.Main) {
+                        holder.creatorTextView.text = "Creador desconocido"
+                    }
+                }
+            }
             
             // Load creator avatar (default for now)
             holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
-            
-            // Load subscription data asynchronously
-            loadSubscriptionData(holder, course)
             
             // Show enrollment button for non-creators
             holder.enrollButtonContainer?.visibility = View.VISIBLE
@@ -172,110 +227,139 @@ class CourseAdapter(
                 return@setOnClickListener
             }
             
+            // Check if user is the creator - creators don't need enrollment
+            val isCreator = canUserModifyCourse(course)
+            
             // Block access to paid courses (price > 0) for non-creators
-            if (course.price > 0 && !canUserModifyCourse(course)) {
+            if (course.price > 0 && !isCreator) {
                 android.widget.Toast.makeText(context, "❌ Este es un curso de pago. Debes realizar el pago para acceder.", android.widget.Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             
-            // If it's a free course and user is not the creator, auto-enroll before navigating
-            if (!course.isPremium && course.price == 0.0 && !canUserModifyCourse(course)) {
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        val db = AppDatabase.getDatabase(context)
-                        
-                        // Check if already enrolled
-                        val existingProgreso = db.progresoEstudianteDao().getProgreso(currentUsername!!, course.id)
-                        
-                        if (existingProgreso == null) {
-                            // Ensure course exists in local DB
-                            val existingCourse = db.courseDao().getCourseById(course.id)
-                            if (existingCourse == null) {
-                                Log.d("CourseAdapter", "Course not in local DB, inserting: ${course.title}")
-                                db.courseDao().insertCourse(course)
-                            }
-                            
-                            // Get total tasks for this course
-                            val topics = db.topicDao().getTopicsByCourse(course.id)
-                            val topicIds = topics.map { it.id }
-                            val totalTasks = if (topicIds.isNotEmpty()) {
-                                db.taskDao().getTasksByTopicIds(topicIds).size
-                            } else {
-                                0
-                            }
-                            
-                            // Create initial progress record
-                            val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                                usuarioEstudiante = currentUsername!!,
-                                cursoId = course.id,
-                                tareasCompletadas = 0,
-                                tareasTotales = totalTasks,
-                                porcentajeProgreso = 0f,
-                                calificacionPonderada = null,
-                                promedio = null,
-                                estado = "Perdido",
-                                ultimaCalculadaEn = System.currentTimeMillis()
-                            )
-                            
-                            // Save locally
-                            db.progresoEstudianteDao().insertProgreso(progreso)
-                            Log.d("CourseAdapter", "✅ Auto-enrolled $currentUsername in free course ${course.id}")
-                            
-                            // Sync to Supabase
-                            val syncRepo = com.example.tareamov.data.sync.SyncRepository(
-                                db.usuarioDao(),
-                                db.personaDao(),
-                                db.topicDao(),
-                                db.contentItemDao(),
-                                db.taskDao(),
-                                db.subscriptionDao(),
-                                db.taskSubmissionDao(),
-                                db.videoDao(),
-                                db.courseDao(),
-                                db.rolDao(),
-                                db.recursoDao(),
-                                db.rolRecursoDao(),
-                                db.chatMessageDao(),
-                                db.fileContextDao(),
-                                db.progresoEstudianteDao()
-                            )
-                            val syncSuccess = syncRepo.syncProgresoToSupabase(progreso)
-                            
-                            withContext(Dispatchers.Main) {
-                                if (syncSuccess) {
-                                    Log.d("CourseAdapter", "✅ Enrollment synced to Supabase")
-                                    android.widget.Toast.makeText(context, "✅ ¡Inscrito automáticamente en ${course.title}!", android.widget.Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Log.w("CourseAdapter", "⚠️ Failed to sync enrollment to Supabase")
-                                }
-                                
-                                // Navigate after enrollment
-                                onCourseClickListener(course)
-                            }
-                        } else {
-                            // Already enrolled, just navigate
-                            withContext(Dispatchers.Main) {
-                                onCourseClickListener(course)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e("CourseAdapter", "❌ Error auto-enrolling in free course", e)
-                        withContext(Dispatchers.Main) {
-                            android.widget.Toast.makeText(context, "❌ Error al inscribirse: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
+            // If it's a free course and user is NOT the creator, auto-enroll before navigating
+            if (!course.isPremium && course.price == 0.0 && !isCreator) {
+                autoEnrollAndNavigate(course)
             } else {
                 // Premium course or user is creator, just navigate
                 onCourseClickListener(course)
             }
         }
     }
+    
+    /**
+     * Auto-enroll user in a free course and navigate to course detail
+     */
+    private fun autoEnrollAndNavigate(course: Course) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                
+                // Get user ID from username
+                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                if (userId == null) {
+                    Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "Error: Usuario no encontrado", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                
+                // Check if already enrolled
+                val existingProgreso = db.progresoEstudianteDao().getProgreso(userId, course.id)
+                
+                if (existingProgreso == null) {
+                    // Ensure course exists in local DB
+                    val existingCourse = db.courseDao().getCourseById(course.id)
+                    if (existingCourse == null) {
+                        Log.d("CourseAdapter", "Course not in local DB, inserting: ${course.title}")
+                        db.courseDao().insertCourse(course)
+                    }
+                    
+                    // Get total tasks for this course
+                    val topics = db.topicDao().getTopicsByCourse(course.id)
+                    val topicIds = topics.map { it.id }
+                    val totalTasks = if (topicIds.isNotEmpty()) {
+                        db.taskDao().getTasksByTopicIds(topicIds).size
+                    } else {
+                        0
+                    }
+                    
+                    // Create initial progress record
+                    val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                        usuarioEstudiante = userId,
+                        cursoId = course.id,
+                        tareasCompletadas = 0,
+                        tareasTotales = totalTasks,
+                        porcentajeProgreso = 0f,
+                        calificacionPonderada = null,
+                        promedio = null,
+                        estado = "Perdido",
+                        ultimaCalculadaEn = System.currentTimeMillis()
+                    )
+                    
+                    // Save locally
+                    db.progresoEstudianteDao().insertProgreso(progreso)
+                    Log.d("CourseAdapter", "✅ Auto-enrolled $currentUsername in free course ${course.id}")
+                    
+                    // Sync to Supabase
+                    val syncRepo = createSyncRepository(db)
+                    val syncSuccess = syncRepo.syncProgresoToSupabase(progreso)
+                    
+                    withContext(Dispatchers.Main) {
+                        if (syncSuccess) {
+                            Log.d("CourseAdapter", "✅ Enrollment synced to Supabase")
+                            android.widget.Toast.makeText(context, "✅ ¡Inscrito automáticamente en ${course.title}!", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            Log.w("CourseAdapter", "⚠️ Failed to sync enrollment to Supabase")
+                        }
+                        
+                        // Navigate after enrollment
+                        onCourseClickListener(course)
+                    }
+                } else {
+                    // Already enrolled, just navigate
+                    withContext(Dispatchers.Main) {
+                        onCourseClickListener(course)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseAdapter", "❌ Error auto-enrolling in free course", e)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "❌ Error al inscribirse: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+    
+    /**
+     * Create SyncRepository instance (extracted to reduce duplication)
+     */
+    private fun createSyncRepository(db: AppDatabase): com.example.tareamov.data.sync.SyncRepository {
+        return com.example.tareamov.data.sync.SyncRepository(
+            db.usuarioDao(),
+            db.personaDao(),
+            db.topicDao(),
+            db.contentItemDao(),
+            db.taskDao(),
+            db.subscriptionDao(),
+            db.taskSubmissionDao(),
+            db.videoDao(),
+            db.courseDao(),
+            db.rolDao(),
+            db.recursoDao(),
+            db.rolRecursoDao(),
+            db.chatMessageDao(),
+            db.fileContextDao(),
+            db.progresoEstudianteDao()
+        )
+    }
 
     override fun getItemCount(): Int = courses.size
 
     fun updateCourses(newCourses: List<Course>) {
+        // Always show newest courses first to match Supabase ordering
         courses = newCourses
+            .sortedWith(compareByDescending<Course> { it.timestamp }.thenByDescending { it.creationDate })
         notifyDataSetChanged()
     }
 
@@ -283,8 +367,19 @@ class CourseAdapter(
      * Check if current user can modify the given course (i.e., is the creator)
      */
     private fun canUserModifyCourse(course: Course): Boolean {
-        val canModify = currentUsername != null && currentUsername == course.creatorUsername
-        return canModify
+        val uid = currentUserIdCached
+        val can = uid != null && uid == course.creatorUserId
+        Log.d("CourseAdapter", "canUserModifyCourse: currentUserId=$uid, course.creatorUserId=${course.creatorUserId}, canModify=$can")
+        return can
+    }
+    
+    /**
+     * Check if current user can modify the given course (suspend version for coroutine contexts)
+     */
+    private suspend fun canUserModifyCourseSuspend(course: Course): Boolean {
+        if (currentUsername == null) return false
+        val currentUserId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+        return currentUserId != null && currentUserId == course.creatorUserId
     }
 
     /**
@@ -312,9 +407,9 @@ class CourseAdapter(
     }
 
     /**
-     * Load subscription data asynchronously
+     * Load subscription data asynchronously with username
      */
-    private fun loadSubscriptionData(holder: CourseViewHolder, course: Course) {
+    private fun loadSubscriptionDataWithUsername(holder: CourseViewHolder, course: Course, creatorUsername: String) {
         if (currentUsername == null) {
             // No user logged in
             holder.subscriberCountTextView.text = "0 suscriptores"
@@ -328,10 +423,10 @@ class CourseAdapter(
                 val db = AppDatabase.getDatabase(context)
                 
                 // Get subscriber count for this creator
-                val subscriberCount = db.subscriptionDao().getSubscriptionCountForCreator(course.creatorUsername ?: "")
+                val subscriberCount = db.subscriptionDao().getSubscriptionCountForCreator(creatorUsername)
                 
                 // Check if current user is subscribed to this creator
-                val isSubscribed = db.subscriptionDao().isUserSubscribedToCreator(currentUsername!!, course.creatorUsername ?: "")
+                val isSubscribed = db.subscriptionDao().isUserSubscribedToCreator(currentUsername!!, creatorUsername)
                 
                 withContext(Dispatchers.Main) {
                     // Update subscriber count
@@ -380,8 +475,15 @@ class CourseAdapter(
             try {
                 val db = AppDatabase.getDatabase(context)
                 
+                // Get user ID from username
+                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                if (userId == null) {
+                    Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
+                    return@launch
+                }
+                
                 // Check if user is already enrolled (has progreso record)
-                val progreso = db.progresoEstudianteDao().getProgreso(currentUsername!!, course.id)
+                val progreso = db.progresoEstudianteDao().getProgreso(userId, course.id)
                 
                 withContext(Dispatchers.Main) {
                     if (progreso != null) {

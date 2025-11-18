@@ -174,24 +174,11 @@ class ExploreFragment : Fragment() {
         }
     }
 
-    // Setup real-time observation of course changes
+    // Setup real-time observation of course changes - DISABLED to force Supabase loading
     private fun setupCourseObservation() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            // Observe courses directly from Course table
-            courseRepository.getAllCoursesFlow().collect { courses ->
-                Log.d("ExploreFragment", "Observed ${courses.size} courses from Course table")
-                // Keep Course table list sorted newest -> oldest
-                val sortedCourses = courses.sortedByDescending { it.timestamp }
-                allCoursesList.clear()
-                allCoursesList.addAll(sortedCourses)
-
-                // Filter courses and update stats
-                filterCourses(searchEditText.text.toString())
-                
-                // Force update stats even if filter didn't change anything
-                updateCourseStats()
-            }
-        }
+        // Observation disabled - we now load all courses directly from Supabase
+        // This avoids showing stale Room data (only 7 courses) instead of full Supabase data (104+ courses)
+        Log.d("ExploreFragment", "Course observation from Room DISABLED - using Supabase direct fetch")
     }
 
     // Generate thumbnails preventively for videos without them
@@ -229,14 +216,19 @@ class ExploreFragment : Fragment() {
     }
 
     // Convert Course to VideoData for adapter compatibility
-    private fun convertCourseToVideoData(course: Course): VideoData {
-        val usernameSafe = course.creatorUsername ?: ""
-        if (course.creatorUsername == null) {
-            Log.w("ExploreFragment", "convertCourseToVideoData: course.id=${course.id} has null creatorUsername, using empty username")
+    private suspend fun convertCourseToVideoData(course: Course): VideoData {
+        // Fetch creator username from user_id
+        val creatorUsername = withContext(Dispatchers.IO) {
+            com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+        } ?: ""
+        
+        if (creatorUsername.isEmpty()) {
+            Log.w("ExploreFragment", "convertCourseToVideoData: course.id=${course.id} creatorUserId=${course.creatorUserId} has no username, using empty")
         }
+        
         return VideoData(
             id = course.id,
-            username = usernameSafe,
+            username = creatorUsername,
             description = course.description ?: "", // Asegurar que no sea null
             title = course.title,
             videoUriString = course.videoUri ?: "",
@@ -279,33 +271,43 @@ class ExploreFragment : Fragment() {
             return
         }
 
-        if (currentUsername == course.creatorUsername) {
-            showDarkToast("❌ No puedes suscribirte a tu propio curso")
-            return
-        }
-
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                // Get creator username from user_id
+                val creatorUsername = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                }
+                
+                if (creatorUsername == null) {
+                    showDarkToast("❌ Error: No se pudo obtener el nombre del creador")
+                    return@launch
+                }
+                
+                if (currentUsername == creatorUsername) {
+                    showDarkToast("❌ No puedes suscribirte a tu propio curso")
+                    return@launch
+                }
+                
                 val db = AppDatabase.getDatabase(requireContext())
                 
                 if (isCurrentlySubscribed) {
                     // Unsubscribe
-                    db.subscriptionDao().unsubscribeFromCreator(currentUsername!!, course.creatorUsername ?: "")
+                    db.subscriptionDao().unsubscribeFromCreator(currentUsername!!, creatorUsername)
                     
                     // Also sync to Supabase
-                    syncUnsubscriptionToSupabase(currentUsername!!, course.creatorUsername ?: "")
+                    syncUnsubscriptionToSupabase(currentUsername!!, creatorUsername)
                     
-                    showDarkToast("✅ Te has desuscrito de ${course.creatorUsername}")
-                    Log.d("ExploreFragment", "User $currentUsername unsubscribed from ${course.creatorUsername}")
+                    showDarkToast("✅ Te has desuscrito de $creatorUsername")
+                    Log.d("ExploreFragment", "User $currentUsername unsubscribed from $creatorUsername")
                 } else {
                     // Subscribe
-                    db.subscriptionDao().subscribeToCreator(currentUsername!!, course.creatorUsername ?: "")
+                    db.subscriptionDao().subscribeToCreator(currentUsername!!, creatorUsername)
                     
                     // Also sync to Supabase
-                    syncSubscriptionToSupabase(currentUsername!!, course.creatorUsername ?: "")
+                    syncSubscriptionToSupabase(currentUsername!!, creatorUsername)
                     
-                    showDarkToast("🎉 Te has suscrito a ${course.creatorUsername}")
-                    Log.d("ExploreFragment", "User $currentUsername subscribed to ${course.creatorUsername}")
+                    showDarkToast("🎉 Te has suscrito a $creatorUsername")
+                    Log.d("ExploreFragment", "User $currentUsername subscribed to $creatorUsername")
                 }
                 
                 // Refresh the adapter to update subscription states
@@ -327,24 +329,45 @@ class ExploreFragment : Fragment() {
             return
         }
         
-        if (currentUsername == course.creatorUsername) {
-            showDarkToast("No puedes inscribirte en tu propio curso")
-            return
-        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Get creator username from user_id
+                val creatorUsername = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                }
+                
+                if (creatorUsername == null) {
+                    showDarkToast("❌ Error: No se pudo obtener el nombre del creador")
+                    return@launch
+                }
+                
+                if (currentUsername == creatorUsername) {
+                    showDarkToast("No puedes inscribirte en tu propio curso")
+                    return@launch
+                }
         
         // Block enrollment for paid courses (price > 0)
         if (course.price > 0) {
             showDarkToast("❌ Este es un curso de pago. Debes realizar el pago para acceder.", Toast.LENGTH_LONG)
-            return
+            return@launch
         }
         
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
                 val db = AppDatabase.getDatabase(requireContext())
+                
+                // Get user ID from username
+                val userId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                }
+                
+                if (userId == null) {
+                    showDarkToast("Error: Usuario no encontrado")
+                    Log.e("ExploreFragment", "Failed to get user ID for username: $currentUsername")
+                    return@launch
+                }
                 
                 // Check if already enrolled
                 val existingProgreso = withContext(Dispatchers.IO) {
-                    db.progresoEstudianteDao().getProgreso(currentUsername!!, course.id)
+                    db.progresoEstudianteDao().getProgreso(userId, course.id)
                 }
                 
                 if (existingProgreso != null) {
@@ -377,7 +400,7 @@ class ExploreFragment : Fragment() {
                 
                 // Create initial progress record
                 val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                    usuarioEstudiante = currentUsername!!,
+                    usuarioEstudiante = userId,
                     cursoId = course.id,
                     tareasCompletadas = 0,
                     tareasTotales = totalTasks,
@@ -431,6 +454,8 @@ class ExploreFragment : Fragment() {
         // Setup for "My Courses" RecyclerView
         val coursesRecyclerView = view.findViewById<RecyclerView>(R.id.coursesRecyclerView)
         coursesRecyclerView.layoutManager = LinearLayoutManager(requireContext(), RecyclerView.VERTICAL, false)
+        coursesRecyclerView.setHasFixedSize(true)
+        coursesRecyclerView.setItemViewCacheSize(100)
 
         Log.d("ExploreFragment", "Setting up adapter with currentUsername: $currentUsername")
 
@@ -438,21 +463,37 @@ class ExploreFragment : Fragment() {
             requireContext(),
             coursesList,
             onCourseClickListener = { course ->
-                Log.d("ExploreFragment", "Course clicked: ${course.title} by ${course.creatorUsername}")
-                navigateToCourseDetail(course)
+                lifecycleScope.launch {
+                    val creatorUsername = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                    }
+                    Log.d("ExploreFragment", "Course clicked: ${course.title} by $creatorUsername")
+                    navigateToCourseDetail(course)
+                }
             },
             currentUsername = currentUsername, // Pass current username for subscription logic
             onSubscriptionClickListener = { course, isCurrentlySubscribed ->
                 handleSubscriptionClick(course, isCurrentlySubscribed)
             },
             onEditClickListener = { course ->
-                editCourse(convertCourseToVideoData(course))
+                lifecycleScope.launch {
+                    val videoData = convertCourseToVideoData(course)
+                    editCourse(videoData)
+                }
             },
             onDeleteClickListener = { course ->
-                deleteCourseFromTable(course.id, course.creatorUsername ?: "")
+                lifecycleScope.launch {
+                    val creatorUsername = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                    }
+                    deleteCourseFromTable(course.id, creatorUsername ?: "")
+                }
             },
             onThumbnailChangeClickListener = { course ->
-                showThumbnailChangeOptions(convertCourseToVideoData(course))
+                lifecycleScope.launch {
+                    val videoData = convertCourseToVideoData(course)
+                    showThumbnailChangeOptions(videoData)
+                }
             },
             onEnrollClickListener = { course ->
                 handleEnrollmentClick(course)
@@ -460,53 +501,59 @@ class ExploreFragment : Fragment() {
         )
         coursesRecyclerView.adapter = coursesAdapter
 
+        // Resolve current user id once and pass to adapter (no blocking per row)
+        if (currentUsername != null) {
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val uid = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                    withContext(Dispatchers.Main) {
+                        coursesAdapter.setCurrentUserId(uid)
+                        Log.d("ExploreFragment", "Cached current user id in adapter: $uid")
+                    }
+                } catch (t: Throwable) {
+                    Log.w("ExploreFragment", "Failed to resolve current user id for $currentUsername", t)
+                }
+            }
+        }
+
         // Agregar ScrollListener para paginación
         coursesRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(recyclerView, dx, dy)
                 
                 val layoutManager = recyclerView.layoutManager as? LinearLayoutManager
-                if (layoutManager != null && dy > 0) { // Solo cuando se hace scroll hacia abajo
+                if (layoutManager != null) {
+                    val totalItemCount = layoutManager.itemCount
                     val lastVisibleItemPosition = layoutManager.findLastVisibleItemPosition()
 
-                    // Cargar más cuando llegue al curso 5 (posición 4, porque empieza en 0)
-                    if (!isLoadingCourses && 
-                        coursesList.size < totalCourses &&
-                        lastVisibleItemPosition >= 4 &&
-                        !hasTriggeredLoadAtPosition5) {
-                        Log.d("ExploreFragment", "User scrolled to course 5 (position $lastVisibleItemPosition), loading more courses...")
-                        hasTriggeredLoadAtPosition5 = true
+                    // Cargar más cuando el usuario vea el 5to desde el final
+                    if (!isLoadingCourses && totalItemCount > 0 && lastVisibleItemPosition >= totalItemCount - 5) {
                         loadMoreCourses()
                     }
-                    
-                    // Después de cargar más, resetear el flag cuando pase la posición 10
-                    if (hasTriggeredLoadAtPosition5 && lastVisibleItemPosition >= 14) {
-                        hasTriggeredLoadAtPosition5 = false
-                        Log.d("ExploreFragment", "Reset load trigger for next batch")
-                    }
-                }
-            }
-            
-            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                super.onScrollStateChanged(recyclerView, newState)
-                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-                    // Cuando el scroll se detiene, permitir que el video visible se reproduzca
-                    Log.d("ExploreFragment", "Scroll stopped, allowing video playback")
                 }
             }
         })
     }
 
     private fun navigateToCourseDetail(course: Course) {
-        // Check if current user is the course creator
-        val isCreator = currentUsername != null && currentUsername == course.creatorUsername
+        lifecycleScope.launch {
+            // Check if current user is the course creator by comparing user IDs
+            val isCreator = if (currentUsername != null) {
+                val currentUserId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                }
+                currentUserId != null && currentUserId == course.creatorUserId
+            } else {
+                false
+            }
 
-        val bundle = Bundle().apply {
-            putLong("courseId", course.id)
-            putString("courseName", course.title)
-            putBoolean("isCreator", isCreator)
+            val bundle = Bundle().apply {
+                putLong("courseId", course.id)
+                putString("courseName", course.title)
+                putBoolean("isCreator", isCreator)
+            }
+            findNavController().navigate(R.id.action_exploreFragment_to_courseDetailFragment, bundle)
         }
-        findNavController().navigate(R.id.action_exploreFragment_to_courseDetailFragment, bundle)
     }
 
     // Method to add new course to Course table
@@ -745,25 +792,43 @@ class ExploreFragment : Fragment() {
     }
 
     // Method to check if current user can perform CRUD operations on a Course entity
-    private fun canUserModifyCourse(course: Course): Boolean {
-        val canModify = currentUsername != null && currentUsername == course.creatorUsername
-        Log.d("ExploreFragment", "Can user modify course entity '${course.title}'? $canModify (Current: '$currentUsername', Course Creator: '${course.creatorUsername}')")
+    private suspend fun canUserModifyCourse(course: Course): Boolean {
+        if (currentUsername == null) return false
+        
+        val currentUserId = withContext(Dispatchers.IO) {
+            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+        }
+        
+        val canModify = currentUserId != null && currentUserId == course.creatorUserId
+        Log.d("ExploreFragment", "Can user modify course entity '${course.title}'? $canModify (Current user_id: '$currentUserId', Course creator_user_id: '${course.creatorUserId}')")
         return canModify
     }
 
     // Get courses created by current user only
-    private fun getUserOwnedCourses(): List<Course> {
-        return if (currentUsername != null) {
-            allCoursesList.filter { it.creatorUsername == currentUsername }
+    private suspend fun getUserOwnedCourses(): List<Course> {
+        if (currentUsername == null) return emptyList()
+        
+        val currentUserId = withContext(Dispatchers.IO) {
+            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+        }
+        
+        return if (currentUserId != null) {
+            allCoursesList.filter { it.creatorUserId == currentUserId }
         } else {
             emptyList()
         }
     }
 
     // Get courses NOT created by current user (for viewing only)
-    private fun getOtherUsersCourses(): List<Course> {
-        return if (currentUsername != null) {
-            allCoursesList.filter { it.creatorUsername != currentUsername }
+    private suspend fun getOtherUsersCourses(): List<Course> {
+        if (currentUsername == null) return allCoursesList
+        
+        val currentUserId = withContext(Dispatchers.IO) {
+            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+        }
+        
+        return if (currentUserId != null) {
+            allCoursesList.filter { it.creatorUserId != currentUserId }
         } else {
             allCoursesList
         }
@@ -1015,7 +1080,7 @@ class ExploreFragment : Fragment() {
         }
     }    /**
      * Load courses with pagination (10 at a time)
-     * OPTIMIZED: Uses Supabase pagination endpoint directly
+     * Uses Supabase pagination for better performance
      */
     private fun loadCourses(forceRemote: Boolean = false) {
         if (isLoadingCourses) {
@@ -1026,34 +1091,62 @@ class ExploreFragment : Fragment() {
         isLoadingCourses = true
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                Log.d("ExploreFragment", "loadCourses: Loading initial courses (page 0)")
+                Log.d("ExploreFragment", "loadCourses: Starting to load courses from Supabase (forceRemote=$forceRemote)")
                 
-                val (courses, total) = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.fetchCoursesSummary(
-                        limit = pageSize,
-                        offset = 0,
-                        orderBy = "timestamp",
-                        direction = "desc"
-                    )
+                // Load ALL courses from Supabase for filtering (but display paginated)
+                val allCourses = withContext(Dispatchers.IO) {
+                    Log.d("ExploreFragment", "loadCourses: Calling SupabaseClient.fetchCourses()")
+                    val courses = com.example.tareamov.service.SupabaseClient.fetchCourses()
+                    Log.d("ExploreFragment", "loadCourses: Received ${courses.size} courses from Supabase")
+                    
+                    // Log unique course titles to verify diversity
+                    val uniqueTitles = courses.map { it.title }.distinct()
+                    Log.d("ExploreFragment", "loadCourses: Unique course titles: ${uniqueTitles.size}")
+                    uniqueTitles.take(10).forEachIndexed { index, title ->
+                        Log.d("ExploreFragment", "  #$index: $title")
+                    }
+                    
+                    // Log creator IDs to check diversity
+                    val uniqueCreators = courses.map { it.creatorUserId }.distinct()
+                    Log.d("ExploreFragment", "loadCourses: Unique creator IDs: ${uniqueCreators.joinToString(", ")}")
+                    
+                    courses
                 }
-
-                totalCourses = total
+                
+                totalCourses = allCourses.size
                 currentPage = 0
-                hasTriggeredLoadAtPosition5 = false // Resetear flag al cargar inicial
+                hasTriggeredLoadAtPosition5 = false
+                
+                Log.d("ExploreFragment", "loadCourses: Total courses fetched = $totalCourses")
                 
                 withContext(Dispatchers.Main) {
+                    // Store ALL courses sorted by most recent for filtering
+                    val sortedCourses = allCourses.sortedByDescending { it.timestamp }
                     allCoursesList.clear()
-                    allCoursesList.addAll(courses)
+                    allCoursesList.addAll(sortedCourses)
                     
+                    Log.d("ExploreFragment", "loadCourses: Stored ${allCoursesList.size} courses in allCoursesList")
+                    
+                    // Display ALL courses immediately (no pagination needed for small lists)
                     coursesList.clear()
-                    coursesList.addAll(courses)
+                    coursesList.addAll(sortedCourses)
+                    
+                    Log.d("ExploreFragment", "loadCourses: Displaying ${coursesList.size} courses in RecyclerView")
+                    
+                    // Log first few courses for verification
+                    coursesList.take(5).forEachIndexed { index, course ->
+                        Log.d("ExploreFragment", "  Course #$index: ${course.title} (ID: ${course.id}, creatorUserId: ${course.creatorUserId})")
+                    }
                     
                     if (::coursesAdapter.isInitialized) {
                         coursesAdapter.updateCourses(coursesList)
+                        Log.d("ExploreFragment", "loadCourses: Adapter updated with ${coursesList.size} courses")
+                    } else {
+                        Log.w("ExploreFragment", "loadCourses: coursesAdapter not initialized yet!")
                     }
                     
                     updateCourseStats()
-                    Log.d("ExploreFragment", "Loaded ${courses.size} courses (total: $totalCourses)")
+                    Log.d("ExploreFragment", "Loaded and displaying all ${allCourses.size} courses")
                 }
 
             } catch (e: Exception) {
@@ -1066,56 +1159,13 @@ class ExploreFragment : Fragment() {
     }
     
     /**
-     * Load more courses (next page)
+     * Load more courses (next page) from the already-loaded allCoursesList
+     * Note: Currently all courses are loaded at once, but this is kept for future pagination
      */
     private fun loadMoreCourses() {
-        if (isLoadingCourses) {
-            Log.d("ExploreFragment", "Already loading courses, skipping")
-            return
-        }
-
-        isLoadingCourses = true
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                val nextPage = currentPage + 1
-                val offset = nextPage * pageSize
-                
-                Log.d("ExploreFragment", "loadMoreCourses: Loading page $nextPage (offset $offset)")
-
-                val (courses, _) = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.fetchCoursesSummary(
-                        limit = pageSize,
-                        offset = offset,
-                        orderBy = "timestamp",
-                        direction = "desc"
-                    )
-                }
-
-                if (courses.isNotEmpty()) {
-                    currentPage = nextPage
-                    
-                    withContext(Dispatchers.Main) {
-                        allCoursesList.addAll(courses)
-                        
-                        val oldSize = coursesList.size
-                        coursesList.addAll(courses)
-                        
-                        if (::coursesAdapter.isInitialized) {
-                            coursesAdapter.notifyItemRangeInserted(oldSize, courses.size)
-                        }
-                        
-                        Log.d("ExploreFragment", "Loaded ${courses.size} more courses (total now: ${coursesList.size}/$totalCourses)")
-                    }
-                } else {
-                    Log.d("ExploreFragment", "No more courses to load")
-                }
-
-            } catch (e: Exception) {
-                Log.e("ExploreFragment", "Error loading more courses", e)
-            } finally {
-                isLoadingCourses = false
-            }
-        }
+        // All courses are already loaded and displayed, no pagination needed
+        Log.d("ExploreFragment", "All courses already loaded (${coursesList.size} courses displayed)")
+        return
     }
 
     /**
@@ -1156,27 +1206,51 @@ class ExploreFragment : Fragment() {
 
     // Filter courses by name or category
     private fun filterCourses(query: String) {
-        val filtered = if (query.isBlank()) {
-            // When search is empty, show the most recent 10 courses
-            allCoursesList.sortedByDescending { it.timestamp }.take(10)
+        if (query.isBlank()) {
+            // When search is empty, show all loaded courses sorted by most recent
+            val sorted = allCoursesList.sortedByDescending { it.timestamp }
+            coursesList.clear()
+            coursesList.addAll(sorted)
+            Log.d("ExploreFragment", "filterCourses -> query empty, showing all ${sorted.size} courses")
+            if (::coursesAdapter.isInitialized) {
+                coursesAdapter.updateCourses(coursesList)
+            }
+            updateCourseStats()
         } else {
-            // When searching, search in ALL courses (not just top 10)
-            allCoursesList.filter { course ->
-                course.title.contains(query, ignoreCase = true) ||
-                        course.description?.contains(query, ignoreCase = true) == true ||
-                        course.creatorUsername?.contains(query, ignoreCase = true) == true
+            // When searching, search remotely in Supabase
+            Log.d("ExploreFragment", "filterCourses -> query='$query', searching remotely...")
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    val searchResults = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.searchCourses(query)
+                    }
+                    
+                    withContext(Dispatchers.Main) {
+                        coursesList.clear()
+                        coursesList.addAll(searchResults.sortedByDescending { it.timestamp })
+                        Log.d("ExploreFragment", "filterCourses -> found ${searchResults.size} results")
+                        if (::coursesAdapter.isInitialized) {
+                            coursesAdapter.updateCourses(coursesList)
+                        }
+                        updateCourseStats()
+                    }
+                } catch (e: Exception) {
+                    Log.e("ExploreFragment", "Error searching courses remotely", e)
+                    // Fallback to local search
+                    val filtered = allCoursesList.filter { course ->
+                        course.title.contains(query, ignoreCase = true) ||
+                                course.description?.contains(query, ignoreCase = true) == true ||
+                                course.category?.contains(query, ignoreCase = true) == true
+                    }.sortedByDescending { it.timestamp }
+                    coursesList.clear()
+                    coursesList.addAll(filtered)
+                    if (::coursesAdapter.isInitialized) {
+                        coursesAdapter.updateCourses(coursesList)
+                    }
+                    updateCourseStats()
+                }
             }
         }
-        coursesList.clear()
-        coursesList.addAll(filtered)
-        Log.d("ExploreFragment", "filterCourses -> query='$query' filteredSize=${filtered.size} allCourses=${allCoursesList.size} coursesList=${coursesList.size}")
-        if (::coursesAdapter.isInitialized) {
-            Log.d("ExploreFragment", "filterCourses -> updating adapter with ${coursesList.size} items")
-            coursesAdapter.updateCourses(coursesList)
-        } else {
-            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
-        }
-        updateCourseStats()
     }
 
     // Show filter options dialog
@@ -1215,7 +1289,9 @@ class ExploreFragment : Fragment() {
 
     // Filter premium courses
     private fun filterPremiumCourses() {
-        val premiumCourses = allCoursesList.filter { it.isPremium == true }
+        val premiumCourses = allCoursesList
+            .filter { it.isPremium == true }
+            .sortedByDescending { it.timestamp }
         coursesList.clear()
         coursesList.addAll(premiumCourses)
         if (::coursesAdapter.isInitialized) {
@@ -1229,7 +1305,9 @@ class ExploreFragment : Fragment() {
 
     // Filter free courses
     private fun filterFreeCourses() {
-        val freeCourses = allCoursesList.filter { it.isPremium != true }
+        val freeCourses = allCoursesList
+            .filter { it.isPremium != true }
+            .sortedByDescending { it.timestamp }
         coursesList.clear()
         coursesList.addAll(freeCourses)
         if (::coursesAdapter.isInitialized) {
@@ -1287,43 +1365,60 @@ class ExploreFragment : Fragment() {
 
     // Filter courses to show only user's own courses
     private fun filterMyCoursesOnly() {
-        val myCoursesOnly = getUserOwnedCourses()
-        coursesList.clear()
-        coursesList.addAll(myCoursesOnly)
-        if (::coursesAdapter.isInitialized) {
-            coursesAdapter.updateCourses(coursesList)
-        } else {
-            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+        lifecycleScope.launch {
+            try {
+                val myCoursesOnly = getUserOwnedCourses()
+                val sorted = myCoursesOnly.sortedByDescending { it.timestamp }
+                coursesList.clear()
+                coursesList.addAll(sorted)
+                if (::coursesAdapter.isInitialized) {
+                    coursesAdapter.updateCourses(coursesList)
+                } else {
+                    Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+                }
+                updateCourseStats()
+                Log.d("ExploreFragment", "Filtered to show only user's courses: ${sorted.size} courses")
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error filtering user's courses", e)
+                Toast.makeText(context, "Error filtrando cursos", Toast.LENGTH_SHORT).show()
+            }
         }
-        updateCourseStats()
-        Log.d("ExploreFragment", "Filtered to show only user's courses: ${myCoursesOnly.size} courses")
     }
 
     // Filter courses to show only other users' courses
     private fun filterOtherCoursesOnly() {
-        val otherCourses = getOtherUsersCourses()
-        coursesList.clear()
-        coursesList.addAll(otherCourses)
-        if (::coursesAdapter.isInitialized) {
-            coursesAdapter.updateCourses(coursesList)
-        } else {
-            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+        lifecycleScope.launch {
+            try {
+                val otherCourses = getOtherUsersCourses()
+                val sorted = otherCourses.sortedByDescending { it.timestamp }
+                coursesList.clear()
+                coursesList.addAll(sorted)
+                if (::coursesAdapter.isInitialized) {
+                    coursesAdapter.updateCourses(coursesList)
+                } else {
+                    Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+                }
+                updateCourseStats()
+                Log.d("ExploreFragment", "Filtered to show only other users' courses: ${sorted.size} courses")
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error filtering other users' courses", e)
+                Toast.makeText(context, "Error filtrando cursos", Toast.LENGTH_SHORT).show()
+            }
         }
-        updateCourseStats()
-        Log.d("ExploreFragment", "Filtered to show only other users' courses: ${otherCourses.size} courses")
     }
 
     // Show all courses (reset filter)
     private fun showAllCourses() {
+        val sorted = allCoursesList.sortedByDescending { it.timestamp }
         coursesList.clear()
-        coursesList.addAll(allCoursesList)
+        coursesList.addAll(sorted)
         if (::coursesAdapter.isInitialized) {
             coursesAdapter.updateCourses(coursesList)
         } else {
             Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
         }
         updateCourseStats()
-        Log.d("ExploreFragment", "Showing all courses: ${allCoursesList.size} courses")
+        Log.d("ExploreFragment", "Showing all courses: ${sorted.size} courses")
     }    override fun onResume() {
         super.onResume()
     // Reload courses when returning to this fragment (force remote refresh)

@@ -73,8 +73,6 @@ class CourseTaskFragment : Fragment() {
     private lateinit var documentPickerLauncher: ActivityResultLauncher<Intent>
 
     private lateinit var sessionManager: SessionManager
-    private var isCourseCreator: Boolean = false
-    private var courseCreatorUsername: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,6 +84,8 @@ class CourseTaskFragment : Fragment() {
         }
         uriPermissionManager = UriPermissionManager(requireContext())
         videoManager = VideoManager(requireContext())
+
+        sessionManager = SessionManager.getInstance(requireContext())
 
         videoPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
@@ -358,7 +358,7 @@ class CourseTaskFragment : Fragment() {
                             // First try local DB
                             topicDao.getTopicById(topicId) ?: 
                             // Then try Supabase
-                            com.example.tareamov.service.SupabaseClient.fetchTopicById(topicId.toInt())
+                            com.example.tareamov.service.SupabaseClient.fetchTopicById(topicId)
                         } catch (e: Exception) {
                             Log.w("CourseTaskFragment", "Error fetching topic", e)
                             null
@@ -422,7 +422,7 @@ class CourseTaskFragment : Fragment() {
                         }
                         
                         // If not in local DB, check Supabase
-                        val remoteTopic = com.example.tareamov.service.SupabaseClient.fetchTopicById(topicId.toInt())
+                        val remoteTopic = com.example.tareamov.service.SupabaseClient.fetchTopicById(topicId)
                         if (remoteTopic != null) {
                             Log.d("CourseTaskFragment", "Topic $topicId found in Supabase")
                             return@withContext true
@@ -470,7 +470,9 @@ class CourseTaskFragment : Fragment() {
                                 null
                             }
                         } else {
-                            Log.d("CourseTaskFragment", "Inserting new task")
+                            Log.d("CourseTaskFragment", "Inserting new task: topicId=${remoteTask.topicId}, title='${remoteTask.name}'")
+                            
+                            // Insert task (creator metadata not needed since tasks table doesn't have those columns)
                             val result = syncRepo.insertTaskRemote(remoteTask)
                             if (result != null) {
                                 Log.d("CourseTaskFragment", "Task inserted with id=$result")

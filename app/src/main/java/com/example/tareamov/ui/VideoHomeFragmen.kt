@@ -330,7 +330,15 @@ class VideoHomeFragment : Fragment() {
                                 // If not found among creator's courses, try searching all remote courses as fallback
                                 if (matchingCourse == null) {
                                     val all = withContext(Dispatchers.IO) { act.syncRepository.fetchCoursesFromSupabase() }
-                                    matchingCourse = all.firstOrNull { c -> (c.title ?: "").equals(videoData.title ?: "", ignoreCase = true) && (c.creatorUsername ?: "").equals(videoData.username ?: "", ignoreCase = true) }
+                                    matchingCourse = all.firstOrNull { c -> 
+                                        val titleMatches = (c.title ?: "").equals(videoData.title ?: "", ignoreCase = true)
+                                        // Fetch username from creator_user_id to compare
+                                        val courseUsername = withContext(Dispatchers.IO) {
+                                            com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(c.creatorUserId)
+                                        }
+                                        val creatorMatches = (courseUsername ?: "").equals(videoData.username ?: "", ignoreCase = true)
+                                        titleMatches && creatorMatches
+                                    }
                                 }
                             } catch (e: Exception) {
                                 Log.w("VideoHomeFragment", "Supabase course lookup failed, falling back to local: ${e.message}", e)

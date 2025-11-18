@@ -96,37 +96,68 @@ class SupabaseRepository(
                     val mappedPayload: Any = when (table) {
                         "tasks" -> {
                             val m = mutableMapOf<String, Any?>()
-                            // Ensure we include local id as the remote id so FK from submissions (task_id) matches
-                            m["id"] = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["taskId"] ?: asMap["task_id"]) ?: coerceToLong(asMap["id"])
+                            // Don't send id on insert - let Supabase auto-generate it
+                            // Only include id if it's explicitly provided and > 0
+                            val taskId = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["taskId"] ?: asMap["task_id"])
+                            if (taskId != null && taskId > 0) {
+                                m["id"] = taskId
+                            }
+                            
                             // Postgres DDL uses snake_case: topic_id (bigint) — coerce to Long
-                            m["topic_id"] = coerceToLong(asMap["topicId"] ?: asMap["topic_id"])
-                            m["title"] = (asMap["name"] ?: asMap["title"] ?: "")
-                            m["description"] = (asMap["description"] ?: null)
+                            val topicId = coerceToLong(asMap["topicId"] ?: asMap["topic_id"])
+                            if (topicId != null && topicId > 0) {
+                                m["topic_id"] = topicId
+                            }
+                            
+                            m["title"] = (asMap["name"] ?: asMap["title"] ?: "").toString()
+                            m["description"] = (asMap["description"]?.toString() ?: null)
+                            
                             // due_date is timestamptz, keep raw string or null
-                            m["due_date"] = asMap["dueDate"] ?: asMap["due_date"]
-                            m["created_at"] = java.time.OffsetDateTime.now().toString()
+                            val dueDate = asMap["dueDate"] ?: asMap["due_date"]
+                            if (dueDate != null) {
+                                m["due_date"] = dueDate
+                            }
                             m
                         }
                         "topics" -> {
                             val m = mutableMapOf<String, Any?>()
-                            // include local id for topics too so tasks referencing topic.id will match
-                            m["id"] = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["topicId"] ?: asMap["topic_id"]) ?: coerceToLong(asMap["id"])
+                            // Don't send id on insert - let Supabase auto-generate it
+                            val topicId = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["topicId"] ?: asMap["topic_id"])
+                            if (topicId != null && topicId > 0) {
+                                m["id"] = topicId
+                            }
+                            
                             // course_id in DDL (bigint)
-                            m["course_id"] = coerceToLong(asMap["courseId"] ?: asMap["course_id"]) ?: coerceToLong(asMap["courseId"] ?: asMap["course_id"]) 
-                            m["name"] = (asMap["name"] ?: asMap["title"] ?: "")
-                            m["description"] = (asMap["description"] ?: null)
+                            val courseId = coerceToLong(asMap["courseId"] ?: asMap["course_id"])
+                            if (courseId != null && courseId > 0) {
+                                m["course_id"] = courseId
+                            }
+                            
+                            m["name"] = (asMap["name"] ?: asMap["title"] ?: "").toString()
+                            m["description"] = (asMap["description"]?.toString() ?: null)
+                            
                             // order_index is integer
-                            m["order_index"] = coerceToInt(asMap["orderIndex"] ?: asMap["order_index"] ?: 0)
+                            val orderIdx = coerceToInt(asMap["orderIndex"] ?: asMap["order_index"] ?: 0)
+                            if (orderIdx != null) {
+                                m["order_index"] = orderIdx
+                            }
                             m
                         }
                         "content_items" -> {
                             val m = mutableMapOf<String, Any?>()
-                            m["id"] = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["contentItemId"] ?: asMap["content_item_id"]) ?: coerceToLong(asMap["id"])
-                            m["topic_id"] = coerceToLong(asMap["topicId"] ?: asMap["topic_id"]) 
-                            m["title"] = (asMap["title"] ?: asMap["name"] ?: "")
-                            m["body"] = asMap["body"] ?: asMap["content"] ?: null
-                            m["content_type"] = (asMap["contentType"] ?: asMap["type"] ?: "unknown")
-                            m["created_at"] = java.time.OffsetDateTime.now().toString()
+                            val contentId = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["contentItemId"] ?: asMap["content_item_id"])
+                            if (contentId != null && contentId > 0) {
+                                m["id"] = contentId
+                            }
+                            
+                            val topicId = coerceToLong(asMap["topicId"] ?: asMap["topic_id"])
+                            if (topicId != null && topicId > 0) {
+                                m["topic_id"] = topicId
+                            }
+                            
+                            m["title"] = (asMap["title"] ?: asMap["name"] ?: "").toString()
+                            m["body"] = asMap["body"]?.toString() ?: asMap["content"]?.toString()
+                            m["content_type"] = (asMap["contentType"] ?: asMap["type"] ?: "unknown").toString()
                             m
                         }
                         "videos" -> {
@@ -224,12 +255,21 @@ class SupabaseRepository(
 
                     val bodyJson = gson.toJson(mappedPayload)
                     val url = "${supabaseUrl.trimEnd('/')}/rest/v1/$table"
+                    
+                    // For tasks table, don't use merge-duplicates to avoid type comparison errors
+                    // Just do a simple POST insert and let Supabase handle conflicts via constraints
+                    val preferHeader = if (table == "tasks" || table == "topics" || table == "content_items") {
+                        "return=representation"
+                    } else {
+                        "resolution=merge-duplicates,return=representation"
+                    }
+                    
                     val request = Request.Builder()
                         .url(url)
                         .post(bodyJson.toRequestBody(jsonMediaType))
                         .addHeader("apikey", supabaseKey)
                         .addHeader("Authorization", "Bearer $supabaseKey")
-                        .addHeader("Prefer", "resolution=merge-duplicates,return=representation")
+                        .addHeader("Prefer", preferHeader)
                         .addHeader("Content-Type", "application/json")
                         .build()
 

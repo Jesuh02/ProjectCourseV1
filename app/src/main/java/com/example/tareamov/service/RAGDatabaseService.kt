@@ -964,7 +964,7 @@ class RAGDatabaseService(private val context: Context) {
                 Log.d(tag, "  ✓ Found task: ${task.name} (topicId=${task.topicId})")
                 
                 // Step 2: Get topic to find courseId
-                val topic = supabase.fetchTopicById(task.topicId.toInt())
+                val topic = supabase.fetchTopicById(task.topicId)
                 if (topic == null) {
                     Log.w(tag, "  ⚠️ Topic with id=${task.topicId} not found")
                     return@withContext Pair("No se encontró el tema asociado a la tarea", 
@@ -979,7 +979,7 @@ class RAGDatabaseService(private val context: Context) {
                     return@withContext Pair("No se encontró el curso asociado al tema",
                         "-- Paso 1\nSELECT * FROM tasks WHERE id = $taskId;\n\n-- Paso 2\nSELECT * FROM topics WHERE id = ${task.topicId};\n\n-- Paso 3 (falló)\nSELECT * FROM courses WHERE id = ${topic.courseId};")
                 }
-                Log.d(tag, "  ✓ Found course: ${course.title} (creator=${course.creatorUsername})")
+                Log.d(tag, "  ✓ Found course: ${course.title} (creator_user_id=${course.creatorUserId})")
                 
                 // Build detailed response
                 val result = """
@@ -998,13 +998,13 @@ class RAGDatabaseService(private val context: Context) {
                        - Descripción: ${course.description ?: "Sin descripción"}
                        - Precio: ${'$'}${course.price}
                     
-                    ✅ Usuario dueño/creador del curso: ${course.creatorUsername}
+                    ✅ ID del usuario creador del curso: ${course.creatorUserId}
                 """.trimIndent()
                 
                 // Build SQL script showing all steps
                 val sqlScript = """
 -- Consulta SQL con JOINs para obtener el creador del curso de una tarea
-SELECT c.creator_username AS username_dueno_curso,
+SELECT c.creator_user_id AS id_dueno_curso,
        c.title AS titulo_curso,
        c.id AS curso_id,
        t.title AS titulo_tarea,
@@ -1048,7 +1048,7 @@ WHERE t.id = $taskId;
                 }
                 
                 // Get topic
-                val topic = supabase.fetchTopicById(task.topicId.toInt())
+                val topic = supabase.fetchTopicById(task.topicId)
                 if (topic == null) {
                     return@withContext Pair("No se encontró el tema asociado",
                         "-- Consulta fallida\nSELECT * FROM public.topics WHERE id = ${task.topicId};")
@@ -1069,14 +1069,14 @@ WHERE t.id = $taskId;
                     🔹 Tarea (ID: $taskId): ${task.name}
                     🔹 Tema (ID: ${topic.id}): ${topic.name}
                     🔹 Curso (ID: ${course.id}): ${course.title}
-                    🔹 Creador del curso: ${course.creatorUsername}
+                    🔹 ID del creador del curso: ${course.creatorUserId}
                     
                     👥 Estudiantes que enviaron esta tarea: $studentsList
                 """.trimIndent()
                 
                 val sqlScript = """
 -- Consulta SQL con JOINs para obtener curso y entregas de una tarea
-SELECT c.creator_username AS username_dueno_curso,
+SELECT c.creator_user_id AS id_dueno_curso,
        c.title AS titulo_curso,
        c.id AS curso_id,
        t.title AS titulo_tarea,
@@ -1753,7 +1753,7 @@ WHERE ts.task_id = $taskId;
                         val jsonArray = org.json.JSONArray(queryResult)
                         if (jsonArray.length() > 0) {
                             val jsonObj = jsonArray.getJSONObject(0)
-                            val creatorUsername = jsonObj.optString("username_dueno_curso", "N/A")
+                            val creatorUserId = jsonObj.optLong("id_dueno_curso", -1)
                             val courseTitle = jsonObj.optString("titulo_curso", "N/A")
                             val courseId = jsonObj.optLong("curso_id", -1)
                             val taskTitle = jsonObj.optString("titulo_tarea", "N/A")
@@ -1773,7 +1773,7 @@ WHERE ts.task_id = $taskId;
                             result.appendLine("🎓 CURSO:")
                             result.appendLine("   - Título: $courseTitle")
                             result.appendLine("   - ID: $courseId")
-                            result.appendLine("   - Dueño/Creador: $creatorUsername")
+                            result.appendLine("   - ID Dueño/Creador: $creatorUserId")
                             result.appendLine()
                             if (grade >= 0) {
                                 result.appendLine("📊 CALIFICACIÓN: $grade")
@@ -1782,7 +1782,7 @@ WHERE ts.task_id = $taskId;
                                 result.appendLine("💬 RETROALIMENTACIÓN: $feedback")
                             }
                             
-                            Log.d(tag, "Successfully retrieved creator: $creatorUsername")
+                            Log.d(tag, "Successfully retrieved creator_user_id: $creatorUserId")
                         } else {
                             result.appendLine("⚠️ No se encontró la entrega con ID: $submissionId")
                         }

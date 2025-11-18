@@ -74,6 +74,11 @@ class CourseProgressLoader(private val context: Context) {
                     // Calcular progreso
                     val progreso = calcularProgreso(courseId, username, tasks, submissions)
                     
+                    if (progreso == null) {
+                        Log.e(TAG, "Failed to calculate progress for user: $username")
+                        return@launch
+                    }
+                    
                     // Guardar en la base de datos local
                     withContext(Dispatchers.IO) {
                         db.progresoEstudianteDao().insertProgreso(progreso)
@@ -95,12 +100,12 @@ class CourseProgressLoader(private val context: Context) {
     /**
      * Calcula el progreso del estudiante en el curso
      */
-    private fun calcularProgreso(
+    private suspend fun calcularProgreso(
         courseId: Long,
         username: String,
         tasks: List<Task>,
         submissions: List<TaskSubmission>
-    ): ProgresoEstudiante {
+    ): ProgresoEstudiante? {
         // Calcular tareas completadas (con calificación)
         val completedTasks = tasks.count { task ->
             submissions.any { it.taskId == task.id && it.grade != null }
@@ -121,8 +126,15 @@ class CourseProgressLoader(private val context: Context) {
             null
         }
         
+        // Get user ID from username
+        val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+        if (userId == null) {
+            Log.e("CourseProgressLoader", "Failed to get user ID for username: $username")
+            return null
+        }
+        
         return ProgresoEstudiante(
-            usuarioEstudiante = username,
+            usuarioEstudiante = userId,
             cursoId = courseId,
             tareasCompletadas = completedTasks,
             tareasTotales = totalTasks,

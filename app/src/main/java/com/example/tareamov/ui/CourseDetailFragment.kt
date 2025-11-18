@@ -292,18 +292,31 @@ class CourseDetailFragment : Fragment() {
                             if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
                                 val remoteCourse = withContext(Dispatchers.IO) { act.syncRepository.fetchCourseById(courseId) }
                                 if (remoteCourse != null) {
-                                    showEdit = (remoteCourse.creatorUsername ?: "") == localUsername
+                                    // Fetch username from remote course's creator_user_id
+                                    val remoteCreatorUsername = withContext(Dispatchers.IO) {
+                                        com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(remoteCourse.creatorUserId)
+                                    }
+                                    showEdit = (remoteCreatorUsername ?: "") == localUsername
                                 } else {
                                     // fallback to local course data if remote missing
-                                    showEdit = (localUsername == it.creatorUsername)
+                                    val localCreatorUsername = withContext(Dispatchers.IO) {
+                                        com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(it.creatorUserId)
+                                    }
+                                    showEdit = (localUsername == localCreatorUsername)
                                 }
                             } else {
                                 // Supabase not configured, fallback to local check
-                                showEdit = (localUsername == it.creatorUsername)
+                                val localCreatorUsername = withContext(Dispatchers.IO) {
+                                    com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(it.creatorUserId)
+                                }
+                                showEdit = (localUsername == localCreatorUsername)
                             }
                         } catch (e: Exception) {
                             Log.w("CourseDetailFragment", "Error checking remote creator", e)
-                            showEdit = (localUsername == it.creatorUsername)
+                            val localCreatorUsername = withContext(Dispatchers.IO) {
+                                com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(it.creatorUserId)
+                            }
+                            showEdit = (localUsername == localCreatorUsername)
                         }
                         editCourseButton.visibility = if (showEdit) View.VISIBLE else View.GONE
 
@@ -648,8 +661,19 @@ class CourseDetailFragment : Fragment() {
         lifecycleScope.launch {
             try {
                 val db = AppDatabase.getDatabase(requireContext())
+                
+                // Get user ID from username
+                val userId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                }
+                
+                if (userId == null) {
+                    android.widget.Toast.makeText(requireContext(), "Error: Usuario no encontrado", android.widget.Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                
                 val progreso = withContext(Dispatchers.IO) {
-                    db.progresoEstudianteDao().getProgreso(currentUsername!!, courseId)
+                    db.progresoEstudianteDao().getProgreso(userId, courseId)
                 }
                 
                 if (progreso == null) {
@@ -728,9 +752,19 @@ class CourseDetailFragment : Fragment() {
                     0
                 }
                 
+                // Get user ID from username
+                val userId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                }
+                
+                if (userId == null) {
+                    android.widget.Toast.makeText(requireContext(), "Error: Usuario no encontrado", android.widget.Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                
                 // Create initial progress record
                 val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                    usuarioEstudiante = currentUsername!!,
+                    usuarioEstudiante = userId,
                     cursoId = course.id,
                     tareasCompletadas = 0,
                     tareasTotales = totalTasks,
@@ -840,8 +874,10 @@ class CourseDetailFragment : Fragment() {
                     courseTitleTextView?.text = title
                     courseName = title
 
-                    // Map creator username and flags
-                    courseCreatorUsername = remoteCourse.creatorUsername
+                    // Map creator username from creator_user_id
+                    courseCreatorUsername = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(remoteCourse.creatorUserId)
+                    }
                     isCurrentUserCreator = courseCreatorUsername == currentUsername
                     courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
                     
@@ -930,8 +966,14 @@ class CourseDetailFragment : Fragment() {
                     courseTitleTextView?.text = course?.title ?: "Curso sin título"
                     courseName = course?.title ?: "Curso sin título"
 
-                    // Map creator username from local course record
-                    courseCreatorUsername = course?.creatorUsername
+                    // Map creator username from local course's creator_user_id
+                    courseCreatorUsername = if (course != null) {
+                        withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                        }
+                    } else {
+                        null
+                    }
                     isCurrentUserCreator = courseCreatorUsername == currentUsername
 
                     // Control visibility of the bottom action bar based on creator status
@@ -2090,9 +2132,16 @@ class CourseDetailFragment : Fragment() {
                         
                         Log.d("CourseDetailFragment", "📈 Calculated metrics: totales=$tareasTotales, completadas=$tareasCompletadas, progreso=$porcentajeProgreso%, promedio=$promedio")
                         
+                        // Get user ID from username
+                        val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+                        if (userId == null) {
+                            Log.e("CourseDetailFragment", "Failed to get user ID for username: $username")
+                            return@withContext
+                        }
+                        
                         // Actualizar en Supabase
                         val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                            usuarioEstudiante = username,
+                            usuarioEstudiante = userId,
                             cursoId = courseIdToUse,
                             tareasTotales = tareasTotales,
                             tareasCompletadas = tareasCompletadas,

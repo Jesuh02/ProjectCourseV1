@@ -17,21 +17,21 @@ interface ProgresoEstudianteDao {
     @Update
     suspend fun updateProgreso(progreso: ProgresoEstudiante)
     
-    @Query("SELECT * FROM progreso_estudiante WHERE usuarioEstudiante = :username AND cursoId = :courseId")
-    suspend fun getProgreso(username: String, courseId: Long): ProgresoEstudiante?
+    @Query("SELECT * FROM progreso_estudiante WHERE usuarioEstudiante = :userId AND cursoId = :courseId")
+    suspend fun getProgreso(userId: Long, courseId: Long): ProgresoEstudiante?
     
     // Alias for clarity
-    @Query("SELECT * FROM progreso_estudiante WHERE usuarioEstudiante = :username AND cursoId = :courseId")
-    suspend fun getProgresoByUsuarioAndCurso(username: String, courseId: Long): ProgresoEstudiante?
+    @Query("SELECT * FROM progreso_estudiante WHERE usuarioEstudiante = :userId AND cursoId = :courseId")
+    suspend fun getProgresoByUsuarioAndCurso(userId: Long, courseId: Long): ProgresoEstudiante?
     
-    @Query("SELECT * FROM progreso_estudiante WHERE usuarioEstudiante = :username")
-    suspend fun getProgresosByUsuario(username: String): List<ProgresoEstudiante>
+    @Query("SELECT * FROM progreso_estudiante WHERE usuarioEstudiante = :userId")
+    suspend fun getProgresosByUsuario(userId: Long): List<ProgresoEstudiante>
     
     @Query("SELECT * FROM progreso_estudiante WHERE cursoId = :courseId")
     suspend fun getProgresosByCurso(courseId: Long): List<ProgresoEstudiante>
     
-    @Query("SELECT * FROM progreso_estudiante WHERE usuarioEstudiante = :username AND cursoId = :courseId")
-    fun getProgresoFlow(username: String, courseId: Long): Flow<ProgresoEstudiante?>
+    @Query("SELECT * FROM progreso_estudiante WHERE usuarioEstudiante = :userId AND cursoId = :courseId")
+    fun getProgresoFlow(userId: Long, courseId: Long): Flow<ProgresoEstudiante?>
     
     /**
      * Upsert: Insert or replace
@@ -39,8 +39,8 @@ interface ProgresoEstudianteDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(progreso: ProgresoEstudiante)
     
-    @Query("DELETE FROM progreso_estudiante WHERE usuarioEstudiante = :username AND cursoId = :courseId")
-    suspend fun deleteProgreso(username: String, courseId: Long)
+    @Query("DELETE FROM progreso_estudiante WHERE usuarioEstudiante = :userId AND cursoId = :courseId")
+    suspend fun deleteProgreso(userId: Long, courseId: Long)
     
     @Query("SELECT * FROM progreso_estudiante")
     suspend fun getAllProgresos(): List<ProgresoEstudiante>

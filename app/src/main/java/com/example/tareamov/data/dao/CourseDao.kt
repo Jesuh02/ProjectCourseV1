@@ -12,8 +12,8 @@ interface CourseDao {
     @Query("SELECT * FROM courses ORDER BY creationDate DESC")
     fun getAllCoursesSync(): List<Course>
 
-    @Query("SELECT * FROM courses WHERE creatorUsername = :username ORDER BY creationDate DESC")
-    suspend fun getCoursesByCreator(username: String): List<Course>
+    @Query("SELECT * FROM courses WHERE creatorUserId = :userId ORDER BY creationDate DESC")
+    suspend fun getCoursesByCreator(userId: Long): List<Course>
 
     @Query("SELECT * FROM courses WHERE id = :courseId")
     suspend fun getCourseById(courseId: Long): Course?
@@ -58,8 +58,8 @@ interface CourseDao {
     @Query("SELECT * FROM courses ORDER BY creationDate DESC")
     fun getAllCoursesFlow(): Flow<List<Course>>
 
-    @Query("SELECT * FROM courses WHERE creatorUsername = :username ORDER BY creationDate DESC")
-    fun getCoursesByCreatorFlow(username: String): Flow<List<Course>>
+    @Query("SELECT * FROM courses WHERE creatorUserId = :userId ORDER BY creationDate DESC")
+    fun getCoursesByCreatorFlow(userId: Long): Flow<List<Course>>
 
     // Add this method to get the maximum course ID for consecutive ID generation
     @Query("SELECT MAX(id) FROM courses")

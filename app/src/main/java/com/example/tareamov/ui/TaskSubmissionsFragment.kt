@@ -365,8 +365,23 @@ class TaskSubmissionsFragment : Fragment() {
                 val students = withContext(Dispatchers.IO) {
                     try {
                         val subs = SupabaseClient.fetchSubscriptions()
-                        val creator = courseCreatorUsername ?: SupabaseClient.fetchCourseById(courseId)?.creatorUsername
-                        subs.filter { it.creatorUsername.equals(creator, ignoreCase = true) }.map { it.subscriberUsername }
+                        val creatorUsername = courseCreatorUsername
+                        if (creatorUsername != null) {
+                            subs.filter { it.creatorUsername.equals(creatorUsername, ignoreCase = true) }.map { it.subscriberUsername }
+                        } else {
+                            // Fallback: fetch course to get creator_user_id, then get username
+                            val course = SupabaseClient.fetchCourseById(courseId)
+                            if (course != null) {
+                                val fetchedCreatorUsername = SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                                if (fetchedCreatorUsername != null) {
+                                    subs.filter { it.creatorUsername.equals(fetchedCreatorUsername, ignoreCase = true) }.map { it.subscriberUsername }
+                                } else {
+                                    emptyList<String>()
+                                }
+                            } else {
+                                emptyList<String>()
+                            }
+                        }
                     } catch (e: Exception) {
                         Log.e("TaskSubmissionsFragment", "Error fetching subscriptions from Supabase", e)
                         emptyList<String>()
@@ -682,9 +697,18 @@ class TaskSubmissionsFragment : Fragment() {
 
             Log.d("TaskSubmissionsFragment", "📈 Calculated: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$promedio")
 
+            // Get user ID from username
+            val userId = withContext(Dispatchers.IO) {
+                com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(studentUsername)
+            }
+            if (userId == null) {
+                Log.e("TaskSubmissionsFragment", "Failed to get user ID for username: $studentUsername")
+                return
+            }
+
             // Crear ProgresoEstudiante actualizado
             val updatedProgreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                usuarioEstudiante = studentUsername,
+                usuarioEstudiante = userId,
                 cursoId = courseId,
                 tareasTotales = tareasTotales,
                 tareasCompletadas = tareasCompletadas,
@@ -1103,9 +1127,16 @@ class TaskSubmissionsFragment : Fragment() {
                     gradesOnly.average().toFloat()
                 } else 0f
                 
+                // Get user ID from username
+                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+                if (userId == null) {
+                    Log.e("TaskSubmissionsFragment", "Failed to get user ID for username: $username")
+                    return@launch
+                }
+                
                 // Update progress in database and Supabase
                 var progreso = database.progresoEstudianteDao()
-                    .getProgresoByUsuarioAndCurso(username, courseId)
+                    .getProgresoByUsuarioAndCurso(userId, courseId)
                 
                 if (progreso != null) {
                     // Create updated copy since properties are val

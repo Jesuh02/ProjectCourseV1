@@ -895,7 +895,7 @@ object AnimatedCertificateGenerator {
     private fun openHtmlFile(context: Context, file: File) {
         try {            val uri = FileProvider.getUriForFile(
                 context,
-                "${context.packageName}.service.fileprovider",
+                "${context.packageName}.fileprovider",
                 file
             )
 

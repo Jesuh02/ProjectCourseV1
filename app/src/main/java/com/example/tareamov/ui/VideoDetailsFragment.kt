@@ -87,6 +87,16 @@ class VideoDetailsFragment : Fragment() {
         // Update the existing video record instead of creating a new one
         CoroutineScope(Dispatchers.Main).launch {
             try {
+                // Get user ID for foreign key
+                val userId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername)
+                }
+
+                if (userId == null || userId <= 0) {
+                    Toast.makeText(context, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+
                 val activity = requireActivity()
                 if (activity !is com.example.tareamov.MainActivity) {
                     Toast.makeText(context, "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
@@ -116,7 +126,7 @@ class VideoDetailsFragment : Fragment() {
                     id = 0, // Supabase auto-generates
                     title = title,
                     description = description,
-                    creatorUsername = currentUsername,
+                    creatorUserId = userId, // Foreign key to usuarios.id
                     videoUri = videoUri.toString(),
                     isPremium = isPaidCourse,
                     price = if (isPaidCourse) 9.99 else 0.0,
@@ -124,12 +134,15 @@ class VideoDetailsFragment : Fragment() {
                     timestamp = System.currentTimeMillis()
                 )
                 
+                Log.d("VideoDetailsFragment", "Creating course with creatorUserId: $userId, title: $title")
+                
                 val courseRemoteId = withContext(Dispatchers.IO) {
                     com.example.tareamov.service.SupabaseClient.insertCourse(newCourse)
                 }
                 
                 if (courseRemoteId == null || courseRemoteId <= 0) {
                     Toast.makeText(context, "Error creando el curso asociado", Toast.LENGTH_SHORT).show()
+                    Log.e("VideoDetailsFragment", "Failed to create course - courseRemoteId: $courseRemoteId")
                     return@launch
                 }
                 
@@ -144,8 +157,11 @@ class VideoDetailsFragment : Fragment() {
                     videoUriString = videoUri.toString(),
                     isPaid = isPaidCourse,
                     price = if (isPaidCourse) 9.99 else null,
-                    courseId = courseRemoteId // Link to the course
+                    courseId = courseRemoteId, // Link to the course
+                    timestamp = System.currentTimeMillis()
                 )
+                
+                Log.d("VideoDetailsFragment", "Attempting to insert video with ID: $nextVideoId, courseId: $courseRemoteId")
                 
                 val remoteId = withContext(Dispatchers.IO) {
                     com.example.tareamov.service.SupabaseClient.insertVideo(videoData)
@@ -156,6 +172,7 @@ class VideoDetailsFragment : Fragment() {
                     Log.d("VideoDetailsFragment", "Video saved successfully with ID: $remoteId, linked to course: $courseRemoteId")
                 } else {
                     Toast.makeText(context, "Error guardando video en Supabase", Toast.LENGTH_SHORT).show()
+                    Log.e("VideoDetailsFragment", "Failed to insert video - remoteId: $remoteId")
                     return@launch
                 }
 

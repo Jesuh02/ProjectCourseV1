@@ -51,10 +51,12 @@ class CourseRepository(private val context: Context) {
         }
     }
 
-    suspend fun getCoursesByCreator(username: String): List<Course> = withContext(Dispatchers.IO) {
+    suspend fun getCoursesByCreator(userId: Long): List<Course> = withContext(Dispatchers.IO) {
         return@withContext if (courseDao != null) {
-            courseDao!!.getCoursesByCreator(username)
+            courseDao!!.getCoursesByCreator(userId)
         } else {
+            // Fallback: get username from userId, then fetch videos
+            val username = com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(userId) ?: ""
             val videos = videoDao.getVideosByUsername(username)
             videos.map { convertVideoDataToCourse(it) }
         }
@@ -168,8 +170,8 @@ class CourseRepository(private val context: Context) {
     fun getAllCoursesFlow(): Flow<List<Course>> = 
         courseDao?.getAllCoursesFlow() ?: kotlinx.coroutines.flow.flowOf(emptyList())
 
-    fun getCoursesByCreatorFlow(username: String): Flow<List<Course>> = 
-        courseDao?.getCoursesByCreatorFlow(username) ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    fun getCoursesByCreatorFlow(userId: Long): Flow<List<Course>> = 
+        courseDao?.getCoursesByCreatorFlow(userId) ?: kotlinx.coroutines.flow.flowOf(emptyList())
 
     // Method to observe course changes and convert to VideoData for UI compatibility
     fun observeCoursesAsVideoData(): Flow<List<VideoData>> = 
@@ -177,9 +179,11 @@ class CourseRepository(private val context: Context) {
             if (courseDao != null) {
                 courseDao!!.getAllCoursesFlow().collect { courses ->
                     val videoDataList = courses.map { course ->
+                        // Fetch username from user_id
+                        val username = com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId) ?: "unknown"
                         VideoData(
                             id = course.id,
-                            username = course.creatorUsername,
+                            username = username,
                             description = course.description,
                             title = course.title,
                             videoUriString = course.videoUri,
@@ -283,12 +287,15 @@ class CourseRepository(private val context: Context) {
     }
 
     // Enhanced conversion that includes automatic categorization
-    private fun convertVideoDataToCourseWithCategory(video: VideoData): Course {
+    private suspend fun convertVideoDataToCourseWithCategory(video: VideoData): Course {
+        // Get user ID from username
+        val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
+        
         return Course(
             id = video.id,
             title = video.title,
             description = video.description,
-            creatorUsername = video.username,
+            creatorUserId = userId,
             thumbnailUri = video.thumbnailUri,
             videoUri = video.videoUriString,
             localFilePath = video.localFilePath,
@@ -339,12 +346,15 @@ class CourseRepository(private val context: Context) {
         }
     }
 
-    private fun convertVideoDataToCourse(video: VideoData): Course {
+    private suspend fun convertVideoDataToCourse(video: VideoData): Course {
+        // Get user ID from username
+        val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
+        
         return Course(
             id = video.id,
             title = video.title,
             description = video.description,
-            creatorUsername = video.username, // VideoData uses 'username' not 'creatorUsername'
+            creatorUserId = userId,
             thumbnailUri = video.thumbnailUri,
             videoUri = video.videoUriString, // VideoData uses 'videoUriString' not 'videoPath'
             localFilePath = video.localFilePath,
@@ -363,7 +373,7 @@ class CourseRepository(private val context: Context) {
     }
     
     // Public method for external conversion needs
-    fun convertVideoDataToCoursePublic(video: VideoData): Course {
+    suspend fun convertVideoDataToCoursePublic(video: VideoData): Course {
         return convertVideoDataToCourse(video)
     }
     
@@ -461,10 +471,13 @@ class CourseRepository(private val context: Context) {
         }
     }
 
-    private fun convertCourseToVideoData(course: Course): VideoData {
+    private suspend fun convertCourseToVideoData(course: Course): VideoData {
+        // Fetch username from user_id
+        val username = com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId) ?: "unknown"
+        
         return VideoData(
             id = course.id,
-            username = course.creatorUsername,
+            username = username,
             description = course.description,
             title = course.title,
             videoUriString = course.videoUri,

@@ -71,13 +71,15 @@ class CreatedCourseAdapter(
         currentPlayingHolder = null
 
         val oldSize = courses.size
+        // Ensure newest items appear first in the feed
         courses = newCourses
+            .sortedWith(compareByDescending<VideoData> { it.timestamp }.thenByDescending { it.id })
 
         // Simpler and more reliable: always refresh entire dataset to avoid
         // subtle RecyclerView notification edge-cases that can hide items.
         notifyDataSetChanged()
 
-        Log.d("CreatedCourseAdapter", "Courses updated: ${newCourses.size} items (oldSize=$oldSize)")
+        Log.d("CreatedCourseAdapter", "Courses updated: ${courses.size} items (oldSize=$oldSize)")
     }
 
     /**

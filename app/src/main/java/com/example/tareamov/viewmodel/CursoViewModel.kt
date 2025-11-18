@@ -143,11 +143,14 @@ class CursoViewModel(application: Application) : AndroidViewModel(application) {
                 val videos = repository.getAllVideos()
                 // Convert VideoData to Course for consistency
                 val courses = videos.map { video ->
+                    // Get user ID from username
+                    val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
+                    
                     Course(
                         id = video.id,
                         title = video.title,
                         description = video.description,
-                        creatorUsername = video.username,
+                        creatorUserId = userId,
                         thumbnailUri = video.thumbnailUri,
                         videoUri = video.videoUriString,
                         localFilePath = video.localFilePath,

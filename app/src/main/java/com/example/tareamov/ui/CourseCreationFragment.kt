@@ -158,32 +158,42 @@ class CourseCreationFragment : Fragment() {
             return
         }
 
-        // Create Course entity with current user as creator
-        val thumbnailUriString = selectedThumbnailUri?.toString()
-        val courseData = Course(
-            id = 0, // Supabase will auto-generate
-            title = courseName,
-            description = courseDescription,
-            creatorUsername = currentUsername,
-            thumbnailUri = thumbnailUriString,
-            videoUri = null,
-            localFilePath = null,
-            duration = null,
-            category = courseCategory,
-            price = coursePrice,
-            isPremium = isPaid,
-            isPublished = true,
-            creationDate = System.currentTimeMillis().toString(),
-            lastModifiedDate = System.currentTimeMillis().toString(),
-            enrollmentCount = 0,
-            rating = 0.0f,
-            tags = null,
-            timestamp = System.currentTimeMillis()
-        )
-        
-        // Save course directly to Supabase
+        // Get user ID from username for foreign key
         CoroutineScope(Dispatchers.Main).launch {
             try {
+                val userId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername)
+                }
+
+                if (userId == null || userId <= 0) {
+                    Toast.makeText(context, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+
+                // Create Course entity with current user ID as creator
+                val thumbnailUriString = selectedThumbnailUri?.toString()
+                val courseData = Course(
+                    id = 0, // Supabase will auto-generate
+                    title = courseName,
+                    description = courseDescription,
+                    creatorUserId = userId, // Foreign key to usuarios.id
+                    thumbnailUri = thumbnailUriString,
+                    videoUri = null,
+                    localFilePath = null,
+                    duration = null,
+                    category = courseCategory,
+                    price = coursePrice,
+                    isPremium = isPaid,
+                    isPublished = true,
+                    creationDate = System.currentTimeMillis().toString(),
+                    lastModifiedDate = System.currentTimeMillis().toString(),
+                    enrollmentCount = 0,
+                    rating = 0.0f,
+                    tags = null,
+                    timestamp = System.currentTimeMillis()
+                )
+        
+                // Save course directly to Supabase
                 val activity = requireActivity()
                 if (activity !is MainActivity) {
                     Toast.makeText(context, "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
@@ -220,8 +230,8 @@ class CourseCreationFragment : Fragment() {
                 Log.e("CourseCreationFragment", "Error saving course to Supabase", e)
                 Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
-        }
-    }
+        } // Close launch
+    } // Close saveCourse
 
     private fun addNewTopic() {
         // Check if course is already saved
@@ -249,35 +259,47 @@ class CourseCreationFragment : Fragment() {
 
         // Crear el objeto Course con la información del curso
         val thumbnailUriString = selectedThumbnailUri?.toString()
-        val courseData = Course(
-            id = 0, // Supabase will auto-generate
-            title = courseName,
-            description = courseDescription,
-            creatorUsername = currentUserUsername,
-            thumbnailUri = thumbnailUriString,
-            videoUri = null,
-            localFilePath = null,
-            duration = null,
-            category = courseCategory,
-            price = coursePrice,
-            isPremium = isPaid,
-            isPublished = true,
-            creationDate = System.currentTimeMillis().toString(),
-            lastModifiedDate = System.currentTimeMillis().toString(),
-            enrollmentCount = 0,
-            rating = 0.0f,
-            tags = null,
-            timestamp = System.currentTimeMillis()
-        )
-
-        // Guardar el curso directamente en Supabase y luego navegar al tema
+        
+        // Get user ID for foreign key
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val activity = requireActivity()
-                if (activity !is MainActivity) {
-                    Toast.makeText(context, "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
+                val userId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                }
+
+                if (userId == null || userId <= 0) {
+                    Toast.makeText(context, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show()
                     return@launch
                 }
+
+                val courseData = Course(
+                    id = 0, // Supabase will auto-generate
+                    title = courseName,
+                    description = courseDescription,
+                    creatorUserId = userId, // Foreign key to usuarios.id
+                    thumbnailUri = thumbnailUriString,
+                    videoUri = null,
+                    localFilePath = null,
+                    duration = null,
+                    category = courseCategory,
+                    price = coursePrice,
+                    isPremium = isPaid,
+                    isPublished = true,
+                    creationDate = System.currentTimeMillis().toString(),
+                    lastModifiedDate = System.currentTimeMillis().toString(),
+                    enrollmentCount = 0,
+                    rating = 0.0f,
+                    tags = null,
+                    timestamp = System.currentTimeMillis()
+                )
+
+                // Guardar el curso directamente en Supabase y luego navegar al tema
+                try {
+                    val activity = requireActivity()
+                    if (activity !is MainActivity) {
+                        Toast.makeText(context, "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
+                        return@launch
+                    }
 
                 // Check for duplicate title in Supabase
                 val titleExists = withContext(Dispatchers.IO) {
@@ -312,10 +334,14 @@ class CourseCreationFragment : Fragment() {
                     Toast.makeText(context, "Error al guardar el curso en Supabase", Toast.LENGTH_SHORT).show()
                 }
                 
+                } catch (e: Exception) {
+                    Log.e("CourseCreationFragment", "Error al guardar el curso", e)
+                    Toast.makeText(context, "Error al guardar el curso: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             } catch (e: Exception) {
-                Log.e("CourseCreationFragment", "Error al guardar el curso", e)
-                Toast.makeText(context, "Error al guardar el curso: ${e.message}", Toast.LENGTH_SHORT).show()
+                Log.e("CourseCreationFragment", "Error getting user ID", e)
+                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
-        }
-    }
+        } // Close launch for userId retrieval
+    } // Close addNewTopic
 }

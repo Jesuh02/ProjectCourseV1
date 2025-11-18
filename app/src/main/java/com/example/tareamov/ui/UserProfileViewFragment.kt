@@ -631,7 +631,10 @@ class UserProfileViewFragment : Fragment() {
 
                 // Normalize and map remote Course entities to VideoData
                 val normalizedCourses = userCoursesList.map { course ->
-                    val usernameSafe = course.creatorUsername ?: ""
+                    // Fetch username from creator_user_id
+                    val usernameSafe = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                    } ?: ""
                     val v = VideoData(
                         id = course.id,
                         username = usernameSafe,

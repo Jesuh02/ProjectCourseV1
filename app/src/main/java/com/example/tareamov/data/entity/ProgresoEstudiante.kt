@@ -21,7 +21,7 @@ import androidx.room.PrimaryKey
     ]
 )
 data class ProgresoEstudiante(
-    val usuarioEstudiante: String = "",
+    val usuarioEstudiante: Long = 0, // Changed from String to Long to match Supabase bigint
     val cursoId: Long = 0,
     val tareasCompletadas: Int = 0,
     val tareasTotales: Int = 0,

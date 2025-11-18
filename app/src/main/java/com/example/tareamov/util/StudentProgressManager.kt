@@ -128,9 +128,19 @@ class StudentProgressManager(private val context: Context) {
                         // Show certificate button only if the student passed the course
                         certificateButtonContainer?.visibility = View.VISIBLE
 
+                        // Get user ID from username
+                        val userId = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+                        }
+                        
+                        if (userId == null) {
+                            Log.e("StudentProgressManager", "Failed to get user ID for username: $username")
+                            return@launch
+                        }
+
                         // Check if certificate was already issued
                         val progreso = withContext(Dispatchers.IO) {
-                            db.progresoEstudianteDao().getProgresoByUsuarioAndCurso(username, courseId)
+                            db.progresoEstudianteDao().getProgresoByUsuarioAndCurso(userId, courseId)
                         }
                         
                         progreso?.certificadoEmitidoEn?.let { timestamp ->
