@@ -371,6 +371,8 @@ class SyncRepository(
                             }
                             val description = if (obj.has("description") && !obj.get("description").isJsonNull) obj.get("description").asString else ""
                             val title = if (obj.has("title") && !obj.get("title").isJsonNull) obj.get("title").asString else ""
+                            // Prefer server `course_id` so UI can resolve creator username via Supabase
+                            val courseId = if (obj.has("course_id") && !obj.get("course_id").isJsonNull) obj.get("course_id").asLong else null
                             val videoUriString = when {
                                 obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
                                 obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
@@ -393,7 +395,8 @@ class SyncRepository(
                                 timestamp = timestamp,
                                 isPaid = isPaid,
                                 thumbnailUri = thumbnailUri,
-                                price = price
+                                price = price,
+                                courseId = courseId
                             )
                             repaired.add(v)
                         } catch (t: Exception) {

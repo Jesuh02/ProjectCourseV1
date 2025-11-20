@@ -77,7 +77,6 @@ class VideoAdapter(
             errorPlaceholder.visibility = View.VISIBLE
             Log.e("VideoAdapter", "Showing error placeholder")
         }        fun bind(videoData: VideoData) {
-            usernameText.text = videoData.username
             descriptionText.text = videoData.description
             titleText.text = videoData.title
 
@@ -96,31 +95,45 @@ class VideoAdapter(
             // Setup button listeners
             setupButtonListeners()
 
-            // Setup profile button click
-            profileButton.setOnClickListener {
-                onProfileClick?.invoke(videoData.username)
-            }
-
-            // Setup username text click to navigate to course
-            usernameText.setOnClickListener {
-                onUsernameClick?.invoke(videoData)
-            }
-
-            // Also make the title clickable to navigate to the course details
-            titleText.setOnClickListener {
-                onUsernameClick?.invoke(videoData)
-            }
-
-            // --- AVATAR LOADING LOGIC ---
+            // --- OBTENER USERNAME DESDE COURSE_ID ---
             currentJob?.cancel()
             profileButton.setImageResource(R.drawable.ic_profile)
+            usernameText.text = "Cargando..." // Placeholder mientras se carga
 
             currentJob = CoroutineScope(Dispatchers.Main).launch {
                 try {
+                    // Obtener username desde course_id
+                    val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
+                        withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
+                        }
+                    } else {
+                        videoData.username // Fallback para compatibilidad
+                    }
+
+                    // Actualizar UI con el username obtenido
+                    usernameText.text = username ?: "Usuario desconocido"
+
+                    // Setup profile button click con el username correcto
+                    profileButton.setOnClickListener {
+                        onProfileClick?.invoke(username ?: "")
+                    }
+
+                    // Setup username text click to navigate to course
+                    usernameText.setOnClickListener {
+                        onUsernameClick?.invoke(videoData)
+                    }
+
+                    // Also make the title clickable to navigate to the course details
+                    titleText.setOnClickListener {
+                        onUsernameClick?.invoke(videoData)
+                    }
+
+                    // --- AVATAR LOADING LOGIC ---
                     val context = itemView.context.applicationContext
                     val db = AppDatabase.getDatabase(context)
                     val persona = withContext(Dispatchers.IO) {
-                        db.personaDao().getPersonaByUsername(videoData.username)
+                        db.personaDao().getPersonaByUsername(username ?: "")
                     }
                     if (persona != null && !persona.avatar.isNullOrEmpty()) {
                         Glide.with(itemView)
@@ -370,7 +383,15 @@ class VideoAdapter(
                     intent.putExtra("video_path", videoData.localFilePath ?: videoData.videoUriString)
                     intent.putExtra("video_title", videoData.title)
                     intent.putExtra("video_description", videoData.description)
-                    intent.putExtra("username", videoData.username)
+                    // Obtener username desde course_id para el intent
+                    val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
+                        runBlocking {
+                            com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
+                        }
+                    } else {
+                        videoData.username
+                    }
+                    intent.putExtra("username", username ?: "")
                     
                     // Pause current video before switching
                     pauseVideo()

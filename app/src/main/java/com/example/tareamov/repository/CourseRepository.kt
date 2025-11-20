@@ -288,8 +288,17 @@ class CourseRepository(private val context: Context) {
 
     // Enhanced conversion that includes automatic categorization
     private suspend fun convertVideoDataToCourseWithCategory(video: VideoData): Course {
-        // Get user ID from username
-        val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
+        // Get user ID from username OR from courseId (new approach)
+        val userId = if (video.courseId != null && video.courseId!! > 0) {
+            // Nuevo: obtener userId desde courseId
+            val course = com.example.tareamov.service.SupabaseClient.fetchCourseById(video.courseId!!)
+            course?.creatorUserId ?: 0L
+        } else if (!video.username.isNullOrEmpty()) {
+            // Fallback: obtener userId desde username (compatibilidad)
+            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
+        } else {
+            0L
+        }
         
         return Course(
             id = video.id,
@@ -347,8 +356,17 @@ class CourseRepository(private val context: Context) {
     }
 
     private suspend fun convertVideoDataToCourse(video: VideoData): Course {
-        // Get user ID from username
-        val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
+        // Get user ID from username OR from courseId (new approach)
+        val userId = if (video.courseId != null && video.courseId!! > 0) {
+            // Nuevo: obtener userId desde courseId
+            val course = com.example.tareamov.service.SupabaseClient.fetchCourseById(video.courseId!!)
+            course?.creatorUserId ?: 0L
+        } else if (!video.username.isNullOrEmpty()) {
+            // Fallback: obtener userId desde username (compatibilidad)
+            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
+        } else {
+            0L
+        }
         
         return Course(
             id = video.id,

@@ -556,23 +556,23 @@ class CourseDetailFragment : Fragment() {
             }
         }
         
-        // Observe task creation notifications
-        navBackEntry?.savedStateHandle?.getLiveData<Long>("task_created")?.observe(viewLifecycleOwner) { taskId ->
-            try {
-                Log.d("CourseDetailFragment", "Task created event received, refreshing from Supabase...")
-                refreshTopicsFromSupabase()
-                navBackEntry.savedStateHandle.remove<Long>("task_created")
-            } catch (e: Exception) {
-                Log.w("CourseDetailFragment", "Error handling task_created event", e)
-            }
-        }
-        
-        // Observe general refresh flag
+        // Observe general refresh flag (usado por tareas y otros cambios)
         navBackEntry?.savedStateHandle?.getLiveData<Boolean>("refresh_from_supabase")?.observe(viewLifecycleOwner) { shouldRefresh ->
             if (shouldRefresh == true) {
                 Log.d("CourseDetailFragment", "Refresh flag received, reloading from Supabase...")
                 refreshTopicsFromSupabase()
                 navBackEntry.savedStateHandle.remove<Boolean>("refresh_from_supabase")
+            }
+        }
+        
+        // Observe flag to switch to tasks tab after creating a task
+        navBackEntry?.savedStateHandle?.getLiveData<Boolean>("switch_to_tasks_tab")?.observe(viewLifecycleOwner) { shouldSwitch ->
+            if (shouldSwitch == true) {
+                Log.d("CourseDetailFragment", "Switching to tasks tab after task creation")
+                currentTab = "tareas"
+                updateTabSelection()
+                filterContentUltraFast()
+                navBackEntry.savedStateHandle.remove<Boolean>("switch_to_tasks_tab")
             }
         }
     }
@@ -1708,7 +1708,6 @@ class CourseDetailFragment : Fragment() {
 
         val taskNameTextView = taskView.findViewById<TextView>(R.id.taskNameTextView)
         val taskDescriptionTextView = taskView.findViewById<TextView>(R.id.taskDescriptionTextView)
-        val taskContentContainer = taskView.findViewById<LinearLayout>(R.id.taskContentContainer)
         val editTaskButton = taskView.findViewById<ImageButton>(R.id.editTaskButton)
         val submitTaskButton = taskView.findViewById<Button>(R.id.uploadSubmissionButton)
         val gradeStatusTextView = taskView.findViewById<TextView>(R.id.gradeStatusTextView)
@@ -1743,8 +1742,65 @@ class CourseDetailFragment : Fragment() {
             taskDescriptionTextView.visibility = View.GONE
         }
 
-        // Load and display content items associated with this task
-        loadTaskContentItems(task.id, taskContentContainer)
+        // Load and display content items
+        val taskContentContainer = taskView.findViewById<LinearLayout>(R.id.taskContentContainer)
+        val taskContentLabel = taskView.findViewById<TextView>(R.id.taskContentLabel)
+        val contentSeparator = taskView.findViewById<View>(R.id.contentSeparator)
+        
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val contentItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    AppDatabase.getDatabase(requireContext()).contentItemDao().getContentItemsByTaskId(task.id)
+                }
+                
+                if (contentItems.isNotEmpty()) {
+                    taskContentContainer?.removeAllViews()
+                    contentSeparator?.visibility = View.VISIBLE
+                    taskContentLabel?.visibility = View.VISIBLE
+                    taskContentContainer?.visibility = View.VISIBLE
+                    
+                    for (contentItem in contentItems) {
+                        val contentItemView = LayoutInflater.from(context).inflate(
+                            android.R.layout.simple_list_item_1,
+                            taskContentContainer,
+                            false
+                        )
+                        val textView = contentItemView.findViewById<TextView>(android.R.id.text1)
+                        textView.text = contentItem.name
+                        textView.setTextColor(resources.getColor(android.R.color.white))
+                        textView.textSize = 14f
+                        textView.setPadding(16, 12, 16, 12)
+                        
+                        contentItemView.setOnClickListener {
+                            // Open the content item
+                            val uri = android.net.Uri.parse(contentItem.uriString)
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, when (contentItem.contentType) {
+                                    "video" -> "video/*"
+                                    else -> requireContext().contentResolver.getType(uri) ?: "*/*"
+                                })
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            
+                            try {
+                                startActivity(intent)
+                            } catch (e: Exception) {
+                                android.util.Log.e("CourseDetailFragment", "Error opening content", e)
+                                android.widget.Toast.makeText(context, "Error al abrir el contenido", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        
+                        taskContentContainer?.addView(contentItemView)
+                    }
+                } else {
+                    contentSeparator?.visibility = View.GONE
+                    taskContentLabel?.visibility = View.GONE
+                    taskContentContainer?.visibility = View.GONE
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("CourseDetailFragment", "Error loading content items", e)
+            }
+        }
 
         // Only show edit button for course creators
         editTaskButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
@@ -1887,30 +1943,9 @@ class CourseDetailFragment : Fragment() {
         }
     }    // Add this method to load content items for a specific task
     private fun loadTaskContentItems(taskId: Long, container: LinearLayout) {
-        val contentItemDao = AppDatabase.getDatabase(requireContext()).contentItemDao()
-        CoroutineScope(Dispatchers.Main).launch {
-            val taskContentItems = withContext(Dispatchers.IO) {
-                contentItemDao.getContentItemsByTaskId(taskId)
-            }
-            container.removeAllViews()
-            val sortedContent = taskContentItems.sortedBy { it.orderIndex }
-            
-            if (sortedContent.isNotEmpty()) {
-                // Find and show the content label
-                val parentView = container.parent as? ViewGroup
-                val taskContentLabel = parentView?.findViewById<TextView>(R.id.taskContentLabel)
-                taskContentLabel?.visibility = View.VISIBLE
-                
-                for (item in sortedContent) {
-                    addContentView(item, container, isTaskContent = true)
-                }
-            } else {
-                // Hide the content label if no content
-                val parentView = container.parent as? ViewGroup
-                val taskContentLabel = parentView?.findViewById<TextView>(R.id.taskContentLabel)
-                taskContentLabel?.visibility = View.GONE
-            }
-        }
+        // Método obsoleto - el contenedor de contenido de tareas fue eliminado del layout
+        // Mantener solo para evitar errores de compilación si hay referencias restantes
+        Log.d("CourseDetailFragment", "loadTaskContentItems: Container removed from layout")
     }// Modify addContentView to handle task content layout and clicks
     private fun addContentView(item: ContentItem, container: LinearLayout, isTaskContent: Boolean = false) {
         Log.d("CourseDetailFragment", "Adding content view - Name: ${item.name}, Type: ${item.contentType}, URI: ${item.uriString}, isTaskContent: $isTaskContent")

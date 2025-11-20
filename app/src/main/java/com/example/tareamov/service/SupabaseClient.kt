@@ -257,7 +257,7 @@ object SupabaseClient {
     suspend fun insertVideo(video: com.example.tareamov.data.entity.VideoData): Long? = withContext(Dispatchers.IO) {
         try {
             val map = mutableMapOf<String, Any?>(
-                "username" to video.username,
+                // NO incluir username - se obtiene desde courses via course_id
                 "description" to video.description,
                 "title" to video.title,
                 "video_uri_string" to video.videoUriString,
@@ -1335,6 +1335,26 @@ object SupabaseClient {
         }
     }
 
+    /**
+     * Obtiene el username del creador desde un course_id.
+     * Primero obtiene el curso, luego su creator_user_id, y finalmente el username.
+     */
+    suspend fun getUsernameFromCourseId(courseId: Long): String? {
+        if (courseId <= 0) return null
+        return try {
+            val course = fetchCourseById(courseId)
+            if (course != null && course.creatorUserId > 0) {
+                getUsernameFromUserId(course.creatorUserId)
+            } else {
+                android.util.Log.w("SupabaseClient", "getUsernameFromCourseId: course not found or invalid creatorUserId for courseId=$courseId")
+                null
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("SupabaseClient", "getUsernameFromCourseId exception for courseId=$courseId: ${e.message}", e)
+            null
+        }
+    }
+
     suspend fun searchCourses(query: String, limit: Int = 50): List<Course> {
         if (!isConfigured()) {
             android.util.Log.w("SupabaseClient", "searchCourses skipped: Supabase not configured")
@@ -1396,7 +1416,83 @@ object SupabaseClient {
             }
         }
     }
-    suspend fun fetchVideos(): List<VideoData> = fetchList("videos", Array<VideoData>::class.java)
+    suspend fun fetchVideos(): List<VideoData> = withContext(Dispatchers.IO) {
+        try {
+            // Try typed mapping first
+            var videos = fetchList("videos", Array<VideoData>::class.java)
+            if (videos.isNotEmpty()) return@withContext videos
+
+            // Defensive fallback: raw JSON mapping to remain resilient to schema changes
+            return@withContext try {
+                val req = buildGetRequest("videos")
+                client.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string()
+                    if (!resp.isSuccessful || body.isNullOrEmpty()) return@use emptyList<VideoData>()
+                    val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
+                    val repaired = mutableListOf<VideoData>()
+                    for (elem in arr) {
+                        try {
+                            val obj = elem.asJsonObject
+                            val id = obj.get("id")?.takeIf { !it.isJsonNull }?.asLong ?: 0L
+                            val username = when {
+                                obj.has("username") && !obj.get("username").isJsonNull -> obj.get("username").asString
+                                obj.has("creator_username") && !obj.get("creator_username").isJsonNull -> obj.get("creator_username").asString
+                                obj.has("user") && !obj.get("user").isJsonNull -> obj.get("user").asString
+                                else -> "unknown"
+                            }
+                            val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                            val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                            val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                            val videoUriString = when {
+                                obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
+                                obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
+                                obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
+                                else -> null
+                            }
+                            val localFilePath = obj.get("local_file_path")?.takeIf { !it.isJsonNull }?.asString
+                            val thumbnailUri = when {
+                                obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull -> obj.get("thumbnail_uri").asString
+                                obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull -> obj.get("thumbnail").asString
+                                else -> null
+                            }
+                            val timestamp = try {
+                                obj.get("timestamp")?.takeIf { !it.isJsonNull }?.asLong
+                                    ?: obj.get("created_at")?.takeIf { !it.isJsonNull }?.asString?.let { java.time.Instant.parse(it).toEpochMilli() }
+                                    ?: System.currentTimeMillis()
+                            } catch (_: Exception) { System.currentTimeMillis() }
+                            val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                            val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
+
+                            repaired.add(
+                                VideoData(
+                                    id = id,
+                                    username = username,
+                                    description = description,
+                                    title = title,
+                                    videoUriString = videoUriString,
+                                    localFilePath = localFilePath,
+                                    timestamp = timestamp,
+                                    isPaid = isPaid,
+                                    thumbnailUri = thumbnailUri,
+                                    price = price,
+                                    courseId = courseId
+                                )
+                            )
+                        } catch (t: Exception) {
+                            Log.w("SupabaseClient", "Failed to parse video element", t)
+                        }
+                    }
+                    repaired
+                }
+            } catch (inner: Exception) {
+                Log.w("SupabaseClient", "Defensive fetchVideos fallback failed", inner)
+                emptyList()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
     // Fetch videos for a specific username (server-side filter). Attempts exact eq match.
     suspend fun fetchVideosByUsername(username: String): List<VideoData> = withContext(Dispatchers.IO) {
         try {
@@ -2304,13 +2400,85 @@ object SupabaseClient {
     suspend fun fetchVideosPaginated(offset: Int, limit: Int): Pair<List<VideoData>, Int> = withContext(Dispatchers.IO) {
         try {
             val path = "videos?offset=$offset&limit=$limit&order=timestamp.desc"
-            val videos = fetchList(path, Array<VideoData>::class.java).toList()
-            
+            var videos = fetchList(path, Array<VideoData>::class.java).toList()
+
+            // Fallback: if typed parsing returned empty (e.g., schema changes like removed username),
+            // do a defensive JSON mapping to keep working and include course_id.
+            if (videos.isEmpty()) {
+                try {
+                    val req = buildGetRequest(path)
+                    client.newCall(req).execute().use { resp ->
+                        val body = resp.body?.string()
+                        if (resp.isSuccessful && !body.isNullOrEmpty()) {
+                            val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
+                            val repaired = mutableListOf<VideoData>()
+                            for (elem in arr) {
+                                try {
+                                    val obj = elem.asJsonObject
+                                    val id = obj.get("id")?.takeIf { !it.isJsonNull }?.asLong ?: 0L
+                                    val username = when {
+                                        obj.has("username") && !obj.get("username").isJsonNull -> obj.get("username").asString
+                                        obj.has("creator_username") && !obj.get("creator_username").isJsonNull -> obj.get("creator_username").asString
+                                        obj.has("user") && !obj.get("user").isJsonNull -> obj.get("user").asString
+                                        else -> "unknown"
+                                    }
+                                    val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                    val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                    val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                                    val videoUriString = when {
+                                        obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
+                                        obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
+                                        obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
+                                        else -> null
+                                    }
+                                    val localFilePath = obj.get("local_file_path")?.takeIf { !it.isJsonNull }?.asString
+                                    val thumbnailUri = when {
+                                        obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull -> obj.get("thumbnail_uri").asString
+                                        obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull -> obj.get("thumbnail").asString
+                                        else -> null
+                                    }
+                                    val timestamp = try {
+                                        obj.get("timestamp")?.takeIf { !it.isJsonNull }?.asLong
+                                            ?: obj.get("created_at")?.takeIf { !it.isJsonNull }?.asString?.let { java.time.Instant.parse(it).toEpochMilli() }
+                                            ?: System.currentTimeMillis()
+                                    } catch (_: Exception) { System.currentTimeMillis() }
+                                    val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                                    val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
+
+                                    repaired.add(
+                                        VideoData(
+                                            id = id,
+                                            username = username,
+                                            description = description,
+                                            title = title,
+                                            videoUriString = videoUriString,
+                                            localFilePath = localFilePath,
+                                            timestamp = timestamp,
+                                            isPaid = isPaid,
+                                            thumbnailUri = thumbnailUri,
+                                            price = price,
+                                            courseId = courseId
+                                        )
+                                    )
+                                } catch (t: Exception) {
+                                    Log.w("SupabaseClient", "Failed to parse paginated video element", t)
+                                }
+                            }
+                            if (repaired.isNotEmpty()) {
+                                videos = repaired
+                            }
+                        }
+                    }
+                } catch (inner: Exception) {
+                    Log.w("SupabaseClient", "Defensive paginated fetch failed", inner)
+                }
+            }
+
             // Get total count
             val countPath = "videos?select=count"
             val countRequest = buildGetRequest(countPath)
             var totalCount = videos.size
-            
+
             try {
                 client.newCall(countRequest).execute().use { response ->
                     val body = response.body?.string()
@@ -2324,7 +2492,7 @@ object SupabaseClient {
             } catch (e: Exception) {
                 Log.w("SupabaseClient", "Could not get total count", e)
             }
-            
+
             return@withContext Pair(videos, totalCount)
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error fetching videos paginated", e)

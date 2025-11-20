@@ -316,6 +316,15 @@ class VideoHomeFragment : Fragment() {
                 // Navigate to CourseDetailFragment using Supabase as authoritative source.
                 lifecycleScope.launch {
                     try {
+                        // Obtener username desde course_id
+                        val videoUsername = if (videoData.courseId != null && videoData.courseId!! > 0) {
+                            withContext(Dispatchers.IO) {
+                                com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
+                            }
+                        } else {
+                            videoData.username // Fallback por compatibilidad
+                        }
+
                         var matchingCourse: com.example.tareamov.data.entity.Course? = null
                         val act = requireActivity()
 
@@ -323,7 +332,7 @@ class VideoHomeFragment : Fragment() {
                             try {
                                 // Try server-side: fetch courses by this creator and match title
                                 val remoteList = withContext(Dispatchers.IO) {
-                                    act.syncRepository.fetchCoursesByCreatorFromSupabase(videoData.username ?: "")
+                                    act.syncRepository.fetchCoursesByCreatorFromSupabase(videoUsername ?: "")
                                 }
                                 matchingCourse = remoteList.firstOrNull { c -> (c.title ?: "").equals(videoData.title ?: "", ignoreCase = true) }
 
@@ -336,7 +345,7 @@ class VideoHomeFragment : Fragment() {
                                         val courseUsername = withContext(Dispatchers.IO) {
                                             com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(c.creatorUserId)
                                         }
-                                        val creatorMatches = (courseUsername ?: "").equals(videoData.username ?: "", ignoreCase = true)
+                                        val creatorMatches = (courseUsername ?: "").equals(videoUsername ?: "", ignoreCase = true)
                                         titleMatches && creatorMatches
                                     }
                                 }
@@ -440,12 +449,25 @@ class VideoHomeFragment : Fragment() {
         // --- NUEVO BLOQUE: Cargar avatar de la persona asociada al usuario del video ---
         lifecycleScope.launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val persona = withContext(Dispatchers.IO) {
-                    db.personaDao().getPersonaByUsername(videoData.username)
+                // Obtener username desde course_id
+                val videoUsername = if (videoData.courseId != null && videoData.courseId!! > 0) {
+                    withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
+                    }
+                } else {
+                    videoData.username // Fallback por compatibilidad
                 }
-                // Avatar loading is now handled by VideoAdapter
-                Log.d("VideoHomeFragment", "Avatar lookup completed for user: ${videoData.username}")
+                
+                if (videoUsername != null) {
+                    val db = AppDatabase.getDatabase(requireContext())
+                    val persona = withContext(Dispatchers.IO) {
+                        db.personaDao().getPersonaByUsername(videoUsername)
+                    }
+                    // Avatar loading is now handled by VideoAdapter
+                    Log.d("VideoHomeFragment", "Avatar lookup completed for user: $videoUsername")
+                } else {
+                    Log.w("VideoHomeFragment", "Could not resolve username for video ${videoData.id}")
+                }
             } catch (e: Exception) {
                 Log.e("VideoHomeFragment", "Error loading video uploader avatar", e)
             }

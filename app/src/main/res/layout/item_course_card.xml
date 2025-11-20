@@ -226,6 +226,40 @@
             </LinearLayout>
 
         </LinearLayout>
+
+        <!-- Owner Status Indicator (Visible solo para el creador del curso) -->
+        <LinearLayout
+            android:id="@+id/ownerStatusContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp"
+            android:gravity="start|center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            android:background="@drawable/bg_card_premium"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="👑 Tu curso"
+                android:textColor="#C2B8FF"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.02" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:text="Gestiona y edita el contenido"
+                android:textColor="#90CAF9"
+                android:textSize="11sp" />
+
+        </LinearLayout>
         
         <!-- Enroll Button Container (Only visible for non-creators and not enrolled) -->
         <LinearLayout

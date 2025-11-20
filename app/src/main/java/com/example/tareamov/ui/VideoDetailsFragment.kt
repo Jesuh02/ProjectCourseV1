@@ -149,9 +149,10 @@ class VideoDetailsFragment : Fragment() {
                 Log.d("VideoDetailsFragment", "Course created with ID: $courseRemoteId")
 
                 // Now create video with the specific ID and courseId reference
+                // NO incluir username - se obtiene desde course_id en el backend/app
                 val videoData = VideoData(
                     id = nextVideoId,
-                    username = currentUsername,
+                    username = "", // NO se envía a Supabase, se deriva desde course_id
                     description = description,
                     title = title,
                     videoUriString = videoUri.toString(),

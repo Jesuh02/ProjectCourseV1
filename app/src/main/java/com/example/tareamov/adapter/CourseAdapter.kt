@@ -69,6 +69,7 @@ class CourseAdapter(
         val editButton: android.widget.ImageButton? = itemView.findViewById(R.id.editButton)
         val deleteButton: android.widget.ImageButton? = itemView.findViewById(R.id.deleteButton)
         val changeThumbnailButton: android.widget.ImageButton? = itemView.findViewById(R.id.changeThumbnailButton)
+        val ownerStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.ownerStatusContainer)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CourseViewHolder {
@@ -93,6 +94,11 @@ class CourseAdapter(
         
         Log.d("CourseAdapter", "Binding course: ${course.title}, creatorUserId: ${course.creatorUserId}, currentUsername: $currentUsername")
         
+        // Default: hide enrollment-related UI to avoid brief flashes before ownership check completes
+        holder.enrollButtonContainer?.visibility = View.GONE
+        holder.enrolledStatusContainer?.visibility = View.GONE
+        holder.ownerStatusContainer?.visibility = View.GONE
+
         // Load real enrollment count from progreso_estudiante table
         loadEnrollmentCount(holder, course)
 
@@ -129,11 +135,15 @@ class CourseAdapter(
                 }
             }
             
-            // Hide enrollment button for creators
+            // Hide ALL enrollment UI for creators (both button and enrolled status)
             holder.enrollButtonContainer?.visibility = View.GONE
+            holder.enrolledStatusContainer?.visibility = View.GONE
             
             // Show CRUD action buttons for creators
             holder.actionButtonsContainer?.visibility = View.VISIBLE
+
+            // Show owner badge
+            holder.ownerStatusContainer?.visibility = View.VISIBLE
             
             // Set up CRUD button click listeners
             holder.editButton?.setOnClickListener {
@@ -181,11 +191,10 @@ class CourseAdapter(
             // Load creator avatar (default for now)
             holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
             
-            // Show enrollment button for non-creators
-            holder.enrollButtonContainer?.visibility = View.VISIBLE
-            
             // Check enrollment status and configure button
             checkEnrollmentStatus(holder, course)
+            // Ensure owner badge hidden for non-creators
+            holder.ownerStatusContainer?.visibility = View.GONE
         }
 
         // Set price without discount logic
@@ -470,6 +479,14 @@ class CourseAdapter(
             holder.enrollButton?.alpha = 0.6f
             return
         }
+
+        // Defensive guard: if current user is creator, ensure no enrollment UI appears
+        if (currentUserIdCached != null && currentUserIdCached == course.creatorUserId) {
+            holder.enrollButtonContainer?.visibility = View.GONE
+            holder.enrolledStatusContainer?.visibility = View.GONE
+            Log.d("CourseAdapter", "Creator detected; hiding enrollment UI for course ${course.id}")
+            return
+        }
         
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -479,6 +496,16 @@ class CourseAdapter(
                 val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
                 if (userId == null) {
                     Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
+                    return@launch
+                }
+                
+                // CRITICAL: Double-check if user is the course creator
+                if (userId == course.creatorUserId) {
+                    Log.d("CourseAdapter", "User $userId is creator of course ${course.id}, hiding all enrollment UI")
+                    withContext(Dispatchers.Main) {
+                        holder.enrollButtonContainer?.visibility = View.GONE
+                        holder.enrolledStatusContainer?.visibility = View.GONE
+                    }
                     return@launch
                 }
                 
