@@ -106,13 +106,13 @@
             android:orientation="vertical"
             android:padding="0dp">
 
-            <!-- Course Title & Hero Section -->
+             <!-- Course Title & Hero Section -->
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/courseTitleContainer"
-                android:layout_width="match_parent"
-                android:layout_height="181dp"
-                android:layout_marginStart="24dp"
-                android:layout_marginTop="24dp"
+                android:layout_width="wrap_content"
+                android:layout_height="290dp"
+                android:layout_marginStart="10dp"
+                android:layout_marginTop="20dp"
                 android:layout_marginEnd="24dp"
                 android:layout_marginBottom="20dp"
                 android:alpha="0"
@@ -120,10 +120,11 @@
                 android:background="@drawable/bg_course_title_pill"
                 android:clipToPadding="false"
                 android:elevation="12dp"
+                android:minHeight="280dp"
                 android:paddingStart="26dp"
-                android:paddingTop="30dp"
+                android:paddingTop="24dp"
                 android:paddingEnd="26dp"
-                android:paddingBottom="30dp"
+                android:paddingBottom="24dp"
                 android:stateListAnimator="@animator/glass_card_state_list"
                 android:transitionName="hero_course_header"
                 android:translationY="-20dp">
@@ -151,6 +152,7 @@
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintTop_toTopOf="parent" />
 
+                <!-- Header Row with Icon, Meta Label and Edit Button -->
                 <LinearLayout
                     android:id="@+id/heroHeaderRow"
                     android:layout_width="0dp"
@@ -191,21 +193,21 @@
                     <Space
                         android:layout_width="0dp"
                         android:layout_height="0dp"
-                        android:layout_marginStart="14dp"
                         android:layout_weight="1" />
 
                     <ImageButton
                         android:id="@+id/editCourseButton"
                         android:layout_width="44dp"
                         android:layout_height="44dp"
-                        android:alpha="0.0"
+                        android:layout_marginEnd="8dp"
+                        android:alpha="0.9"
                         android:background="@drawable/bg_nav_button"
                         android:contentDescription="Editar curso"
                         android:padding="12dp"
                         android:scaleType="centerInside"
                         android:src="@android:drawable/ic_menu_edit"
                         android:tint="#F0E7FF"
-                        android:translationY="6dp" />
+                        android:visibility="gone" />
                 </LinearLayout>
 
                 <View
@@ -219,22 +221,25 @@
                     app:layout_constraintStart_toStartOf="@id/heroHeaderRow"
                     app:layout_constraintTop_toBottomOf="@id/heroHeaderRow" />
 
+                <!-- Course Title -->
                 <TextView
                     android:id="@+id/courseTitleTextView"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
+                    android:layout_marginTop="12dp"
                     android:alpha="0"
+                    android:ellipsize="end"
                     android:fontFamily="@font/sf_pro_display_semibold"
                     android:includeFontPadding="false"
                     android:letterSpacing="-0.024"
                     android:lineSpacingMultiplier="1.18"
+                    android:maxLines="2"
                     android:shadowColor="#66151930"
                     android:shadowDx="0"
                     android:shadowDy="6"
                     android:shadowRadius="12"
                     android:textColor="#FFFFFF"
-                    android:textSize="32sp"
+                    android:textSize="28sp"
                     android:textStyle="bold"
                     android:translationY="10dp"
                     app:layout_constraintEnd_toEndOf="parent"
@@ -242,35 +247,129 @@
                     app:layout_constraintTop_toBottomOf="@id/courseMetaDivider"
                     tools:text="¿Quién nació primero?" />
 
+                <!-- Course Description -->
                 <TextView
                     android:id="@+id/courseDescriptionTextView"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
+                    android:layout_marginTop="8dp"
                     android:alpha="0"
+                    android:ellipsize="end"
                     android:fontFamily="@font/sf_pro_display_regular"
                     android:includeFontPadding="false"
                     android:letterSpacing="0.01"
-                    android:lineSpacingMultiplier="1.4"
-                    android:textColor="#F3EEFF"
-                    android:textSize="15sp"
+                    android:lineSpacingMultiplier="1.35"
+                    android:maxLines="3"
+                    android:textColor="#E8DDFF"
+                    android:textSize="14sp"
                     android:translationY="16dp"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintTop_toBottomOf="@id/courseTitleTextView"
                     tools:text="Explora contenido premium curado para tus estudiantes." />
 
+                <!-- Temática / Category Badge -->
+                <LinearLayout
+                    android:id="@+id/courseThematicContainer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toBottomOf="@id/courseDescriptionTextView">
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:alpha="0.8"
+                        android:contentDescription="Categoría"
+                        android:src="@drawable/ic_sparkle"
+                        android:tint="#9B7EFF" />
+
+                    <TextView
+                        android:id="@+id/courseThematicTextView"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
+                        android:letterSpacing="0.05"
+                        android:text="Temática: Educación"
+                        android:textColor="#C9B8FF"
+                        android:textSize="13sp"
+                        tools:text="Temática: Programación" />
+                </LinearLayout>
+
+                <!-- Pricing Section -->
+                <LinearLayout
+                    android:id="@+id/coursePricingContainer"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bg_surface_glass"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="12dp"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toBottomOf="@id/courseThematicContainer">
+
+                    <!-- Price Type Icon -->
+                    <ImageView
+                        android:id="@+id/coursePriceIcon"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:contentDescription="Tipo de curso"
+                        android:src="@android:drawable/ic_menu_info_details"
+                        android:tint="#4CAF50"
+                        tools:tint="#FFB300" />
+
+                    <!-- Price Text -->
+                    <TextView
+                        android:id="@+id/coursePriceTextView"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
+                        android:text="Curso Gratuito"
+                        android:textColor="#FFFFFF"
+                        android:textSize="15sp"
+                        tools:text="$49.99 USD" />
+
+                    <!-- Toggle Price Button (for creators) -->
+                    <Button
+                        android:id="@+id/togglePriceButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/button_premium"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
+                        android:paddingStart="16dp"
+                        android:paddingEnd="16dp"
+                        android:text="Configurar"
+                        android:textAllCaps="false"
+                        android:textColor="#FFFFFF"
+                        android:textSize="13sp"
+                        android:visibility="gone"
+                        tools:visibility="visible" />
+                </LinearLayout>
+
+                <!-- Accent Divider -->
                 <View
                     android:id="@+id/courseAccentDivider"
                     android:layout_width="88dp"
                     android:layout_height="4dp"
-                    android:layout_marginTop="26dp"
+                    android:layout_marginTop="16dp"
                     android:alpha="0"
                     android:background="@drawable/course_title_accent"
                     android:scaleX="0.64"
                     android:translationY="10dp"
                     app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@id/courseDescriptionTextView" />
+                    app:layout_constraintTop_toBottomOf="@id/coursePricingContainer" />
             </androidx.constraintlayout.widget.ConstraintLayout>
 
 

@@ -221,8 +221,12 @@ class CourseCreationFragment : Fragment() {
                     Toast.makeText(context, "Curso guardado exitosamente en Supabase con ID: $remoteId", Toast.LENGTH_SHORT).show()
                     Log.d("CourseCreationFragment", "Course saved to Supabase with ID: $remoteId")
                     
-                    // Navigate back to previous screen
-                    findNavController().navigateUp()
+                    // Navigate to CourseDetailFragment with the created course
+                    val bundle = Bundle().apply {
+                        putLong("courseId", remoteId)
+                        putString("courseName", courseName)
+                    }
+                    findNavController().navigate(R.id.action_courseCreationFragment_to_courseDetailFragment, bundle)
                 } else {
                     Toast.makeText(context, "Error al guardar el curso en Supabase", Toast.LENGTH_SHORT).show()
                 }

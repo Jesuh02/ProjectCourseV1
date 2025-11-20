@@ -171,14 +171,14 @@ class VideoDetailsFragment : Fragment() {
                 if (remoteId != null && remoteId > 0) {
                     Toast.makeText(context, "✅ Video guardado con ID $remoteId, Curso ID $courseRemoteId", Toast.LENGTH_LONG).show()
                     Log.d("VideoDetailsFragment", "Video saved successfully with ID: $remoteId, linked to course: $courseRemoteId")
+                    
+                    // Navigate to VideoHomeFragment after creating video
+                    findNavController().navigate(R.id.action_videoDetailsFragment_to_videoHomeFragment)
                 } else {
                     Toast.makeText(context, "Error guardando video en Supabase", Toast.LENGTH_SHORT).show()
                     Log.e("VideoDetailsFragment", "Failed to insert video - remoteId: $remoteId")
                     return@launch
                 }
-
-                // Navigate back to VideoHomeFragment to show the updated video
-                findNavController().navigate(R.id.action_videoDetailsFragment_to_videoHomeFragment)
             } catch (e: Exception) {
                 Log.e("VideoDetailsFragment", "Error saving video details", e)
                 Toast.makeText(context, "Error guardando video: ${e.message}", Toast.LENGTH_SHORT).show()

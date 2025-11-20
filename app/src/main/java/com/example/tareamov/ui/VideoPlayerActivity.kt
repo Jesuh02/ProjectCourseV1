@@ -435,15 +435,18 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        // If the activity enters background but is in PIP mode, keep playback running.
-        // Otherwise pause playback when the activity is fully paused.
-        if (!isInPictureInPictureMode && videoView.isPlaying) videoView.pause()
+        // If the activity enters background but is in PIP mode, keep playback as-is (playing or paused).
+        // Only pause playback when the activity is fully paused and NOT in PIP mode.
+        if (!isInPictureInPictureMode && videoView.isPlaying) {
+            videoView.pause()
+        }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // Trigger PIP automatically when user leaves the activity (press Home) and video is playing
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && videoView.isPlaying && !isInPictureInPictureMode) {
+        // Trigger PIP automatically when user leaves the activity (press Home)
+        // Works regardless of playback state (playing or paused)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode) {
             try {
                 val w = if (videoView.width > 0) videoView.width else 16
                 val h = if (videoView.height > 0) videoView.height else 9

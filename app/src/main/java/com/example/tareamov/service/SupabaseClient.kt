@@ -668,13 +668,22 @@ object SupabaseClient {
     suspend fun insertContentItem(contentItem: com.example.tareamov.data.entity.ContentItem): Long? = withContext(Dispatchers.IO) {
         try {
             // Map local ContentItem fields to Supabase content_items columns (title/body)
-            val map = mapOf(
+            val map = mutableMapOf(
                 "topic_id" to contentItem.topicId,
                 "task_id" to contentItem.taskId,
                 "title" to (contentItem.name ?: ""),
                 "body" to contentItem.uriString,
-                "content_type" to contentItem.contentType
+                "content_type" to contentItem.contentType,
+                "order_index" to (contentItem.orderIndex ?: 0)
             )
+            
+            // Add creator fields if available
+            if (contentItem.creator_usuario_id != null && contentItem.creator_usuario_id!! > 0) {
+                map["creator_usuario_id"] = contentItem.creator_usuario_id!!
+            }
+            if (!contentItem.creator_username.isNullOrBlank()) {
+                map["creator_username"] = contentItem.creator_username!!
+            }
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
             val url = "$baseUrl/rest/v1/content_items"
@@ -1319,6 +1328,8 @@ object SupabaseClient {
         if (trimmed.isEmpty()) return null
         return try {
             fetchUsuarioByUsername(trimmed)?.id?.takeIf { it > 0 }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             android.util.Log.w("SupabaseClient", "getUserIdFromUsername exception for username=$trimmed: ${e.message}", e)
             null
@@ -1329,6 +1340,8 @@ object SupabaseClient {
         if (userId <= 0) return null
         return try {
             fetchUsuarioById(userId)?.usuario?.takeIf { it.isNotBlank() }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             android.util.Log.w("SupabaseClient", "getUsernameFromUserId exception for id=$userId: ${e.message}", e)
             null
@@ -1349,6 +1362,8 @@ object SupabaseClient {
                 android.util.Log.w("SupabaseClient", "getUsernameFromCourseId: course not found or invalid creatorUserId for courseId=$courseId")
                 null
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             android.util.Log.w("SupabaseClient", "getUsernameFromCourseId exception for courseId=$courseId: ${e.message}", e)
             null
@@ -1496,18 +1511,19 @@ object SupabaseClient {
     // Fetch videos for a specific username (server-side filter). Attempts exact eq match.
     suspend fun fetchVideosByUsername(username: String): List<VideoData> = withContext(Dispatchers.IO) {
         try {
-            val escaped = username.replace("'", "''")
-            // Ask the server to order newest first by timestamp or created_at (fallback)
-            val path = "videos?username=eq.'${escaped}'&order=timestamp.desc,created_at.desc.nullslast"
-            var list = fetchList(path, Array<VideoData>::class.java)
-            if (list.isNotEmpty()) return@withContext list
-
-            // Fallback to ilike for case-insensitive matches, still ordered
-            val pathIlike = "videos?username=ilike.'${escaped}'&order=timestamp.desc,created_at.desc.nullslast"
-            list = fetchList(pathIlike, Array<VideoData>::class.java)
-            if (list.isNotEmpty()) return@withContext list
-
-            // Last resort: fetch all videos ordered and filter client-side
+            // Since 'videos' table doesn't have 'username' column, we must go through courses -> creator_user_id
+            val userId = getUserIdFromUsername(username)
+            if (userId != null) {
+                val courses = fetchCoursesByCreatorUserId(userId)
+                val courseIds = courses.map { it.id }
+                if (courseIds.isNotEmpty()) {
+                    val videos = fetchVideosByCourseIds(courseIds)
+                    // Manually set the username since it's not in the video table
+                    return@withContext videos.map { it.copy(username = username) }
+                }
+            }
+            
+            // Fallback: fetch all videos ordered and filter client-side (inefficient but safe)
             val allPath = "videos?order=timestamp.desc,created_at.desc.nullslast"
             val all = fetchList(allPath, Array<VideoData>::class.java)
             return@withContext all.filter { v -> (v.username ?: "").trim().equals(username.trim(), ignoreCase = true) }
@@ -1652,6 +1668,8 @@ object SupabaseClient {
             return@withContext false
         }
     }
+
+
 
     // Delete a subscription (unsubscribe) from Supabase
     suspend fun deleteSubscriptionFromSupabase(subscriber: String, creator: String): Boolean = withContext(Dispatchers.IO) {
@@ -1902,6 +1920,29 @@ object SupabaseClient {
             emptyList()
         }
     }
+    
+    // Fetch content items for a specific task using server-side filter
+    suspend fun fetchContentItemsByTaskId(taskId: Long): List<ContentItem> = withContext(Dispatchers.IO) {
+        if (taskId <= 0) return@withContext emptyList()
+        try {
+            val path = "content_items?task_id=eq.$taskId&order=order_index.asc"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchContentItemsByTaskId failed status=${resp.code} for taskId=$taskId")
+                    return@withContext emptyList()
+                }
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                val arr = underscoredGson.fromJson(body, Array<ContentItem>::class.java)
+                Log.d("SupabaseClient", "fetchContentItemsByTaskId: Found ${arr.size} items for taskId=$taskId")
+                return@withContext arr.toList()
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchContentItemsByTaskId exception for taskId=$taskId", e)
+            emptyList()
+        }
+    }
+    
     // Fetch tasks for a specific topic or for many topics using 'in' filter
     suspend fun fetchTasksByTopicIds(topicIds: List<Long>): List<Task> = withContext(Dispatchers.IO) {
         if (topicIds.isEmpty()) return@withContext emptyList()
@@ -1950,89 +1991,31 @@ object SupabaseClient {
             return@withContext emptyList()
         }
     }
-    suspend fun fetchRoles(): List<Rol> = fetchList("roles", Array<Rol>::class.java)
-    suspend fun fetchRecursos(): List<Recurso> = fetchList("recursos", Array<Recurso>::class.java)
-    suspend fun fetchRolRecursos(): List<RolRecurso> = fetchList("rol_recursos", Array<RolRecurso>::class.java)
 
-    // Fetch a single role by id
-    suspend fun fetchRolById(id: Long): Rol? = withContext(Dispatchers.IO) {
+    // Fetch courses by creator user ID (server-side filter)
+    suspend fun fetchCoursesByCreatorUserId(userId: Long): List<Course> = withContext(Dispatchers.IO) {
         try {
-            val path = "roles?id=eq.$id"
-            val list = fetchList(path, Array<Rol>::class.java)
-            return@withContext list.firstOrNull()
+            val path = "courses?creator_user_id=eq.$userId&order=timestamp.desc,created_at.desc.nullslast"
+            fetchList(path, Array<Course>::class.java)
         } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext null
+            Log.e("SupabaseClient", "Error fetching courses by creator user ID", e)
+            emptyList()
         }
     }
 
-    // Fetch a Usuario by username and include its role via separate request (safe for PostgREST)
-    suspend fun fetchUsuarioWithRoleByUsername(username: String): Pair<Usuario?, Rol?> = withContext(Dispatchers.IO) {
+    // Fetch videos by a list of course IDs (server-side filter using 'in')
+    suspend fun fetchVideosByCourseIds(courseIds: List<Long>): List<VideoData> = withContext(Dispatchers.IO) {
         try {
-            val u = fetchUsuarioByUsername(username)
-            if (u == null) return@withContext Pair(null, null)
-            val role = if (u.rol_id != null && u.rol_id > 0) {
-                fetchRolById(u.rol_id)
-            } else null
-            return@withContext Pair(u, role)
+            if (courseIds.isEmpty()) return@withContext emptyList()
+            val idsStr = courseIds.joinToString(",")
+            val path = "videos?course_id=in.($idsStr)&order=timestamp.desc,created_at.desc.nullslast"
+            fetchList(path, Array<VideoData>::class.java)
         } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext Pair(null, null)
+            Log.e("SupabaseClient", "Error fetching videos by course IDs", e)
+            emptyList()
         }
     }
-
-    // Lightweight helper to fetch the most recent timestamp value for a table.
-    // This can be used to detect remote changes without downloading entire tables.
-    suspend fun fetchTableMaxUpdatedAt(table: String, field: String = "updated_at"): String? = withContext(Dispatchers.IO) {
-        try {
-            // Try a small set of commonly used timestamp fields when the default is not present.
-            val candidates = listOf(field, "timestamp", "last_modified", "last_modified_date", "updatedat", "modified_at")
-                .distinct()
-
-            for (f in candidates) {
-                try {
-                    val path = "${table}?select=${f}&order=${f}.desc&limit=1"
-                    val request = buildGetRequest(path)
-                    client.newCall(request).execute().use { resp ->
-                        val body = resp.body?.string()
-                        if (!resp.isSuccessful) {
-                            // If server returns 400 (bad request) it's likely the field doesn't exist ÔÇö try next candidate.
-                            if (resp.code == 400) {
-                                android.util.Log.w("SupabaseClient", "fetchTableMaxUpdatedAt: field '$f' not valid for table '$table' (400). Trying next candidate.")
-                                return@use
-                            }
-                            android.util.Log.w("SupabaseClient", "fetchTableMaxUpdatedAt failed for $table (field=$f): ${resp.code} body=${body}")
-                            return@withContext null
-                        }
-
-                        if (body.isNullOrEmpty()) return@use
-                        try {
-                            val json = com.google.gson.JsonParser.parseString(body).asJsonArray
-                            if (json.size() == 0) return@use
-                            val obj = json[0].asJsonObject
-                            if (!obj.has(f)) return@use
-                            return@withContext obj.get(f).asString
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                            return@use
-                        }
-                    }
-                } catch (inner: Exception) {
-                    // Continue trying other candidates on transient failures
-                    android.util.Log.w("SupabaseClient", "Error trying field '$f' for table '$table': ${inner.message}")
-                }
-            }
-
-            // No candidate produced a value
-            return@withContext null
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext null
-        }
-    }
-
-    // ========== NUEVOS MÉTODOS PARA MCP Y RAG ==========
-
+    
     /**
      * Call RPC function with parameters
      */
@@ -2188,7 +2171,7 @@ object SupabaseClient {
     /**
      * Fetch Video by ID
      */
-    suspend fun fetchVideoById(id: Int): VideoData? = withContext(Dispatchers.IO) {
+    suspend fun fetchVideoById(id: Long): VideoData? = withContext(Dispatchers.IO) {
         try {
             val path = "videos?id=eq.$id"
             val list = fetchList(path, Array<VideoData>::class.java)
@@ -2222,30 +2205,566 @@ object SupabaseClient {
     }
 
     /**
-     * Fetch ContentItem by ID - Acepta Int o Long
+     * Fetch Rol by ID
      */
-    suspend fun fetchContentItemById(id: Int): ContentItem? = withContext(Dispatchers.IO) {
+    suspend fun fetchRolById(id: Long): Rol? = withContext(Dispatchers.IO) {
         try {
-            val path = "content_items?id=eq.$id"
-            val list = fetchList(path, Array<ContentItem>::class.java)
+            val path = "roles?id=eq.$id"
+            val list = fetchList(path, Array<Rol>::class.java)
             return@withContext list.firstOrNull()
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching content item by ID", e)
+            Log.e("SupabaseClient", "Error fetching rol by ID", e)
             return@withContext null
         }
     }
 
     /**
-     * Fetch Task by ID
+     * Fetch all Roles
      */
-    suspend fun fetchTaskById(id: Int): Task? = withContext(Dispatchers.IO) {
+    suspend fun fetchRoles(): List<Rol> = fetchList("roles", Array<Rol>::class.java)
+
+    /**
+     * Fetch all Recursos
+     */
+    suspend fun fetchRecursos(): List<Recurso> = fetchList("recursos", Array<Recurso>::class.java)
+
+    /**
+     * Fetch all RolRecursos
+     */
+    suspend fun fetchRolRecursos(): List<RolRecurso> = fetchList("rol_recursos", Array<RolRecurso>::class.java)
+
+    /**
+     * Fetch Usuario and their Role by username
+     */
+    suspend fun fetchUsuarioWithRoleByUsername(username: String): Pair<Usuario?, Rol?> = withContext(Dispatchers.IO) {
+        val user = fetchUsuarioByUsername(username)
+        if (user != null && user.rol_id != null) {
+            val rol = fetchRolById(user.rol_id)
+            return@withContext Pair(user, rol)
+        } else {
+            return@withContext Pair(user, null)
+        }
+    }
+
+    /**
+     * Fetch max updated_at for a table
+     */
+    suspend fun fetchTableMaxUpdatedAt(table: String, field: String = "updated_at"): String? = withContext(Dispatchers.IO) {
         try {
-            val path = "tasks?id=eq.$id"
-            val list = fetchList(path, Array<Task>::class.java)
-            return@withContext list.firstOrNull()
+            val path = "$table?select=$field&order=$field.desc&limit=1"
+            val request = buildGetRequest(path)
+            client.newCall(request).execute().use { resp ->
+                val body = resp.body?.string()
+                if (!resp.isSuccessful || body.isNullOrEmpty()) return@withContext null
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                if (jsonArray.size() > 0) {
+                    val obj = jsonArray[0].asJsonObject
+                    if (obj.has(field) && !obj.get(field).isJsonNull) {
+                        return@withContext obj.get(field).asString
+                    }
+                }
+                return@withContext null
+            }
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching task by ID", e)
+            Log.e("SupabaseClient", "Error fetching max updated_at for $table", e)
             return@withContext null
+        }
+    }
+
+    /**
+     * Get max video ID from Supabase
+     */
+    suspend fun getMaxVideoIdFromSupabase(): Long = withContext(Dispatchers.IO) {
+        try {
+            val path = "videos?select=id&order=id.desc&limit=1"
+            val request = buildGetRequest(path)
+            
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                if (!response.isSuccessful || body.isNullOrEmpty()) {
+                    return@withContext 0L
+                }
+                
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                if (jsonArray.size() > 0) {
+                    val obj = jsonArray[0].asJsonObject
+                    return@withContext obj.get("id")?.asLong ?: 0L
+                }
+                
+                return@withContext 0L
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error getting max video ID", e)
+            return@withContext 0L
+        }
+    }
+
+    /**
+     * Fetch Courses Summary with pagination
+     */
+    suspend fun fetchCoursesSummary(
+        limit: Int = 10,
+        offset: Int = 0,
+        orderBy: String = "enrollment_count",
+        direction: String = "desc"
+    ): Pair<List<Course>, Int> = withContext(Dispatchers.IO) {
+        try {
+            val path = "courses?offset=$offset&limit=$limit&order=$orderBy.$direction"
+            val courses = fetchList(path, Array<Course>::class.java).toList()
+            
+            // Get total count
+            val countPath = "courses?select=count"
+            val countRequest = buildGetRequest(countPath)
+            var totalCount = courses.size
+            
+            try {
+                client.newCall(countRequest).execute().use { response ->
+                    val body = response.body?.string()
+                    if (response.isSuccessful && !body.isNullOrEmpty()) {
+                        val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                        if (jsonArray.size() > 0) {
+                            totalCount = jsonArray[0].asJsonObject.get("count")?.asInt ?: courses.size
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("SupabaseClient", "Could not get total count", e)
+            }
+            
+            return@withContext Pair(courses, totalCount)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching courses summary", e)
+            return@withContext Pair(emptyList(), 0)
+        }
+    }
+
+    /**
+     * Search videos by title, username, or category
+     */
+    suspend fun searchVideos(
+        query: String,
+        searchType: String = "all",
+        limit: Int = 50
+    ): List<VideoData> = withContext(Dispatchers.IO) {
+        if (!isConfigured()) {
+            Log.w("SupabaseClient", "searchVideos: not configured, returning empty list")
+            return@withContext emptyList()
+        }
+
+        try {
+            val searchQuery = query.trim().lowercase()
+            if (searchQuery.isEmpty()) {
+                Log.d("SupabaseClient", "Empty search query, fetching all videos")
+                return@withContext fetchVideos().take(limit)
+            }
+
+            // Special handling for username search since 'videos' table lacks username column
+            if (searchType == "username") {
+                try {
+                    // 1. Find users matching the query (partial match)
+                    val users = fetchList<Usuario>("usuarios?usuario=ilike.*${searchQuery}*", Array<Usuario>::class.java)
+                    if (users.isNotEmpty()) {
+                        val userIds = users.map { it.id }
+                        val userIdToNameMap = users.associate { it.id to it.usuario }
+                        
+                        // 2. Find courses created by these users
+                        val courses = fetchList<Course>("courses?creator_user_id=in.(${userIds.joinToString(",")})", Array<Course>::class.java)
+                        if (courses.isNotEmpty()) {
+                            val courseIds = courses.map { it.id }
+                            val courseIdToUsernameMap = courses.associate { it.id to (userIdToNameMap[it.creatorUserId] ?: "unknown") }
+                            
+                            // 3. Find videos in these courses
+                            val urlPath = "videos?course_id=in.(${courseIds.joinToString(",")})&order=id.desc&limit=${limit}"
+                            val request = buildGetRequest(urlPath)
+                            
+                            client.newCall(request).execute().use { resp ->
+                                if (resp.isSuccessful) {
+                                    val body = resp.body?.string()
+                                    if (body != null) {
+                                        val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                                        val results = mutableListOf<VideoData>()
+                                        for (element in jsonArray) {
+                                            try {
+                                                val obj = element.asJsonObject
+                                                val id = obj.get("id")?.takeIf { !it.isJsonNull }?.asLong ?: 0L
+                                                val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                                val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                                val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                                                
+                                                val videoUriString = when {
+                                                    obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
+                                                    obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
+                                                    obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
+                                                    else -> null
+                                                }
+                                                val localFilePath = obj.get("local_file_path")?.takeIf { !it.isJsonNull }?.asString
+                                                val thumbnailUri = when {
+                                                    obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull -> obj.get("thumbnail_uri").asString
+                                                    obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull -> obj.get("thumbnail").asString
+                                                    else -> null
+                                                }
+                                                val timestamp = try {
+                                                    obj.get("timestamp")?.takeIf { !it.isJsonNull }?.asLong
+                                                        ?: obj.get("created_at")?.takeIf { !it.isJsonNull }?.asString?.let { java.time.Instant.parse(it).toEpochMilli() }
+                                                        ?: System.currentTimeMillis()
+                                                } catch (_: Exception) { System.currentTimeMillis() }
+                                                val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                                                val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
+
+                                                // Inject username
+                                                val uName = courseId?.let { courseIdToUsernameMap[it] } ?: "unknown"
+                                                
+                                                val video = VideoData(
+                                                    id = id,
+                                                    username = uName,
+                                                    description = description,
+                                                    title = title,
+                                                    videoUriString = videoUriString,
+                                                    localFilePath = localFilePath,
+                                                    timestamp = timestamp,
+                                                    isPaid = isPaid,
+                                                    thumbnailUri = thumbnailUri,
+                                                    price = price,
+                                                    courseId = courseId
+                                                )
+                                                results.add(video)
+                                            } catch (e: Exception) {
+                                                Log.e("SupabaseClient", "Error parsing video in username search", e)
+                                            }
+                                        }
+                                        return@withContext results
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("SupabaseClient", "Error in username search", e)
+                }
+                return@withContext emptyList()
+            }
+
+            val urlPath = when (searchType) {
+                "title" -> "videos?title=ilike.*${searchQuery}*&order=id.desc&limit=${limit}"
+                "category" -> "videos?description=ilike.*${searchQuery}*&order=id.desc&limit=${limit}"
+                // For 'all', include username search as well
+                else -> "videos?or=(title.ilike.*${searchQuery}*,description.ilike.*${searchQuery}*)&order=id.desc&limit=${limit}"
+            }
+            
+            val request = buildGetRequest(urlPath)
+            
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                
+                val results = mutableListOf<VideoData>()
+                for (element in jsonArray) {
+                    try {
+                        val obj = element.asJsonObject
+                        
+                        // Robust parsing logic similar to fetchVideos
+                        val id = obj.get("id")?.takeIf { !it.isJsonNull }?.asLong ?: 0L
+                        val username = when {
+                            obj.has("username") && !obj.get("username").isJsonNull -> obj.get("username").asString
+                            obj.has("creator_username") && !obj.get("creator_username").isJsonNull -> obj.get("creator_username").asString
+                            obj.has("user") && !obj.get("user").isJsonNull -> obj.get("user").asString
+                            else -> "unknown"
+                        }
+                        val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                        val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                        val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                        
+                        val videoUriString = when {
+                            obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
+                            obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
+                            obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
+                            else -> null
+                        }
+                        
+                        val localFilePath = obj.get("local_file_path")?.takeIf { !it.isJsonNull }?.asString
+                        
+                        val thumbnailUri = when {
+                            obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull -> obj.get("thumbnail_uri").asString
+                            obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull -> obj.get("thumbnail").asString
+                            else -> null
+                        }
+                        
+                        val timestamp = try {
+                            obj.get("timestamp")?.takeIf { !it.isJsonNull }?.asLong
+                                ?: obj.get("created_at")?.takeIf { !it.isJsonNull }?.asString?.let { java.time.Instant.parse(it).toEpochMilli() }
+                                ?: System.currentTimeMillis()
+                        } catch (_: Exception) { System.currentTimeMillis() }
+                        
+                        val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                        val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
+
+                        val video = VideoData(
+                            id = id,
+                            username = username,
+                            description = description,
+                            title = title,
+                            videoUriString = videoUriString,
+                            localFilePath = localFilePath,
+                            timestamp = timestamp,
+                            isPaid = isPaid,
+                            thumbnailUri = thumbnailUri,
+                            price = price,
+                            courseId = courseId
+                        )
+                        results.add(video)
+                    } catch (e: Exception) {
+                        Log.w("SupabaseClient", "Failed to parse video in search results", e)
+                    }
+                }
+                return@withContext results
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Exception in searchVideos", e)
+            return@withContext emptyList()
+        }
+    }
+
+    /**
+     * Fetch Videos Paginated
+     */
+    suspend fun fetchVideosPaginated(offset: Int, limit: Int): Pair<List<VideoData>, Int> = withContext(Dispatchers.IO) {
+        try {
+            val path = "videos?offset=$offset&limit=$limit&order=timestamp.desc"
+            var videos = fetchList(path, Array<VideoData>::class.java).toList()
+            
+            // Get total count
+            val countPath = "videos?select=count"
+            val countRequest = buildGetRequest(countPath)
+            var totalCount = videos.size
+
+            try {
+                client.newCall(countRequest).execute().use { response ->
+                    val body = response.body?.string()
+                    if (response.isSuccessful && !body.isNullOrEmpty()) {
+                        val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                        if (jsonArray.size() > 0) {
+                            totalCount = jsonArray[0].asJsonObject.get("count")?.asInt ?: videos.size
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("SupabaseClient", "Could not get total count", e)
+            }
+
+            return@withContext Pair(videos, totalCount)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching videos paginated", e)
+            return@withContext Pair(emptyList(), 0)
+        }
+    }
+
+    /**
+     * Insert Topic using trigger (returns generated ID)
+     */
+    suspend fun insertTopicUsingTrigger(topic: Topic, courseTitle: String? = null): Long? = withContext(Dispatchers.IO) {
+        try {
+            val map = mutableMapOf<String, Any?>(
+                "course_id" to topic.courseId,
+                "name" to topic.name,
+                "description" to topic.description,
+                "order_index" to topic.orderIndex
+            )
+            
+            if (courseTitle != null) {
+                map["course_title"] = courseTitle
+            }
+            
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/topics"
+            
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+            
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) return@withContext null
+                
+                if (respBody.isNullOrEmpty()) return@withContext null
+                
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        val idElem = jsonArray[0].asJsonObject.get("id")
+                        return@withContext idElem?.asLong
+                    }
+                } catch (e: Exception) {
+                    Log.e("SupabaseClient", "Error parsing insert response", e)
+                }
+                
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error inserting topic", e)
+            return@withContext null
+        }
+    }
+
+    /**
+     * Update Video
+     */
+    suspend fun updateVideo(video: VideoData): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val map = mutableMapOf<String, Any?>()
+            map["title"] = video.title
+            map["description"] = video.description
+            map["video_uri"] = video.videoUri
+            map["thumbnail_uri"] = video.thumbnailUri
+            map["username"] = video.username
+            map["timestamp"] = video.timestamp
+            
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/videos?id=eq.${video.id}"
+            
+            val request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+            
+            client.newCall(request).execute().use { resp ->
+                return@withContext resp.isSuccessful
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "updateVideo exception", e)
+            return@withContext false
+        }
+    }
+
+    /**
+     * Upsert student progress to Supabase progreso_estudiante table
+     */
+    suspend fun upsertProgresoEstudiante(progreso: com.example.tareamov.data.entity.ProgresoEstudiante): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext false
+            
+            val payload = mapOf(
+                "usuario_estudiante" to progreso.usuarioEstudiante,
+                "curso_id" to progreso.cursoId,
+                "tareas_completadas" to progreso.tareasCompletadas,
+                "tareas_totales" to progreso.tareasTotales,
+                "porcentaje_progreso" to progreso.porcentajeProgreso,
+                "calificacion_ponderada" to progreso.calificacionPonderada,
+                "promedio" to (progreso.promedio ?: progreso.calificacionPonderada ?: 0f),
+                "ultima_calculada_en" to java.time.Instant.ofEpochMilli(progreso.ultimaCalculadaEn).toString(),
+                "certificado_emitido_en" to progreso.certificadoEmitidoEn?.let { java.time.Instant.ofEpochMilli(it).toString() },
+                "creado_en" to java.time.Instant.ofEpochMilli(progreso.creadoEn).toString()
+            )
+            
+            val json = gson.toJson(payload)
+            val body = json.toRequestBody("application/json".toMediaType())
+            
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/progreso_estudiante")
+                .post(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "resolution=merge-duplicates")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                return@withContext response.isSuccessful || response.code == 201
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "upsertProgresoEstudiante exception", e)
+            return@withContext false
+        }
+    }
+    
+    /**
+     * Fetch student progress from Supabase
+     */
+    suspend fun fetchProgresoEstudiante(userId: Long, courseId: Long): com.example.tareamov.data.entity.ProgresoEstudiante? = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext null
+            
+            val request = buildGetRequest("progreso_estudiante?usuario_estudiante=eq.$userId&curso_id=eq.$courseId&limit=1")
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                
+                val json = response.body?.string() ?: return@withContext null
+                val jsonArray = gson.fromJson(json, com.google.gson.JsonArray::class.java)
+                
+                if (jsonArray.size() == 0) return@withContext null
+                
+                val obj = jsonArray[0].asJsonObject
+                
+                // Helper to parse timestamp
+                fun parseTs(s: String?): Long? = try { java.time.Instant.parse(s).toEpochMilli() } catch(e: Exception) { null }
+
+                return@withContext com.example.tareamov.data.entity.ProgresoEstudiante(
+                    usuarioEstudiante = userId,
+                    cursoId = obj.get("curso_id")?.asLong ?: courseId,
+                    tareasCompletadas = obj.get("tareas_completadas")?.asInt ?: 0,
+                    tareasTotales = obj.get("tareas_totales")?.asInt ?: 0,
+                    porcentajeProgreso = obj.get("porcentaje_progreso")?.asFloat ?: 0f,
+                    calificacionPonderada = obj.get("calificacion_ponderada")?.asFloat,
+                    promedio = obj.get("promedio")?.asFloat,
+                    estado = obj.get("estado")?.asString,
+                    ultimaCalculadaEn = parseTs(obj.get("ultima_calculada_en")?.asString) ?: System.currentTimeMillis(),
+                    certificadoEmitidoEn = parseTs(obj.get("certificado_emitido_en")?.asString),
+                    creadoEn = parseTs(obj.get("creado_en")?.asString) ?: System.currentTimeMillis()
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "fetchProgresoEstudiante exception", e)
+            return@withContext null
+        }
+    }
+    
+    /**
+     * Fetch all student progress for a course from Supabase
+     */
+    suspend fun fetchProgresosByCurso(courseId: Long): List<com.example.tareamov.data.entity.ProgresoEstudiante> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+            
+            val request = buildGetRequest("progreso_estudiante?curso_id=eq.$courseId")
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                
+                val json = response.body?.string() ?: return@withContext emptyList()
+                val jsonArray = gson.fromJson(json, com.google.gson.JsonArray::class.java)
+                
+                fun parseTs(s: String?): Long? = try { java.time.Instant.parse(s).toEpochMilli() } catch(e: Exception) { null }
+
+                return@withContext jsonArray.map { element ->
+                    val obj = element.asJsonObject
+                    com.example.tareamov.data.entity.ProgresoEstudiante(
+                        usuarioEstudiante = obj.get("usuario_estudiante")?.asLong ?: 0L,
+                        cursoId = obj.get("curso_id")?.asLong ?: courseId,
+                        tareasCompletadas = obj.get("tareas_completadas")?.asInt ?: 0,
+                        tareasTotales = obj.get("tareas_totales")?.asInt ?: 0,
+                        porcentajeProgreso = obj.get("porcentaje_progreso")?.asFloat ?: 0f,
+                        calificacionPonderada = obj.get("calificacion_ponderada")?.asFloat,
+                        promedio = obj.get("promedio")?.asFloat,
+                        estado = obj.get("estado")?.asString,
+                        ultimaCalculadaEn = parseTs(obj.get("ultima_calculada_en")?.asString) ?: System.currentTimeMillis(),
+                        certificadoEmitidoEn = parseTs(obj.get("certificado_emitido_en")?.asString),
+                        creadoEn = parseTs(obj.get("creado_en")?.asString) ?: System.currentTimeMillis()
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "fetchProgresosByCurso exception", e)
+            return@withContext emptyList()
         }
     }
 
@@ -2315,34 +2834,6 @@ object SupabaseClient {
     }
 
     /**
-     * Get max video ID from Supabase
-     */
-    suspend fun getMaxVideoIdFromSupabase(): Long = withContext(Dispatchers.IO) {
-        try {
-            val path = "videos?select=id&order=id.desc&limit=1"
-            val request = buildGetRequest(path)
-            
-            client.newCall(request).execute().use { response ->
-                val body = response.body?.string()
-                if (!response.isSuccessful || body.isNullOrEmpty()) {
-                    return@withContext 0L
-                }
-                
-                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
-                if (jsonArray.size() > 0) {
-                    val obj = jsonArray[0].asJsonObject
-                    return@withContext obj.get("id")?.asLong ?: 0L
-                }
-                
-                return@withContext 0L
-            }
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error getting max video ID", e)
-            return@withContext 0L
-        }
-    }
-
-    /**
      * Get next available video ID (alias de getMaxVideoIdFromSupabase + 1)
      */
     suspend fun getNextVideoId(): Long = withContext(Dispatchers.IO) {
@@ -2352,248 +2843,6 @@ object SupabaseClient {
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error getting next video ID", e)
             return@withContext 83L
-        }
-    }
-
-    /**
-     * Fetch Courses Summary with pagination
-     */
-    suspend fun fetchCoursesSummary(
-        limit: Int = 10,
-        offset: Int = 0,
-        orderBy: String = "enrollment_count",
-        direction: String = "desc"
-    ): Pair<List<Course>, Int> = withContext(Dispatchers.IO) {
-        try {
-            val path = "courses?offset=$offset&limit=$limit&order=$orderBy.$direction"
-            val courses = fetchList(path, Array<Course>::class.java).toList()
-            
-            // Get total count
-            val countPath = "courses?select=count"
-            val countRequest = buildGetRequest(countPath)
-            var totalCount = courses.size
-            
-            try {
-                client.newCall(countRequest).execute().use { response ->
-                    val body = response.body?.string()
-                    if (response.isSuccessful && !body.isNullOrEmpty()) {
-                        val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
-                        if (jsonArray.size() > 0) {
-                            totalCount = jsonArray[0].asJsonObject.get("count")?.asInt ?: courses.size
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w("SupabaseClient", "Could not get total count", e)
-            }
-            
-            return@withContext Pair(courses, totalCount)
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching courses summary", e)
-            return@withContext Pair(emptyList(), 0)
-        }
-    }
-
-    /**
-     * Fetch Videos Paginated
-     */
-    suspend fun fetchVideosPaginated(offset: Int, limit: Int): Pair<List<VideoData>, Int> = withContext(Dispatchers.IO) {
-        try {
-            val path = "videos?offset=$offset&limit=$limit&order=timestamp.desc"
-            var videos = fetchList(path, Array<VideoData>::class.java).toList()
-
-            // Fallback: if typed parsing returned empty (e.g., schema changes like removed username),
-            // do a defensive JSON mapping to keep working and include course_id.
-            if (videos.isEmpty()) {
-                try {
-                    val req = buildGetRequest(path)
-                    client.newCall(req).execute().use { resp ->
-                        val body = resp.body?.string()
-                        if (resp.isSuccessful && !body.isNullOrEmpty()) {
-                            val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
-                            val repaired = mutableListOf<VideoData>()
-                            for (elem in arr) {
-                                try {
-                                    val obj = elem.asJsonObject
-                                    val id = obj.get("id")?.takeIf { !it.isJsonNull }?.asLong ?: 0L
-                                    val username = when {
-                                        obj.has("username") && !obj.get("username").isJsonNull -> obj.get("username").asString
-                                        obj.has("creator_username") && !obj.get("creator_username").isJsonNull -> obj.get("creator_username").asString
-                                        obj.has("user") && !obj.get("user").isJsonNull -> obj.get("user").asString
-                                        else -> "unknown"
-                                    }
-                                    val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
-                                    val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
-                                    val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
-                                    val videoUriString = when {
-                                        obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
-                                        obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
-                                        obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
-                                        else -> null
-                                    }
-                                    val localFilePath = obj.get("local_file_path")?.takeIf { !it.isJsonNull }?.asString
-                                    val thumbnailUri = when {
-                                        obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull -> obj.get("thumbnail_uri").asString
-                                        obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull -> obj.get("thumbnail").asString
-                                        else -> null
-                                    }
-                                    val timestamp = try {
-                                        obj.get("timestamp")?.takeIf { !it.isJsonNull }?.asLong
-                                            ?: obj.get("created_at")?.takeIf { !it.isJsonNull }?.asString?.let { java.time.Instant.parse(it).toEpochMilli() }
-                                            ?: System.currentTimeMillis()
-                                    } catch (_: Exception) { System.currentTimeMillis() }
-                                    val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
-                                    val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
-
-                                    repaired.add(
-                                        VideoData(
-                                            id = id,
-                                            username = username,
-                                            description = description,
-                                            title = title,
-                                            videoUriString = videoUriString,
-                                            localFilePath = localFilePath,
-                                            timestamp = timestamp,
-                                            isPaid = isPaid,
-                                            thumbnailUri = thumbnailUri,
-                                            price = price,
-                                            courseId = courseId
-                                        )
-                                    )
-                                } catch (t: Exception) {
-                                    Log.w("SupabaseClient", "Failed to parse paginated video element", t)
-                                }
-                            }
-                            if (repaired.isNotEmpty()) {
-                                videos = repaired
-                            }
-                        }
-                    }
-                } catch (inner: Exception) {
-                    Log.w("SupabaseClient", "Defensive paginated fetch failed", inner)
-                }
-            }
-
-            // Get total count
-            val countPath = "videos?select=count"
-            val countRequest = buildGetRequest(countPath)
-            var totalCount = videos.size
-
-            try {
-                client.newCall(countRequest).execute().use { response ->
-                    val body = response.body?.string()
-                    if (response.isSuccessful && !body.isNullOrEmpty()) {
-                        val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
-                        if (jsonArray.size() > 0) {
-                            totalCount = jsonArray[0].asJsonObject.get("count")?.asInt ?: videos.size
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w("SupabaseClient", "Could not get total count", e)
-            }
-
-            return@withContext Pair(videos, totalCount)
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching videos paginated", e)
-            return@withContext Pair(emptyList(), 0)
-        }
-    }
-
-    /**
-     * Insert Topic using trigger (returns generated ID)
-     */
-    suspend fun insertTopicUsingTrigger(topic: Topic, courseTitle: String? = null): Long? = withContext(Dispatchers.IO) {
-        try {
-            val map = mutableMapOf<String, Any?>(
-                "course_id" to topic.courseId,
-                "name" to topic.name,
-                "description" to topic.description,
-                "order_index" to topic.orderIndex
-            )
-            
-            // Añadir courseTitle si se proporciona
-            if (courseTitle != null) {
-                map["course_title"] = courseTitle
-            }
-            
-            val body = gson.toJson(map).toRequestBody(jsonMedia)
-            val url = "$baseUrl/rest/v1/topics"
-            
-            val request = Request.Builder()
-                .url(url)
-                .post(body)
-                .addHeader("apikey", effectiveApiKey())
-                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
-                .addHeader("Accept", "application/json")
-                .addHeader("Content-Type", "application/json")
-                .addHeader("Prefer", "return=representation")
-                .build()
-            
-            client.newCall(request).execute().use { resp ->
-                val respBody = resp.body?.string()
-                if (!resp.isSuccessful) {
-                    Log.w("SupabaseClient", "insertTopicUsingTrigger failed: ${resp.code} body=$respBody")
-                    return@withContext null
-                }
-                
-                if (respBody.isNullOrEmpty()) return@withContext null
-                
-                try {
-                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
-                    if (jsonArray.size() > 0) {
-                        val idElem = jsonArray[0].asJsonObject.get("id")
-                        return@withContext idElem?.asLong
-                    }
-                } catch (e: Exception) {
-                    Log.e("SupabaseClient", "Error parsing insert response", e)
-                }
-                
-                return@withContext null
-            }
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error inserting topic", e)
-            return@withContext null
-        }
-    }
-
-    /**
-     * Update Video
-     */
-    suspend fun updateVideo(video: VideoData): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val map = mutableMapOf<String, Any?>()
-            map["title"] = video.title
-            map["description"] = video.description
-            map["video_uri"] = video.videoUri
-            map["thumbnail_uri"] = video.thumbnailUri
-            map["username"] = video.username
-            map["timestamp"] = video.timestamp
-            
-            val body = gson.toJson(map).toRequestBody(jsonMedia)
-            val url = "$baseUrl/rest/v1/videos?id=eq.${video.id}"
-            
-            val request = Request.Builder()
-                .url(url)
-                .patch(body)
-                .addHeader("apikey", effectiveApiKey())
-                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
-                .addHeader("Accept", "application/json")
-                .addHeader("Content-Type", "application/json")
-                .addHeader("Prefer", "return=representation")
-                .build()
-            
-            client.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    val bodyStr = resp.body?.string() ?: ""
-                    Log.w("SupabaseClient", "updateVideo failed: ${resp.code} ${resp.message} body=$bodyStr")
-                    return@withContext false
-                }
-                return@withContext true
-            }
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "updateVideo exception", e)
-            return@withContext false
         }
     }
 
@@ -2660,193 +2909,7 @@ object SupabaseClient {
             return@withContext false
         }
     }
-    
-    /**
-     * Upsert student progress to Supabase progreso_estudiante table
-     * Uses UPSERT (INSERT ... ON CONFLICT UPDATE) via Prefer header
-     */
-    suspend fun upsertProgresoEstudiante(progreso: com.example.tareamov.data.entity.ProgresoEstudiante): Boolean = withContext(Dispatchers.IO) {
-        try {
-            if (!isConfigured()) {
-                Log.w("SupabaseClient", "Supabase not configured, cannot upsert progreso")
-                return@withContext false
-            }
-            
-            Log.d("SupabaseClient", "🔄 Upserting progreso: student=${progreso.usuarioEstudiante}, course=${progreso.cursoId}")
-            Log.d("SupabaseClient", "📊 Values: totales=${progreso.tareasTotales}, completadas=${progreso.tareasCompletadas}, progreso=${progreso.porcentajeProgreso}%, promedio=${progreso.promedio}")
-            
-            // Map entity to Supabase format (snake_case)
-            val payload = mapOf(
-                "usuario_estudiante" to progreso.usuarioEstudiante,
-                "curso_id" to progreso.cursoId,
-                "tareas_completadas" to progreso.tareasCompletadas,
-                "tareas_totales" to progreso.tareasTotales,
-                "porcentaje_progreso" to progreso.porcentajeProgreso,
-                "calificacion_ponderada" to progreso.calificacionPonderada,
-                "promedio" to (progreso.promedio ?: progreso.calificacionPonderada ?: 0f), // Usar promedio o calificacionPonderada
-                "ultima_calculada_en" to java.time.Instant.ofEpochMilli(progreso.ultimaCalculadaEn).toString(),
-                "certificado_emitido_en" to progreso.certificadoEmitidoEn?.let { 
-                    java.time.Instant.ofEpochMilli(it).toString() 
-                },
-                "creado_en" to java.time.Instant.ofEpochMilli(progreso.creadoEn).toString()
-            )
-            
-            val json = gson.toJson(payload)
-            Log.d("SupabaseClient", "📤 Sending payload: $json")
-            
-            val body = json.toRequestBody("application/json".toMediaType())
-            
-            val request = Request.Builder()
-                .url("$baseUrl/rest/v1/progreso_estudiante")
-                .post(body)
-                .addHeader("apikey", effectiveApiKey())
-                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
-                .addHeader("Content-Type", "application/json")
-                .addHeader("Prefer", "resolution=merge-duplicates")
-                .build()
 
-            requestListener?.invoke("POST $baseUrl/rest/v1/progreso_estudiante")
-            val response = client.newCall(request).execute()
-            
-            if (response.isSuccessful || response.code == 201) {
-                Log.d("SupabaseClient", "✅ Progreso upserted successfully for ${progreso.usuarioEstudiante} in course ${progreso.cursoId}")
-                return@withContext true
-            } else {
-                val errorBody = response.body?.string()
-                Log.e("SupabaseClient", "❌ Failed to upsert progreso: ${response.code} ${response.message} - $errorBody")
-                Log.e("SupabaseClient", "❌ Payload was: $json")
-                return@withContext false
-            }
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "❌ upsertProgresoEstudiante exception", e)
-            return@withContext false
-        }
-    }
-    
-    /**
-     * Fetch student progress from Supabase
-     */
-    suspend fun fetchProgresoEstudiante(userId: Long, courseId: Long): com.example.tareamov.data.entity.ProgresoEstudiante? = withContext(Dispatchers.IO) {
-        try {
-            if (!isConfigured()) {
-                Log.w("SupabaseClient", "Supabase not configured")
-                return@withContext null
-            }
-
-            if (userId <= 0) {
-                Log.w("SupabaseClient", "fetchProgresoEstudiante skipped: invalid userId=$userId")
-                return@withContext null
-            }
-            
-            val request = buildGetRequest("progreso_estudiante?usuario_estudiante=eq.$userId&curso_id=eq.$courseId&limit=1")
-            val response = client.newCall(request).execute()
-            
-            if (!response.isSuccessful) {
-                Log.e("SupabaseClient", "Failed to fetch progreso: ${response.code}")
-                return@withContext null
-            }
-            
-            val json = response.body?.string() ?: return@withContext null
-            val jsonArray = gson.fromJson(json, com.google.gson.JsonArray::class.java)
-            
-            if (jsonArray.size() == 0) {
-                return@withContext null
-            }
-            
-            val obj = jsonArray[0].asJsonObject
-            
-            val parsedUserId = jsonElementAsLong(obj.get("usuario_estudiante"), userId) ?: userId
-
-            return@withContext com.example.tareamov.data.entity.ProgresoEstudiante(
-                usuarioEstudiante = parsedUserId,
-                cursoId = obj.get("curso_id")?.asLong ?: courseId,
-                tareasCompletadas = obj.get("tareas_completadas")?.asInt ?: 0,
-                tareasTotales = obj.get("tareas_totales")?.asInt ?: 0,
-                porcentajeProgreso = obj.get("porcentaje_progreso")?.asFloat ?: 0f,
-                calificacionPonderada = obj.get("calificacion_ponderada")?.asFloat,
-                promedio = obj.get("promedio")?.asFloat ?: obj.get("calificacion_ponderada")?.asFloat,
-                estado = obj.get("estado")?.asString,
-                ultimaCalculadaEn = parseTimestamp(obj.get("ultima_calculada_en")?.asString)
-                    ?: System.currentTimeMillis(),
-                certificadoEmitidoEn = parseTimestamp(obj.get("certificado_emitido_en")?.asString),
-                creadoEn = parseTimestamp(obj.get("creado_en")?.asString) ?: System.currentTimeMillis()
-            )
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "fetchProgresoEstudiante exception", e)
-            return@withContext null
-        }
-    }
-    
-    /**
-     * Fetch all student progress for a course from Supabase
-     */
-    suspend fun fetchProgresosByCurso(courseId: Long): List<com.example.tareamov.data.entity.ProgresoEstudiante> = withContext(Dispatchers.IO) {
-        try {
-            if (!isConfigured()) {
-                return@withContext emptyList()
-            }
-            
-            val request = buildGetRequest("progreso_estudiante?curso_id=eq.$courseId")
-            val response = client.newCall(request).execute()
-            
-            if (!response.isSuccessful) {
-                Log.e("SupabaseClient", "Failed to fetch progresos: ${response.code}")
-                return@withContext emptyList()
-            }
-            
-            val json = response.body?.string() ?: return@withContext emptyList()
-            val jsonArray = gson.fromJson(json, com.google.gson.JsonArray::class.java)
-            
-            return@withContext jsonArray.map { element ->
-                val obj = element.asJsonObject
-                com.example.tareamov.data.entity.ProgresoEstudiante(
-                    usuarioEstudiante = jsonElementAsLong(obj.get("usuario_estudiante")) ?: 0L,
-                    cursoId = obj.get("curso_id")?.asLong ?: courseId,
-                    tareasCompletadas = obj.get("tareas_completadas")?.asInt ?: 0,
-                    tareasTotales = obj.get("tareas_totales")?.asInt ?: 0,
-                    porcentajeProgreso = obj.get("porcentaje_progreso")?.asFloat ?: 0f,
-                    calificacionPonderada = obj.get("calificacion_ponderada")?.asFloat,
-                    promedio = obj.get("promedio")?.asFloat ?: obj.get("calificacion_ponderada")?.asFloat,
-                    estado = obj.get("estado")?.asString,
-                    ultimaCalculadaEn = parseTimestamp(obj.get("ultima_calculada_en")?.asString)
-                        ?: System.currentTimeMillis(),
-                    certificadoEmitidoEn = parseTimestamp(obj.get("certificado_emitido_en")?.asString),
-                    creadoEn = parseTimestamp(obj.get("creado_en")?.asString) ?: System.currentTimeMillis()
-                )
-            }
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "fetchProgresosByCurso exception", e)
-            return@withContext emptyList()
-        }
-    }
-    
-    /**
-     * Helper to parse ISO timestamp to epoch millis
-     */
-    private fun parseTimestamp(timestampStr: String?): Long? {
-        if (timestampStr.isNullOrBlank()) return null
-        return try {
-            java.time.Instant.parse(timestampStr).toEpochMilli()
-        } catch (e: Exception) {
-            Log.w("SupabaseClient", "Failed to parse timestamp: $timestampStr", e)
-            null
-        }
-    }
-
-    private fun jsonElementAsLong(element: com.google.gson.JsonElement?, fallback: Long? = null): Long? {
-        if (element == null || element.isJsonNull) return fallback
-        return try {
-            val prim = element.asJsonPrimitive
-            when {
-                prim.isNumber -> prim.asLong
-                prim.isString -> prim.asString.toLongOrNull() ?: fallback
-                else -> fallback
-            }
-        } catch (_: Exception) {
-            fallback
-        }
-    }
-    
     /**
      * Actualiza el campo certificado_emitido_en cuando se genera un certificado
      */

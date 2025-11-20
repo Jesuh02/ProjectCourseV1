@@ -455,6 +455,24 @@ class SyncRepository(
         }
     }
     
+    // Search videos by query and type
+    suspend fun searchVideos(
+        query: String,
+        searchType: String = "all",
+        limit: Int = 50
+    ): List<com.example.tareamov.data.entity.VideoData> {
+        return try {
+            withContext(Dispatchers.IO) {
+                supabaseClient.searchVideos(query, searchType, limit)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error searching videos", e)
+            emptyList()
+        }
+    }
+
     // Fetch videos with pagination
     suspend fun fetchVideosPaginated(
         limit: Int = 10,
@@ -466,7 +484,7 @@ class SyncRepository(
                 return Pair(emptyList(), 0)
             }
             withContext(Dispatchers.IO) {
-                supabaseClient.fetchVideosPaginated(limit, offset)
+                supabaseClient.fetchVideosPaginated(offset = offset, limit = limit)
             }
         } catch (e: Exception) {
             Log.w("SyncRepository", "fetchVideosPaginated failed", e)
@@ -584,6 +602,20 @@ class SyncRepository(
             emptyList()
         }
     }
+    
+    // Fetch content items for a specific task from Supabase
+    suspend fun fetchContentItemsByTaskIdFromSupabase(taskId: Long): List<ContentItem> {
+        return try {
+            if (!supabaseClient.isConfigured() || taskId <= 0) return emptyList()
+            Log.d("SyncRepository", "Fetching content items for taskId=$taskId from Supabase")
+            val items = withContext(Dispatchers.IO) { supabaseClient.fetchContentItemsByTaskId(taskId) }
+            Log.d("SyncRepository", "Fetched ${items.size} content items for taskId=$taskId")
+            items
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchContentItemsByTaskIdFromSupabase failed for taskId=$taskId", e)
+            emptyList()
+        }
+    }
 
     // Fetch videos for a specific username from Supabase (server-side filter)
     suspend fun fetchVideosByUsernameFromSupabase(username: String): List<com.example.tareamov.data.entity.VideoData> {
@@ -613,6 +645,36 @@ class SyncRepository(
             filtered
         } catch (e: Exception) {
             Log.w("SyncRepository", "fetchVideosByUsernameFromSupabase failed for $username", e)
+            emptyList()
+        }
+    }
+
+    // Fetch videos by creator user ID from Supabase (using 2-step fetch to avoid raw SQL)
+    suspend fun fetchVideosByCreatorUserIdFromSupabase(userId: Long): List<com.example.tareamov.data.entity.VideoData> {
+        return try {
+            if (!supabaseClient.isConfigured()) {
+                return emptyList()
+            }
+            
+            // Step 1: Fetch courses for this user
+            val courses = withContext(Dispatchers.IO) { supabaseClient.fetchCoursesByCreatorUserId(userId) }
+            val courseIds = courses.map { it.id }
+            
+            if (courseIds.isEmpty()) {
+                return emptyList()
+            }
+            
+            // Step 2: Fetch videos for these courses
+            val videos = withContext(Dispatchers.IO) { supabaseClient.fetchVideosByCourseIds(courseIds) }
+            
+            // We need to inject the username since it's not in the video table.
+            // We can get it from the user ID if needed, but for now let's try to get it from SupabaseClient helper
+            val username = withContext(Dispatchers.IO) { supabaseClient.getUsernameFromUserId(userId) } ?: ""
+            
+            val result = videos.map { it.copy(username = username) }
+            result
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchVideosByCreatorUserIdFromSupabase failed for userId=$userId", e)
             emptyList()
         }
     }
@@ -1083,7 +1145,10 @@ class SyncRepository(
     // Insert a ContentItem into Supabase and return remote id (or null)
     suspend fun insertContentItemRemote(contentItem: com.example.tareamov.data.entity.ContentItem): Long? {
         return try {
-            withContext(Dispatchers.IO) { supabaseClient.insertContentItem(contentItem) }
+            Log.d("SyncRepository", "Inserting ContentItem: name=${contentItem.name}, type=${contentItem.contentType}, creator_id=${contentItem.creator_usuario_id}, creator_username=${contentItem.creator_username}")
+            val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertContentItem(contentItem) }
+            Log.d("SyncRepository", "ContentItem inserted successfully with remote ID: $remoteId")
+            remoteId
         } catch (e: Exception) {
             Log.w("SyncRepository", "Failed to insert content item to Supabase", e)
             null

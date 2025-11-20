@@ -498,6 +498,14 @@ class CourseTaskFragment : Fragment() {
 
                 // Save content items for all tasks (new and existing)
                 val contentItemsToSave = mutableListOf<ContentItem>()
+                val currentUsername = sessionManager.getUsername()
+                val currentUserId = withContext(Dispatchers.IO) {
+                    currentUsername?.let { username ->
+                        AppDatabase.getDatabase(requireContext()).usuarioDao()
+                            .getUsuarioByUsername(username)?.id
+                    }
+                }
+                
                 for (i in 0 until contentContainer.childCount) {
                     val itemView = contentContainer.getChildAt(i)
                     val contentUri = itemView.tag as? Uri
@@ -506,12 +514,14 @@ class CourseTaskFragment : Fragment() {
                         contentItemsToSave.add(
                             ContentItem(
                                 id = 0,
-                                topicId = topicId,
+                                topicId = 0, // Se deja en 0 porque pertenece a una tarea
                                 taskId = savedTaskId,
                                 name = getFileName(contentUri) ?: "Contenido sin título",
                                 contentType = contentType,
                                 uriString = contentUri.toString(),
-                                orderIndex = i
+                                orderIndex = i,
+                                creator_usuario_id = currentUserId,
+                                creator_username = currentUsername
                             )
                         )
                     }
@@ -566,9 +576,10 @@ class CourseTaskFragment : Fragment() {
                 // Notify CourseDetailFragment to refresh from Supabase and switch to tasks tab
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("refresh_from_supabase", true)
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("switch_to_tasks_tab", true)
+                findNavController().previousBackStackEntry?.savedStateHandle?.set("force_reload_topics", true)
 
-                // Navigate back
-                findNavController().navigateUp()
+                // Navigate back to CourseDetailFragment specifically, clearing this fragment
+                findNavController().popBackStack(R.id.courseDetailFragment, false)
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error saving task", e)
                 Toast.makeText(context, "Error al guardar la tarea", Toast.LENGTH_SHORT).show()

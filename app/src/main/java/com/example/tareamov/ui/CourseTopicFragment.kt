@@ -541,12 +541,13 @@ class CourseTopicFragment : Fragment() {
                 // Show success message and navigate back
                 Toast.makeText(context, "Tema guardado correctamente en Supabase", Toast.LENGTH_SHORT).show()
 
-                // Notify CourseDetailFragment to refresh from Supabase
+                // Notify CourseDetailFragment to refresh from Supabase and force reload
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("topic_created", savedTopicId)
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("refresh_from_supabase", true)
+                findNavController().previousBackStackEntry?.savedStateHandle?.set("force_reload_topics", true)
                 
-                // Navigate back to course detail
-                findNavController().navigateUp()
+                // Navigate back to CourseDetailFragment specifically
+                findNavController().popBackStack(R.id.courseDetailFragment, false)
 
             } catch (e: Exception) {
                 Log.e("CourseTopicFragment", "Error al guardar el tema", e)

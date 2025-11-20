@@ -81,6 +81,10 @@ class CourseDetailFragment : Fragment() {
     // Add missing view references for editing course
     private lateinit var courseTitleTextView: TextView
     private lateinit var courseDescriptionTextView: TextView
+    private lateinit var courseThematicTextView: TextView
+    private lateinit var coursePriceTextView: TextView
+    private lateinit var coursePriceIcon: ImageView
+    private lateinit var togglePriceButton: Button
     private lateinit var editCourseButton: ImageButton
     // Repository for remote checks
     private val syncRepository by lazy { com.example.tareamov.data.sync.SyncRepository(
@@ -252,6 +256,10 @@ class CourseDetailFragment : Fragment() {
         // Initialize view references for editing course
         courseTitleTextView = view.findViewById(R.id.courseTitleTextView)
         courseDescriptionTextView = view.findViewById(R.id.courseDescriptionTextView)
+        courseThematicTextView = view.findViewById(R.id.courseThematicTextView)
+        coursePriceTextView = view.findViewById(R.id.coursePriceTextView)
+        coursePriceIcon = view.findViewById(R.id.coursePriceIcon)
+        togglePriceButton = view.findViewById(R.id.togglePriceButton)
         editCourseButton = view.findViewById(R.id.editCourseButton)
 
         // Animate title and description with iPhone-style entrance
@@ -259,6 +267,7 @@ class CourseDetailFragment : Fragment() {
 
         // Initially hide edit controls until we verify creator ownership remotely
         editCourseButton.visibility = View.GONE
+        togglePriceButton.visibility = View.GONE
         courseTitleTextView.isClickable = false
 
         val courseTitle = view.findViewById<TextView>(R.id.courseTitleTextView)
@@ -283,6 +292,7 @@ class CourseDetailFragment : Fragment() {
                 editCourseButton = view.findViewById(R.id.editCourseButton)
                 // Decide edit button visibility using Supabase when possible
                 val localUsername = sessionManager.getUsername()
+                Log.d("CourseDetailFragment", "🔍 Local username: $localUsername, courseId: $courseId, creatorUserId: ${it.creatorUserId}")
                 editCourseButton.visibility = View.GONE
                 if (localUsername != null) {
                     lifecycleScope.launch {
@@ -296,47 +306,69 @@ class CourseDetailFragment : Fragment() {
                                     val remoteCreatorUsername = withContext(Dispatchers.IO) {
                                         com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(remoteCourse.creatorUserId)
                                     }
-                                    showEdit = (remoteCreatorUsername ?: "") == localUsername
+                                    Log.d("CourseDetailFragment", "✅ Remote creator: $remoteCreatorUsername, local: $localUsername, match: ${remoteCreatorUsername == localUsername}")
+                                    showEdit = remoteCreatorUsername != null && remoteCreatorUsername == localUsername
                                 } else {
                                     // fallback to local course data if remote missing
                                     val localCreatorUsername = withContext(Dispatchers.IO) {
                                         com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(it.creatorUserId)
                                     }
-                                    showEdit = (localUsername == localCreatorUsername)
+                                    Log.d("CourseDetailFragment", "⚠️ Local creator (fallback): $localCreatorUsername, match: ${localCreatorUsername == localUsername}")
+                                    showEdit = localCreatorUsername != null && localCreatorUsername == localUsername
                                 }
                             } else {
                                 // Supabase not configured, fallback to local check
                                 val localCreatorUsername = withContext(Dispatchers.IO) {
                                     com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(it.creatorUserId)
                                 }
-                                showEdit = (localUsername == localCreatorUsername)
+                                Log.d("CourseDetailFragment", "📱 Local creator (no Supabase): $localCreatorUsername, match: ${localCreatorUsername == localUsername}")
+                                showEdit = localCreatorUsername != null && localCreatorUsername == localUsername
                             }
                         } catch (e: Exception) {
-                            Log.w("CourseDetailFragment", "Error checking remote creator", e)
+                            Log.e("CourseDetailFragment", "❌ Error checking remote creator: ${e.message}", e)
                             val localCreatorUsername = withContext(Dispatchers.IO) {
                                 com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(it.creatorUserId)
                             }
-                            showEdit = (localUsername == localCreatorUsername)
+                            Log.d("CourseDetailFragment", "🔧 Local creator (error): $localCreatorUsername, match: ${localCreatorUsername == localUsername}")
+                            showEdit = localCreatorUsername != null && localCreatorUsername == localUsername
                         }
-                        editCourseButton.visibility = if (showEdit) View.VISIBLE else View.GONE
+                        
+                        Log.d("CourseDetailFragment", "🎯 FINAL showEdit decision: $showEdit")
+                        
+                        withContext(Dispatchers.Main) {
+                            editCourseButton.visibility = if (showEdit) View.VISIBLE else View.GONE
+                            togglePriceButton.visibility = if (showEdit) View.VISIBLE else View.GONE
+                            isCurrentUserCreator = showEdit
 
-                        // Animate edit button entrance if it becomes visible
-                        if (showEdit) {
-                            editCourseButton.alpha = 0f
-                            editCourseButton.scaleX = 0.8f
-                            editCourseButton.scaleY = 0.8f
-                            editCourseButton.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
-                            editCourseButton.animate()
-                                .alpha(1f)
-                                .scaleX(1f)
-                                .scaleY(1f)
-                                .translationY(0f)
-                                .setDuration(350)
-                                .setInterpolator(android.view.animation.OvershootInterpolator(1.2f))
-                                .start()
+                            // Animate edit button entrance if it becomes visible
+                            if (showEdit) {
+                                editCourseButton.alpha = 0f
+                                editCourseButton.scaleX = 0.8f
+                                editCourseButton.scaleY = 0.8f
+                                editCourseButton.translationY = 20f
+                                editCourseButton.animate()
+                                    .alpha(1f)
+                                    .scaleX(1f)
+                                    .scaleY(1f)
+                                    .translationY(0f)
+                                    .setDuration(350)
+                                    .setInterpolator(android.view.animation.OvershootInterpolator(1.2f))
+                                    .start()
+                                
+                                Log.d("CourseDetailFragment", "✨ Edit button should be VISIBLE now")
+                            } else {
+                                Log.d("CourseDetailFragment", "🚫 Edit button hidden - user is not creator")
+                            }
                         }
                     }
                 }
+                
+                // Update thematic/category
+                val thematic = it.category ?: "General"
+                courseThematicTextView.text = "Temática: $thematic"
+                
+                // Update price information
+                updatePriceDisplay(it.price)
             }
         }
 
@@ -418,6 +450,11 @@ class CourseDetailFragment : Fragment() {
                 }
                 .setNegativeButton("Cancelar", null)
                 .show()        }
+        
+        // Setup toggle price button
+        togglePriceButton.setOnClickListener {
+            showPriceConfigurationDialog()
+        }
 
         // Load course details
         courseViewModel.getCourseById(courseId)
@@ -573,6 +610,16 @@ class CourseDetailFragment : Fragment() {
                 updateTabSelection()
                 filterContentUltraFast()
                 navBackEntry.savedStateHandle.remove<Boolean>("switch_to_tasks_tab")
+            }
+        }
+        
+        // Observe flag to force complete reload (clears cache to avoid duplicates)
+        navBackEntry?.savedStateHandle?.getLiveData<Boolean>("force_reload_topics")?.observe(viewLifecycleOwner) { shouldForceReload ->
+            if (shouldForceReload == true) {
+                Log.d("CourseDetailFragment", "Force reload requested - clearing cache and reloading")
+                cachedTopicsData.clear()
+                refreshTopicsFromSupabase()
+                navBackEntry.savedStateHandle.remove<Boolean>("force_reload_topics")
             }
         }
     }
@@ -1541,21 +1588,45 @@ class CourseDetailFragment : Fragment() {
 
     // Fast content view creation (simplified)
     private fun addContentViewFast(item: ContentItem, container: LinearLayout) {
-        val contentView = TextView(context).apply {
-            text = "📄 ${item.name ?: "Contenido sin título"}"
-            textSize = 14f
-            setPadding(16, 8, 16, 8)
-            setTextColor(resources.getColor(android.R.color.white, null))
-            setOnClickListener { openContent(item) }
-            background = resources.getDrawable(R.drawable.bg_card_premium, null)
-            val params = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = 8
+        Log.d("CourseDetailFragment", "addContentViewFast - Name: ${item.name}, Type: ${item.contentType}")
+        
+        val contentView = LayoutInflater.from(context).inflate(
+            R.layout.item_content_mini,
+            container,
+            false
+        )
+        
+        val iconView = contentView.findViewById<ImageView>(R.id.contentIconView)
+        val nameView = contentView.findViewById<TextView>(R.id.contentNameView)
+        val typeView = contentView.findViewById<TextView>(R.id.contentTypeView)
+        
+        nameView?.text = item.name ?: "Archivo adjunto"
+        
+        // Set icon and type based on content type
+        when (item.contentType.lowercase()) {
+            "video" -> {
+                iconView?.setImageResource(android.R.drawable.ic_media_play)
+                typeView?.text = "Video"
             }
-            layoutParams = params
+            "pdf" -> {
+                iconView?.setImageResource(android.R.drawable.ic_menu_agenda)
+                typeView?.text = "PDF"
+            }
+            else -> {
+                iconView?.setImageResource(android.R.drawable.ic_menu_help)
+                typeView?.text = "Documento"
+            }
         }
+        
+        contentView.setOnClickListener { openContent(item) }
+        
+        val params = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            bottomMargin = 8
+        }
+        contentView.layoutParams = params
         container.addView(contentView)
     }
 
@@ -1747,58 +1818,108 @@ class CourseDetailFragment : Fragment() {
         val taskContentLabel = taskView.findViewById<TextView>(R.id.taskContentLabel)
         val contentSeparator = taskView.findViewById<View>(R.id.contentSeparator)
         
+        // Hacer que el contenedor sea clicable para abrir archivos
+        taskContentContainer?.setOnClickListener {
+            // El click se maneja en los items individuales de contenido
+        }
+        
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                Log.d("CourseDetailFragment", "Loading content items for taskId=${task.id}")
+                
+                // First, try to sync from Supabase
+                val remoteContentItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    syncRepository.fetchContentItemsByTaskIdFromSupabase(task.id)
+                }
+                
+                // Save remote items to local database
+                if (remoteContentItems.isNotEmpty()) {
+                    withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val contentItemDao = AppDatabase.getDatabase(requireContext()).contentItemDao()
+                        remoteContentItems.forEach { item ->
+                            try {
+                                contentItemDao.insertContentItem(item)
+                                Log.d("CourseDetailFragment", "Saved content item to Room: ${item.name}")
+                            } catch (e: Exception) {
+                                Log.w("CourseDetailFragment", "Failed to save content item", e)
+                            }
+                        }
+                    }
+                }
+                
+                // Now load from local database (which should have the synced data)
                 val contentItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
                     AppDatabase.getDatabase(requireContext()).contentItemDao().getContentItemsByTaskId(task.id)
                 }
                 
+                Log.d("CourseDetailFragment", "Found ${contentItems.size} content items for taskId=${task.id} (${remoteContentItems.size} from Supabase)")
+                
+                // Always show the container section for better UX
+                taskContentContainer?.removeAllViews()
+                contentSeparator?.visibility = View.VISIBLE
+                taskContentLabel?.visibility = View.VISIBLE
+                taskContentContainer?.visibility = View.VISIBLE
+                
                 if (contentItems.isNotEmpty()) {
-                    taskContentContainer?.removeAllViews()
-                    contentSeparator?.visibility = View.VISIBLE
-                    taskContentLabel?.visibility = View.VISIBLE
-                    taskContentContainer?.visibility = View.VISIBLE
-                    
                     for (contentItem in contentItems) {
+                        Log.d("CourseDetailFragment", "Adding content item: name=${contentItem.name}, type=${contentItem.contentType}, uri=${contentItem.uriString}")
+                        
                         val contentItemView = LayoutInflater.from(context).inflate(
-                            android.R.layout.simple_list_item_1,
+                            R.layout.item_content_mini,
                             taskContentContainer,
                             false
                         )
-                        val textView = contentItemView.findViewById<TextView>(android.R.id.text1)
-                        textView.text = contentItem.name
-                        textView.setTextColor(resources.getColor(android.R.color.white))
-                        textView.textSize = 14f
-                        textView.setPadding(16, 12, 16, 12)
                         
+                        val iconView = contentItemView.findViewById<ImageView>(R.id.contentIconView)
+                        val nameView = contentItemView.findViewById<TextView>(R.id.contentNameView)
+                        val typeView = contentItemView.findViewById<TextView>(R.id.contentTypeView)
+                        
+                        nameView?.text = contentItem.name ?: "Archivo adjunto"
+                        
+                        // Set icon and type based on content type
+                        when (contentItem.contentType.lowercase()) {
+                            "video" -> {
+                                iconView?.setImageResource(android.R.drawable.ic_media_play)
+                                typeView?.text = "Video"
+                            }
+                            "pdf" -> {
+                                iconView?.setImageResource(android.R.drawable.ic_menu_agenda)
+                                typeView?.text = "PDF"
+                            }
+                            else -> {
+                                iconView?.setImageResource(android.R.drawable.ic_menu_help)
+                                typeView?.text = "Documento"
+                            }
+                        }
+                        
+                        // Make the whole item clickable
                         contentItemView.setOnClickListener {
-                            // Open the content item
-                            val uri = android.net.Uri.parse(contentItem.uriString)
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, when (contentItem.contentType) {
-                                    "video" -> "video/*"
-                                    else -> requireContext().contentResolver.getType(uri) ?: "*/*"
-                                })
-                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            
-                            try {
-                                startActivity(intent)
-                            } catch (e: Exception) {
-                                android.util.Log.e("CourseDetailFragment", "Error opening content", e)
-                                android.widget.Toast.makeText(context, "Error al abrir el contenido", android.widget.Toast.LENGTH_SHORT).show()
-                            }
+                            openContent(contentItem)
                         }
                         
                         taskContentContainer?.addView(contentItemView)
                     }
                 } else {
-                    contentSeparator?.visibility = View.GONE
-                    taskContentLabel?.visibility = View.GONE
-                    taskContentContainer?.visibility = View.GONE
+                    // Show a message when no content is available
+                    val noContentView = TextView(context).apply {
+                        text = "No hay archivos adjuntos"
+                        setTextColor(resources.getColor(android.R.color.darker_gray, null))
+                        setPadding(16, 16, 16, 16)
+                        textSize = 13f
+                    }
+                    taskContentContainer?.addView(noContentView)
                 }
             } catch (e: Exception) {
-                android.util.Log.e("CourseDetailFragment", "Error loading content items", e)
+                android.util.Log.e("CourseDetailFragment", "Error loading content items for taskId=${task.id}", e)
+                // Show error message in container
+                taskContentContainer?.removeAllViews()
+                val errorView = TextView(context).apply {
+                    text = "Error al cargar archivos"
+                    setTextColor(resources.getColor(android.R.color.holo_red_light, null))
+                    setPadding(16, 16, 16, 16)
+                    textSize = 13f
+                }
+                taskContentContainer?.addView(errorView)
             }
         }
 
@@ -1946,63 +2067,47 @@ class CourseDetailFragment : Fragment() {
         // Método obsoleto - el contenedor de contenido de tareas fue eliminado del layout
         // Mantener solo para evitar errores de compilación si hay referencias restantes
         Log.d("CourseDetailFragment", "loadTaskContentItems: Container removed from layout")
-    }// Modify addContentView to handle task content layout and clicks
+    }// Modify addContentView to use item_content_mini.xml for consistent display
     private fun addContentView(item: ContentItem, container: LinearLayout, isTaskContent: Boolean = false) {
-        Log.d("CourseDetailFragment", "Adding content view - Name: ${item.name}, Type: ${item.contentType}, URI: ${item.uriString}, isTaskContent: $isTaskContent")
+        Log.d("CourseDetailFragment", "Adding content view - Name: ${item.name}, Type: ${item.contentType}, URI: ${item.uriString}")
         
         val inflater = LayoutInflater.from(context)
-        val layoutRes = if (isTaskContent) {
-            R.layout.item_content_detail // Use detail layout for task content
-        } else {
-            R.layout.item_course_content_detail // Use course content layout for topics
-        }
-        val contentView = inflater.inflate(layoutRes, container, false)
+        val contentView = inflater.inflate(R.layout.item_content_mini, container, false)
 
-        if (isTaskContent) {
-            // Handle task content display (item_content_detail.xml)
-            val contentTitleTextView = contentView.findViewById<TextView>(R.id.contentTitleTextView)
-            val contentDescriptionTextView = contentView.findViewById<TextView>(R.id.contentDescriptionTextView)
-            val contentDurationTextView = contentView.findViewById<TextView>(R.id.contentDurationTextView)
-            val contentThumbnailImageView = contentView.findViewById<ImageView>(R.id.contentThumbnailImageView)
-            val contentTypeIconView = contentView.findViewById<ImageView>(R.id.contentTypeIconView)
+        val iconView = contentView.findViewById<ImageView>(R.id.contentIconView)
+        val nameView = contentView.findViewById<TextView>(R.id.contentNameView)
+        val typeView = contentView.findViewById<TextView>(R.id.contentTypeView)
 
-            contentTitleTextView.text = item.name ?: "Contenido sin nombre"
-            contentDescriptionTextView.text = getContentTypeDescription(item.contentType)
-            contentDurationTextView.text = if (item.contentType == "video") "Video" else "Documento"
+        nameView?.text = item.name ?: "Archivo adjunto"
 
-            // Load thumbnail and set type icon
-            loadContentThumbnail(item, contentThumbnailImageView)
-            setContentTypeIcon(item.contentType, contentTypeIconView)
-
-            // If this is a video, allow opening in floating player by tapping the play icon
-            if (item.contentType == "video") {
-                contentTypeIconView.isClickable = true
-                contentTypeIconView.setOnClickListener {
-                    openFloatingPlayer(item)
-                }
+        // Set icon and type based on content type
+        when (item.contentType.lowercase()) {
+            "video" -> {
+                iconView?.setImageResource(android.R.drawable.ic_media_play)
+                typeView?.text = "Video"
             }
-
-        } else {
-            // Handle course content display (item_course_content_detail.xml)
-            val contentNameTextView = contentView.findViewById<TextView>(R.id.contentNameTextView)
-            val contentDurationTextView = contentView.findViewById<TextView>(R.id.contentDurationTextView)
-            val contentTypeTextView = contentView.findViewById<TextView>(R.id.contentTypeTextView)
-            val contentThumbnailImageView = contentView.findViewById<ImageView>(R.id.contentThumbnailImageView)
-            val contentIconView = contentView.findViewById<ImageView>(R.id.contentIconView)
-
-            contentNameTextView.text = item.name ?: "Contenido sin nombre"
-            contentDurationTextView.text = if (item.contentType == "video") "Video" else "Documento"
-            contentTypeTextView.text = item.contentType.uppercase()
-
-            // Load thumbnail and set type icon
-            loadContentThumbnail(item, contentThumbnailImageView)
-            setContentTypeIcon(item.contentType, contentIconView)
+            "pdf" -> {
+                iconView?.setImageResource(android.R.drawable.ic_menu_agenda)
+                typeView?.text = "PDF"
+            }
+            else -> {
+                iconView?.setImageResource(android.R.drawable.ic_menu_help)
+                typeView?.text = "Documento"
+            }
         }
 
+        // Make the whole item clickable to open content
         contentView.setOnClickListener {
             openContent(item)
         }
 
+        val params = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            bottomMargin = 8
+        }
+        contentView.layoutParams = params
         container.addView(contentView)
     }
 
@@ -2537,5 +2642,127 @@ class CourseDetailFragment : Fragment() {
             .setDuration(520)
             .setInterpolator(android.view.animation.DecelerateInterpolator(1.8f))
             .start()
+    }
+    
+    /**
+     * Update the price display UI based on the course price
+     */
+    private fun updatePriceDisplay(price: Double) {
+        val isFree = price <= 0.0
+        
+        if (isFree) {
+            coursePriceTextView.text = "Curso Gratuito"
+            coursePriceIcon.setImageResource(android.R.drawable.ic_menu_info_details)
+            coursePriceIcon.setColorFilter(resources.getColor(android.R.color.holo_green_light, null))
+        } else {
+            coursePriceTextView.text = String.format("$%.2f USD", price)
+            coursePriceIcon.setImageResource(android.R.drawable.ic_secure)
+            coursePriceIcon.setColorFilter(resources.getColor(android.R.color.holo_orange_light, null))
+        }
+    }
+    
+    /**
+     * Show dialog to configure course price
+     */
+    private fun showPriceConfigurationDialog() {
+        val context = requireContext()
+        val dialogView = LayoutInflater.from(context).inflate(android.R.layout.simple_list_item_2, null)
+        
+        val currentCourse = courseViewModel.course.value ?: return
+        val currentPrice = currentCourse.price
+        
+        val options = arrayOf(
+            "Curso Gratuito (0.00 USD)",
+            "Curso de Pago (Ingresar monto)"
+        )
+        
+        AlertDialog.Builder(context)
+            .setTitle("Configurar Precio del Curso")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> {
+                        // Set as free course
+                        updateCoursePrice(0.0)
+                    }
+                    1 -> {
+                        // Show input dialog for custom price
+                        showPriceInputDialog(currentPrice)
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+    
+    /**
+     * Show input dialog for entering custom price
+     */
+    private fun showPriceInputDialog(currentPrice: Double) {
+        val context = requireContext()
+        val input = EditText(context)
+        input.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        input.hint = "Ejemplo: 49.99"
+        if (currentPrice > 0) {
+            input.setText(String.format("%.2f", currentPrice))
+        }
+        
+        AlertDialog.Builder(context)
+            .setTitle("Ingresar Precio")
+            .setMessage("Ingresa el precio del curso en USD:")
+            .setView(input)
+            .setPositiveButton("Guardar") { _, _ ->
+                val priceText = input.text.toString().trim()
+                val price = priceText.toDoubleOrNull()
+                
+                if (price != null && price >= 0) {
+                    updateCoursePrice(price)
+                } else {
+                    Toast.makeText(context, "Precio inválido. Debe ser un número positivo.", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+    
+    /**
+     * Update course price in database and Supabase
+     */
+    private fun updateCoursePrice(newPrice: Double) {
+        val course = courseViewModel.course.value ?: return
+        
+        lifecycleScope.launch {
+            try {
+                val updatedCourse = course.copy(
+                    price = newPrice,
+                    isPremium = newPrice > 0.0
+                )
+                
+                // Update locally
+                withContext(Dispatchers.IO) {
+                    val db = AppDatabase.getDatabase(requireContext())
+                    db.courseDao()?.updateCourse(updatedCourse)
+                }
+                
+                // Sync to Supabase
+                withContext(Dispatchers.IO) {
+                    syncRepository.upsertCourseToSupabase(updatedCourse)
+                }
+                
+                // Update UI
+                updatePriceDisplay(newPrice)
+                courseViewModel.getCourseById(courseId)
+                
+                val message = if (newPrice > 0) {
+                    "Curso configurado como de pago: $${"%.2f".format(newPrice)} USD"
+                } else {
+                    "Curso configurado como gratuito"
+                }
+                Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+                
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error updating course price", e)
+                Toast.makeText(requireContext(), "Error al actualizar el precio", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 }

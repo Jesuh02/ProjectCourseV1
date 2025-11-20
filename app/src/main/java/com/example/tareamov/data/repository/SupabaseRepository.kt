@@ -177,6 +177,31 @@ class SupabaseRepository(
                             m["created_at"] = java.time.OffsetDateTime.now().toString()
                             m
                         }
+                        "roles" -> {
+                            val m = mutableMapOf<String, Any?>()
+                            // Ensure id is properly converted to Long (not String with decimal format)
+                            val roleId = coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["roleId"] ?: asMap["role_id"])
+                            if (roleId != null && roleId > 0) {
+                                m["id"] = roleId
+                            }
+                            m["nombre"] = (asMap["nombre"] ?: asMap["name"] ?: "").toString()
+                            // nivel is float but ensure proper format
+                            val nivel = when (val n = asMap["nivel"] ?: asMap["level"]) {
+                                is Number -> n.toFloat()
+                                is String -> n.toFloatOrNull() ?: 1.0f
+                                else -> 1.0f
+                            }
+                            m["nivel"] = nivel
+                            // default is boolean
+                            val isDefault = when (val d = asMap["default"] ?: asMap["is_default"]) {
+                                is Boolean -> d
+                                is Number -> d.toInt() != 0
+                                is String -> d.toBoolean()
+                                else -> false
+                            }
+                            m["default"] = isDefault
+                            m
+                        }
                         "file_contexts" -> {
                             val m = mutableMapOf<String, Any?>()
                             coerceToLong(asMap["id"] ?: asMap["Id"] ?: asMap["fileContextId"] ?: asMap["file_context_id"])?.let { m["id"] = it }
@@ -456,6 +481,104 @@ class SupabaseRepository(
     }
     
     /**
+     * Search videos by title, username, or category
+     */
+    fun searchVideos(
+        query: String,
+        searchType: String = "all",
+        limit: Int = 50
+    ): List<Map<String, Any?>> {
+        return try {
+            val sanitizedQuery = query.trim().replace("'", "''").lowercase()
+            if (sanitizedQuery.isEmpty()) {
+                Log.d("SupabaseRepository", "Empty search query")
+                return emptyList()
+            }
+
+            // Prioritize exact matches, then starts-with, then contains.
+            // Note: 'username' and 'category' columns may not exist in the 'videos' table,
+            // so we fallback to searching title and description to ensure stability.
+            
+            val whereClause = when (searchType) {
+                "title" -> "LOWER(title) LIKE '%$sanitizedQuery%'"
+                // Fallback for username/category to avoid crash, search description/title instead
+                "username", "category", "all" -> "LOWER(title) LIKE '%$sanitizedQuery%' OR LOWER(description) LIKE '%$sanitizedQuery%'"
+                else -> "LOWER(title) LIKE '%$sanitizedQuery%' OR LOWER(description) LIKE '%$sanitizedQuery%'"
+            }
+
+            // Relevance scoring:
+            // 0: Exact title match
+            // 1: Title starts with query
+            // 2: Title contains query
+            // 3: Description contains query (fallback)
+            val orderByClause = """
+                CASE 
+                    WHEN LOWER(title) = '$sanitizedQuery' THEN 0 
+                    WHEN LOWER(title) LIKE '$sanitizedQuery%' THEN 1 
+                    WHEN LOWER(title) LIKE '%$sanitizedQuery%' THEN 2
+                    ELSE 3 
+                END, id DESC
+            """.trimIndent()
+
+            val sql = "SELECT * FROM videos WHERE $whereClause ORDER BY $orderByClause LIMIT $limit"
+
+            val url = "${supabaseUrl.trimEnd('/')}/rest/v1/rpc/execute_sql"
+            val payload = mapOf("query" to sql)
+            val bodyJson = gson.toJson(payload)
+            
+            val request = Request.Builder()
+                .url(url)
+                .post(bodyJson.toRequestBody(jsonMediaType))
+                .addHeader("apikey", supabaseKey)
+                .addHeader("Authorization", "Bearer $supabaseKey")
+                .addHeader("Content-Type", "application/json")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.e("SupabaseRepository", "searchVideos failed: code=${resp.code}")
+                    return emptyList()
+                }
+                
+                val body = resp.body?.string() ?: return emptyList()
+                val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                val resultList = mutableListOf<Map<String, Any?>>()
+                
+                for (element in jsonArray) {
+                    if (element.isJsonObject) {
+                        val obj = element.asJsonObject
+                        val map = mutableMapOf<String, Any?>()
+                        
+                        for ((key, value) in obj.entrySet()) {
+                            map[key] = when {
+                                value.isJsonNull -> null
+                                value.isJsonPrimitive -> {
+                                    val prim = value.asJsonPrimitive
+                                    when {
+                                        prim.isNumber -> prim.asNumber
+                                        prim.isBoolean -> prim.asBoolean
+                                        prim.isString -> prim.asString
+                                        else -> prim.toString()
+                                    }
+                                }
+                                else -> value.toString()
+                            }
+                        }
+                        
+                        resultList.add(map)
+                    }
+                }
+                
+                Log.d("SupabaseRepository", "searchVideos found ${resultList.size} results")
+                return resultList
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error searching videos", e)
+            emptyList()
+        }
+    }
+    
+    /**
      * Recalcula el progreso (tareas_totales, tareas_completadas, porcentaje_progreso, promedio)
      * para todos los estudiantes inscritos en un curso específico.
      * Útil después de agregar o eliminar tareas.
@@ -546,4 +669,29 @@ class SupabaseRepository(
             false
         }
     }
+
+    /**
+     * Fetch videos created by a specific user (via courses relation) using a JOIN
+     */
+    suspend fun fetchVideosByCreatorUsername(username: String): List<Map<String, Any?>> {
+        return try {
+            val sanitizedUsername = username.trim().replace("'", "''")
+            
+            val sql = """
+                SELECT v.*, c.title as course_title, u.username as creator_username
+                FROM videos v
+                JOIN courses c ON v.course_id = c.id
+                JOIN usuarios u ON c.creator_user_id = u.id
+                WHERE u.username = '$sanitizedUsername'
+                ORDER BY v.id DESC
+            """.trimIndent()
+            
+            executeRawQuery(sql)
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error fetching videos by creator", e)
+            emptyList()
+        }
+    }
+
+
 }

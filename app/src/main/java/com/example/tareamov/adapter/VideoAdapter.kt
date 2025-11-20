@@ -59,6 +59,7 @@ class VideoAdapter(
         private val errorPlaceholder: TextView = itemView.findViewById(R.id.errorPlaceholder)
         private val profileButton: de.hdodenhof.circleimageview.CircleImageView = itemView.findViewById(R.id.profileButton)
         private val playPauseOverlay: android.widget.ImageView? = itemView.findViewById(R.id.playPauseOverlay)
+        private val fullscreenButtonContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.fullscreenButtonContainer)
         private val fullscreenButton: android.widget.ImageView? = itemView.findViewById(R.id.fullscreenButton)
         private val likeButton: android.widget.ImageView? = itemView.findViewById(R.id.likeButton)
         private val shareButton: android.widget.ImageView? = itemView.findViewById(R.id.shareButton)
@@ -154,6 +155,18 @@ class VideoAdapter(
             if (bestUri != null) {
                 try {
                     Log.d("VideoAdapter", "Setting video URI: $bestUri")
+                    
+                    // Check if it's a local file URI and if the file exists
+                    if (bestUri.scheme == "file") {
+                        val file = File(bestUri.path ?: "")
+                        if (!file.exists()) {
+                            Log.e("VideoAdapter", "Local video file does not exist: ${bestUri.path}")
+                            showErrorPlaceholder()
+                            errorPlaceholder.text = "Video no disponible en este dispositivo"
+                            return
+                        }
+                    }
+                    
                     videoView.setVideoURI(bestUri)
 
                     videoView.setOnPreparedListener { mp ->
@@ -246,6 +259,8 @@ class VideoAdapter(
                     videoView.pause()
                     isVideoPaused = true
                     showPlayPauseOverlay(R.drawable.ic_play_overlay)
+                    // Mostrar botón de pantalla completa durante 2 segundos al pausar
+                    showFullscreenButtonTemporarily()
                     Log.d("VideoAdapter", "Video paused by user tap")
                 } else {
                     videoView.start()
@@ -275,6 +290,32 @@ class VideoAdapter(
             }
         }
 
+        /**
+         * Muestra el botón de pantalla completa transparente durante 2 segundos al pausar
+         */
+        private fun showFullscreenButtonTemporarily() {
+            fullscreenButtonContainer?.let { container ->
+                // Hacer el contenedor semi-transparente y visible
+                container.alpha = 0.0f
+                container.visibility = View.VISIBLE
+                container.animate()
+                    .alpha(0.9f)
+                    .setDuration(200)
+                    .start()
+                
+                // Ocultar después de 2 segundos
+                overlayHandler.postDelayed({
+                    container.animate()
+                        .alpha(0.0f)
+                        .setDuration(300)
+                        .withEndAction {
+                            container.visibility = View.GONE
+                        }
+                        .start()
+                }, 2000)
+            }
+        }
+
         private fun setupButtonListeners() {
             // Like button
             likeButton?.setOnClickListener {
@@ -294,8 +335,8 @@ class VideoAdapter(
                 setMuteState(isMuted)
             }
 
-            // Fullscreen button
-            fullscreenButton?.setOnClickListener {
+            // Fullscreen button container
+            fullscreenButtonContainer?.setOnClickListener {
                 // Navigate to fullscreen activity
                 navigateToFullscreen()
             }

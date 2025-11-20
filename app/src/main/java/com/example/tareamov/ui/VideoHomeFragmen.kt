@@ -37,6 +37,14 @@ import com.example.tareamov.util.SessionManager
 import android.graphics.Color
 import android.graphics.PorterDuff
 import android.media.MediaPlayer // Required for MediaPlayer interactions if direct
+import android.widget.EditText
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import com.google.android.material.chip.Chip
+import com.google.android.material.chip.ChipGroup
+import com.example.tareamov.data.sync.SyncRepository
+import android.text.Editable
+import android.text.TextWatcher
 
 class VideoHomeFragment : Fragment() {
     private lateinit var profileAvatars: CircleImageView
@@ -59,7 +67,17 @@ class VideoHomeFragment : Fragment() {
     private val pageSize = 10
     private var totalVideos = 0
     private var isLoadingVideos = false
-
+    
+    // Search variables
+    private var isSearchMode = false
+    private var currentSearchQuery = ""
+    private var currentSearchType = "all"
+    private lateinit var syncRepository: SyncRepository
+    
+    // Store all videos for fast local filtering
+    private val allVideosList = mutableListOf<VideoData>()
+    
+    private var searchJob: kotlinx.coroutines.Job? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -77,6 +95,26 @@ class VideoHomeFragment : Fragment() {
         // Initialize VideoManager
         videoManager = VideoManager(requireContext())
         sessionManager = SessionManager.getInstance(requireContext()) // Initialize SessionManager
+        
+        // Initialize SyncRepository
+        val database = AppDatabase.getDatabase(requireContext())
+        syncRepository = SyncRepository(
+            usuarioDao = database.usuarioDao(),
+            personaDao = database.personaDao(),
+            topicDao = database.topicDao(),
+            contentItemDao = database.contentItemDao(),
+            taskDao = database.taskDao(),
+            subscriptionDao = database.subscriptionDao(),
+            taskSubmissionDao = database.taskSubmissionDao(),
+            videoDao = database.videoDao(),
+            courseDao = database.courseDao(),
+            rolDao = database.rolDao(),
+            recursoDao = database.recursoDao(),
+            rolRecursoDao = database.rolRecursoDao(),
+            chatMessageDao = database.chatMessageDao(),
+            fileContextDao = database.fileContextDao(),
+            progresoEstudianteDao = database.progresoEstudianteDao()
+        )
 
         // Refresh session info from Supabase in background so role checks are current
         lifecycleScope.launch {
@@ -104,6 +142,9 @@ class VideoHomeFragment : Fragment() {
 
         // Setup initial colors for bottom navigation icons
         setupBottomNavigationIconColors()
+        
+        // Setup search functionality
+        setupSearchBar(view)
 
 
         // Enhanced Courses Button with improved animations and interactions
@@ -489,25 +530,52 @@ class VideoHomeFragment : Fragment() {
             try {
                 Log.d("VideoHomeFragment", "Loading initial videos from Supabase (page 0)")
 
-                val (videos, total) = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.fetchVideosPaginated(
+                // If a specific video is requested, try to fetch it first
+                var targetVideo: VideoData? = null
+                if (targetVideoId != -1L) {
+                    targetVideo = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.fetchVideoById(targetVideoId)
+                    }
+                }
+
+                val result = withContext(Dispatchers.IO) {
+                    syncRepository.fetchVideosPaginated(
                         limit = pageSize,
                         offset = 0
                     )
                 }
+                val videos = result.first
+                val total = result.second
 
                 totalVideos = total
                 currentPage = 0
                 
                 withContext(Dispatchers.Main) {
                     videoList.clear()
-                    videoList.addAll(videos)
+                    
+                    // If we have a target video, add it first
+                    if (targetVideo != null) {
+                        videoList.add(targetVideo)
+                        // Add other videos, excluding the target if it's already in the list
+                        val others = videos.filter { it.id != targetVideoId }
+                        videoList.addAll(others)
+                    } else {
+                        videoList.addAll(videos)
+                    }
+                    
+                    // Store all videos for fast local filtering
+                    allVideosList.clear()
+                    allVideosList.addAll(videoList)
                     
                     if (::videoAdapter.isInitialized) {
                         videoAdapter.updateVideos(videoList)
+                        // Scroll to top to show the target video
+                        if (targetVideo != null) {
+                            view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.setCurrentItem(0, false)
+                        }
                     }
                     
-                    Log.d("VideoHomeFragment", "Loaded ${videos.size} videos (total: $totalVideos)")
+                    Log.d("VideoHomeFragment", "Loaded ${videoList.size} videos (total: $totalVideos)")
                     isVideosLoaded = true
                 }
 
@@ -537,12 +605,13 @@ class VideoHomeFragment : Fragment() {
                 
                 Log.d("VideoHomeFragment", "Loading more videos from Supabase (page $nextPage, offset $offset)")
 
-                val (videos, _) = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.fetchVideosPaginated(
+                val result = withContext(Dispatchers.IO) {
+                    syncRepository.fetchVideosPaginated(
                         limit = pageSize,
                         offset = offset
                     )
                 }
+                val videos = result.first
 
                 if (videos.isNotEmpty()) {
                     currentPage = nextPage
@@ -550,6 +619,9 @@ class VideoHomeFragment : Fragment() {
                     withContext(Dispatchers.Main) {
                         val oldSize = videoList.size
                         videoList.addAll(videos)
+                        
+                        // Add to all videos list for filtering
+                        allVideosList.addAll(videos)
                         
                         if (::videoAdapter.isInitialized) {
                             videoAdapter.notifyItemRangeInserted(oldSize, videos.size)
@@ -788,5 +860,242 @@ class VideoHomeFragment : Fragment() {
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "Error navigating to video index $index", e)
         }
+    }
+    
+    private fun setupSearchBar(view: View) {
+        val toggleSearchButton = view.findViewById<ImageButton>(R.id.toggleSearchButton)
+        val topNavTabs = view.findViewById<LinearLayout>(R.id.topNavTabs)
+        val searchBarContainer = view.findViewById<LinearLayout>(R.id.searchBarContainer)
+        val searchEditText = view.findViewById<EditText>(R.id.searchEditText)
+        // searchButton removed as per design
+        val closeSearchButton = view.findViewById<ImageButton>(R.id.closeSearchButton)
+        val filterChipGroup = view.findViewById<ChipGroup>(R.id.searchFilterChipGroup)
+        
+        // Add TextWatcher for instant search (like ExploreFragment)
+        searchEditText?.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val query = s?.toString() ?: ""
+                filterVideos(query)
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+        
+        // Toggle search bar visibility
+        toggleSearchButton?.setOnClickListener {
+            // Animate the transition with a fluid custom transition
+            val container = view.findViewById<ViewGroup>(R.id.topNavContainer)
+            val transition = androidx.transition.TransitionSet()
+                .addTransition(androidx.transition.ChangeBounds())
+                .addTransition(androidx.transition.Fade())
+                .addTransition(androidx.transition.ChangeTransform())
+                .setDuration(400)
+                .setInterpolator(androidx.interpolator.view.animation.FastOutSlowInInterpolator())
+            
+            androidx.transition.TransitionManager.beginDelayedTransition(container, transition)
+            
+            if (searchBarContainer.visibility == View.GONE) {
+                // Mostrar barra de búsqueda y ocultar botones normales
+                topNavTabs.visibility = View.GONE
+                searchBarContainer.visibility = View.VISIBLE
+                searchEditText.requestFocus()
+                showKeyboard(searchEditText)
+            } else {
+                // Ocultar barra de búsqueda y mostrar botones normales
+                searchBarContainer.visibility = View.GONE
+                topNavTabs.visibility = View.VISIBLE
+                hideKeyboard(searchEditText)
+                if (isSearchMode) {
+                    clearSearch()
+                }
+            }
+        }
+        
+        // Close search button
+        closeSearchButton?.setOnClickListener {
+            // Si hay texto, solo limpiarlo (eliminar filtro)
+            if (searchEditText.text.isNotEmpty()) {
+                searchEditText.setText("")
+                return@setOnClickListener
+            }
+
+            // Si no hay texto, cerrar la barra de búsqueda
+            // Animate the transition
+            val container = view.findViewById<ViewGroup>(R.id.topNavContainer)
+            val transition = androidx.transition.TransitionSet()
+                .addTransition(androidx.transition.ChangeBounds())
+                .addTransition(androidx.transition.Fade())
+                .addTransition(androidx.transition.ChangeTransform())
+                .setDuration(300)
+                .setInterpolator(androidx.interpolator.view.animation.FastOutSlowInInterpolator())
+
+            androidx.transition.TransitionManager.beginDelayedTransition(container, transition)
+
+            // Ocultar barra de búsqueda y mostrar botones normales
+            searchBarContainer.visibility = View.GONE
+            topNavTabs.visibility = View.VISIBLE
+            hideKeyboard(searchEditText)
+            if (isSearchMode) {
+                clearSearch()
+            }
+        }
+        
+        // Search on Enter key
+        searchEditText?.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                hideKeyboard(searchEditText)
+                true
+            } else {
+                false
+            }
+        }
+        
+        // Filter chip selection
+        filterChipGroup?.setOnCheckedStateChangeListener { group, checkedIds ->
+            if (checkedIds.isEmpty()) {
+                currentSearchType = "all"
+                return@setOnCheckedStateChangeListener
+            }
+            
+            val checkedChip = view.findViewById<Chip>(checkedIds[0])
+            currentSearchType = when (checkedChip?.id) {
+                R.id.filterTitleChip -> "title"
+                R.id.filterUsernameChip -> "username"
+                R.id.filterCategoryChip -> "category"
+                else -> "all"
+            }
+            
+            // Re-filter with new type if in search mode
+            if (isSearchMode && currentSearchQuery.isNotEmpty()) {
+                filterVideos(currentSearchQuery)
+            }
+        }
+    }
+    
+    // Fast local filtering with remote fallback (like ExploreFragment)
+    private fun filterVideos(query: String) {
+        if (query.isBlank()) {
+            // When search is empty, reload videos from Supabase to ensure fresh state
+            isSearchMode = false
+            currentSearchQuery = ""
+            Log.d("VideoHomeFragment", "filterVideos -> query empty, reloading videos from Supabase")
+            forceReloadVideos()
+            return
+        }
+
+        isSearchMode = true
+        currentSearchQuery = query
+        val lowerQuery = query.lowercase()
+        
+        // 1. Instant local filter for immediate feedback
+        // Filter AND Sort by relevance: Exact > StartsWith > Contains
+        val filtered = when (currentSearchType) {
+            "title" -> allVideosList.filter { 
+                it.title?.contains(query, ignoreCase = true) == true
+            }
+            "username" -> allVideosList.filter { 
+                it.username?.contains(query, ignoreCase = true) == true
+            }
+            "category" -> allVideosList.filter { 
+                it.description?.contains(query, ignoreCase = true) == true
+            }
+            else -> allVideosList.filter { video ->
+                video.title?.contains(query, ignoreCase = true) == true ||
+                video.description?.contains(query, ignoreCase = true) == true
+            }
+        }.sortedWith(compareBy<VideoData> { video ->
+            val title = video.title?.lowercase() ?: ""
+            when {
+                title == lowerQuery -> 0 // Exact match first
+                title.startsWith(lowerQuery) -> 1 // Starts with second
+                title.contains(lowerQuery) -> 2 // Contains third
+                else -> 3 // Description match last
+            }
+        }.thenByDescending { it.id }) // Then by newest
+        
+        videoList.clear()
+        videoList.addAll(filtered)
+        // Use updateVideos to ensure adapter refreshes correctly with a new list reference
+        if (::videoAdapter.isInitialized) {
+            videoAdapter.updateVideos(videoList.toList())
+        }
+        view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.currentItem = 0
+        
+        // 2. Debounced remote search (Supabase)
+        searchJob?.cancel()
+        searchJob = lifecycleScope.launch {
+            kotlinx.coroutines.delay(500) // 500ms debounce
+            searchRemoteVideos(query)
+        }
+    }
+    
+    // Remote search for additional results
+    private fun searchRemoteVideos(query: String) {
+        // Note: This is called from a coroutine scope already
+        try {
+            Log.d("VideoHomeFragment", "Searching remote videos: query='$query', type='$currentSearchType'")
+            
+            // We need to run this in IO context, but we are already in a launch block from filterVideos
+            // However, we should ensure we don't block the main thread if called directly
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val results = syncRepository.searchVideos(query, currentSearchType, 50)
+                    
+                    withContext(Dispatchers.Main) {
+                        // Only update if the query hasn't changed since we started
+                        if (currentSearchQuery == query) {
+                            if (results.isNotEmpty()) {
+                                // Update with authoritative remote results
+                                videoList.clear()
+                                videoList.addAll(results)
+                                // Use updateVideos to ensure adapter refreshes correctly with a new list reference
+                                videoAdapter.updateVideos(videoList.toList())
+                                view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.currentItem = 0
+                                Log.d("VideoHomeFragment", "Updated with ${results.size} remote results")
+                            } else {
+                                // If no remote results, keep local results or show empty state?
+                                // For now, we keep local results if any, or empty if none.
+                                Log.d("VideoHomeFragment", "No remote results found")
+                                if (videoList.isEmpty()) {
+                                    // If local was empty and remote is empty, ensure adapter knows
+                                    videoAdapter.updateVideos(emptyList())
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("VideoHomeFragment", "Error in searchRemoteVideos coroutine", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("VideoHomeFragment", "Error initiating remote search", e)
+        }
+    }
+    
+    private fun performSearch(query: String) {
+        // This method is kept for compatibility but now just calls filterVideos
+        filterVideos(query)
+    }
+    
+    private fun clearSearch() {
+        isSearchMode = false
+        currentSearchQuery = ""
+        currentSearchType = "all"
+        
+        view?.findViewById<EditText>(R.id.searchEditText)?.setText("")
+        view?.findViewById<Chip>(R.id.filterAllChip)?.isChecked = true
+        
+        Log.d("VideoHomeFragment", "clearSearch -> reloading videos from Supabase")
+        forceReloadVideos()
+    }
+    
+    private fun showKeyboard(view: View) {
+        val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+    }
+    
+    private fun hideKeyboard(view: View) {
+        val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(view.windowToken, 0)
     }
 }
