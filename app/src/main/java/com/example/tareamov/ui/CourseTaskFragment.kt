@@ -574,7 +574,7 @@ class CourseTaskFragment : Fragment() {
                 }
 
                 // Notify CourseDetailFragment to refresh from Supabase and switch to tasks tab
-                findNavController().previousBackStackEntry?.savedStateHandle?.set("refresh_from_supabase", true)
+                // Only set force_reload_topics to avoid duplicate refresh calls
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("switch_to_tasks_tab", true)
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("force_reload_topics", true)
 

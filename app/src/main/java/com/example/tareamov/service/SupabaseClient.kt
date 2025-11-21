@@ -427,9 +427,8 @@ object SupabaseClient {
                 .build()
 
             client.newCall(request).execute().use { resp ->
-                val respBody = resp.body?.string()
+                val bodyStr = resp.body?.string() ?: ""
                 if (!resp.isSuccessful) {
-                    val bodyStr = respBody ?: ""
                     Log.w("SupabaseClient", "updateCourseById failed: ${resp.code} ${resp.message} body=$bodyStr")
                     return@withContext false
                 }
@@ -3006,6 +3005,57 @@ object SupabaseClient {
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Exception updating certificate date", e)
             return@withContext false
+        }
+    }
+
+    // Check if a user is enrolled in a course (exists in progreso_estudiante)
+    suspend fun isUserEnrolled(userId: Long, courseId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Query progreso_estudiante table for matching usuario_estudiante and curso_id
+            // We use the path relative to /rest/v1/ as buildGetRequest prepends the base URL
+            // Use select=curso_id to be safe, as we know it exists
+            val path = "progreso_estudiante?usuario_estudiante=eq.$userId&curso_id=eq.$courseId&select=curso_id"
+            val request = buildGetRequest(path)
+            
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.e("SupabaseClient", "isUserEnrolled failed: ${resp.code} ${resp.message}")
+                    return@withContext false
+                }
+                val body = resp.body?.string() ?: return@withContext false
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                val isEnrolled = jsonArray.size() > 0
+                Log.d("SupabaseClient", "isUserEnrolled(userId=$userId, courseId=$courseId) = $isEnrolled")
+                return@withContext isEnrolled
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error checking enrollment status", e)
+            return@withContext false
+        }
+    }
+
+    // Fetch all course IDs where the user is enrolled
+    suspend fun fetchEnrolledCourseIds(userId: Long): List<Long> = withContext(Dispatchers.IO) {
+        try {
+            val path = "progreso_estudiante?usuario_estudiante=eq.$userId&select=curso_id"
+            val request = buildGetRequest(path)
+            
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                val ids = mutableListOf<Long>()
+                for (element in jsonArray) {
+                    val obj = element.asJsonObject
+                    if (obj.has("curso_id") && !obj.get("curso_id").isJsonNull) {
+                        ids.add(obj.get("curso_id").asLong)
+                    }
+                }
+                return@withContext ids
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching enrolled course IDs", e)
+            return@withContext emptyList()
         }
     }
 }

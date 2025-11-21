@@ -215,6 +215,14 @@
         android:name="com.example.tareamov.ui.CourseCreationFragment"
         android:label="Course Creation"
         tools:layout="@layout/fragment_course_creation">
+        <argument
+            android:name="courseId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="isEditing"
+            app:argType="boolean"
+            android:defaultValue="false" />
         <action
             android:id="@+id/action_courseCreationFragment_to_courseTopicFragment"
             app:destination="@id/courseTopicFragment" />
@@ -359,6 +367,10 @@
         <action
             android:id="@+id/action_courseDetailFragment_to_homeFragment"
             app:destination="@id/homeFragment" />
+        <!-- Add action to navigate to CourseCreationFragment -->
+        <action
+            android:id="@+id/action_courseDetailFragment_to_courseCreationFragment"
+            app:destination="@id/courseCreationFragment" />
         <!-- Removed the duplicate action to videoHomeFragment if it existed -->
         <!-- Add other necessary actions if they were in the duplicate block -->
     </fragment>

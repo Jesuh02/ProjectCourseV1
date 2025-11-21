@@ -35,6 +35,8 @@ import kotlinx.coroutines.withContext
 import android.text.Editable
 import android.text.TextWatcher
 import android.widget.EditText
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import android.widget.ImageView
 
 class ExploreFragment : Fragment() {
     private lateinit var videoManager: VideoManager
@@ -57,6 +59,9 @@ class ExploreFragment : Fragment() {
     // Variables for thumbnail change functionality
     private var currentCourseForThumbnailChange: VideoData? = null
     private lateinit var imagePickerLauncher: ActivityResultLauncher<Intent>
+    
+    // Current filter index (0=All, 1=My Created, 2=Other, 3=Premium, 4=Free, 5=Enrolled)
+    private var currentFilterIndex = 0
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -102,6 +107,15 @@ class ExploreFragment : Fragment() {
         // Setup filter button
         view.findViewById<View>(R.id.filterButton)?.setOnClickListener {
             showFilterOptions()
+        }
+        
+        // Setup clear filter button (both the container and the X icon)
+        view.findViewById<View>(R.id.clearFilterButton)?.setOnClickListener {
+            clearActiveFilter()
+        }
+        
+        view.findViewById<View>(R.id.activeFilterContainer)?.setOnClickListener {
+            clearActiveFilter()
         }
 
         // Setup course observation
@@ -1176,21 +1190,23 @@ class ExploreFragment : Fragment() {
         // Sort by timestamp DESC (most recent first)
         val sortedCourses = courses.sortedByDescending { it.timestamp }
         
-        // Store ALL courses for search
-        allCoursesList.clear()
-        allCoursesList.addAll(sortedCourses)
+        // Store ALL courses for search (only when showing all, not when filtering)
+        if (currentFilterIndex == 0) {
+            allCoursesList.clear()
+            allCoursesList.addAll(sortedCourses)
+        }
         
-        // Show ALL loaded courses (no limit)
+        // Show loaded courses in UI
         coursesList.clear()
         coursesList.addAll(sortedCourses)
         
         // Update adapter
         if (::coursesAdapter.isInitialized) {
             coursesAdapter.updateCourses(sortedCourses)
-            Log.d("ExploreFragment", "displayCourses: Updated adapter with ${sortedCourses.size} courses (Total in Supabase: $totalCourses)")
+            Log.d("ExploreFragment", "displayCourses: Updated adapter with ${sortedCourses.size} courses")
         }
         
-        // Update stats
+        // Update stats based on currently displayed courses
         updateCourseStats()
     }
 
@@ -1253,38 +1269,145 @@ class ExploreFragment : Fragment() {
         }
     }
 
-    // Show filter options dialog
+    // Show filter options dialog with modern BottomSheet
     private fun showFilterOptions() {
-        val options = arrayOf(
-            "📚 Todos los cursos",
-            "👤 Mis cursos",
-            "🌟 Cursos de otros",
-            "💰 Cursos premium",
-            "🆓 Cursos gratuitos"
-        )
+        val bottomSheetDialog = BottomSheetDialog(requireContext(), R.style.DarkBottomSheetDialogTheme)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_filter_courses, null)
+        bottomSheetDialog.setContentView(view)
 
-        val dialogBuilder = androidx.appcompat.app.AlertDialog.Builder(
-            androidx.appcompat.view.ContextThemeWrapper(requireContext(), R.style.DarkAlertDialogTheme)
-        )
+        // Make background transparent to show rounded corners
+        (view.parent as? View)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
-        dialogBuilder
-            .setTitle("🔍 Filtrar Cursos")
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> showAllCourses()
-                    1 -> filterMyCoursesOnly()
-                    2 -> filterOtherCoursesOnly()
-                    3 -> filterPremiumCourses()
-                    4 -> filterFreeCourses()
-                }
+        val recyclerView = view.findViewById<RecyclerView>(R.id.filterOptionsRecyclerView)
+        recyclerView.layoutManager = LinearLayoutManager(requireContext())
+
+        val options = listOf(
+            FilterOption("📚", "Todos los cursos", 0) { 
+                showAllCourses()
+            },
+            FilterOption("🎓", "Mis inscripciones", 5) { 
+                filterEnrolledCourses()
+                updateActiveFilterUI("Mis Inscripciones")
+            },
+            FilterOption("👤", "Mis cursos (Creados)", 1) { 
+                filterMyCoursesOnly()
+            },
+            FilterOption("🌟", "Cursos de otros", 2) { 
+                filterOtherCoursesOnly()
+            },
+            FilterOption("💰", "Cursos premium", 3) { 
+                filterPremiumCourses()
+            },
+            FilterOption("🆓", "Cursos gratuitos", 4) { 
+                filterFreeCourses()
             }
-            .setNegativeButton("❌ Cancelar", null)
+        )
 
-        val dialog = dialogBuilder.create()
-        dialog.setOnShowListener {
-            dialog.window?.setBackgroundDrawableResource(R.drawable.dark_dialog_background)
+        val adapter = FilterAdapter(options, currentFilterIndex) { selectedIndex ->
+            currentFilterIndex = selectedIndex
+            bottomSheetDialog.dismiss()
         }
-        dialog.show()
+        recyclerView.adapter = adapter
+        
+        // Add staggered animation to RecyclerView items
+        recyclerView.alpha = 0f
+        recyclerView.translationY = 50f
+        
+        // Show dialog first
+        bottomSheetDialog.show()
+        
+        // Then animate RecyclerView
+        recyclerView.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(300)
+            .setStartDelay(100)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .start()
+        
+        // Animate each item with stagger effect
+        recyclerView.post {
+            for (i in 0 until recyclerView.childCount) {
+                val child = recyclerView.getChildAt(i)
+                child?.alpha = 0f
+                child?.translationX = -50f
+                child?.animate()
+                    ?.alpha(1f)
+                    ?.translationX(0f)
+                    ?.setDuration(250)
+                    ?.setStartDelay(150L + (i * 50L))
+                    ?.setInterpolator(android.view.animation.DecelerateInterpolator())
+                    ?.start()
+            }
+        }
+    }
+
+    data class FilterOption(
+        val icon: String,
+        val title: String,
+        val index: Int,
+        val action: () -> Unit
+    )
+
+    inner class FilterAdapter(
+        private val options: List<FilterOption>,
+        private val selectedIndex: Int,
+        private val onOptionSelected: (Int) -> Unit
+    ) : RecyclerView.Adapter<FilterAdapter.FilterViewHolder>() {
+
+        inner class FilterViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+            val icon: TextView = itemView.findViewById(R.id.filterIcon)
+            val title: TextView = itemView.findViewById(R.id.filterTitle)
+            val check: ImageView = itemView.findViewById(R.id.filterCheck)
+            val container: LinearLayout = itemView as LinearLayout
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FilterViewHolder {
+            val view = LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_filter_option, parent, false)
+            return FilterViewHolder(view)
+        }
+
+        override fun onBindViewHolder(holder: FilterViewHolder, position: Int) {
+            val option = options[position]
+            holder.icon.text = option.icon
+            holder.title.text = option.title
+            
+            val isSelected = option.index == selectedIndex
+            holder.check.visibility = if (isSelected) View.VISIBLE else View.GONE
+            
+            if (isSelected) {
+                holder.title.setTextColor(androidx.core.content.ContextCompat.getColor(holder.itemView.context, R.color.purple_500))
+                holder.icon.alpha = 1.0f
+            } else {
+                holder.title.setTextColor(android.graphics.Color.WHITE)
+                holder.icon.alpha = 0.7f
+            }
+
+            holder.itemView.setOnClickListener {
+                // Add scale animation on click
+                holder.itemView.animate()
+                    .scaleX(0.95f)
+                    .scaleY(0.95f)
+                    .setDuration(100)
+                    .withEndAction {
+                        holder.itemView.animate()
+                            .scaleX(1.0f)
+                            .scaleY(1.0f)
+                            .setDuration(100)
+                            .start()
+                    }
+                    .start()
+                
+                // Invoke action after short delay for animation feedback
+                holder.itemView.postDelayed({
+                    option.action.invoke()
+                    onOptionSelected(option.index)
+                }, 200)
+            }
+        }
+
+        override fun getItemCount() = options.size
     }
 
     // Filter premium courses
@@ -1300,6 +1423,14 @@ class ExploreFragment : Fragment() {
             Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
         }
         updateCourseStats()
+        updateActiveFilterUI("Cursos Premium")
+        
+        if (premiumCourses.isEmpty()) {
+            showDarkToast("No hay cursos premium disponibles")
+        } else {
+            showDarkToast("Mostrando ${premiumCourses.size} cursos premium")
+        }
+        
         Log.d("ExploreFragment", "Filtered to show premium courses: ${premiumCourses.size} courses")
     }
 
@@ -1316,50 +1447,101 @@ class ExploreFragment : Fragment() {
             Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
         }
         updateCourseStats()
+        updateActiveFilterUI("Cursos Gratis")
+        
+        if (freeCourses.isEmpty()) {
+            showDarkToast("No hay cursos gratuitos disponibles")
+        } else {
+            showDarkToast("Mostrando ${freeCourses.size} cursos gratis")
+        }
+        
         Log.d("ExploreFragment", "Filtered to show free courses: ${freeCourses.size} courses")
     }
 
-    // Update course statistics in header
+    // Filter enrolled courses
+    private fun filterEnrolledCourses() {
+        isLoadingCourses = true
+        // Show loading state if possible
+        
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername ?: "")
+                if (userId == null) {
+                    withContext(Dispatchers.Main) {
+                        showDarkToast("Debes iniciar sesión para ver tus inscripciones")
+                        isLoadingCourses = false
+                    }
+                    return@launch
+                }
+
+                val enrolledIds = com.example.tareamov.service.SupabaseClient.fetchEnrolledCourseIds(userId)
+                
+                withContext(Dispatchers.Main) {
+                    val filtered = allCoursesList.filter { course ->
+                        enrolledIds.contains(course.id)
+                    }
+                    displayCourses(filtered)
+                    
+                    val count = filtered.size
+                    showDarkToast("Mostrando $count cursos inscritos")
+                    isLoadingCourses = false
+                }
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error filtering enrolled courses", e)
+                withContext(Dispatchers.Main) {
+                    showDarkToast("Error al cargar inscripciones")
+                    isLoadingCourses = false
+                }
+            }
+        }
+    }
+
+    // Update course statistics in header based on currently displayed courses
     private fun updateCourseStats() {
         view?.let { v ->
             val totalCoursesCount = v.findViewById<TextView>(R.id.totalCoursesCount)
             val popularCoursesCount = v.findViewById<TextView>(R.id.popularCoursesCount)
             val newCoursesCount = v.findViewById<TextView>(R.id.newCoursesCount)
 
-            Log.d("ExploreFragment", "Updating course stats - Loaded courses: ${coursesList.size}, Total in Supabase: $totalCourses")
+            Log.d("ExploreFragment", "Updating course stats - Displayed courses: ${coursesList.size}")
 
-            // Show TOTAL courses from Supabase (not just loaded ones)
-            totalCoursesCount?.text = totalCourses.toString()
+            // Show count of currently displayed courses
+            totalCoursesCount?.text = coursesList.size.toString()
             
-            // Count premium courses from loaded courses as "popular"
-            val premiumCount = allCoursesList.count { it.isPremium == true }
-            popularCoursesCount?.text = premiumCount.toString()
-            Log.d("ExploreFragment", "Premium courses count: $premiumCount")
+            // Count popular courses (rating >= 4.5 or enrollments >= 10) from displayed courses
+            val popularCount = coursesList.count { course ->
+                course.rating >= 4.5 || (course.enrollmentCount ?: 0) >= 10
+            }
+            popularCoursesCount?.text = popularCount.toString()
+            Log.d("ExploreFragment", "Popular courses count: $popularCount")
             
-            // Count recent courses (last 7 days) from loaded courses as "new"
+            // Count recent courses (last 30 days) from displayed courses as "new"
             val currentTime = System.currentTimeMillis()
-            val sevenDaysAgo = currentTime - (7 * 24 * 60 * 60 * 1000)
-            val newCount = allCoursesList.count { 
-                val courseTime = it.timestamp
-                val isNew = courseTime > sevenDaysAgo
-                Log.d("ExploreFragment", "Course '${it.title}' timestamp: $courseTime, current: $currentTime, isNew: $isNew")
+            val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
+            val newCount = coursesList.count { course ->
+                val courseTime = course.timestamp
+                val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
+                val mostRecentTime = maxOf(courseTime, creationTime)
+                val isNew = mostRecentTime > thirtyDaysAgo
                 isNew
             }
             newCoursesCount?.text = newCount.toString()
-            Log.d("ExploreFragment", "New courses count (last 7 days): $newCount")
+            Log.d("ExploreFragment", "New courses count (last 30 days): $newCount")
 
-            // Additional debug info
-            if (allCoursesList.isNotEmpty()) {
-                Log.d("ExploreFragment", "Sample course timestamps:")
-                allCoursesList.take(3).forEach { course ->
-                    val daysDiff = (currentTime - course.timestamp) / (24 * 60 * 60 * 1000)
-                    Log.d("ExploreFragment", "- '${course.title}': ${course.timestamp} (${daysDiff} days ago)")
-                }
-            }
-
-            Log.d("ExploreFragment", "Stats updated - Total in Supabase: $totalCourses, Loaded: ${coursesList.size}, Premium: $premiumCount, New: $newCount")
+            Log.d("ExploreFragment", "Stats updated - Displayed: ${coursesList.size}, Popular: $popularCount, New: $newCount")
         } ?: run {
             Log.w("ExploreFragment", "View is null, cannot update course stats")
+        }
+    }
+    
+    // Helper to parse date string to timestamp
+    private fun parseDate(dateString: String): Long {
+        return try {
+            val format = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault())
+            format.parse(dateString)?.time ?: 0
+        } catch (e: Exception) {
+            Log.w("ExploreFragment", "Failed to parse date: $dateString", e)
+            0
         }
     }
 
@@ -1377,6 +1559,7 @@ class ExploreFragment : Fragment() {
                     Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
                 }
                 updateCourseStats()
+                updateActiveFilterUI("Mis Cursos Creados")
                 Log.d("ExploreFragment", "Filtered to show only user's courses: ${sorted.size} courses")
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error filtering user's courses", e)
@@ -1399,6 +1582,7 @@ class ExploreFragment : Fragment() {
                     Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
                 }
                 updateCourseStats()
+                updateActiveFilterUI("Cursos de Otros")
                 Log.d("ExploreFragment", "Filtered to show only other users' courses: ${sorted.size} courses")
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error filtering other users' courses", e)
@@ -1409,6 +1593,7 @@ class ExploreFragment : Fragment() {
 
     // Show all courses (reset filter)
     private fun showAllCourses() {
+        currentFilterIndex = 0
         val sorted = allCoursesList.sortedByDescending { it.timestamp }
         coursesList.clear()
         coursesList.addAll(sorted)
@@ -1418,8 +1603,75 @@ class ExploreFragment : Fragment() {
             Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
         }
         updateCourseStats()
+        clearActiveFilterUI()
+        showDarkToast("Mostrando todos los cursos (${sorted.size})")
         Log.d("ExploreFragment", "Showing all courses: ${sorted.size} courses")
-    }    override fun onResume() {
+    }
+    
+    // Update active filter UI indicator
+    private fun updateActiveFilterUI(filterName: String) {
+        val activeFilterContainer = view?.findViewById<LinearLayout>(R.id.activeFilterContainer)
+        val activeFilterText = view?.findViewById<TextView>(R.id.activeFilterText)
+        val coursesSectionTitle = view?.findViewById<TextView>(R.id.coursesSectionTitle)
+        
+        if (currentFilterIndex == 0) {
+            // Hide filter chip with animation when showing all courses
+            activeFilterContainer?.animate()
+                ?.alpha(0f)
+                ?.scaleX(0.8f)
+                ?.scaleY(0.8f)
+                ?.setDuration(200)
+                ?.withEndAction {
+                    activeFilterContainer.visibility = View.GONE
+                }
+                ?.start()
+            coursesSectionTitle?.text = "Todos los Cursos"
+        } else {
+            // Show filter chip with animation and selected filter name
+            activeFilterText?.text = filterName
+            coursesSectionTitle?.text = filterName
+            
+            if (activeFilterContainer?.visibility != View.VISIBLE) {
+                activeFilterContainer?.visibility = View.VISIBLE
+                activeFilterContainer?.alpha = 0f
+                activeFilterContainer?.scaleX = 0.8f
+                activeFilterContainer?.scaleY = 0.8f
+                activeFilterContainer?.animate()
+                    ?.alpha(1f)
+                    ?.scaleX(1f)
+                    ?.scaleY(1f)
+                    ?.setDuration(250)
+                    ?.setInterpolator(android.view.animation.OvershootInterpolator(1.2f))
+                    ?.start()
+            }
+        }
+    }
+    
+    // Clear active filter UI
+    private fun clearActiveFilterUI() {
+        val activeFilterContainer = view?.findViewById<LinearLayout>(R.id.activeFilterContainer)
+        val coursesSectionTitle = view?.findViewById<TextView>(R.id.coursesSectionTitle)
+        
+        // Animate out the filter chip
+        activeFilterContainer?.animate()
+            ?.alpha(0f)
+            ?.scaleX(0.8f)
+            ?.scaleY(0.8f)
+            ?.setDuration(200)
+            ?.withEndAction {
+                activeFilterContainer.visibility = View.GONE
+            }
+            ?.start()
+        
+        coursesSectionTitle?.text = "Todos los Cursos"
+    }
+    
+    // Clear active filter and show all courses
+    private fun clearActiveFilter() {
+        showAllCourses()
+    }
+    
+    override fun onResume() {
         super.onResume()
     // Reload courses when returning to this fragment (force remote refresh)
     loadCourses(forceRemote = true)

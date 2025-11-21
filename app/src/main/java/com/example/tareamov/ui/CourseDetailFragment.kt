@@ -86,6 +86,7 @@ class CourseDetailFragment : Fragment() {
     private lateinit var coursePriceIcon: ImageView
     private lateinit var togglePriceButton: Button
     private lateinit var editCourseButton: ImageButton
+    private var refreshJob: kotlinx.coroutines.Job? = null // Job to handle refresh cancellation
     // Repository for remote checks
     private val syncRepository by lazy { com.example.tareamov.data.sync.SyncRepository(
         AppDatabase.getDatabase(requireContext()).usuarioDao(),
@@ -381,75 +382,23 @@ class CourseDetailFragment : Fragment() {
             }
         }
 
-        // Edit button click: show dialog to edit title/description
+        // Edit button click: navigate to CourseCreationFragment for editing
         editCourseButton.setOnClickListener {
-            val context = requireContext()
-            val inflater = LayoutInflater.from(context)
-            // Asegúrate de inflar SIEMPRE el layout correcto
-            val dialogView = inflater.inflate(R.layout.dialog_edit_course, null)
-            val titleEdit = dialogView.findViewById<EditText>(R.id.editCourseTitle)
-            val descEdit = dialogView.findViewById<EditText>(R.id.editCourseDescription)
-            // Setea el texto actual
-            titleEdit.setText(courseTitleTextView.text)
-            descEdit.setText(courseDescriptionTextView.text)
-
-            AlertDialog.Builder(context)
-                .setTitle("Editar Curso")
-                .setView(dialogView)
-                .setPositiveButton("Guardar") { _, _ ->
-                    val newTitle = titleEdit.text.toString().trim()
-                    val newDesc = descEdit.text.toString().trim()
-                    // Update Course and related VideoData, then sync to Supabase
-                    lifecycleScope.launch {
-                        try {
-                            val repo = com.example.tareamov.repository.CourseRepository(requireContext())
-                            val db = AppDatabase.getDatabase(requireContext())
-                            val course = courseViewModel.course.value
-                            if (course != null) {
-                                val updatedCourse = course.copy(title = newTitle, description = newDesc)
-                                withContext(Dispatchers.IO) {
-                                    // Update Course table (if available)
-                                    try {
-                                        repo.updateCourse(updatedCourse)
-                                    } catch (e: Exception) {
-                                        // Fallback: update CourseDao directly if repo failed
-                                        try {
-                                            db.courseDao()?.updateCourse(updatedCourse)
-                                        } catch (ignored: Exception) { }
-                                    }
-
-                                    // No longer update VideoData as course is stored in Course table
-                                    // If there's additional media metadata tied to a Course, it should be handled separately.
-                                }
-
-                                // Request Supabase upsert for the updated course
-                                try {
-                                    val act = requireActivity()
-                                    if (act is com.example.tareamov.MainActivity) {
-                                        // Ensure values match Course fields and handle nullables
-                                        val courseToUpsert = updatedCourse.copy(
-                                            // Keep existing course fields; ensure price and flags are valid
-                                            price = updatedCourse.price ?: 0.0,
-                                            isPremium = updatedCourse.isPremium
-                                        )
-                                        withContext(Dispatchers.IO) {
-                                            act.syncRepository.upsertCourseToSupabase(courseToUpsert)
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    Log.w("CourseDetailFragment", "Failed to upsert updated course to Supabase: ${e.message}", e)
-                                }
-
-                                // Refresh UI
-                                courseViewModel.getCourseById(courseId)
-                            }
-                        } catch (e: Exception) {
-                            Log.e("CourseDetailFragment", "Error updating course and videos", e)
-                        }
-                    }
+            val bundle = Bundle().apply {
+                putLong("courseId", courseId)
+                putBoolean("isEditing", true)
+            }
+            try {
+                findNavController().navigate(R.id.action_courseDetailFragment_to_courseCreationFragment, bundle)
+            } catch (e: Exception) {
+                // Fallback if action not found, try direct navigation by ID
+                try {
+                    findNavController().navigate(R.id.courseCreationFragment, bundle)
+                } catch (e2: Exception) {
+                    Toast.makeText(requireContext(), "Error de navegación: " + e2.message, Toast.LENGTH_SHORT).show()
                 }
-                .setNegativeButton("Cancelar", null)
-                .show()        }
+            }
+        }
         
         // Setup toggle price button
         togglePriceButton.setOnClickListener {
@@ -1802,7 +1751,7 @@ class CourseDetailFragment : Fragment() {
                     taskNameTextView.text = remote.name
                 }
             } catch (e: Exception) {
-                android.util.Log.w("CourseDetailFragment", "Failed to fetch remote task title", e)
+                Log.w("CourseDetailFragment", "Failed to fetch remote task title", e)
             }
         }
     }
@@ -1967,7 +1916,10 @@ class CourseDetailFragment : Fragment() {
     private fun refreshTopicsFromSupabase() {
         if (courseId == -1L) return
 
-        CoroutineScope(Dispatchers.Main).launch {
+        // Cancel previous job if active to prevent race conditions and duplication
+        refreshJob?.cancel()
+
+        refreshJob = CoroutineScope(Dispatchers.Main).launch {
             try {
                 val act = requireActivity()
                 val lookupId = if (resolvedCourseId > 0) resolvedCourseId else courseId
@@ -2015,7 +1967,9 @@ class CourseDetailFragment : Fragment() {
                 // IMPORTANTE: Recalcular progreso de estudiantes después de refrescar
                 recalculateStudentProgress()
             } catch (e: Exception) {
-                Log.w("CourseDetailFragment", "refreshTopicsFromSupabase failed", e)
+                if (e !is kotlinx.coroutines.CancellationException) {
+                    Log.e("CourseDetailFragment", "Error refreshing topics", e)
+                }
             }
         }
     }

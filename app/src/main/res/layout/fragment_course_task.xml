@@ -97,10 +97,11 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:background="@drawable/bg_surface_glass"
-                android:paddingStart="20dp"
-                android:paddingTop="24dp"
-                android:paddingEnd="20dp"
-                android:paddingBottom="28dp"
+                android:paddingStart="24dp"
+                android:paddingTop="32dp"
+                android:paddingEnd="24dp"
+                android:paddingBottom="48dp"
+                android:minHeight="600dp"
                 android:animateLayoutChanges="true"
                 android:elevation="6dp">
 
@@ -117,19 +118,19 @@
                     android:id="@+id/taskNameEditText"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
+                    android:layout_marginTop="12dp"
                     android:background="@drawable/bg_input_glass"
                     android:fontFamily="@font/sf_pro_display_regular"
                     android:hint="Ingresa el nombre de la tarea"
-                    android:padding="16dp"
+                    android:padding="18dp"
                     android:textColor="#FFFFFF"
                     android:textColorHint="#B8C0FF"
-                    android:textSize="15sp" />
+                    android:textSize="16sp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="20dp"
+                    android:layout_marginTop="24dp"
                     android:text="Descripción"
                     android:textColor="#FFFFFF"
                     android:textSize="16sp"
@@ -138,23 +139,23 @@
                 <EditText
                     android:id="@+id/taskDescriptionEditText"
                     android:layout_width="match_parent"
-                    android:layout_height="120dp"
-                    android:layout_marginTop="10dp"
+                    android:layout_height="220dp"
+                    android:layout_marginTop="12dp"
                     android:background="@drawable/bg_input_glass"
                     android:fontFamily="@font/sf_pro_display_regular"
                     android:gravity="top"
                     android:hint="Describe de qué trata esta tarea"
                     android:inputType="textMultiLine"
-                    android:padding="16dp"
+                    android:padding="18dp"
                     android:textColor="#FFFFFF"
                     android:textColorHint="#B8C0FF"
-                    android:textSize="15sp"
-                    android:lineSpacingExtra="4dp" />
+                    android:textSize="16sp"
+                    android:lineSpacingExtra="6dp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="20dp"
+                    android:layout_marginTop="28dp"
                     android:text="Contenido de la Tarea"
                     android:textColor="#FFFFFF"
                     android:textSize="16sp"
@@ -164,13 +165,13 @@
                     android:id="@+id/contentContainer"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
+                    android:layout_marginTop="12dp"
                     android:orientation="vertical" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
+                    android:layout_marginTop="24dp"
                     android:text="Agregar Contenido"
                     android:textColor="#FFFFFF"
                     android:textSize="14sp"

@@ -57,6 +57,39 @@
                 android:layout_marginStart="16dp"
                 app:tint="#A259FF" />
 
+            <!-- Active Filter Chip -->
+            <LinearLayout
+                android:id="@+id/activeFilterContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_filter_chip_active"
+                android:gravity="center_vertical"
+                android:paddingStart="12dp"
+                android:paddingEnd="4dp"
+                android:visibility="gone"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/activeFilterText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Filtro"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:maxLines="1"
+                    android:ellipsize="end"/>
+
+                <ImageView
+                    android:id="@+id/clearFilterButton"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_close"
+                    app:tint="#FFFFFF"
+                    android:layout_marginStart="4dp"/>
+            </LinearLayout>
+
             <EditText
                 android:id="@+id/searchEditText"
                 android:layout_width="0dp"

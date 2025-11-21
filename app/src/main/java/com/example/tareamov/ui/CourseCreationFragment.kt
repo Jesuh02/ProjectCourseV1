@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import android.widget.*
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
+import com.bumptech.glide.Glide
 import com.example.tareamov.R
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
@@ -35,6 +36,7 @@ class CourseCreationFragment : Fragment() {
     private var courseSaved = false
     private lateinit var sessionManager: SessionManager // Added SessionManager instance
     private var selectedThumbnailUri: Uri? = null
+    private var isEditing = false // Added flag for editing mode
 
     companion object {
         private const val REQUEST_THUMBNAIL_PICK = 1001
@@ -50,6 +52,19 @@ class CourseCreationFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // Check arguments for editing
+        arguments?.let {
+            val id = it.getLong("courseId", -1L)
+            isEditing = it.getBoolean("isEditing", false)
+            if (id != -1L && isEditing) {
+                currentCourseId = id
+                courseSaved = true // Course exists
+                loadCourseData(id)
+                // Update UI for editing
+                view.findViewById<Button>(R.id.saveButton)?.text = "Actualizar Curso"
+            }
+        }
 
         // Restore thumbnail URI if available
         if (savedInstanceState != null) {
@@ -134,6 +149,50 @@ class CourseCreationFragment : Fragment() {
         outState.putString(KEY_THUMBNAIL_URI, selectedThumbnailUri?.toString())
     }
 
+    private fun loadCourseData(courseId: Long) {
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val activity = requireActivity()
+                if (activity is MainActivity) {
+                    val course = withContext(Dispatchers.IO) {
+                        activity.syncRepository.fetchCourseById(courseId)
+                    }
+                    
+                    if (course != null) {
+                        // Populate fields
+                        view?.findViewById<EditText>(R.id.courseNameEditText)?.setText(course.title)
+                        view?.findViewById<EditText>(R.id.courseCategoryEditText)?.setText(course.category)
+                        view?.findViewById<EditText>(R.id.courseDescriptionEditText)?.setText(course.description)
+                        
+                        if (course.isPremium) {
+                            view?.findViewById<RadioButton>(R.id.paidCourseRadioButton)?.isChecked = true
+                            view?.findViewById<EditText>(R.id.coursePriceEditText)?.setText(course.price.toString())
+                            view?.findViewById<LinearLayout>(R.id.priceContainer)?.visibility = View.VISIBLE
+                        } else {
+                            view?.findViewById<RadioButton>(R.id.freeCourseRadioButton)?.isChecked = true
+                            view?.findViewById<LinearLayout>(R.id.priceContainer)?.visibility = View.GONE
+                        }
+                        
+                        // Load thumbnail
+                        if (!course.thumbnailUri.isNullOrEmpty()) {
+                            selectedThumbnailUri = Uri.parse(course.thumbnailUri)
+                            val imageView = view?.findViewById<ImageView>(R.id.courseThumbnailImageView)
+                            if (imageView != null) {
+                                Glide.with(this@CourseCreationFragment)
+                                    .load(course.thumbnailUri)
+                                    .placeholder(R.drawable.placeholder_image) // Assuming placeholder exists or just default
+                                    .into(imageView)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseCreationFragment", "Error loading course data", e)
+                Toast.makeText(context, "Error al cargar datos del curso", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun saveCourse() {
         val courseName = view?.findViewById<EditText>(R.id.courseNameEditText)?.text.toString()
         val courseCategory = view?.findViewById<EditText>(R.id.courseCategoryEditText)?.text.toString()
@@ -170,65 +229,98 @@ class CourseCreationFragment : Fragment() {
                     return@launch
                 }
 
-                // Create Course entity with current user ID as creator
                 val thumbnailUriString = selectedThumbnailUri?.toString()
-                val courseData = Course(
-                    id = 0, // Supabase will auto-generate
-                    title = courseName,
-                    description = courseDescription,
-                    creatorUserId = userId, // Foreign key to usuarios.id
-                    thumbnailUri = thumbnailUriString,
-                    videoUri = null,
-                    localFilePath = null,
-                    duration = null,
-                    category = courseCategory,
-                    price = coursePrice,
-                    isPremium = isPaid,
-                    isPublished = true,
-                    creationDate = System.currentTimeMillis().toString(),
-                    lastModifiedDate = System.currentTimeMillis().toString(),
-                    enrollmentCount = 0,
-                    rating = 0.0f,
-                    tags = null,
-                    timestamp = System.currentTimeMillis()
-                )
-        
-                // Save course directly to Supabase
+                
                 val activity = requireActivity()
                 if (activity !is MainActivity) {
                     Toast.makeText(context, "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
                     return@launch
                 }
 
-                // Check for duplicate title in Supabase
-                val titleExists = withContext(Dispatchers.IO) {
-                    activity.syncRepository.isTitleExistsInSupabase(courseName)
-                }
-
-                if (titleExists) {
-                    Toast.makeText(context, "Ya existe un curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
-                    return@launch
-                }
-
-                // Insert course to Supabase and get the remote ID
-                val remoteId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.insertCourse(courseData)
-                }
-
-                if (remoteId != null && remoteId > 0) {
-                    currentCourseId = remoteId
-                    courseSaved = true
-                    Toast.makeText(context, "Curso guardado exitosamente en Supabase con ID: $remoteId", Toast.LENGTH_SHORT).show()
-                    Log.d("CourseCreationFragment", "Course saved to Supabase with ID: $remoteId")
-                    
-                    // Navigate to CourseDetailFragment with the created course
-                    val bundle = Bundle().apply {
-                        putLong("courseId", remoteId)
-                        putString("courseName", courseName)
+                if (isEditing) {
+                    // Update existing course
+                    val originalCourse = withContext(Dispatchers.IO) {
+                        activity.syncRepository.fetchCourseById(currentCourseId)
                     }
-                    findNavController().navigate(R.id.action_courseCreationFragment_to_courseDetailFragment, bundle)
+                    
+                    if (originalCourse != null) {
+                        val updatedCourse = originalCourse.copy(
+                            title = courseName,
+                            description = courseDescription,
+                            category = courseCategory,
+                            price = coursePrice,
+                            isPremium = isPaid,
+                            thumbnailUri = thumbnailUriString ?: originalCourse.thumbnailUri,
+                            lastModifiedDate = System.currentTimeMillis().toString()
+                        )
+                        
+                        val success = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.updateCourseById(currentCourseId, updatedCourse)
+                        }
+                        
+                        if (success) {
+                            Toast.makeText(context, "Curso actualizado exitosamente", Toast.LENGTH_SHORT).show()
+                            // Navigate back to details
+                            findNavController().navigateUp()
+                        } else {
+                            Toast.makeText(context, "Error al actualizar el curso", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        Toast.makeText(context, "Error: No se encontró el curso original", Toast.LENGTH_SHORT).show()
+                    }
                 } else {
-                    Toast.makeText(context, "Error al guardar el curso en Supabase", Toast.LENGTH_SHORT).show()
+                    // Create new course
+                    val courseData = Course(
+                        id = 0, // Supabase will auto-generate
+                        title = courseName,
+                        description = courseDescription,
+                        creatorUserId = userId, // Foreign key to usuarios.id
+                        thumbnailUri = thumbnailUriString,
+                        videoUri = null,
+                        localFilePath = null,
+                        duration = null,
+                        category = courseCategory,
+                        price = coursePrice,
+                        isPremium = isPaid,
+                        isPublished = true,
+                        creationDate = System.currentTimeMillis().toString(),
+                        lastModifiedDate = System.currentTimeMillis().toString(),
+                        enrollmentCount = 0,
+                        rating = 0.0f,
+                        tags = null,
+                        timestamp = System.currentTimeMillis()
+                    )
+            
+                    // Check for duplicate title in Supabase
+                    val titleExists = withContext(Dispatchers.IO) {
+                        activity.syncRepository.isTitleExistsInSupabase(courseName)
+                    }
+
+                    if (titleExists) {
+                        Toast.makeText(context, "Ya existe un curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
+                        return@launch
+                    }
+
+                    // Insert course to Supabase and get the remote ID
+                    val remoteId = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.insertCourse(courseData)
+                    }
+
+                    if (remoteId != null && remoteId > 0) {
+                        currentCourseId = remoteId
+                        courseSaved = true
+                        Toast.makeText(context, "Curso guardado exitosamente en Supabase con ID: $remoteId", Toast.LENGTH_SHORT).show()
+                        Log.d("CourseCreationFragment", "Course saved to Supabase with ID: $remoteId")
+                        
+                        // Navigate to CourseDetailFragment with the created course
+                        val bundle = Bundle().apply {
+                            putLong("courseId", remoteId)
+                            putString("courseName", courseName)
+                        }
+                        findNavController().navigate(R.id.action_courseCreationFragment_to_courseDetailFragment, bundle)
+                    } else {
+                        Toast.makeText(context, "Error al guardar el curso en Supabase", Toast.LENGTH_SHORT).show()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("CourseCreationFragment", "Error saving course to Supabase", e)

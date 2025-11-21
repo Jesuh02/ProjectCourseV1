@@ -510,10 +510,13 @@ class CourseAdapter(
                 }
                 
                 // Check if user is already enrolled (has progreso record)
-                val progreso = db.progresoEstudianteDao().getProgreso(userId, course.id)
+                // We check directly against Supabase as requested, avoiding Room cache issues
+                Log.d("CourseAdapter", "Checking enrollment for userId=$userId courseId=${course.id}")
+                val isEnrolled = com.example.tareamov.service.SupabaseClient.isUserEnrolled(userId, course.id)
+                Log.d("CourseAdapter", "Enrollment result for userId=$userId courseId=${course.id}: $isEnrolled")
                 
                 withContext(Dispatchers.Main) {
-                    if (progreso != null) {
+                    if (isEnrolled) {
                         // Already enrolled - Show enrolled status, hide enrollment container
                         holder.enrollButtonContainer?.visibility = View.GONE
                         holder.enrolledStatusContainer?.visibility = View.VISIBLE
