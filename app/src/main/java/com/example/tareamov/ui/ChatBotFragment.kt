@@ -98,6 +98,8 @@ class ChatBotFragment : Fragment() {
     private lateinit var database: AppDatabase
     private lateinit var aiAnalysisService: AIAnalysisService
     private lateinit var fileAnalysisService: FileAnalysisService
+    private lateinit var sessionManager: com.example.tareamov.util.SessionManager
+    private lateinit var syncRepository: com.example.tareamov.data.sync.SyncRepository
 
     // Runtime host selection: choose correct host for emulator vs physical device
     private fun isRunningOnEmulator(): Boolean {
@@ -113,7 +115,7 @@ class ChatBotFragment : Fragment() {
             "http://10.0.2.2:3001/"
         } else {
             // Use your host LAN IP when testing from a physical device on same Wi-Fi
-            "http://192.168.1.158:3001/"
+            "http://10.169.165.181:3001/"
         }
     }
 
@@ -121,7 +123,7 @@ class ChatBotFragment : Fragment() {
         return if (isRunningOnEmulator()) {
             "http://10.0.2.2:11435"
         } else {
-            "http://192.168.1.158:11435"
+            "http://10.169.165.181:11435"
         }
     }
     // Aumentar los timeouts para evitar que el chat cierre la espera antes de que el modelo responda
@@ -246,6 +248,25 @@ class ChatBotFragment : Fragment() {
         database = AppDatabase.getDatabase(requireContext())
         aiAnalysisService = AIAnalysisService(requireContext())
         fileAnalysisService = FileAnalysisService(requireContext())
+        sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        syncRepository = com.example.tareamov.data.sync.SyncRepository(
+            usuarioDao = database.usuarioDao(),
+            personaDao = database.personaDao(),
+            topicDao = database.topicDao(),
+            contentItemDao = database.contentItemDao(),
+            taskDao = database.taskDao(),
+            subscriptionDao = database.subscriptionDao(),
+            taskSubmissionDao = database.taskSubmissionDao(),
+            videoDao = database.videoDao(),
+            courseDao = database.courseDao(),
+            rolDao = database.rolDao(),
+            recursoDao = database.recursoDao(),
+            rolRecursoDao = database.rolRecursoDao(),
+            chatMessageDao = database.chatMessageDao(),
+            fileContextDao = database.fileContextDao(),
+            progresoEstudianteDao = database.progresoEstudianteDao()
+        )
+        syncRepository.initWithContext(requireContext())
 
         initializeViews(view)
         setupRecyclerView()
@@ -604,10 +625,37 @@ class ChatBotFragment : Fragment() {
                 }
             }
             loadingProgressBar.visibility = View.VISIBLE
-
+            
             // Contexto por defecto: la tarea/archivo actualmente cargado en el chat
             var effectiveTaskDescription = currentFileContext?.contentSummary ?: ""
             var effectiveFileContent = currentFileContext?.fileContent ?: ""
+            var effectiveJsonContent = currentFileContext?.jsonContent ?: ""
+            var effectiveMetadata = currentFileContext?.metadata ?: ""
+            
+            // 🔥 CRÍTICO: Si el mensaje contiene # y taskName está establecido, esperar a que el contexto termine de cargar
+            // Detectar si hay una referencia a tarea pendiente de procesar
+            val hasTaskReference = messageText.contains("#") && taskName.isNotEmpty()
+            if (hasTaskReference) {
+                Log.d("ChatBotFragment", "⏳ Detectado # con taskName='$taskName', esperando a que currentFileContext se cargue...")
+                
+                // Esperar hasta que currentFileContext esté cargado o timeout de 5 segundos
+                var waitCount = 0
+                while (currentFileContext == null && waitCount < 50) { // 50 * 100ms = 5 segundos
+                    delay(100)
+                    waitCount++
+                }
+                
+                if (currentFileContext != null) {
+                    Log.d("ChatBotFragment", "✅ currentFileContext cargado después de ${waitCount * 100}ms")
+                    // Actualizar todos los contextos efectivos desde currentFileContext
+                    effectiveFileContent = currentFileContext!!.fileContent
+                    effectiveJsonContent = currentFileContext!!.jsonContent ?: ""
+                    effectiveMetadata = currentFileContext!!.metadata ?: ""
+                    effectiveTaskDescription = currentFileContext!!.contentSummary ?: taskDescription
+                } else {
+                    Log.w("ChatBotFragment", "⚠️ Timeout esperando currentFileContext después de 5 segundos")
+                }
+            }
             
             // Agregar información del tipo de archivo para que el LLM lo entienda mejor
             if (currentFileContext != null && effectiveFileContent.isNotEmpty()) {
@@ -682,9 +730,107 @@ class ChatBotFragment : Fragment() {
                 }
             }
 
-            // Si el mensaje referencia una tarea con #<índice>, usar el contexto de esa tarea
+            // Si el mensaje referencia una tarea con #<índice> o #<nombre>, usar el contexto de esa tarea
+            // También verificar si hay una tarea seleccionada manualmente (taskName no vacío)
             val refMatch = Regex("#(\\d+)").find(messageText)
-            if (refMatch != null && courseId != -1L) {
+            val refNameMatch = Regex("#([^\\s]+)").find(messageText)
+            
+            // 🔥 Prioridad 1: Tarea seleccionada manualmente (variables de instancia) o currentFileContext cargado
+            // Si currentFileContext está presente, SIEMPRE usarlo primero (fue cargado por onTaskSelected)
+            if (currentFileContext != null) {
+                Log.d("ChatBotFragment", "🔗 Usando currentFileContext establecido por onTaskSelected")
+                
+                effectiveFileContent = currentFileContext!!.fileContent
+                effectiveTaskDescription = currentFileContext!!.contentSummary ?: taskDescription
+                
+                Log.d("ChatBotFragment", "✅ fileContent de currentFileContext: ${effectiveFileContent.length} caracteres")
+                Log.d("ChatBotFragment", "✅ taskDescription de currentFileContext: ${effectiveTaskDescription.length} caracteres")
+                Log.d("ChatBotFragment", "✅ Tarea asociada: $taskName")
+            }
+            // Prioridad 2: Si taskName está establecido pero currentFileContext es null
+            else if (taskName.isNotEmpty() && taskDescription.isNotEmpty()) {
+                Log.d("ChatBotFragment", "🔗 Usando contexto de tarea seleccionada manualmente: $taskName")
+                
+                // ✅ SIEMPRE usar taskDescription de la tarea seleccionada
+                effectiveTaskDescription = taskDescription
+                
+                Log.d("ChatBotFragment", "✅ taskDescription: ${effectiveTaskDescription.length} caracteres")
+                
+                // Si TODAVÍA no hay contenido de archivo pero hay tarea seleccionada, intentar cargar contexto asociado
+                if (effectiveFileContent.isEmpty() && courseId != -1L) {
+                    val username = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUsername()
+                    if (!username.isNullOrEmpty()) {
+                        withContext(Dispatchers.IO) {
+                            try {
+                                val supabaseClient = com.example.tareamov.service.SupabaseClient
+                                
+                                // 1. Buscar tarea (local o remota)
+                                var task = database.taskDao().getTaskByNameAndCourse(taskName, courseId)
+                                
+                                if (task == null && supabaseClient.isConfigured()) {
+                                     try {
+                                         val remoteTopics = supabaseClient.fetchTopicsByCourse(courseId)
+                                         if (remoteTopics.isNotEmpty()) {
+                                             val remoteTasks = supabaseClient.fetchTasksByTopicIds(remoteTopics.map { it.id })
+                                             task = remoteTasks.firstOrNull { it.name == taskName }
+                                         }
+                                     } catch (e: Exception) {
+                                         Log.w("ChatBotFragment", "Error buscando tarea remota: ${e.message}")
+                                     }
+                                }
+
+                                if (task != null) {
+                                    val finalTask = task
+                                    // 2. Buscar submission (local o remota)
+                                    val localSubmission = database.taskSubmissionDao().getUserSubmissionForTask(finalTask.id, username)
+                                    
+                                    val submission = if (localSubmission == null && supabaseClient.isConfigured()) {
+                                        try {
+                                            val remoteSubs = supabaseClient.fetchTaskSubmissions()
+                                            remoteSubs.firstOrNull { it.taskId == finalTask.id && it.studentUsername.equals(username, ignoreCase = true) }
+                                        } catch (e: Exception) {
+                                            Log.w("ChatBotFragment", "Error buscando submission remota: ${e.message}")
+                                            null
+                                        }
+                                    } else {
+                                        localSubmission
+                                    }
+
+                                    if (submission != null) {
+                                        // 3. Buscar FileContext (local o remoto)
+                                        val localFc = database.fileContextDao().getFileContextBySubmission(submission.id)
+                                        
+                                        val fc = if (localFc == null && supabaseClient.isConfigured()) {
+                                            try {
+                                                val remoteFcs = supabaseClient.fetchFileContexts()
+                                                remoteFcs.firstOrNull { it.submissionId == submission.id }
+                                            } catch (e: Exception) {
+                                                Log.w("ChatBotFragment", "Error buscando FileContext remoto: ${e.message}")
+                                                null
+                                            }
+                                        } else {
+                                            localFc
+                                        }
+
+                                        if (fc != null) {
+                                            effectiveFileContent = fc.fileContent
+                                            effectiveJsonContent = fc.jsonContent ?: ""
+                                            effectiveMetadata = fc.metadata ?: ""
+                                            effectiveTaskDescription = fc.contentSummary ?: taskDescription
+                                            Log.d("ChatBotFragment", "📄 Contexto de archivo cargado para tarea seleccionada: ${fc.fileName}")
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e("ChatBotFragment", "Error cargando contexto adicional para tarea seleccionada", e)
+                            }
+                            Unit
+                        }
+                    }
+                }
+            }
+            // Prioridad 3: Referencia por índice #1, #2, etc.
+            else if (refMatch != null && courseId != -1L) {
                 val idx = refMatch.groupValues[1].toIntOrNull()
                 if (idx != null) {
                     // Asegurar que tenemos el cache de tareas del curso
@@ -707,25 +853,22 @@ class ChatBotFragment : Fragment() {
                                 try {
                                     // Preferir Supabase for submissions and file contexts
                                     val supabaseClient = com.example.tareamov.service.SupabaseClient
-                                    var submission: com.example.tareamov.data.entity.TaskSubmission? = null
-                                    if (supabaseClient.isConfigured()) {
+                                    
+                                    val remoteSubmission = if (supabaseClient.isConfigured()) {
                                         val remoteSubs = supabaseClient.fetchTaskSubmissions()
-                                        submission = remoteSubs.firstOrNull { it.taskId == referencedTask.taskId && it.studentUsername.equals(username, ignoreCase = true) }
-                                    }
-                                    if (submission == null) {
-                                        submission = database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, username)
-                                    }
+                                        remoteSubs.firstOrNull { it.taskId == referencedTask.taskId && it.studentUsername.equals(username, ignoreCase = true) }
+                                    } else null
+                                    
+                                    val submission = remoteSubmission ?: database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, username)
 
                                     if (submission != null) {
                                         // Try to get file context from Supabase first
-                                        var fc: com.example.tareamov.data.entity.FileContext? = null
-                                        if (supabaseClient.isConfigured()) {
+                                        val remoteFc = if (supabaseClient.isConfigured()) {
                                             val remoteFcs = supabaseClient.fetchFileContexts()
-                                            fc = remoteFcs.firstOrNull { it.submissionId == submission.id }
-                                        }
-                                        if (fc == null) {
-                                            fc = database.fileContextDao().getFileContextBySubmission(submission.id)
-                                        }
+                                            remoteFcs.firstOrNull { it.submissionId == submission.id }
+                                        } else null
+                                        
+                                        val fc = remoteFc ?: database.fileContextDao().getFileContextBySubmission(submission.id)
 
                                         if (fc != null) {
                                             effectiveTaskDescription = fc.contentSummary ?: (referencedTask.taskDescription ?: "")
@@ -742,12 +885,36 @@ class ChatBotFragment : Fragment() {
                                     Log.e("ChatBotFragment", "Error resolviendo contexto de tarea referenciada", e)
                                     // Mantener contexto por defecto
                                 }
+                                Unit
                             }
                         } else {
                             // Sin usuario en sesión: usar solo descripción de la tarea
                             effectiveTaskDescription = referencedTask.taskDescription ?: ""
                         }
                     }
+                }
+            }
+            // Prioridad 4: Referencia por nombre #NombreTarea
+            else if (refNameMatch != null && courseId != -1L) {
+                val nameRef = refNameMatch.groupValues[1]
+                // Intentar buscar tarea por nombre aproximado en las tareas cargadas
+                if (currentCourseTasks.isEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            val tasks = loadCourseTasksForOverlay()
+                            currentCourseTasks.clear()
+                            currentCourseTasks.addAll(tasks)
+                        } catch (_: Exception) {}
+                    }
+                }
+                
+                val referencedTask = currentCourseTasks.firstOrNull { 
+                    it.taskName.equals(nameRef, ignoreCase = true) || it.taskName.contains(nameRef, ignoreCase = true) 
+                }
+                
+                if (referencedTask != null) {
+                    Log.d("ChatBotFragment", "🔗 Tarea referenciada por nombre: ${referencedTask.taskName}")
+                    effectiveTaskDescription = referencedTask.taskDescription ?: ""
                 }
             }
             
@@ -775,7 +942,9 @@ class ChatBotFragment : Fragment() {
                             ollamaUrl = getOllamaUrl(),
                             // Always send strings (empty when absent) to avoid undefined on the microservice
                             taskDescription = if (effectiveTaskDescription.isNotEmpty()) effectiveTaskDescription else "",
-                            fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else ""
+                            fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else "",
+                            jsonContent = if (effectiveJsonContent.isNotEmpty()) effectiveJsonContent else null,
+                            metadata = if (effectiveMetadata.isNotEmpty()) effectiveMetadata else null
                         )   
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📤 ENVIANDO AL MICROSERVICIO:")
@@ -784,6 +953,8 @@ class ChatBotFragment : Fragment() {
                         Log.d("ChatBotFragment", "ollamaUrl: '${getOllamaUrl()}'")
                         Log.d("ChatBotFragment", "taskDescription (descripción): '$effectiveTaskDescription'")
                         Log.d("ChatBotFragment", "fileContent (archivo): ${effectiveFileContent.length} caracteres")
+                        Log.d("ChatBotFragment", "jsonContent (JSON estructurado): ${effectiveJsonContent.length} caracteres")
+                        Log.d("ChatBotFragment", "metadata (metadatos): ${effectiveMetadata.length} caracteres")
                         Log.d("ChatBotFragment", "==============================================")
                         
                         // Usar suspend function en lugar de .execute() para mejor manejo de timeouts
@@ -1058,11 +1229,27 @@ class ChatBotFragment : Fragment() {
         val userMessageLower = userMessage.lowercase()
         val botResponseLower = botResponse.lowercase()
         
+        // 1. Detección FUERTE: Si el bot usa el formato estándar de calificación del backend
+        // Esto asegura que siempre aparezcan los botones si el backend envió una nota explícita
+        if (botResponseLower.contains("**calificación actual:") || 
+            botResponseLower.contains("**calificacion actual:") ||
+            botResponseLower.contains("📊 **calificación actual:") ||
+            botResponseLower.contains("calificación actual:") ||
+            botResponseLower.contains("**calificación:") ||
+            botResponseLower.contains("**calificacion:") ||
+            botResponseLower.contains("📊 **calificación:") ||
+            botResponseLower.contains("**nota:") ||
+            botResponseLower.contains("📊 **nota:") ||
+            botResponseLower.contains("nota:") && Regex("nota:\\s*\\d+").containsMatchIn(botResponseLower)) {
+            return true
+        }
+        
         // Palabras clave que indican solicitud de calificación
         val calificationKeywords = listOf(
             "calificación", "calificacion", "nota", "puntaje", "puntuación", "puntuacion",
             "nota", "score", "rating", "evaluación", "evaluacion", "qué nota", "que nota",
-            "cuánto saqué", "cuanto saque", "mi nota", "mi calificación", "mi calificacion"
+            "cuánto saqué", "cuanto saque", "mi nota", "mi calificación", "mi calificacion",
+            "revisar", "corregir", "feedback", "retroalimentación", "retroalimentacion"
         )
         
         // Verificar si el usuario pidió calificación
@@ -1086,12 +1273,21 @@ class ChatBotFragment : Fragment() {
     private fun extractCalificationValue(botResponse: String): String? {
         // Buscar patrones de calificación comunes
         val patterns = listOf(
+            // Nuevos formatos específicos (con y sin asteriscos al final)
+            Regex("📊 \\*\\*CALIFICACIÓN ACTUAL: (\\d+/\\d+)\\*\\*", RegexOption.IGNORE_CASE),
+            Regex("📊 \\*\\*CALIFICACIÓN ACTUAL: (\\d+/\\d+)", RegexOption.IGNORE_CASE),
+            Regex("📊 \\*\\*CALIFICACIÓN ACTUAL:\\*\\* (\\d+/\\d+)", RegexOption.IGNORE_CASE),
+            Regex("calificación actual:\\s*(\\d+/\\d+)", RegexOption.IGNORE_CASE),
+            Regex("calificacion actual:\\s*(\\d+/\\d+)", RegexOption.IGNORE_CASE),
+            
+            // Formatos anteriores
             Regex("calificación:\\s*(\\d+/\\d+)", RegexOption.IGNORE_CASE),
             Regex("calificacion:\\s*(\\d+/\\d+)", RegexOption.IGNORE_CASE),
             Regex("(\\d+/\\d+)"),
             Regex("nota:\\s*(\\d+)", RegexOption.IGNORE_CASE),
             Regex("calificación:\\s*(\\d+)", RegexOption.IGNORE_CASE),
-            Regex("calificacion:\\s*(\\d+)", RegexOption.IGNORE_CASE)
+            Regex("calificacion:\\s*(\\d+)", RegexOption.IGNORE_CASE),
+            Regex("nota:\\s*(\\d+/\\d+)", RegexOption.IGNORE_CASE)
         )
         
         for (pattern in patterns) {
@@ -1570,13 +1766,14 @@ class ChatBotFragment : Fragment() {
 
         lifecycleScope.launch {
             try {
-                // Usar directamente la lista en memoria que se va acumulando
-                if (gradedTasksList.isEmpty()) {
-                    // Si la lista en memoria está vacía, intentar cargar desde la base de datos
-                    val gradedTasksFromDB = loadGradedTasksFromChat()
-                    gradedTasksList.clear()
-                    gradedTasksList.addAll(gradedTasksFromDB)
-                }
+                loadingProgressBar.visibility = View.VISIBLE
+                
+                // Siempre recargar desde Supabase/DB para tener datos actualizados
+                val gradedTasksFromDB = loadGradedTasksFromChat()
+                gradedTasksList.clear()
+                gradedTasksList.addAll(gradedTasksFromDB)
+                
+                loadingProgressBar.visibility = View.GONE
                 
                 if (gradedTasksList.isEmpty()) {
                     Toast.makeText(context, "No hay tareas calificadas aún", Toast.LENGTH_SHORT).show()
@@ -1607,6 +1804,7 @@ class ChatBotFragment : Fragment() {
                     .start()
                 
             } catch (e: Exception) {
+                loadingProgressBar.visibility = View.GONE
                 Log.e("ChatBotFragment", "Error cargando tareas calificadas", e)
                 Toast.makeText(context, "Error al cargar tareas calificadas", Toast.LENGTH_SHORT).show()
             }
@@ -1637,29 +1835,54 @@ class ChatBotFragment : Fragment() {
     /**
      * Carga las tareas calificadas desde TaskSubmissionDao usando IDs únicos
      */
+    /**
+     * Carga las tareas calificadas desde Supabase (prioridad) o TaskSubmissionDao
+     */
     private suspend fun loadGradedTasksFromChat(): List<GradedTaskItem> {
         return withContext(Dispatchers.IO) {
             try {
                 val gradedTasks = mutableListOf<GradedTaskItem>()
                 val processedTaskSubmissionIds = mutableSetOf<Long>()
                 
-                Log.d("ChatBotFragment", "Cargando tareas calificadas desde TaskSubmissionDao")
+                Log.d("ChatBotFragment", "Cargando tareas calificadas...")
                 
-                // Obtener todas las submissions para el curso actual
-                val allSubmissions = if (courseId != -1L) {
-                    database.taskSubmissionDao().getSubmissionsByCourse(courseId)
-                } else {
-                    database.taskSubmissionDao().getAllTaskSubmissions()
+                val username = try {
+                    sessionManager.getUsername()
+                } catch (e: Exception) {
+                    null
                 }
                 
-                Log.d("ChatBotFragment", "Total submissions encontradas: ${allSubmissions.size}")
+                // Obtener todas las submissions (intentar Supabase primero si hay curso y usuario)
+                var allSubmissions: List<TaskSubmission> = emptyList()
+                var loadedFromSupabase = false
                 
-                // Obtener mensajes con calificaciones para mapear con submissions
-                val messagesWithGrades = database.chatMessageDao().getMessagesWithCalifications()
-                Log.d("ChatBotFragment", "Mensajes con calificaciones: ${messagesWithGrades.size}")
+                if (courseId != -1L && !username.isNullOrEmpty()) {
+                    try {
+                        Log.d("ChatBotFragment", "Intentando obtener submissions desde Supabase para curso $courseId y usuario $username")
+                        val remoteSubmissions = syncRepository.fetchStudentSubmissionsForCourseFromSupabase(username, courseId)
+                        if (remoteSubmissions.isNotEmpty()) {
+                            Log.d("ChatBotFragment", "Submissions obtenidas de Supabase: ${remoteSubmissions.size}")
+                            allSubmissions = remoteSubmissions
+                            loadedFromSupabase = true
+                        } else {
+                            Log.d("ChatBotFragment", "Supabase no retornó submissions, intentando local")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("ChatBotFragment", "Error fetching from Supabase: ${e.message}")
+                    }
+                }
                 
-                // Ordenar mensajes por fecha descendente para priorizar los más recientes
-                val sortedMessages = messagesWithGrades.sortedByDescending { it.timestamp }
+                // Fallback a local si no se cargó de Supabase
+                if (!loadedFromSupabase) {
+                    Log.d("ChatBotFragment", "Cargando submissions desde base de datos local")
+                    allSubmissions = if (courseId != -1L) {
+                        database.taskSubmissionDao().getSubmissionsByCourse(courseId)
+                    } else {
+                        database.taskSubmissionDao().getAllTaskSubmissions()
+                    }
+                }
+                
+                Log.d("ChatBotFragment", "Total submissions a procesar: ${allSubmissions.size}")
                 
                 for (submission in allSubmissions) {
                     // Evitar duplicados por submission ID
@@ -1668,48 +1891,47 @@ class ChatBotFragment : Fragment() {
                     }
                     
                     try {
-                        // Buscar si esta submission tiene calificación
-                        val fileContext = database.fileContextDao().getFileContextBySubmission(submission.id)
-                        var gradeMessage: ChatMessage? = null
-                        
-                        // 1. Intentar encontrar mensaje asociado por FileContext (vínculo fuerte)
-                        if (fileContext != null) {
-                            // Buscar mensaje posterior a la fecha de entrega
-                            gradeMessage = sortedMessages.firstOrNull { 
-                                it.timestamp >= submission.submissionDate 
+                        if (submission.grade != null) {
+                            // Intentar obtener tarea localmente
+                            var task = database.taskDao().getTaskById(submission.taskId)
+                            
+                            // Si no está local y venimos de Supabase, intentar fetch remoto de la tarea
+                            if (task == null && loadedFromSupabase) {
+                                try {
+                                    task = syncRepository.fetchTaskByIdFromSupabase(submission.taskId)
+                                } catch (e: Exception) {
+                                    Log.e("ChatBotFragment", "Error fetching task ${submission.taskId} from Supabase: ${e.message}")
+                                }
                             }
-                        }
-                        
-                        // 2. Fallback: Si no hay FileContext o no se encontró mensaje, buscar cualquier mensaje calificado posterior
-                        if (gradeMessage == null) {
-                            gradeMessage = sortedMessages.firstOrNull { 
-                                it.timestamp >= submission.submissionDate 
-                            }
-                        }
-                        
-                        // Si encontramos una calificación, agregar a la lista
-                        if (gradeMessage != null) {
-                            val task = database.taskDao().getTaskById(submission.taskId)
-                            val topic = task?.let { database.topicDao().getTopicById(it.topicId) }
                             
                             if (task != null) {
-                                val grade = gradeMessage.calificationValue ?: "Pendiente"
-                                val feedback = gradeMessage.message ?: "Sin feedback disponible"
+                                val topic = database.topicDao().getTopicById(task.topicId)
+                                // Nota: Si el topic no está, podríamos buscarlo también, pero por ahora "Sin tema" es aceptable
+                                
+                                val gradeValue = submission.grade
+                                val gradeDisplay = if (gradeValue > 10) {
+                                    String.format("%.1f/10", gradeValue / 10)
+                                } else {
+                                    String.format("%.1f/10", gradeValue)
+                                }
+                                
+                                val feedback = submission.feedback ?: "Sin feedback disponible"
                                 
                                 val gradedTask = GradedTaskItem(
                                     taskId = task.id,
                                     taskName = task.name,
                                     taskDescription = task.description ?: "Sin descripción",
                                     topicName = topic?.name ?: "Sin tema",
-                                    index = submission.id.toInt(), // USAR EL ID DE LA SUBMISSION EN LUGAR DE taskIndex
-                                    grade = grade,
+                                    index = submission.id.toInt(),
+                                    grade = gradeDisplay,
                                     feedback = feedback
                                 )
                                 
                                 gradedTasks.add(gradedTask)
                                 processedTaskSubmissionIds.add(submission.id)
-                                
-                                Log.d("ChatBotFragment", "Tarea calificada agregada: ${task.name} - Grade: $grade - SubmissionId: ${submission.id}")
+                                Log.d("ChatBotFragment", "Tarea calificada cargada: ${task.name} - Grade: $gradeDisplay")
+                            } else {
+                                Log.w("ChatBotFragment", "Submission ${submission.id} tiene taskId ${submission.taskId} pero no se encontró la tarea")
                             }
                         }
                     } catch (e: Exception) {
@@ -1961,8 +2183,12 @@ class ChatBotFragment : Fragment() {
     private fun onTaskSelected(task: TaskItem) {
         lifecycleScope.launch {
             try {
-                // El index ahora contiene el submissionId (o -1 si no hay submission)
-                val submissionId = task.index.toLong()
+                // ✅ CRÍTICO: Actualizar SIEMPRE las variables de instancia para que sendMessage las use
+                taskName = task.taskName
+                taskDescription = task.taskDescription ?: ""
+                
+                Log.d("ChatBotFragment", "🎯 Tarea seleccionada: $taskName")
+                Log.d("ChatBotFragment", "📝 Descripción: $taskDescription")
                 
                 // Insertar el nombre de la tarea en el input
                 val currentText = messageEditText.text.toString()
@@ -1990,55 +2216,244 @@ class ChatBotFragment : Fragment() {
                      messageEditText.setSelection(messageEditText.text.length)
                 }
                 
-                if (submissionId > 0) {
-                    // Cargar el FileContext de esta submission
-                    val fileContext = withContext(Dispatchers.IO) {
-                        database.fileContextDao().getFileContextBySubmission(submissionId)
+                // Intentar cargar submission y contexto usando el taskId y usuario actual
+                val username = sessionManager.getUsername() ?: ""
+                
+                Log.d("ChatBotFragment", "🔍 Buscando submission para:")
+                Log.d("ChatBotFragment", "   - taskId: ${task.taskId}")
+                Log.d("ChatBotFragment", "   - username: '$username'")
+                
+                // Lógica mejorada para obtener la submission y el contexto
+                var fileContext: FileContext? = null
+                var submission: TaskSubmission? = null
+                
+                withContext(Dispatchers.IO) {
+                    // Log de búsqueda inicial
+                    Log.d("ChatBotFragment", "🔍 Buscando submission para:")
+                    Log.d("ChatBotFragment", "   - taskId: ${task.taskId}")
+                    Log.d("ChatBotFragment", "   - username: '$username'")
+                    
+                    // 1. Intentar obtener desde Supabase primero
+                    val supabaseClient = com.example.tareamov.service.SupabaseClient
+                    var allTaskSubmissions: List<TaskSubmission> = emptyList()
+                    
+                    if (supabaseClient.isConfigured()) {
+                        try {
+                            Log.d("ChatBotFragment", "🌐 Consultando Supabase...")
+                            allTaskSubmissions = supabaseClient.fetchTaskSubmissions()
+                                .filter { it.taskId == task.taskId }
+                            Log.d("ChatBotFragment", "📊 Total submissions para esta tarea (Supabase): ${allTaskSubmissions.size}")
+                        } catch (e: Exception) {
+                            Log.w("ChatBotFragment", "⚠️ Error consultando Supabase: ${e.message}")
+                        }
                     }
                     
-                    if (fileContext != null) {
-                        // Establecer este contexto como el contexto actual
-                        currentFileContext = fileContext
+                    // 2. Fallback a base de datos local si Supabase falla o está vacío
+                    if (allTaskSubmissions.isEmpty()) {
+                        Log.d("ChatBotFragment", "📂 Consultando base de datos local...")
+                        allTaskSubmissions = database.taskSubmissionDao().getSubmissionsByTask(task.taskId)
+                        Log.d("ChatBotFragment", "📊 Total submissions para esta tarea (Local): ${allTaskSubmissions.size}")
+                    }
+                    
+                    // Log de todas las submissions encontradas
+                    allTaskSubmissions.forEachIndexed { index, sub ->
+                        val match = if (sub.studentUsername.equals(username, ignoreCase = true)) " ← Detectará este aunque sea '${sub.studentUsername}' vs '$username'" else ""
+                        Log.d("ChatBotFragment", "   [$index] id=${sub.id}, username='${sub.studentUsername}', file='${sub.fileName}'$match")
+                    }
+                    
+                    // Comparación case-insensitive para username
+                    // IMPORTANTE: Primero buscar match exacto, luego intentar match parcial
+                    var localSubmissions = allTaskSubmissions
+                        .filter { it.studentUsername.equals(username, ignoreCase = true) }
+                        .sortedByDescending { it.submissionDate }
+                    
+                    // Si no se encontró match exacto, intentar match parcial (ej: 'jesus' en 'jesus1')
+                    if (localSubmissions.isEmpty() && username.isNotBlank()) {
+                        Log.d("ChatBotFragment", "⚠️ No hubo match exacto, intentando match parcial...")
+                        localSubmissions = allTaskSubmissions
+                            .filter { it.studentUsername.contains(username, ignoreCase = true) }
+                            .sortedByDescending { it.submissionDate }
                         
-                        // Actualizar información del curso
-                        updateCourseInfo(submissionId)
+                        if (localSubmissions.isNotEmpty()) {
+                            Log.d("ChatBotFragment", "✅ Encontrado con match parcial: '${localSubmissions.first().studentUsername}' contiene '$username'")
+                        }
+                    }
+                    
+                    Log.d("ChatBotFragment", "✅ Submissions del usuario actual: ${localSubmissions.size}")
+                    
+                    if (localSubmissions.isNotEmpty()) {
+                        submission = localSubmissions.first()
+                        Log.d("ChatBotFragment", "📝 Submission encontrada: id=${submission!!.id}, file='${submission!!.fileName}'")
                         
-                        Log.d("ChatBotFragment", "Contexto de archivo cargado para tarea seleccionada:")
-                        Log.d("ChatBotFragment", "- FileName: ${fileContext.fileName}")
+                        // Guardar en local si vino de Supabase
+                        try {
+                            database.taskSubmissionDao().insertSubmission(submission!!)
+                            Log.d("ChatBotFragment", "💾 Submission guardada en DB local")
+                        } catch (e: Exception) {
+                            Log.d("ChatBotFragment", "📝 Submission ya existe en DB local")
+                        }
                         
-                        // Mostrar mensaje informativo sobre el contexto cargado
-                        val contextMessage = ChatMessage(
-                            message = "📄 **Contexto de tarea cargado**\n\n" +
-                                    "📝 Tarea: ${task.taskName}\n" +
-                                    "📁 Archivo: ${fileContext.fileName}\n" +
-                                    "🔧 Tipo: ${fileContext.fileType}\n" +
-                                    "📊 Contenido: ${fileContext.fileContent.length} caracteres\n\n" +
-                                    "✅ Ahora puedes hacer preguntas sobre esta tarea y su entrega.",
-                            isFromUser = false,
-                            sessionId = sessionId,
-                            timestamp = System.currentTimeMillis()
-                        )
+                        // Buscar FileContext primero en Supabase
+                        if (supabaseClient.isConfigured()) {
+                            try {
+                                Log.d("ChatBotFragment", "🌐 Buscando FileContext en Supabase...")
+                                fileContext = supabaseClient.fetchFileContextBySubmissionId(submission!!.id)
+                                
+                                if (fileContext != null) {
+                                    Log.d("ChatBotFragment", "📄 FileContext: ENCONTRADO (Supabase)")
+                                    Log.d("ChatBotFragment", "   - fileName: ${fileContext!!.fileName}")
+                                    Log.d("ChatBotFragment", "   - fileContent length: ${fileContext!!.fileContent.length}")
+                                    Log.d("ChatBotFragment", "   - contentSummary: ${fileContext!!.contentSummary?.take(100)}")
+                                    
+                                    // Guardar en local para futuras consultas
+                                    try {
+                                        database.fileContextDao().insertFileContext(fileContext!!)
+                                        Log.d("ChatBotFragment", "💾 FileContext guardado en DB local")
+                                    } catch (e: Exception) {
+                                        Log.d("ChatBotFragment", "📝 FileContext ya existe en DB local")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w("ChatBotFragment", "⚠️ Error consultando FileContext en Supabase: ${e.message}")
+                            }
+                        }
                         
-                        // Insertar mensaje en la base de datos
-                        withContext(Dispatchers.IO) {
-                            database.chatMessageDao().insertMessage(contextMessage)
+                        // Fallback a base de datos local si no se encontró en Supabase
+                        if (fileContext == null) {
+                            Log.d("ChatBotFragment", "📂 Buscando FileContext en DB local...")
+                            fileContext = database.fileContextDao().getFileContextBySubmission(submission!!.id)
+                            
+                            if (fileContext != null) {
+                                Log.d("ChatBotFragment", "📄 FileContext: ENCONTRADO (Local)")
+                                Log.d("ChatBotFragment", "   - fileName: ${fileContext!!.fileName}")
+                                Log.d("ChatBotFragment", "   - fileContent length: ${fileContext!!.fileContent.length}")
+                                Log.d("ChatBotFragment", "   - contentSummary: ${fileContext!!.contentSummary?.take(100)}")
+                            } else {
+                                Log.d("ChatBotFragment", "📄 FileContext: NO ENCONTRADO")
+                            }
                         }
                     } else {
-                        Log.w("ChatBotFragment", "No se encontró FileContext para submission ID: $submissionId")
-                        // Intentar cargar info básica aunque no haya archivo
-                        updateCourseInfo(submissionId)
+                        Log.w("ChatBotFragment", "⚠️ No se encontraron submissions para este usuario y tarea")
                     }
+                    
+                    // 3. Fallback final: Si tenemos submission pero no FileContext, intentar leer el archivo
+                    if (fileContext == null && submission != null) {
+                        Log.w("ChatBotFragment", "⚠️ FileContext no encontrado, intentando crear contexto desde archivo...")
+                        
+                        var actualFileContent: String? = null
+                        
+                        // Intentar leer el contenido real del archivo si el URI aún es accesible
+                        try {
+                            val fileUri = android.net.Uri.parse(submission!!.fileUri)
+                            Log.d("ChatBotFragment", "🔍 Intentando leer archivo desde URI: $fileUri")
+                            
+                            requireContext().contentResolver.openInputStream(fileUri)?.use { inputStream ->
+                                actualFileContent = inputStream.bufferedReader().use { it.readText() }
+                                Log.d("ChatBotFragment", "✅ Archivo leído exitosamente: ${actualFileContent!!.length} caracteres")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("ChatBotFragment", "⚠️ No se pudo leer el archivo desde URI: ${e.message}")
+                        }
+                        
+                        val fallbackContent = if (actualFileContent != null) {
+                            """
+                            |=== INFORMACIÓN DEL ARCHIVO (LEÍDO DESDE ALMACENAMIENTO) ===
+                            |Nombre del archivo: ${submission!!.fileName}
+                            |Estudiante: ${submission!!.studentUsername}
+                            |Fecha de entrega: ${java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault()).format(submission!!.submissionDate)}
+                            |=== CONTENIDO DEL ARCHIVO ===
+                            |
+                            |$actualFileContent
+                        """.trimMargin()
+                        } else {
+                            """
+                            |=== INFORMACIÓN DE LA ENTREGA (CONTEXTO LIMITADO) ===
+                            |⚠️ ADVERTENCIA: El contenido completo del archivo no está disponible
+                            |
+                            |Estudiante: ${submission!!.studentUsername}
+                            |Fecha: ${java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault()).format(submission!!.submissionDate)}
+                            |Archivo adjunto: ${submission!!.fileName}
+                            |URI del archivo: ${submission!!.fileUri}
+                            |
+                            |NOTA: El archivo fue enviado pero no se pudo recuperar su contenido completo.
+                            |Recomendación: Vuelve a cargar el archivo desde TaskSubmissionsFragment para análisis completo.
+                        """.trimMargin()
+                        }
+                        
+                        Log.d("ChatBotFragment", "📦 Creando FileContext temporal con ${fallbackContent.length} caracteres")
+                        
+                        fileContext = FileContext(
+                            submissionId = submission!!.id,
+                            fileName = submission!!.fileName,
+                            fileType = submission!!.fileName.substringAfterLast('.', "unknown"),
+                            fileContent = fallbackContent,
+                            contentSummary = "Entrega realizada: ${submission!!.fileName}"
+                        )
+                        
+                        // Intentar guardar este contexto generado para futuras consultas
+                        if (actualFileContent != null) {
+                            try {
+                                val savedId = database.fileContextDao().insertFileContext(fileContext!!)
+                                Log.d("ChatBotFragment", "💾 FileContext temporal guardado en DB local con id=$savedId")
+                            } catch (e: Exception) {
+                                Log.w("ChatBotFragment", "No se pudo guardar FileContext temporal: ${e.message}")
+                            }
+                        }
+                    }
+                }
+                
+                if (fileContext != null) {
+                    // ✅ CRÍTICO: Establecer este contexto como el contexto actual
+                    currentFileContext = fileContext
+                    
+                    Log.d("ChatBotFragment", "✅ currentFileContext establecido:")
+                    Log.d("ChatBotFragment", "   - FileName: ${fileContext!!.fileName}")
+                    Log.d("ChatBotFragment", "   - FileContent length: ${fileContext!!.fileContent.length}")
+                    Log.d("ChatBotFragment", "   - ContentSummary: ${fileContext!!.contentSummary?.take(100)}")
+                    
+                    // Actualizar información del curso
+                    if (submission != null) {
+                        updateCourseInfo(submission!!.id)
+                    }
+                    
+                    // Mostrar mensaje informativo sobre el contexto cargado
+                    val contextMessage = ChatMessage(
+                        message = "📄 **Contexto de tarea cargado**\n\n" +
+                                "📝 Tarea: ${task.taskName}\n" +
+                                "📁 Archivo: ${fileContext!!.fileName}\n" +
+                                "🔧 Tipo: ${fileContext!!.fileType}\n" +
+                                "📊 Contenido: ${fileContext!!.fileContent.length} caracteres\n\n" +
+                                "✅ Ahora puedes hacer preguntas sobre esta tarea y su entrega.",
+                        isFromUser = false,
+                        sessionId = sessionId,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    
+                    // Insertar mensaje en la base de datos
+                    withContext(Dispatchers.IO) {
+                        database.chatMessageDao().insertMessage(contextMessage)
+                    }
+                    
+                    // Actualizar UI (automático por Flow)
+                    // chatAdapter.addMessage(contextMessage) 
+                    // messagesRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)
                 } else {
-                    // Logic for task without submission
+                    Log.d("ChatBotFragment", "⚠️ No se encontró contexto de archivo para la tarea ${task.taskName}")
+                    Log.d("ChatBotFragment", "   Pero taskName y taskDescription SÍ están establecidos para sendMessage")
+                    
+                    // ✅ NO limpiar currentFileContext aquí, dejarlo como null
+                    // Las variables taskName y taskDescription YA están establecidas arriba
+                    currentFileContext = null
+                    
+                    // Logic for task without submission or context
                     updateTaskInfoByTaskId(task.taskId)
-                    currentFileContext = null // Clear file context
                     
                     // Show message
                     val contextMessage = ChatMessage(
                         message = "📝 **Tarea seleccionada**\n\n" +
                                 "📌 Tarea: ${task.taskName}\n" +
                                 "ℹ️ Descripción: ${task.taskDescription}\n\n" +
-                                "⚠️ No hay entrega asociada. El contexto se limita a la descripción de la tarea.",
+                                "⚠️ No hay entrega asociada o no se pudo cargar el contexto. El contexto se limita a la descripción de la tarea.",
                         isFromUser = false,
                         sessionId = sessionId,
                         timestamp = System.currentTimeMillis()
@@ -2046,6 +2461,8 @@ class ChatBotFragment : Fragment() {
                     withContext(Dispatchers.IO) {
                         database.chatMessageDao().insertMessage(contextMessage)
                     }
+                    // chatAdapter.addMessage(contextMessage)
+                    // messagesRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)
                 }
                 
                 hideTaskListOverlay()
@@ -2074,7 +2491,7 @@ class ChatBotFragment : Fragment() {
                             val topic = database.topicDao().getTopicById(task.topicId)
                             if (topic != null) {
                                 // Obtener el curso
-                                val course = database.videoDao().getVideoById(topic.courseId)
+                                val course = database.courseDao().getCourseById(topic.courseId)
                                 if (course != null) {
                                     // Formatear la fecha de entrega
                                     val dateFormat = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault())

@@ -2247,4 +2247,27 @@ class SyncRepository(
         }
     }
 
+    suspend fun getSubmissionAndContextForTask(taskId: Long, username: String): Pair<TaskSubmission?, com.example.tareamov.data.entity.FileContext?> {
+        return withContext(Dispatchers.IO) {
+            // Try local first
+            var submission = taskSubmissionDao.getSubmissionsByTask(taskId).firstOrNull { it.studentUsername == username }
+            var fileContext: com.example.tareamov.data.entity.FileContext? = null
+            
+            if (submission == null) {
+                // Try remote
+                submission = supabaseClient.fetchTaskSubmissionByTaskId(taskId, username)
+            }
+            
+            if (submission != null) {
+                fileContext = fileContextDao.getFileContextBySubmission(submission.id)
+                if (fileContext == null) {
+                    // Try remote
+                    fileContext = supabaseClient.fetchFileContextBySubmissionId(submission.id)
+                }
+            }
+            
+            Pair(submission, fileContext)
+        }
+    }
+
 }

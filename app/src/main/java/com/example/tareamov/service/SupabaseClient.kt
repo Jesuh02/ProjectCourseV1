@@ -860,6 +860,13 @@ object SupabaseClient {
                     val bodyStr = respBody ?: ""
                     android.util.Log.e("SupabaseClient", "❌ insertTaskSubmission failed: code=${resp.code} message=${resp.message}")
                     android.util.Log.e("SupabaseClient", "❌ Response body: $bodyStr")
+                    
+                    // Detectar errores específicos de RLS (Row Level Security)
+                    if (bodyStr.contains("42501") || bodyStr.contains("row-level security policy", ignoreCase = true)) {
+                        android.util.Log.e("SupabaseClient", "🔒 RLS POLICY ERROR: Las políticas de seguridad de Supabase están bloqueando el INSERT")
+                        android.util.Log.e("SupabaseClient", "🔒 Solución: Ejecutar el script supabase/migrations/20251120_fix_rls_policies.sql en Supabase SQL Editor")
+                        android.util.Log.e("SupabaseClient", "🔒 Usuario: ${submission.studentUsername}, TaskId: ${submission.taskId}")
+                    }
 
                     // If Postgres sequence is out-of-sync, PostgREST may return 23505 duplicate key error.
                     if (bodyStr.contains("23505") || bodyStr.contains("duplicate key value violates unique constraint", ignoreCase = true)) {
@@ -982,6 +989,14 @@ object SupabaseClient {
                 if (!resp.isSuccessful) {
                     Log.e("SupabaseClient", "insertFileContext failed: ${resp.code} ${resp.message}")
                     Log.e("SupabaseClient", "Response body: $responseBody")
+                    
+                    // Detectar errores específicos de RLS (Row Level Security)
+                    if (responseBody.contains("42501") || responseBody.contains("row-level security policy", ignoreCase = true)) {
+                        Log.e("SupabaseClient", "🔒 RLS POLICY ERROR: Las políticas de seguridad de Supabase están bloqueando el INSERT")
+                        Log.e("SupabaseClient", "🔒 Solución: Ejecutar el script supabase/migrations/20251120_fix_rls_policies.sql en Supabase SQL Editor")
+                        Log.e("SupabaseClient", "🔒 SubmissionId: ${fileContext.submissionId}, FileName: ${fileContext.fileName}")
+                    }
+                    
                     return@withContext null
                 }
 
@@ -1738,6 +1753,45 @@ object SupabaseClient {
         }
     }
     suspend fun fetchTaskSubmissions(): List<TaskSubmission> = fetchList("task_submissions", Array<TaskSubmission>::class.java)
+
+    // Fetch a single TaskSubmission by taskId and studentUsername
+    suspend fun fetchTaskSubmissionByTaskId(taskId: Long, username: String): TaskSubmission? = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/task_submissions?task_id=eq.$taskId&student_username=eq.$username&select=*"
+            val request = buildGetRequest(url)
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val json = response.body?.string()
+                val list = underscoredGson.fromJson(json, Array<TaskSubmission>::class.java)
+                list.firstOrNull()
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching submission: ${e.message}")
+            null
+        }
+    }
+
+    // Fetch FileContext by submissionId
+    suspend fun fetchFileContextBySubmissionId(submissionId: Long): FileContext? = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/file_contexts?submission_id=eq.$submissionId&select=*"
+            val request = buildGetRequest(url)
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val json = response.body?.string()
+                val list = underscoredGson.fromJson(json, Array<FileContext>::class.java)
+                list.firstOrNull()
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching file context: ${e.message}")
+            null
+        }
+    }
+
     suspend fun fetchChatMessages(): List<ChatMessage> = fetchList("chat_messages", Array<ChatMessage>::class.java)
     suspend fun fetchFileContexts(): List<FileContext> = fetchList("file_contexts", Array<FileContext>::class.java)
     

@@ -842,6 +842,9 @@ class TaskSubmissionsFragment : Fragment() {
                 
                 try {
                     // Directly insert submission to Supabase
+                    Log.d("TaskSubmissionsFragment", "📤 Intentando insertar TaskSubmission en Supabase...")
+                    Log.d("TaskSubmissionsFragment", "📤 Datos: taskId=$taskId, studentUsername=$username, fileName=$fileName")
+                    
                     val remoteId = withContext(Dispatchers.IO) {
                         SupabaseClient.insertTaskSubmission(submission)
                     }
@@ -906,11 +909,15 @@ class TaskSubmissionsFragment : Fragment() {
                                     Log.d("TaskSubmissionsFragment", "✅ FileContext guardado en BD local para submission $createdSubmissionId")
                                     
                                     // 2. Enviar a Supabase
+                                    Log.d("TaskSubmissionsFragment", "📤 Intentando insertar FileContext en Supabase...")
+                                    Log.d("TaskSubmissionsFragment", "📤 Datos: submissionId=$createdSubmissionId, fileName=${fileContext.fileName}, contentLength=${fileContext.fileContent.length}")
+                                    
                                     val remoteFileContextId = SupabaseClient.insertFileContext(fileContext)
                                     if (remoteFileContextId != null) {
                                         Log.d("TaskSubmissionsFragment", "✅ FileContext enviado a Supabase con ID remoto: ${remoteFileContextId}")
                                     } else {
                                         Log.w("TaskSubmissionsFragment", "⚠️ FileContext no pudo ser enviado a Supabase (quedó solo en BD local)")
+                                        Log.w("TaskSubmissionsFragment", "⚠️ Esto puede causar que el contexto no esté disponible al seleccionar la tarea con #")
                                     }
                                 } catch (e: Exception) {
                                     Log.e("TaskSubmissionsFragment", "❌ Error guardando/enviando FileContext", e)

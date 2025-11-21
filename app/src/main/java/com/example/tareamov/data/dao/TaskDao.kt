@@ -45,4 +45,7 @@ interface TaskDao {
     // Add this method to get task count
     @Query("SELECT COUNT(*) FROM tasks")
     suspend fun getTaskCount(): Int
+
+    @Query("SELECT tasks.* FROM tasks INNER JOIN topics ON tasks.topicId = topics.id WHERE tasks.name = :taskName AND topics.courseId = :courseId LIMIT 1")
+    suspend fun getTaskByNameAndCourse(taskName: String, courseId: Long): Task?
 }

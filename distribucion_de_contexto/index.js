@@ -1,9 +1,14 @@
 
-const express = require('express');
-const bodyParser = require('body-parser');
-const axios = require('axios');
-const { encode } = require('gpt-3-encoder');
-const ragCache = require('./rag_cache');
+import express from 'express';
+import bodyParser from 'body-parser';
+import axios from 'axios';
+import { encode } from 'gpt-3-encoder';
+import ragCache from './rag_cache.js';
+import ndjson from 'ndjson';
+import { networkInterfaces } from 'os';
+import { PDFLoader } from 'langchain/document_loaders/fs/pdf';
+import { TextLoader } from 'langchain/document_loaders/fs/text';
+import { DocxLoader } from 'langchain/document_loaders/fs/docx';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -98,18 +103,18 @@ Para poder calificar esta tarea, necesito poder leer y analizar el contenido del
   let textoExtraido = fileContent;
   try {
     if (fileType === 'pdf') {
-      const { PDFLoader } = require('langchain/document_loaders/fs/pdf');
+      // const { PDFLoader } = require('langchain/document_loaders/fs/pdf');
       const buffer = Buffer.from(fileContent, 'base64');
       const loader = new PDFLoader(buffer);
       const docs = await loader.load();
       textoExtraido = docs.map(doc => doc.pageContent).join('\n');
     } else if (fileType === 'txt') {
-      const { TextLoader } = require('langchain/document_loaders/fs/text');
+      // const { TextLoader } = require('langchain/document_loaders/fs/text');
       const loader = new TextLoader(fileContent);
       const docs = await loader.load();
       textoExtraido = docs.map(doc => doc.pageContent).join('\n');
     } else if (fileType === 'docx') {
-      const { DocxLoader } = require('langchain/document_loaders/fs/docx');
+      // const { DocxLoader } = require('langchain/document_loaders/fs/docx');
       const buffer = Buffer.from(fileContent, 'base64');
       const loader = new DocxLoader(buffer);
       const docs = await loader.load();
@@ -352,7 +357,7 @@ CASOS CRÍTICOS INCOMPATIBLES (SIEMPRE nota 0):
 - Se pide sistema HOSPITALARIO pero se envía cualquier otro tema
 
 FORMATO DE RESPUESTA OBLIGATORIO:
-📊 **NOTA: [número]/10**
+📊 **CALIFICACIÓN ACTUAL: [número]/10**
 
 🔍 **ANÁLISIS ESTRICTO:**
 [Explicación detallada del cumplimiento/incompatibilidad]
@@ -388,7 +393,7 @@ CRÍTICO: Si detectas CUALQUIER incompatibilidad temática (ej: banco vs pelícu
           'Content-Type': 'application/json'
         }
       });
-      const ndjson = require('ndjson');
+      // const ndjson = require('ndjson');
       let resultadoGemma = await new Promise((resolve, reject) => {
         let texto = '';
         responseGemma.data
@@ -587,7 +592,7 @@ La respuesta debe ser educativa, constructiva y MUY CLARA sobre por qué se asig
         'Content-Type': 'application/json'
       }
     });
-    const ndjson = require('ndjson');
+    // const ndjson = require('ndjson');
     let respuestaFeedback = await new Promise((resolve, reject) => {
       let texto = '';
       responseLlama.data
@@ -644,7 +649,7 @@ app.post('/procesar-prompt', async (req, res) => {
     // CORRECCIÓN: Si ollamaUrl usa una IP que coincide con la del servidor, cambiarla a localhost
     // Esto es necesario porque el móvil envía la IP del host, pero Ollama está en localhost del servidor
     if (ollamaUrl) {
-      const serverIPs = ['192.168.1.158', '192.168.1.203', '10.0.2.2']; // IPs comunes
+      const serverIPs = ['10.169.165.181', '192.168.1.158', '192.168.1.203', '10.0.2.2']; // IPs comunes
       serverIPs.forEach(ip => {
         if (ollamaUrl.includes(ip)) {
           const originalUrl = ollamaUrl;
@@ -860,7 +865,7 @@ Responde considerando el contexto académico disponible si es relevante para la 
             'Content-Type': 'application/json'
           }
         });
-        const ndjson = require('ndjson');
+        // const ndjson = require('ndjson');
         let respuestaFinal = await new Promise((resolve, reject) => {
           let texto = '';
           response2.data
@@ -938,7 +943,7 @@ Responde considerando el contexto académico disponible si es relevante para la 
             'Content-Type': 'application/json'
           }
         });
-        const ndjson = require('ndjson');
+        // const ndjson = require('ndjson');
         let respuestaFinal = await new Promise((resolve, reject) => {
           let texto = '';
           response2.data
@@ -1011,7 +1016,7 @@ Responde considerando el contexto académico disponible si es relevante para la 
             'Content-Type': 'application/json'
           }
         });
-        const ndjson = require('ndjson');
+        // const ndjson = require('ndjson');
         let respuestaFinal = await new Promise((resolve, reject) => {
           let texto = '';
           response2.data
@@ -1099,8 +1104,8 @@ EJEMPLOS CONCRETOS:
 ❌ "calculadora" + sistema de archivos = 0/10 (NO CUMPLE)
 ✅ "ejemplo de programa" + cualquier programa = 9-10/10 (CUMPLE)
 
-FORMATO RESPUESTA (EN ESPAÑOL):
-📊 **CALIFICACIÓN: [0-10]/10**
+FORMATO RESPUESTA OBLIGATORIO (EN ESPAÑOL):
+📊 **CALIFICACIÓN ACTUAL: [0-10]/10**
 🎯 **TEMA SOLICITADO:** [lo que pidió el profesor]
 📄 **TEMA ENTREGADO:** [lo que envió el estudiante]
 ⚖️ **COMPATIBILIDAD:** [TU ANÁLISIS JUSTO]
@@ -1114,7 +1119,7 @@ ${taskDescriptionClean}
 LO QUE SE ENTREGÓ:
 ${fileContentClean}
 
-EVALÚA DE MANERA JUSTA Y EDUCATIVA:`;
+EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CALIFICACIÓN ACTUAL: X/10**" AL INICIO.`;
       
       try {
         const tokensEvaluacion = encode(promptEvaluacionCritica).length;
@@ -1137,7 +1142,7 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA:`;
           }
         });
         
-        const ndjson = require('ndjson');
+        // const ndjson = require('ndjson');
         let respuestaEvaluacion = await new Promise((resolve, reject) => {
           let texto = '';
           response.data
@@ -1236,7 +1241,7 @@ EVALÚA DE MANERA JUSTA: ¿El estudiante cumplió con la solicitud? Recuerda ser
           'Content-Type': 'application/json'
         }
       });
-      const ndjson = require('ndjson');
+      // const ndjson = require('ndjson');
       veredictoModelo1 = await new Promise((resolve, reject) => {
         let texto = '';
         response1.data
@@ -1257,62 +1262,32 @@ EVALÚA DE MANERA JUSTA: ¿El estudiante cumplió con la solicitud? Recuerda ser
     }
 
     // Prompt para llama3 incluye el veredicto y instrucciones flexibles
-    let promptModelo2 = `VALIDADOR FINAL DE INCOMPATIBILIDADES TEMÁTICAS:
+    let promptModelo2 = `GENERADOR DE FEEDBACK ACADÉMICO FINAL:
 
-INSTRUCCIONES CRÍTICAS:
-- RESPONDE SIEMPRE EN ESPAÑOL
-- USA TERMINOLOGÍA EN ESPAÑOL
-- NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
-- FORMATO EDUCATIVO Y PROFESIONAL
+INSTRUCCIONES:
+1. Analiza la evaluación previa del modelo auxiliar.
+2. Genera una respuesta final para el estudiante.
+3. OBLIGATORIO: Incluye la calificación en el formato exacto solicitado.
 
-🚨 MISIÓN CRÍTICA: Validar y reforzar incompatibilidades temáticas detectadas
+CONTEXTO DE LA TAREA:
+- LO QUE SE PIDIÓ: "${taskDescriptionClean}"
+- LO QUE SE ENTREGÓ: "${fileContentClean}"
 
-CONTEXTO ESPECÍFICO PARA ESTE CASO:
-- SE PIDIÓ: "Base de datos de INTELIGENCIA ARTIFICIAL"
-- SE ENTREGÓ: Base de datos de "matrículas, estudiantes, docentes, asignaturas"
-- VEREDICTO OBLIGATORIO: INCOMPATIBILIDAD TOTAL = NOTA 0
+EVALUACIÓN PREVIA (MODELO AUXILIAR):
+${veredictoModelo1}
 
-ANÁLISIS CRÍTICO REQUERIDO:
-🔍 ¿Qué tiene que ver INTELIGENCIA ARTIFICIAL con SISTEMA DE MATRÍCULAS?
-❌ RESPUESTA: NADA - Son dominios completamente diferentes
+FORMATO DE RESPUESTA OBLIGATORIO (Copiar exactamente el encabezado):
+📊 **CALIFICACIÓN ACTUAL: [NOTA]/10**
+🎯 **ESTADO:** [APROBADO / REVISAR / RECHAZADO]
+📝 **FEEDBACK:**
+[Tu explicación detallada y constructiva aquí]
 
-DOMINIOS TEMÁTICOS CLARAMENTE DIFERENCIADOS:
-🤖 INTELIGENCIA ARTIFICIAL:
-- Algoritmos de aprendizaje automático
-- Redes neuronales
-- Procesamiento de lenguaje natural
-- Visión por computadora
-- Sistemas expertos
-
-🎓 SISTEMA ACADÉMICO/MATRÍCULAS:
-- Gestión de estudiantes
-- Control de notas
-- Administración educativa
-- Registro de asignaturas
-
-FORMATO DE RESPUESTA OBLIGATORIO (EN ESPAÑOL):
-📊 **CALIFICACIÓN: 0/10**
-
-🚨 **INCOMPATIBILIDAD TEMÁTICA TOTAL DETECTADA:**
-- 🎯 TEMA SOLICITADO: Base de datos de Inteligencia Artificial
-- 📄 TEMA ENTREGADO: Sistema de matrículas académicas
-- ⚖️ COMPATIBILIDAD: CERO - Son dominios completamente diferentes
-
-❌ **DIAGNÓSTICO CRÍTICO:**
-El estudiante entregó un sistema académico cuando se solicitó específicamente inteligencia artificial. No hay relación entre algoritmos de IA y gestión de matrículas estudiantiles.
-
-💬 **VEREDICTO FINAL:**
-NOTA 0 - Entrega completamente fuera del tema solicitado. Se requiere empezar de nuevo con el tema correcto.
-
-⭐ **SOLUCIÓN REQUERIDA:**
-Crear una base de datos que contenga información relacionada con IA: datasets de entrenamiento, modelos ML, algoritmos, redes neuronales, etc.
+SI LA EVALUACIÓN PREVIA FUE POSITIVA, MANTÉN LA NOTA ALTA.
+SI HUBO ERRORES, EXPLÍCALOS AMABLEMENTE.
 
 PREGUNTA DEL USUARIO: ${prompt}
 
-EVALUACIÓN PREVIA:
-${veredictoModelo1}
-
-IMPORTANTE: Si la evaluación previa NO detectó la incompatibilidad, CORREGIR y asignar NOTA 0 por incompatibilidad temática total.`;
+Genera la respuesta final ahora. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CALIFICACIÓN ACTUAL: X/10**" AL INICIO.`;
     
     const tokensModelo2 = encode(promptModelo2).length;
     console.log('[MODELO llama3:latest] TOKENS CONSUMIDOS:', tokensModelo2);
@@ -1334,7 +1309,7 @@ IMPORTANTE: Si la evaluación previa NO detectó la incompatibilidad, CORREGIR y
           'Content-Type': 'application/json'
         }
       });
-      const ndjson = require('ndjson');
+      // const ndjson = require('ndjson');
       respuestaFinal = await new Promise((resolve, reject) => {
         let texto = '';
         response2.data
@@ -1376,7 +1351,7 @@ IMPORTANTE: Si la evaluación previa NO detectó la incompatibilidad, CORREGIR y
 
 // Función para obtener la IP local del servidor automáticamente
 function getLocalIPAddress() {
-  const { networkInterfaces } = require('os');
+  // const { networkInterfaces } = require('os');
   const nets = networkInterfaces();
   const results = [];
 
@@ -1402,6 +1377,9 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📡 Puerto: ${PORT}`);
   console.log(`🌐 Escuchando en todas las interfaces: 0.0.0.0`);
   console.log('\n📍 Direcciones IP disponibles para conectar desde otros dispositivos:');
+  
+  // Agregar IP específica solicitada por el usuario
+  console.log(`   👉 IP CONFIGURADA: 10.169.165.181`);
   
   if (localIPs.length > 0) {
     localIPs.forEach((ip, index) => {
