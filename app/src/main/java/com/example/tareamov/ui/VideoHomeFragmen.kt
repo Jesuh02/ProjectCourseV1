@@ -45,6 +45,9 @@ import com.google.android.material.chip.ChipGroup
 import com.example.tareamov.data.sync.SyncRepository
 import android.text.Editable
 import android.text.TextWatcher
+import eightbitlab.com.blurview.BlurView
+import eightbitlab.com.blurview.RenderScriptBlur
+import android.view.ViewOutlineProvider
 
 class VideoHomeFragment : Fragment() {
     private lateinit var profileAvatars: CircleImageView
@@ -145,7 +148,6 @@ class VideoHomeFragment : Fragment() {
         
         // Setup search functionality
         setupSearchBar(view)
-
 
         // Enhanced Courses Button with improved animations and interactions
         val coursesButton = view.findViewById<ImageView>(R.id.coursesButton)
@@ -850,11 +852,32 @@ class VideoHomeFragment : Fragment() {
     private fun setupSearchBar(view: View) {
         val toggleSearchButton = view.findViewById<ImageButton>(R.id.toggleSearchButton)
         val topNavTabs = view.findViewById<LinearLayout>(R.id.topNavTabs)
-        val searchBarContainer = view.findViewById<LinearLayout>(R.id.searchBarContainer)
+        val searchBarContainer = view.findViewById<BlurView>(R.id.searchBarContainer)
         val searchEditText = view.findViewById<EditText>(R.id.searchEditText)
         // searchButton removed as per design
         val closeSearchButton = view.findViewById<ImageButton>(R.id.closeSearchButton)
         val filterChipGroup = view.findViewById<ChipGroup>(R.id.searchFilterChipGroup)
+
+        // Setup BlurView
+        val radius = 20f
+        val decorView = requireActivity().window.decorView
+        // Use the fragment's root view (ConstraintLayout) as the blur source since it contains the video background
+        val rootView = view as ViewGroup
+        val windowBackground = decorView.background
+
+        searchBarContainer.setupWith(rootView, RenderScriptBlur(requireContext()))
+            //.setFrameClearDrawable(windowBackground) // Removed to allow video to show through
+            .setBlurRadius(radius)
+            .setBlurAutoUpdate(true)
+            .setOverlayColor(Color.parseColor("#33000000")) // Match ExploreFragment overlay
+        
+        searchBarContainer.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                val cornerRadius = view.context.resources.displayMetrics.density * 24 // 24dp
+                outline.setRoundRect(0, 0, view.width, view.height, cornerRadius)
+            }
+        }
+        searchBarContainer.clipToOutline = true
         
         // Add TextWatcher for instant search (like ExploreFragment)
         searchEditText?.addTextChangedListener(object : TextWatcher {
@@ -881,14 +904,14 @@ class VideoHomeFragment : Fragment() {
             
             if (searchBarContainer.visibility == View.GONE) {
                 // Mostrar barra de búsqueda y ocultar botones normales
-                topNavTabs.visibility = View.GONE
+                // topNavTabs.visibility = View.GONE // Keep icons visible in background
                 searchBarContainer.visibility = View.VISIBLE
                 searchEditText.requestFocus()
                 showKeyboard(searchEditText)
             } else {
                 // Ocultar barra de búsqueda y mostrar botones normales
                 searchBarContainer.visibility = View.GONE
-                topNavTabs.visibility = View.VISIBLE
+                // topNavTabs.visibility = View.VISIBLE
                 hideKeyboard(searchEditText)
                 if (isSearchMode) {
                     clearSearch()
@@ -918,7 +941,7 @@ class VideoHomeFragment : Fragment() {
 
             // Ocultar barra de búsqueda y mostrar botones normales
             searchBarContainer.visibility = View.GONE
-            topNavTabs.visibility = View.VISIBLE
+            // topNavTabs.visibility = View.VISIBLE
             hideKeyboard(searchEditText)
             if (isSearchMode) {
                 clearSearch()

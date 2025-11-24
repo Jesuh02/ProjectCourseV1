@@ -484,7 +484,10 @@ class UserProfileViewFragment : Fragment() {
                 
                 val subscribersDeferred = async(Dispatchers.IO) {
                     try {
-                        database.subscriptionDao().getSubscriptionCountForCreator(username)
+                        val u = database.usuarioDao().getUsuarioByUsername(username)
+                        if (u != null) {
+                            database.subscriptionDao().getSubscriptionCountForCreator(u.id)
+                        } else 0
                     } catch (e: Exception) { 0 }
                 }
 

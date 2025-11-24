@@ -52,11 +52,6 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     // MCP HTTP Client for tareamov-mcp-server (connects via HTTP to Node.js server)
     private lateinit var mcpHttpClient: com.example.tareamov.service.MCPHttpClient
     
-    // MCP Tools adapter
-    private lateinit var mcpToolsAdapter: com.example.tareamov.ui.adapter.MCPToolsAdapter
-    private val mcpTools = mutableListOf<com.example.tareamov.ui.model.MCPTool>()
-    private var isMCPToolbarVisible = false
-    
     // Enhanced chat state management per user
     private val chatHistory = mutableListOf<ChatMessage>()
     private var isProcessingQuery = false
@@ -117,9 +112,6 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             if (initialized) {
                 Log.d(TAG, "✅ MCP HTTP client connected to server at http://10.0.2.2:3000")
                 
-                // Load MCP tools
-                loadMCPTools()
-                
                 withContext(Dispatchers.Main) {
                     addMessageToChat("✅ Conectado a servidor MCP tareamov-mcp-server (HTTP)", false)
                 }
@@ -134,9 +126,6 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         // Setup chat RecyclerView with enhanced scrolling
         setupChatRecyclerView()
         
-        // Setup MCP toolbar
-        setupMCPToolbar()
-
         // Setup floating action buttons
         setupFloatingActionButtons()
 
@@ -188,7 +177,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         updateUserIndicator()
 
         // Make brain icon visible initially
-        binding.centerBrainIcon.visibility = View.VISIBLE
+        binding.emptyStateContainer.visibility = View.VISIBLE
 
         // Load logo image from drawable resources
         try {
@@ -272,12 +261,14 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             scrollToBottom(smooth = true)
         }
         
-        // Chat history button
-        binding.fabChatHistory.setOnClickListener {
+        // Chat history button (now in header)
+        binding.historyButton.setImageResource(R.drawable.ic_history_minimal) // Use minimalist icon
+        binding.historyButton.setOnClickListener {
             showChatHistoryDialog()
         }
         
         // Clear history button in header
+        binding.clearHistoryButton.setImageResource(R.drawable.ic_delete_minimal) // Use minimalist icon
         binding.clearHistoryButton.setOnClickListener {
             showClearHistoryDialog()
         }
@@ -288,173 +279,6 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         }
         binding.connectionIndicator.setOnClickListener {
             testLLMConnection()
-        }
-    }
-    
-    private fun setupMCPToolbar() {
-        // Setup MCP tools adapter
-        mcpToolsAdapter = com.example.tareamov.ui.adapter.MCPToolsAdapter(mcpTools) { tool ->
-            onMCPToolExecute(tool)
-        }
-        
-        binding.mcpToolsRecyclerView.apply {
-            layoutManager = LinearLayoutManager(context)
-            adapter = mcpToolsAdapter
-        }
-        
-        // Toggle toolbar button
-        binding.btnToggleToolbar.setOnClickListener {
-            toggleMCPToolbar()
-        }
-    }
-    
-    private fun loadMCPTools() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val tools = mcpHttpClient.listTools()
-                Log.d(TAG, "📋 Loaded ${tools.size} MCP tools")
-                
-                withContext(Dispatchers.Main) {
-                    mcpTools.clear()
-                    mcpTools.addAll(tools)
-                    mcpToolsAdapter.notifyDataSetChanged()
-                    
-                    // Update tools count badge
-                    binding.toolsCountBadge.text = tools.size.toString()
-                    
-                    // Show toolbar if tools are available
-                    if (tools.isNotEmpty()) {
-                        binding.mcpToolbar.visibility = View.VISIBLE
-                        isMCPToolbarVisible = true
-                    }
-                    
-                    Log.d(TAG, "✅ MCP tools loaded and displayed")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Error loading MCP tools", e)
-            }
-        }
-    }
-    
-    private fun toggleMCPToolbar() {
-        isMCPToolbarVisible = !isMCPToolbarVisible
-        
-        if (isMCPToolbarVisible) {
-            binding.mcpToolsRecyclerView.visibility = View.VISIBLE
-            binding.btnToggleToolbar.setImageResource(R.drawable.ic_expand_less)
-        } else {
-            binding.mcpToolsRecyclerView.visibility = View.GONE
-            binding.btnToggleToolbar.setImageResource(R.drawable.ic_expand_more)
-        }
-    }
-    
-    private fun onMCPToolExecute(tool: com.example.tareamov.ui.model.MCPTool) {
-        Log.d(TAG, "🔧 Executing MCP tool: ${tool.name}")
-        Log.d(TAG, "📋 Input schema: ${tool.inputSchema}")
-        
-        // Get required parameters
-        val params = tool.getParameters()
-        Log.d(TAG, "📝 Parameters found: ${params.size}")
-        params.forEach { (name, param) ->
-            Log.d(TAG, "  - $name: ${param.description} (required: ${param.required})")
-        }
-        
-        if (params.isEmpty()) {
-            // No parameters required, execute directly
-            Log.d(TAG, "⚡ Executing without parameters")
-            executeMCPTool(tool, org.json.JSONObject())
-        } else {
-            // Show dialog to input parameters
-            Log.d(TAG, "💬 Showing parameters dialog")
-            showToolParametersDialog(tool)
-        }
-    }
-    
-    private fun showToolParametersDialog(tool: com.example.tareamov.ui.model.MCPTool) {
-        val params = tool.getParameters()
-        val dialogView = LayoutInflater.from(requireContext())
-            .inflate(R.layout.dialog_tool_parameters, null)
-        
-        val paramsContainer = dialogView.findViewById<LinearLayout>(R.id.paramsContainer)
-        val inputViews = mutableMapOf<String, android.widget.EditText>()
-        
-        // Create input fields for each parameter
-        params.forEach { (name, param) ->
-            val paramView = LayoutInflater.from(requireContext())
-                .inflate(R.layout.item_parameter_input, paramsContainer, false)
-            
-            val paramLabel = paramView.findViewById<TextView>(R.id.paramLabel)
-            val paramInput = paramView.findViewById<android.widget.EditText>(R.id.paramInput)
-            val paramHint = paramView.findViewById<TextView>(R.id.paramHint)
-            
-            paramLabel.text = name + if (param.required) " *" else ""
-            paramHint.text = param.description
-            
-            inputViews[name] = paramInput
-            paramsContainer.addView(paramView)
-        }
-        
-        android.app.AlertDialog.Builder(requireContext())
-            .setTitle(tool.getDisplayName())
-            .setMessage("Ingresa los parámetros para la herramienta:")
-            .setView(dialogView)
-            .setPositiveButton("Ejecutar") { _, _ ->
-                val arguments = org.json.JSONObject()
-                inputViews.forEach { (name, editText) ->
-                    val value = editText.text.toString()
-                    if (value.isNotEmpty()) {
-                        arguments.put(name, value)
-                    }
-                }
-                executeMCPTool(tool, arguments)
-            }
-            .setNegativeButton("Cancelar", null)
-            .show()
-    }
-    
-    private fun executeMCPTool(tool: com.example.tareamov.ui.model.MCPTool, arguments: org.json.JSONObject) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                // Add user message showing what tool is being executed
-                val argsString = if (arguments.length() > 0) {
-                    arguments.keys().asSequence().joinToString(", ") { key ->
-                        "$key: ${arguments.get(key)}"
-                    }
-                } else {
-                    "sin parámetros"
-                }
-                
-                addMessageToChat("🔧 Ejecutando: ${tool.getDisplayName()} ($argsString)", true)
-                
-                // Show typing indicator
-                chatAdapter.addTypingIndicator()
-                scrollToBottom()
-                
-                // Execute tool
-                val result = mcpHttpClient.executeTool(tool.name, arguments)
-                
-                withContext(Dispatchers.Main) {
-                    chatAdapter.removeTypingIndicator()
-                    
-                    if (result.success) {
-                        val resultText = when (result.data) {
-                            is String -> result.data
-                            else -> result.data.toString()
-                        }
-                        addMessageToChat("✅ Resultado:\n\n$resultText", false)
-                    } else {
-                        addMessageToChat("❌ Error: ${result.error}", false)
-                    }
-                    
-                    scrollToBottom()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Error executing MCP tool", e)
-                withContext(Dispatchers.Main) {
-                    chatAdapter.removeTypingIndicator()
-                    addMessageToChat("❌ Error: ${e.message}", false)
-                }
-            }
         }
     }
     
@@ -533,7 +357,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
 
         // Hide brain icon when chat has messages (with null check)
         if (_binding != null && chatAdapter.itemCount > 0) {
-            binding.centerBrainIcon.visibility = View.GONE
+            binding.emptyStateContainer.visibility = View.GONE
             binding.chatHistoryHeader.visibility = View.VISIBLE
         }
 
@@ -648,23 +472,31 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     private fun checkServerStatus() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                // Create MSPClient to check Ollama connection
+                // Check MCP Server (Node.js) connection first
+                val mcpConnected = mcpHttpClient.initialize()
+                
+                if (mcpConnected) {
+                    updateConnectionStatus(true, "Conectado (MCP)")
+                    Log.d("DatabaseQueryFragment", "✓ MCP Server is reachable")
+                    return@launch
+                }
+
+                // Fallback: Check Ollama connection
                 val mspClient = MSPClient(requireContext())
                 val testResults = mspClient.testAllConnections()
                 val hasConnection = testResults.any { it.value }
                 
-                updateConnectionStatus(hasConnection, if (hasConnection) "Conectado" else "Desconectado")
+                updateConnectionStatus(hasConnection, if (hasConnection) "Conectado (Local)" else "Desconectado")
                 
                 if (hasConnection) {
                     Log.d("DatabaseQueryFragment", "✓ LLM server is reachable")
                 } else {
-                    Log.w("DatabaseQueryFragment", "⚠️ LLM server is not reachable")
+                    Log.w("DatabaseQueryFragment", "⚠️ No servers reachable")
                     // Optionally show a message to the user
                     addMessageToChat("""
-                        ⚠️ No se detectó conexión con el servidor LLM.
+                        ⚠️ No se detectó conexión con el servidor MCP ni LLM local.
                         
-                        Puedes usar las funciones de consulta, pero las respuestas 
-                        no serán procesadas por IA.
+                        Asegúrate de que el servidor Node.js esté corriendo (puerto 3000).
                         
                         💡 Toca el indicador de conexión para probar la conectividad.
                     """.trimIndent(), false)
@@ -693,8 +525,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         // Add user message to chat first
         addMessageToChat(query, true)
         
-        // Show typing indicator
-        chatAdapter.addTypingIndicator()
+        // Show spinner instead of typing indicator
+        binding.sendButton.visibility = View.GONE
+        binding.loadingSpinner.visibility = View.VISIBLE
         scrollToBottom(smooth = true)
 
         binding.chartContainer.visibility = View.GONE // Hide chart container
@@ -708,7 +541,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 try {
                     val result = handleBIQuery(query)
                     
-                    chatAdapter.removeTypingIndicator()
+                    // Hide spinner
+                    binding.loadingSpinner.visibility = View.GONE
+                    binding.sendButton.visibility = View.VISIBLE
                     
                     if (result.isNullOrBlank()) {
                         addMessageToChat("⚠️ No se pudo generar el análisis de Business Intelligence.", false)
@@ -716,7 +551,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                         addMessageToChat(result, false)
                     }
                 } catch (e: Exception) {
-                    chatAdapter.removeTypingIndicator()
+                    // Hide spinner
+                    binding.loadingSpinner.visibility = View.GONE
+                    binding.sendButton.visibility = View.VISIBLE
+                    
                     Log.e("DatabaseQueryFragment", "Error processing BI query", e)
                     addMessageToChat("❌ Error generando análisis BI: ${e.message}", false)
                 } finally {
@@ -730,10 +568,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         // ALWAYS use LLM with MCP tool calling for ANY query (including "hola", "qué es", etc.)
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                Log.d("DatabaseQueryFragment", "Delegating ALL queries to LLM with dynamic MCP context")
+                Log.d("DatabaseQueryFragment", "Delegating ALL queries to MCP Server (Node.js Agent)")
                 
-                // Let the LLM decide what context it needs from MCP based on the query
-                val result = processQueryWithLLMToolCalling(query)
+                // Use the remote MCP server which has the Agentic Workflow (LangChain + OpenAI)
+                val result = processQueryWithMCPServer(query)
 
                 Log.d("DatabaseQueryFragment", "=== FINAL RESULT LOG ===")
                 Log.d("DatabaseQueryFragment", "Result Length: ${result.length} characters")
@@ -742,8 +580,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
 
                 // Check if the response is a graph request
                 if (result.startsWith("GRAPH_REQUEST:")) {
-                    // Remove typing indicator before showing result
-                    chatAdapter.removeTypingIndicator()
+                    // Hide spinner
+                    binding.loadingSpinner.visibility = View.GONE
+                    binding.sendButton.visibility = View.VISIBLE
                     
                     handleGraphRequest(result)
 
@@ -758,8 +597,12 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                     }
                     addMessageToChat(graphMessage, false)
                 } else {
-                    // Remove typing indicator before showing result
-                    chatAdapter.removeTypingIndicator()
+                    // Check if binding is still valid before accessing it
+                    if (_binding != null) {
+                        // Hide spinner
+                        binding.loadingSpinner.visibility = View.GONE
+                        binding.sendButton.visibility = View.VISIBLE
+                    }
                     
                     // Display the text result in chat
                     if (result.isNullOrBlank()) {
@@ -772,8 +615,12 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 }
 
             } catch (e: Exception) {
-                // Remove typing indicator on error
-                chatAdapter.removeTypingIndicator()
+                // Check if binding is still valid before accessing it
+                if (_binding != null) {
+                    // Hide spinner
+                    binding.loadingSpinner.visibility = View.GONE
+                    binding.sendButton.visibility = View.VISIBLE
+                }
                 
                 Log.e("DatabaseQueryFragment", "Error processing query", e)
                 val errorMessage = "❌ Error procesando la consulta: ${e.message}"
@@ -863,19 +710,15 @@ INSTRUCCIONES - Responde EXACTAMENTE como Visual Studio Code Copilot con estas s
 - Visualization: [descripción]
 - Access: [descripción]
 
-## Ejemplos de SQL
+## Ejemplos de SQL (SOLO CONSULTAS SIMPLES - NO JOINs)
 ```sql
 -- [Descripción query 1]
-SELECT ...
-FROM ...
-WHERE ...;
+SELECT * FROM tabla WHERE ...;
 
 -- [Descripción query 2]
-SELECT ...
-FROM ...
-WHERE ...;
+SELECT id, campo FROM tabla WHERE ...;
 ```
-[5 ejemplos SQL basados en el esquema real]
+[5 ejemplos SQL basados en el esquema real. IMPORTANTE: NO USES JOIN NI GROUP BY. La base de datos no lo soporta en este modo. Usa consultas simples.]
 
 ## Plan corto de implementación (2–4 semanas)
 1. Semana 0–1: [tareas]
@@ -1413,7 +1256,7 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
             
             withContext(Dispatchers.IO) {
                 val subscriptions = database.subscriptionDao().getAllSubscriptions()
-                val creatorCounts = subscriptions.groupBy { it.creatorUsername }
+                val creatorCounts = subscriptions.groupBy { it.creatorId }
                     .mapValues { it.value.size }
                     .toList()
                     .sortedByDescending { it.second }
@@ -1650,7 +1493,7 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
                 
                 // Update UI based on restored messages
                 if (messageList.isNotEmpty()) {
-                    binding.centerBrainIcon.visibility = View.GONE
+                    binding.emptyStateContainer.visibility = View.GONE
                     binding.chatHistoryHeader.visibility = View.VISIBLE
                     updateMessageCountDisplay()
                     
@@ -1692,7 +1535,7 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
             .remove(CHAT_HISTORY_KEY)
             .apply()
             
-        binding.centerBrainIcon.visibility = View.VISIBLE
+        binding.emptyStateContainer.visibility = View.VISIBLE
         binding.chatHistoryHeader.visibility = View.GONE
         updateMessageCountDisplay()
         
@@ -1765,7 +1608,7 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
         updateUserIndicator()
         
         // Reset UI
-        binding.centerBrainIcon.visibility = View.VISIBLE
+        binding.emptyStateContainer.visibility = View.VISIBLE
         binding.chatHistoryHeader.visibility = View.GONE
         updateMessageCountDisplay()
     }
@@ -1860,33 +1703,22 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
 
     private fun addWelcomeMessage() {
         val username = sessionManager.getUsername() ?: "Usuario"
-        val toolsCount = mcpTools.size
-        val toolsList = if (toolsCount > 0) {
-            mcpTools.joinToString("\n") { "  • ${it.getDisplayName()}: ${it.description}" }
-        } else {
-            "  (Cargando...)"
-        }
         
         val welcomeText = """
 🎯 ¡Bienvenido/a, $username!
 
-Estás conectado al sistema MCP (Model Context Protocol) con acceso a:
+Estás conectado al sistema de Consulta Inteligente.
 
-🛠️ **Herramientas MCP disponibles ($toolsCount):**
-$toolsList
-
-💬 **Modos de interacción:**
-  • Chat natural: Escribe consultas en lenguaje natural
-  • Herramientas directas: Usa el botón 🔧 para ejecutar herramientas específicas
-  • Consultas SQL: El sistema generará SQL automáticamente
+💬 **¿Cómo funciona?**
+Simplemente escribe tu consulta en lenguaje natural. El sistema analizará tu petición y consultará la base de datos automáticamente.
 
 📊 **Capacidades:**
   • Consultas a la base de datos en tiempo real
   • Análisis de esquemas y relaciones
   • Generación de gráficos y visualizaciones
-  • Respuestas contextuales con RAG
+  • Respuestas contextuales
 
-✨ Escribe tu consulta o usa el botón de herramientas para empezar.
+✨ Escribe tu consulta para empezar.
         """.trimIndent()
         
         addMessageToChat(welcomeText, false)
@@ -2045,8 +1877,9 @@ $toolsList
                         chatHistory.removeAt(historyIndex + 1)
                     }
                     
-                    // Show typing indicator for new response
-                    chatAdapter.addTypingIndicator()
+                    // Show spinner for new response
+                    binding.sendButton.visibility = View.GONE
+                    binding.loadingSpinner.visibility = View.VISIBLE
                     scrollToBottom(smooth = true)
                     
                     try {
@@ -2054,15 +1887,17 @@ $toolsList
                             databaseQueryService.processQuery(newText)
                         }
                         
-                        // Remove typing indicator
-                        chatAdapter.removeTypingIndicator()
+                        // Hide spinner
+                        binding.loadingSpinner.visibility = View.GONE
+                        binding.sendButton.visibility = View.VISIBLE
                         
                         // Add new bot response
                         addMessageToChat(result, false)
                         
                     } catch (e: Exception) {
-                        // Remove typing indicator on error
-                        chatAdapter.removeTypingIndicator()
+                        // Hide spinner
+                        binding.loadingSpinner.visibility = View.GONE
+                        binding.sendButton.visibility = View.VISIBLE
                         
                         addMessageToChat("Error al procesar la consulta editada: ${e.message}", false)
                     }

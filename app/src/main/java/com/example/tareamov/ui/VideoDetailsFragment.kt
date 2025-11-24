@@ -14,6 +14,9 @@ import android.widget.Toast
 import android.widget.VideoView
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
+import eightbitlab.com.blurview.BlurView
+import eightbitlab.com.blurview.RenderScriptBlur
+import android.view.ViewOutlineProvider
 import com.example.tareamov.R
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
@@ -46,8 +49,31 @@ class VideoDetailsFragment : Fragment() {
         return inflater.inflate(R.layout.fragment_video_details, container, false)
     }
 
+    private var isPaidCourse = false
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // Setup BlurView for header
+        val headerLayout = view.findViewById<BlurView>(R.id.headerLayout)
+        val radius = 20f
+        val decorView = requireActivity().window.decorView
+        val rootView = view as ViewGroup
+        // val windowBackground = decorView.background // Not used to avoid blocking video
+
+        headerLayout.setupWith(rootView, RenderScriptBlur(requireContext()))
+            //.setFrameClearDrawable(windowBackground)
+            .setBlurRadius(radius)
+            .setBlurAutoUpdate(true)
+            .setOverlayColor(android.graphics.Color.parseColor("#33000000")) // Match ExploreFragment
+            
+        headerLayout.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                val cornerRadius = view.context.resources.displayMetrics.density * 24 // 24dp
+                outline.setRoundRect(0, 0, view.width, view.height, cornerRadius)
+            }
+        }
+        headerLayout.clipToOutline = true
 
         // Set up video preview
         val videoPreview = view.findViewById<VideoView>(R.id.videoPreview)
@@ -60,17 +86,79 @@ class VideoDetailsFragment : Fragment() {
         }
 
         // Set up next button
-        view.findViewById<Button>(R.id.nextButton).setOnClickListener {
+        view.findViewById<View>(R.id.nextButton).setOnClickListener {
             saveVideoDetails()
         }
-    }    private fun saveVideoDetails() {
+
+        // Set up course type selection
+        setupCourseTypeSelection(view)
+    }
+
+    private fun setupCourseTypeSelection(view: View) {
+        val optionFree = view.findViewById<View>(R.id.optionFree)
+        val optionPaid = view.findViewById<View>(R.id.optionPaid)
+        val iconFree = view.findViewById<android.widget.ImageView>(R.id.iconFree)
+        val iconPaid = view.findViewById<android.widget.ImageView>(R.id.iconPaid)
+        val textFree = view.findViewById<android.widget.TextView>(R.id.textFree)
+        val textPaid = view.findViewById<android.widget.TextView>(R.id.textPaid)
+
+        // Default state: Free selected
+        updateSelectionState(false, optionFree, optionPaid, iconFree, iconPaid, textFree, textPaid)
+
+        optionFree.setOnClickListener {
+            isPaidCourse = false
+            updateSelectionState(false, optionFree, optionPaid, iconFree, iconPaid, textFree, textPaid)
+        }
+
+        optionPaid.setOnClickListener {
+            isPaidCourse = true
+            updateSelectionState(true, optionFree, optionPaid, iconFree, iconPaid, textFree, textPaid)
+        }
+    }
+
+    private fun updateSelectionState(
+        isPaid: Boolean,
+        optionFree: View,
+        optionPaid: View,
+        iconFree: android.widget.ImageView,
+        iconPaid: android.widget.ImageView,
+        textFree: android.widget.TextView,
+        textPaid: android.widget.TextView
+    ) {
+        val selectedBg = R.drawable.bg_rounded_card_selected
+        val unselectedBg = R.drawable.bg_rounded_input
+        val selectedColor = android.graphics.Color.parseColor("#3b82f6") // Blue
+        val unselectedColor = android.graphics.Color.parseColor("#71717a") // Gray
+        val whiteColor = android.graphics.Color.parseColor("#FFFFFF")
+
+        if (!isPaid) {
+            // Free selected
+            optionFree.setBackgroundResource(selectedBg)
+            optionPaid.setBackgroundResource(unselectedBg)
+            
+            iconFree.setColorFilter(selectedColor)
+            textFree.setTextColor(whiteColor)
+            
+            iconPaid.setColorFilter(unselectedColor)
+            textPaid.setTextColor(unselectedColor)
+        } else {
+            // Paid selected
+            optionFree.setBackgroundResource(unselectedBg)
+            optionPaid.setBackgroundResource(selectedBg)
+            
+            iconFree.setColorFilter(unselectedColor)
+            textFree.setTextColor(unselectedColor)
+            
+            iconPaid.setColorFilter(selectedColor)
+            textPaid.setTextColor(whiteColor)
+        }
+    }
+
+    private fun saveVideoDetails() {
         val title = view?.findViewById<EditText>(R.id.titleEditText)?.text.toString()
         val description = view?.findViewById<EditText>(R.id.descriptionEditText)?.text.toString()
 
-        // Get course type selection
-        val courseTypeRadioGroup = view?.findViewById<RadioGroup>(R.id.courseTypeRadioGroup)
-        val selectedTypeId = courseTypeRadioGroup?.checkedRadioButtonId
-        val isPaidCourse = selectedTypeId == R.id.paidRadioButton
+        // isPaidCourse is already updated by click listeners
 
         if (title.isBlank()) {
             Toast.makeText(context, "Por favor ingresa un título", Toast.LENGTH_SHORT).show()

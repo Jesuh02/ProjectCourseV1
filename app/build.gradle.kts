@@ -78,6 +78,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+        // Enable RenderScript for BlurView
+        renderscriptTargetApi = 31
+        renderscriptSupportModeEnabled = true
+
         // Provide a single authority string for FileProvider usage
         manifestPlaceholders["fileProviderAuthority"] = "${applicationId}.fileprovider"
 
@@ -207,6 +211,9 @@ dependencies {
     implementation("org.apache.poi:poi:5.2.5")
     implementation("org.apache.poi:poi-ooxml:5.2.5")
     implementation("org.apache.poi:poi-scratchpad:5.2.5")
+
+    // BlurView for real-time blur effect (glassmorphism)
+    implementation("com.github.Dimezis:BlurView:version-2.0.5")
 }
 
 // Apply Google Services plugin only when google-services.json exists in the app module.

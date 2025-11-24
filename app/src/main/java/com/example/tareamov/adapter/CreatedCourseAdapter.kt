@@ -402,7 +402,11 @@ class CreatedCourseAdapter(
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 try {
                     val db = com.example.tareamov.data.AppDatabase.getDatabase(itemView.context)
-                    val count = db.subscriptionDao().getSubscriptionCountForCreator(course.username)
+                    // Resolve creator ID from username since VideoData doesn't have creatorUserId
+                    val creatorUser = db.usuarioDao().getUsuarioByUsername(course.username)
+                    val creatorId = creatorUser?.id ?: -1L
+                    
+                    val count = if (creatorId > 0) db.subscriptionDao().getSubscriptionCountForCreator(creatorId) else 0
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
                         studentsTextView.text = if (count == 1) "1 estudiante" else "${count} estudiantes"
                     }

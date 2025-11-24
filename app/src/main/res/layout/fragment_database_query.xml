@@ -7,606 +7,305 @@
     android:background="#000000"
     tools:context=".ui.DatabaseQueryFragment">
 
-    <!-- Header with title and connection status -->
+    <!-- Header -->
     <LinearLayout
         android:id="@+id/headerLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:padding="16dp"
+        android:gravity="center_vertical"
+        android:background="#000000"
         app:layout_constraintTop_toTopOf="parent">
 
-        <LinearLayout
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_brain"
+            app:tint="#10A37F" />
+
+        <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:orientation="horizontal">
+            android:layout_marginStart="12dp"
+            android:text="Database Assistant"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
 
-            <ImageView
-                android:id="@+id/brainIcon"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_gravity="center_vertical"
-                android:src="@drawable/ic_brain"
-                android:tint="#10A37F" />
-
-            <TextView
-                android:id="@+id/titleText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="Sistema MCP"
-                android:textColor="#FFFFFF"
-                android:textSize="18sp"
-                android:textStyle="bold" />
-        </LinearLayout>
+        <ImageButton
+            android:id="@+id/historyButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_history"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            app:tint="#FFFFFF"
+            android:padding="8dp"
+            android:layout_marginEnd="8dp" />
 
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:background="#000000"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_user_indicator"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="4dp">
+            
             <View
                 android:id="@+id/connectionIndicator"
-                android:layout_width="6dp"
-                android:layout_height="6dp"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
                 android:background="@drawable/circle_shape"
                 android:backgroundTint="#4CAF50" />
-
+                
             <TextView
                 android:id="@+id/connectionStatus"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="6dp"
-                android:text="Conectado"
+                android:text="Online"
                 android:textColor="#FFFFFF"
                 android:textSize="12sp" />
         </LinearLayout>
     </LinearLayout>
 
-    <!-- Subtitle with user indicator -->
-    <LinearLayout
-        android:id="@+id/subtitleLayout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingTop="4dp"
-        android:paddingBottom="4dp"
-        app:layout_constraintTop_toBottomOf="@id/headerLayout">
-
-        <TextView
-            android:id="@+id/subtitleText"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Consulta de Base de Datos"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp" />
-
-        <LinearLayout
-            android:id="@+id/userIndicatorLayout"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:background="@drawable/bg_user_indicator"
-            android:paddingStart="6dp"
-            android:paddingEnd="6dp"
-            android:paddingTop="3dp"
-            android:paddingBottom="3dp"
-            android:gravity="center_vertical">
-
-            <ImageView
-                android:layout_width="10dp"
-                android:layout_height="10dp"
-                android:src="@drawable/ic_person"
-                android:tint="#10A37F"
-                android:layout_marginEnd="3dp" />
-
-            <TextView
-                android:id="@+id/currentUserText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Usuario"
-                android:textColor="#FFFFFF"
-                android:textSize="11sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-    </LinearLayout>    <!-- Chat history header -->
-    <LinearLayout
-        android:id="@+id/chatHistoryHeader"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="12dp"
-        android:background="#000000"
-        android:gravity="center_vertical"
-        android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/subtitleLayout">
-
-        <ImageView
-            android:layout_width="14dp"
-            android:layout_height="14dp"
-            android:src="@drawable/ic_history"
-            android:tint="#10A37F" />
-
-        <TextView
-            android:id="@+id/historyHeaderText"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="6dp"
-            android:text="Conversaciones anteriores"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp" />
-
-        <ImageButton
-            android:id="@+id/clearHistoryButton"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:src="@drawable/ic_delete"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:tint="#80FFFFFF"
-            android:contentDescription="Limpiar historial" />
-    </LinearLayout>
-
-    <!-- MCP Tools Toolbar (collapsible) - Minimalist compact version -->
-    <LinearLayout
-        android:id="@+id/mcpToolbar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="#0A0A0A"
-        android:visibility="gone"
-        android:elevation="2dp"
-        app:layout_constraintTop_toBottomOf="@id/chatHistoryHeader">
-
-        <!-- Toolbar Header - Compact -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="8dp"
-            android:gravity="center_vertical"
-            android:background="#1A1A1A">
-
-            <ImageView
-                android:layout_width="16dp"
-                android:layout_height="16dp"
-                android:src="@drawable/ic_tool"
-                android:tint="#10A37F"
-                android:layout_marginEnd="6dp" />
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Tools"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/toolsCountBadge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="2"
-                android:textColor="#10A37F"
-                android:textSize="11sp"
-                android:background="@drawable/bg_tools_count_badge"
-                android:paddingStart="6dp"
-                android:paddingEnd="6dp"
-                android:paddingTop="2dp"
-                android:paddingBottom="2dp"
-                android:layout_marginEnd="6dp" />
-
-            <ImageButton
-                android:id="@+id/btnToggleToolbar"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_expand_less"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#FFFFFF"
-                android:contentDescription="Toggle toolbar" />
-        </LinearLayout>
-
-        <!-- Tools RecyclerView - Compact -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/mcpToolsRecyclerView"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:maxHeight="200dp"
-            android:paddingTop="4dp"
-            android:paddingBottom="4dp"
-            android:clipToPadding="false" />
-    </LinearLayout>
-
-    <!-- Enhanced Chat RecyclerView with ChatGPT-style full-width layout -->
+    <!-- Chat Area -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/chatRecyclerView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:clipToPadding="false"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
-        android:scrollbars="none"
-        android:overScrollMode="never"
-        android:nestedScrollingEnabled="true"
-        android:background="#000000"
-        app:layout_constraintTop_toBottomOf="@id/mcpToolbar"
-        app:layout_constraintBottom_toTopOf="@id/typingIndicator" />
+        android:paddingBottom="16dp"
+        app:layout_constraintTop_toBottomOf="@id/headerLayout"
+        app:layout_constraintBottom_toTopOf="@id/inputContainer" />
 
-    <!-- Enhanced typing indicator with LLM branding - More compact and animated -->
+    <!-- Empty State -->
     <LinearLayout
-        android:id="@+id/typingIndicator"
-        android:layout_width="match_parent"
+        android:id="@+id/emptyStateContainer"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="12dp"
-        android:layout_marginStart="12dp"
-        android:layout_marginEnd="12dp"
-        android:background="@drawable/bg_typing_indicator"
-        android:gravity="start|center_vertical"
-        android:visibility="gone"
-        android:elevation="2dp"
-        android:alpha="0"
+        android:orientation="vertical"
+        android:gravity="center"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/queryInputLayout">
+        app:layout_constraintEnd_toEndOf="parent">
 
         <ImageView
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+            android:id="@+id/centerBrainIcon"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
             android:src="@drawable/ic_brain"
-            android:tint="#10A37F"
-            android:padding="3dp"
-            android:background="@drawable/circle_bg_purple" />
-
-        <LinearLayout
-            android:layout_width="0dp"
+            app:tint="#333333" />
+            
+        <TextView
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="10dp"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Llama 3.3 70B"
-                android:textColor="#FFFFFF"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="está pensando..."
-                android:textColor="#B0B0B0"
-                android:textSize="11sp"
-                android:textStyle="italic" />
-        </LinearLayout>
-
-        <ProgressBar
-            android:layout_width="18dp"
-            android:layout_height="18dp"
-            android:layout_marginEnd="6dp"
-            style="?android:attr/progressBarStyleSmall"
-            android:indeterminateTint="#10A37F" />
+            android:layout_marginTop="16dp"
+            android:text="Ask anything about your data"
+            android:textColor="#666666"
+            android:textSize="14sp" />
     </LinearLayout>
 
-    <!-- Brain Icon in the center - shown when chat is empty - Smaller and more minimalist -->
-    <ImageView
-        android:id="@+id/centerBrainIcon"
-        android:layout_width="80dp"
-        android:layout_height="80dp"
-        android:src="@drawable/ic_brain"
-        android:tint="#10A37F"
-        android:alpha="0.6"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/queryInputLayout"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Keep the ScrollView for compatibility but make it invisible by default -->
-    <ScrollView
-        android:id="@+id/scrollView"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_margin="16dp"
-        android:background="#000000"
-        android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/subtitleLayout"
-        app:layout_constraintBottom_toTopOf="@id/queryInputLayout">
-
-        <TextView
-            android:id="@+id/resultText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textSize="16sp"
-            android:textColor="#FFFFFF"
-            android:padding="16dp"
-            android:textIsSelectable="true"
-            android:text="Sistema MCP - Consulta Inteligente\n\nUtiliza lenguaje natural para consultar la base de datos. El sistema procesará tu consulta y mostrará los resultados relevantes." />
-    </ScrollView>
-
-    <!-- Chart container (hidden by default) -->
+    <!-- Chart Container -->
     <FrameLayout
         android:id="@+id/chartContainer"
         android:layout_width="match_parent"
-        android:layout_height="250dp"
+        android:layout_height="200dp"
         android:layout_margin="16dp"
         android:visibility="gone"
-        android:background="#000000"
-        app:layout_constraintTop_toBottomOf="@id/subtitleLayout"
-        app:layout_constraintBottom_toTopOf="@id/chartControls" />
+        app:layout_constraintBottom_toTopOf="@id/inputContainer"
+        app:layout_constraintTop_toBottomOf="@id/headerLayout"
+        app:layout_constraintVertical_bias="0.0" />
 
-    <!-- Chart controls (hidden by default) -->
+    <!-- Chart Controls -->
     <LinearLayout
         android:id="@+id/chartControls"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:visibility="gone"
-        android:gravity="center"
-        android:layout_marginBottom="8dp"
-        app:layout_constraintBottom_toTopOf="@id/queryInputLayout">
-
+        app:layout_constraintTop_toBottomOf="@id/chartContainer"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginEnd="16dp">
+        
         <Button
             android:id="@+id/zoomInButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Zoom +"
-            android:backgroundTint="#10A37F"
-            android:layout_marginEnd="8dp" />
-
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="+"
+            android:backgroundTint="#333333" />
+            
         <Button
             android:id="@+id/zoomOutButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Zoom -"
-            android:backgroundTint="#10A37F"
-            android:layout_marginEnd="8dp" />
-
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:text="-"
+            android:backgroundTint="#333333" />
+            
         <Button
             android:id="@+id/resetChartButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Reiniciar"
-            android:backgroundTint="#10A37F" />
-    </LinearLayout>    <!-- Floating action button for chat history - Minimalist version -->
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/fabChatHistory"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_margin="8dp"
-        android:src="@drawable/ic_history"
-        app:tint="#FFFFFF"
-        app:backgroundTint="#888888"
-        app:elevation="4dp"
-        app:borderWidth="0dp"
-        android:contentDescription="Ver historial de chat"
-        app:fabSize="mini"
-        android:visibility="visible"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/queryInputLayout" />
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:text="R"
+            android:backgroundTint="#333333" />
+    </LinearLayout>
 
-    <!-- Scroll to bottom button - Minimalist version -->
+    <!-- FABs -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabScrollToBottom"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="8dp"
-        android:layout_marginBottom="60dp"
+        android:layout_margin="16dp"
         android:src="@drawable/ic_keyboard_arrow_down"
         app:tint="#FFFFFF"
-        app:backgroundTint="#10A37F"
-        app:elevation="4dp"
-        app:borderWidth="0dp"
-        android:contentDescription="Ir al final del chat"
+        app:backgroundTint="#333333"
         app:fabSize="mini"
         android:visibility="gone"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/queryInputLayout" />
+        app:layout_constraintBottom_toTopOf="@id/inputContainer"
+        app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Enhanced input area with better design -->
+
+
+    <!-- Input Area -->
     <LinearLayout
-        android:id="@+id/queryInputLayout"
+        android:id="@+id/inputContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="@drawable/bg_input_area_enhanced"
-        android:elevation="12dp"
+        android:background="#000000"
+        android:padding="8dp"
         app:layout_constraintBottom_toBottomOf="parent">
 
-        <!-- Message counter and info bar - Hidden by default for minimalist design -->
-        <LinearLayout
-            android:id="@+id/messageInfoBar"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:paddingTop="4dp"
-            android:paddingBottom="4dp"
-            android:gravity="center_vertical"
-            android:visibility="gone">
-
-            <TextView
-                android:id="@+id/messageCountText"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="0 mensajes"
-                android:textColor="#80FFFFFF"
-                android:textSize="11sp" />
-
-            <ImageButton
-                android:id="@+id/exportChatButton"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_share"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:tint="#80FFFFFF"
-                android:contentDescription="Exportar chat"
-                android:visibility="gone" />
-        </LinearLayout>
-
-        <!-- Input row - Compact design -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="12dp"
-            android:gravity="center_vertical">
-
-            <!-- Attachment button (for future features) - Smaller -->
-            <ImageButton
-                android:id="@+id/attachButton"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_marginEnd="6dp"
-                android:src="@drawable/ic_attach"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:tint="#80FFFFFF"
-                android:contentDescription="Adjuntar archivo"
-                android:visibility="gone" />
-
-            <!-- Enhanced input field with chat-like design -->
-            <com.google.android.material.textfield.TextInputLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginEnd="8dp"
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                app:boxStrokeColor="#10A37F"
-                app:boxStrokeWidth="2dp"
-                app:hintTextColor="#888888"
-                app:boxBackgroundColor="#000000"
-                app:boxCornerRadiusTopStart="20dp"
-                app:boxCornerRadiusTopEnd="20dp"
-                app:boxCornerRadiusBottomStart="20dp"
-                app:boxCornerRadiusBottomEnd="20dp"
-                app:hintAnimationEnabled="true">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/queryInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:hint="Pregunta algo a Llama 3.3..."
-                    android:textColorHint="#B0B0B0"
-                    android:textColor="#FFFFFF"
-                    android:inputType="textMultiLine|textCapSentences"
-                    android:minLines="1"
-                    android:maxLines="5"
-                    android:textSize="15sp"
-                    android:padding="12dp"
-                    android:background="@android:color/transparent"
-                    android:lineSpacingExtra="2dp" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <!-- Enhanced send button - Smaller -->
-            <com.google.android.material.floatingactionbutton.FloatingActionButton
-                android:id="@+id/sendButton"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:src="@drawable/ic_send"
-                app:tint="#FFFFFF"
-                app:backgroundTint="#10A37F"
-                app:elevation="3dp"
-                app:borderWidth="0dp"
-                android:contentDescription="Enviar consulta"
-                app:fabSize="mini" />
-        </LinearLayout>
-
-        <!-- Quick actions row -->
         <LinearLayout
             android:id="@+id/quickActionsLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:padding="8dp"
-            android:gravity="center"
+            android:paddingBottom="8dp"
             android:visibility="gone">
-
+            
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipClearChat"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="8dp"
-                android:text="Limpiar chat"
+                android:text="Clear"
                 android:textColor="#FFFFFF"
-                app:chipBackgroundColor="#888888"
-                app:chipStrokeColor="#10A37F"
-                app:chipStrokeWidth="1dp" />
-
+                app:chipBackgroundColor="#333333" />
+                
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipHelp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="8dp"
-                android:text="Ayuda"
+                android:layout_marginStart="8dp"
+                android:text="Help"
                 android:textColor="#FFFFFF"
-                app:chipBackgroundColor="#4A5F7A"
-                app:chipStrokeColor="#9370DB"
-                app:chipStrokeWidth="1dp" />
-
+                app:chipBackgroundColor="#333333" />
+                
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipExamples"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Ejemplos"
+                android:layout_marginStart="8dp"
+                android:text="Examples"
                 android:textColor="#FFFFFF"
-                app:chipBackgroundColor="#4A5F7A"
-                app:chipStrokeColor="#9370DB"
-                app:chipStrokeWidth="1dp" />
+                app:chipBackgroundColor="#333333" />
         </LinearLayout>
-    </LinearLayout>
 
+        <LinearLayout
+            android:id="@+id/queryInputLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="bottom">
 
-    <!-- Enhanced model info with better styling - Compact version -->
-    <LinearLayout
-        android:id="@+id/modelInfoLayout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:paddingTop="3dp"
-        android:paddingBottom="6dp"
-        android:background="@drawable/bg_model_info"
-        app:layout_constraintBottom_toTopOf="@id/queryInputLayout">
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                app:boxBackgroundColor="#1A1A1A"
+                app:boxCornerRadiusTopStart="24dp"
+                app:boxCornerRadiusTopEnd="24dp"
+                app:boxCornerRadiusBottomStart="24dp"
+                app:boxCornerRadiusBottomEnd="24dp"
+                app:boxStrokeWidth="0dp"
+                app:hintEnabled="false">
 
-        <ImageView
-            android:layout_width="14dp"
-            android:layout_height="14dp"
-            android:src="@drawable/ic_cpu"
-            android:tint="#10A37F"
-            android:layout_marginEnd="6dp" />
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/queryInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Message Database..."
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="#666666"
+                    android:padding="16dp"
+                    android:background="@android:color/transparent"
+                    android:inputType="textMultiLine|textCapSentences"
+                    android:maxLines="4" />
+            </com.google.android.material.textfield.TextInputLayout>
 
+            <FrameLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp">
+
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/sendButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:src="@drawable/ic_send"
+                    app:tint="#FFFFFF"
+                    app:backgroundTint="#10A37F"
+                    app:fabSize="mini"
+                    app:elevation="0dp" />
+
+                <ProgressBar
+                    android:id="@+id/loadingSpinner"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_gravity="center"
+                    android:visibility="gone"
+                    android:indeterminateTint="#10A37F" />
+            </FrameLayout>
+        </LinearLayout>
+        
         <TextView
             android:id="@+id/modelInfo"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Llama 3.3 70B • RAG"
-            android:textColor="#888888"
-            android:textSize="11sp"
-            android:textStyle="italic"
-            android:gravity="center" />
-
-        <View
-            android:layout_width="6dp"
-            android:layout_height="6dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/circle_shape"
-            android:backgroundTint="#4CAF50" />
+            android:text="Llama 3.3 70B  RAG Enabled"
+            android:textColor="#444444"
+            android:textSize="10sp"
+            android:gravity="center"
+            android:paddingTop="4dp" />
     </LinearLayout>
+
+    <!-- Hidden Views for Compatibility -->
+    <ScrollView
+        android:id="@+id/scrollView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+        <TextView android:id="@+id/resultText" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </ScrollView>
+    
+    <LinearLayout
+        android:id="@+id/chatHistoryHeader"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+        <ImageButton android:id="@+id/clearHistoryButton" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <TextView android:id="@+id/messageCountText" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <LinearLayout android:id="@+id/messageInfoBar" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+    
+    <TextView android:id="@+id/currentUserText" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" app:layout_constraintTop_toTopOf="parent" app:layout_constraintStart_toStartOf="parent"/>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -175,20 +175,17 @@ class TaskSubmissionsFragment : Fragment() {
         val submitFileButton = view.findViewById<Button>(R.id.submitFileButton)
         val selectedFileNameTextView = view.findViewById<TextView>(R.id.selectedFileNameTextView)
         val mySubmissionStatusTextView = view.findViewById<TextView>(R.id.mySubmissionStatusTextView)
-        val emptyStateTextView = view.findViewById<TextView>(R.id.emptyStateTextView)
-
+        
         // Configure visibility based on user role
         if (isCourseCreator) {
             // Course creator sees progress of all students
             progressSection.visibility = View.VISIBLE
             uploadSection.visibility = View.GONE
-            emptyStateTextView.text = "No hay entregas para esta tarea"
             loadTaskProgress()
         } else {
             // Regular student sees their own progress
             progressSection.visibility = View.VISIBLE
             uploadSection.visibility = View.VISIBLE
-            emptyStateTextView.text = "No has entregado esta tarea aún"
             selectFileButton.setOnClickListener { openFilePicker() }
             submitFileButton.setOnClickListener { submitTaskFile() }
 
@@ -279,11 +276,12 @@ class TaskSubmissionsFragment : Fragment() {
                     }
                 } else {
                     Log.w("TaskSubmissionsFragment", "No se encontró entrega del usuario para aplicar la calificación")
-                    Toast.makeText(
+                    // Toast suprimido para evitar mensajes molestos si la entrega aún no se ha sincronizado
+                    /* Toast.makeText(
                         context, 
                         "⚠️ No se encontró tu entrega para aplicar la calificación", 
                         Toast.LENGTH_SHORT
-                    ).show()
+                    ).show() */
                 }
 
             } catch (e: Exception) {
@@ -366,21 +364,21 @@ class TaskSubmissionsFragment : Fragment() {
                     try {
                         val subs = SupabaseClient.fetchSubscriptions()
                         val creatorUsername = courseCreatorUsername
-                        if (creatorUsername != null) {
-                            subs.filter { it.creatorUsername.equals(creatorUsername, ignoreCase = true) }.map { it.subscriberUsername }
+                        
+                        // Resolve creator ID
+                        val creatorId = if (creatorUsername != null) {
+                            SupabaseClient.fetchUsuarioWithRoleByUsername(creatorUsername).first?.id ?: -1L
                         } else {
-                            // Fallback: fetch course to get creator_user_id, then get username
                             val course = SupabaseClient.fetchCourseById(courseId)
-                            if (course != null) {
-                                val fetchedCreatorUsername = SupabaseClient.getUsernameFromUserId(course.creatorUserId)
-                                if (fetchedCreatorUsername != null) {
-                                    subs.filter { it.creatorUsername.equals(fetchedCreatorUsername, ignoreCase = true) }.map { it.subscriberUsername }
-                                } else {
-                                    emptyList<String>()
-                                }
-                            } else {
-                                emptyList<String>()
-                            }
+                            course?.creatorUserId ?: -1L
+                        }
+
+                        if (creatorId != -1L) {
+                            val subscriberIds = subs.filter { it.creatorId == creatorId }.map { it.subscriberId }
+                            // Resolve usernames from IDs
+                            subscriberIds.mapNotNull { id -> SupabaseClient.getUsernameFromUserId(id) }
+                        } else {
+                            emptyList<String>()
                         }
                     } catch (e: Exception) {
                         Log.e("TaskSubmissionsFragment", "Error fetching subscriptions from Supabase", e)
@@ -1519,6 +1517,8 @@ class TaskSubmissionsFragment : Fragment() {
                         }
                     }
                     putString("fileName", fileContext.fileName)
+                    putString("taskName", taskName)
+                    putString("taskDescription", taskDescription)
                 }
                 
                 // Navegar al chat solo si no estamos ya ahí

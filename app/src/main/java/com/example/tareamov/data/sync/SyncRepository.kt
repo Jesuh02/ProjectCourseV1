@@ -684,9 +684,9 @@ class SyncRepository(
         return try {
             if (!supabaseClient.isConfigured()) return false
             // First check if the subscription already exists remotely
-            val exists = withContext(Dispatchers.IO) { supabaseClient.isSubscribedRemote(sub.subscriberUsername, sub.creatorUsername) }
+            val exists = withContext(Dispatchers.IO) { supabaseClient.isSubscribedRemote(sub.subscriberId, sub.creatorId) }
             if (exists) {
-                Log.d("SyncRepository", "insertSubscriptionRemote: subscription already exists remotely for ${sub.subscriberUsername} -> ${sub.creatorUsername}")
+                Log.d("SyncRepository", "insertSubscriptionRemote: subscription already exists remotely for ${sub.subscriberId} -> ${sub.creatorId}")
                 return true
             }
             // Not exists -> try insert
@@ -1155,20 +1155,20 @@ class SyncRepository(
         }
     }
 
-    suspend fun deleteSubscriptionRemote(subscriber: String, creator: String): Boolean {
+    suspend fun deleteSubscriptionRemote(subscriberId: Long, creatorId: Long): Boolean {
         return try {
             if (!supabaseClient.isConfigured()) return false
-            withContext(Dispatchers.IO) { supabaseClient.deleteSubscriptionFromSupabase(subscriber, creator) }
+            withContext(Dispatchers.IO) { supabaseClient.deleteSubscriptionFromSupabase(subscriberId, creatorId) }
         } catch (e: Exception) {
             Log.w("SyncRepository", "deleteSubscriptionRemote failed", e)
             false
         }
     }
 
-    suspend fun isSubscribedRemote(subscriber: String, creator: String): Boolean {
+    suspend fun isSubscribedRemote(subscriberId: Long, creatorId: Long): Boolean {
         return try {
             if (!supabaseClient.isConfigured()) return false
-            withContext(Dispatchers.IO) { supabaseClient.isSubscribedRemote(subscriber, creator) }
+            withContext(Dispatchers.IO) { supabaseClient.isSubscribedRemote(subscriberId, creatorId) }
         } catch (e: Exception) {
             Log.w("SyncRepository", "isSubscribedRemote failed", e)
             false
@@ -1323,15 +1323,15 @@ class SyncRepository(
                     try {
                         // Map Room entity fields to snake_case expected by Supabase/Postgres
                         val mapped = mapOf(
-                            "subscriber_username" to sub.subscriberUsername,
-                            "creator_username" to sub.creatorUsername,
+                            "subscriber_id" to sub.subscriberId,
+                            "creator_id" to sub.creatorId,
                             "subscription_date" to sub.subscriptionDate
                         )
                         val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("subscriptions", mapped) }
-                        if (ok) Log.i("SyncRepository", "Subscription ${sub.subscriberUsername}_${sub.creatorUsername} synced to Supabase.")
-                        else Log.e("SyncRepository", "Failed to sync subscription ${sub.subscriberUsername}_${sub.creatorUsername} to Supabase.")
+                        if (ok) Log.i("SyncRepository", "Subscription ${sub.subscriberId}_${sub.creatorId} synced to Supabase.")
+                        else Log.e("SyncRepository", "Failed to sync subscription ${sub.subscriberId}_${sub.creatorId} to Supabase.")
                     } catch (e: Exception) {
-                        Log.e("SyncRepository", "Exception while syncing subscription ${sub.subscriberUsername}_${sub.creatorUsername}", e)
+                        Log.e("SyncRepository", "Exception while syncing subscription ${sub.subscriberId}_${sub.creatorId}", e)
                     }
                 }
 

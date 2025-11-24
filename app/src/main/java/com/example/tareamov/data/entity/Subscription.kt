@@ -5,14 +5,14 @@ import androidx.room.Index
 
 @Entity(
     tableName = "subscriptions",
-    primaryKeys = ["subscriberUsername", "creatorUsername"],
+    primaryKeys = ["subscriberId", "creatorId"],
     indices = [
-        Index(value = ["subscriberUsername"]),
-        Index(value = ["creatorUsername"])
+        Index(value = ["subscriberId"]),
+        Index(value = ["creatorId"])
     ]
 )
 data class Subscription(
-    val subscriberUsername: String = "",
-    val creatorUsername: String = "",
+    val subscriberId: Long = 0,
+    val creatorId: Long = 0,
     val subscriptionDate: Long = System.currentTimeMillis()
 ) 

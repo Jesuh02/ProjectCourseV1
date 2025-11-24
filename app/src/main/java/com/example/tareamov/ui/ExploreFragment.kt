@@ -1,5 +1,8 @@
 package com.example.tareamov.ui
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
+import eightbitlab.com.blurview.BlurView
+import eightbitlab.com.blurview.RenderScriptBlur
+import android.view.ViewOutlineProvider
 
 import android.app.Activity
 import android.content.Intent
@@ -94,6 +97,21 @@ class ExploreFragment : Fragment() {
 
         // Initialize searchEditText
         searchEditText = view.findViewById(R.id.searchEditText)
+
+        // Setup BlurView for header section
+        val headerSection = view.findViewById<BlurView>(R.id.headerSection)
+        val radius = 20f
+        val decorView = requireActivity().window.decorView
+        // Use the fragment's root view as the blur source
+        val rootView = view as ViewGroup
+        val windowBackground = decorView.background
+
+        headerSection.setupWith(rootView, RenderScriptBlur(requireContext()))
+            .setFrameClearDrawable(windowBackground)
+            .setBlurRadius(radius)
+            
+        headerSection.outlineProvider = ViewOutlineProvider.BACKGROUND
+        headerSection.clipToOutline = true
 
         // Add TextWatcher to search bar
         searchEditText.addTextChangedListener(object : TextWatcher {
@@ -277,7 +295,7 @@ class ExploreFragment : Fragment() {
     }
 
     /**
-     * Handle subscription/unsubscription clicks
+     * Handle subscription button click
      */
     private fun handleSubscriptionClick(course: Course, isCurrentlySubscribed: Boolean) {
         if (currentUsername == null) {
@@ -287,17 +305,19 @@ class ExploreFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                // Get creator username from user_id
-                val creatorUsername = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                // Get current user ID
+                val currentUserId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
                 }
-                
-                if (creatorUsername == null) {
-                    showDarkToast("❌ Error: No se pudo obtener el nombre del creador")
+
+                if (currentUserId == null) {
+                    showDarkToast("❌ Error: No se pudo obtener tu ID de usuario")
                     return@launch
                 }
+
+                val creatorUserId = course.creatorUserId
                 
-                if (currentUsername == creatorUsername) {
+                if (currentUserId == creatorUserId) {
                     showDarkToast("❌ No puedes suscribirte a tu propio curso")
                     return@launch
                 }
@@ -306,22 +326,22 @@ class ExploreFragment : Fragment() {
                 
                 if (isCurrentlySubscribed) {
                     // Unsubscribe
-                    db.subscriptionDao().unsubscribeFromCreator(currentUsername!!, creatorUsername)
+                    db.subscriptionDao().unsubscribeFromCreator(currentUserId, creatorUserId)
                     
                     // Also sync to Supabase
-                    syncUnsubscriptionToSupabase(currentUsername!!, creatorUsername)
+                    syncUnsubscriptionToSupabase(currentUserId, creatorUserId)
                     
-                    showDarkToast("✅ Te has desuscrito de $creatorUsername")
-                    Log.d("ExploreFragment", "User $currentUsername unsubscribed from $creatorUsername")
+                    showDarkToast("✅ Te has desuscrito")
+                    Log.d("ExploreFragment", "User $currentUserId unsubscribed from $creatorUserId")
                 } else {
                     // Subscribe
-                    db.subscriptionDao().subscribeToCreator(currentUsername!!, creatorUsername)
+                    db.subscriptionDao().subscribeToCreator(currentUserId, creatorUserId)
                     
                     // Also sync to Supabase
-                    syncSubscriptionToSupabase(currentUsername!!, creatorUsername)
+                    syncSubscriptionToSupabase(currentUserId, creatorUserId)
                     
-                    showDarkToast("🎉 Te has suscrito a $creatorUsername")
-                    Log.d("ExploreFragment", "User $currentUsername subscribed to $creatorUsername")
+                    showDarkToast("🎉 Te has suscrito")
+                    Log.d("ExploreFragment", "User $currentUserId subscribed to $creatorUserId")
                 }
                 
                 // Refresh the adapter to update subscription states
@@ -1278,6 +1298,26 @@ class ExploreFragment : Fragment() {
         // Make background transparent to show rounded corners
         (view.parent as? View)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
+        // Setup BlurView for BottomSheet
+        val blurView = view.findViewById<eightbitlab.com.blurview.BlurView>(R.id.blurView)
+        val decorView = requireActivity().window.decorView
+        val rootView = requireActivity().window.decorView.findViewById<ViewGroup>(android.R.id.content)
+        val windowBackground = decorView.background
+
+        blurView.setupWith(rootView, RenderScriptBlur(requireContext()))
+            .setFrameClearDrawable(windowBackground)
+            .setBlurRadius(20f)
+            .setBlurAutoUpdate(true)
+            .setOverlayColor(android.graphics.Color.parseColor("#CC1E1E1E")) // Match item background color with transparency
+
+        blurView.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                val radius = view.resources.displayMetrics.density * 24f
+                outline.setRoundRect(0, 0, view.width, view.height, radius)
+            }
+        }
+        blurView.clipToOutline = true
+
         val recyclerView = view.findViewById<RecyclerView>(R.id.filterOptionsRecyclerView)
         recyclerView.layoutManager = LinearLayoutManager(requireContext())
 
@@ -1591,114 +1631,14 @@ class ExploreFragment : Fragment() {
         }
     }
 
-    // Show all courses (reset filter)
-    private fun showAllCourses() {
-        currentFilterIndex = 0
-        val sorted = allCoursesList.sortedByDescending { it.timestamp }
-        coursesList.clear()
-        coursesList.addAll(sorted)
-        if (::coursesAdapter.isInitialized) {
-            coursesAdapter.updateCourses(coursesList)
-        } else {
-            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
-        }
-        updateCourseStats()
-        clearActiveFilterUI()
-        showDarkToast("Mostrando todos los cursos (${sorted.size})")
-        Log.d("ExploreFragment", "Showing all courses: ${sorted.size} courses")
-    }
-    
-    // Update active filter UI indicator
-    private fun updateActiveFilterUI(filterName: String) {
-        val activeFilterContainer = view?.findViewById<LinearLayout>(R.id.activeFilterContainer)
-        val activeFilterText = view?.findViewById<TextView>(R.id.activeFilterText)
-        val coursesSectionTitle = view?.findViewById<TextView>(R.id.coursesSectionTitle)
-        
-        if (currentFilterIndex == 0) {
-            // Hide filter chip with animation when showing all courses
-            activeFilterContainer?.animate()
-                ?.alpha(0f)
-                ?.scaleX(0.8f)
-                ?.scaleY(0.8f)
-                ?.setDuration(200)
-                ?.withEndAction {
-                    activeFilterContainer.visibility = View.GONE
-                }
-                ?.start()
-            coursesSectionTitle?.text = "Todos los Cursos"
-        } else {
-            // Show filter chip with animation and selected filter name
-            activeFilterText?.text = filterName
-            coursesSectionTitle?.text = filterName
-            
-            if (activeFilterContainer?.visibility != View.VISIBLE) {
-                activeFilterContainer?.visibility = View.VISIBLE
-                activeFilterContainer?.alpha = 0f
-                activeFilterContainer?.scaleX = 0.8f
-                activeFilterContainer?.scaleY = 0.8f
-                activeFilterContainer?.animate()
-                    ?.alpha(1f)
-                    ?.scaleX(1f)
-                    ?.scaleY(1f)
-                    ?.setDuration(250)
-                    ?.setInterpolator(android.view.animation.OvershootInterpolator(1.2f))
-                    ?.start()
-            }
-        }
-    }
-    
-    // Clear active filter UI
-    private fun clearActiveFilterUI() {
-        val activeFilterContainer = view?.findViewById<LinearLayout>(R.id.activeFilterContainer)
-        val coursesSectionTitle = view?.findViewById<TextView>(R.id.coursesSectionTitle)
-        
-        // Animate out the filter chip
-        activeFilterContainer?.animate()
-            ?.alpha(0f)
-            ?.scaleX(0.8f)
-            ?.scaleY(0.8f)
-            ?.setDuration(200)
-            ?.withEndAction {
-                activeFilterContainer.visibility = View.GONE
-            }
-            ?.start()
-        
-        coursesSectionTitle?.text = "Todos los Cursos"
-    }
-    
-    // Clear active filter and show all courses
-    private fun clearActiveFilter() {
-        showAllCourses()
-    }
-    
-    override fun onResume() {
-        super.onResume()
-    // Reload courses when returning to this fragment (force remote refresh)
-    loadCourses(forceRemote = true)
-        // Sync any changes from RecyclerView to Course table
-        syncCoursesToTable()
-        // Update stats when resuming
-        updateCourseStats()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        // No video playback to stop in course cards
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        // Clean up any resources - no video playback to stop in course cards
-    }
-
     /**
      * Sync subscription to Supabase
      */
-    private suspend fun syncSubscriptionToSupabase(subscriberUsername: String, creatorUsername: String) {
+    private suspend fun syncSubscriptionToSupabase(subscriberId: Long, creatorId: Long) {
         try {
             val supabaseClient = com.example.tareamov.service.SupabaseClient
-            supabaseClient.subscribeToCreator(subscriberUsername, creatorUsername)
-            Log.d("ExploreFragment", "Subscription synced to Supabase: $subscriberUsername -> $creatorUsername")
+            supabaseClient.subscribeToCreator(subscriberId, creatorId)
+            Log.d("ExploreFragment", "Subscription synced to Supabase: $subscriberId -> $creatorId")
         } catch (e: Exception) {
             Log.e("ExploreFragment", "Error syncing subscription to Supabase", e)
             // Don't throw - local subscription is more important
@@ -1708,58 +1648,43 @@ class ExploreFragment : Fragment() {
     /**
      * Sync unsubscription to Supabase
      */
-    private suspend fun syncUnsubscriptionToSupabase(subscriberUsername: String, creatorUsername: String) {
+    private suspend fun syncUnsubscriptionToSupabase(subscriberId: Long, creatorId: Long) {
         try {
             val supabaseClient = com.example.tareamov.service.SupabaseClient
-            supabaseClient.unsubscribeFromCreator(subscriberUsername, creatorUsername)
-            Log.d("ExploreFragment", "Unsubscription synced to Supabase: $subscriberUsername -> $creatorUsername")
+            supabaseClient.unsubscribeFromCreator(subscriberId, creatorId)
+            Log.d("ExploreFragment", "Unsubscription synced to Supabase: $subscriberId -> $creatorId")
         } catch (e: Exception) {
             Log.e("ExploreFragment", "Error syncing unsubscription to Supabase", e)
             // Don't throw - local unsubscription is more important
         }
     }
-    
-    // Debug function to show detailed stats info - remove in production
+
+    private fun clearActiveFilter() {
+        // Clear any active filter and reload all courses
+        showAllCourses()
+        updateActiveFilterUI(null)
+    }
+
     private fun showDebugStatsInfo() {
-        val currentTime = System.currentTimeMillis()
-        val sevenDaysAgo = currentTime - (7 * 24 * 60 * 60 * 1000)
+        // Show debug stats info
+        Toast.makeText(context, "Debug Stats Info", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showAllCourses() {
+        // Reload all courses without filter
+        loadCourses(forceRemote = false)
+    }
+
+    private fun updateActiveFilterUI(filterName: String?) {
+        // Update UI based on active filter
+        val activeFilterContainer = view?.findViewById<View>(R.id.activeFilterContainer)
+        val activeFilterText = view?.findViewById<TextView>(R.id.activeFilterText)
         
-        val debugInfo = StringBuilder()
-        debugInfo.append("📊 ESTADÍSTICAS DE CURSOS\n\n")
-        debugInfo.append("🔢 Total de cursos: ${allCoursesList.size}\n")
-        debugInfo.append("💎 Cursos premium: ${allCoursesList.count { it.isPremium }}\n")
-        debugInfo.append("🆓 Cursos gratuitos: ${allCoursesList.count { !it.isPremium }}\n")
-        debugInfo.append("🆕 Cursos nuevos (7 días): ${allCoursesList.count { it.timestamp > sevenDaysAgo }}\n\n")
-        
-        if (allCoursesList.isNotEmpty()) {
-            debugInfo.append("📋 DETALLES DE CURSOS:\n")
-            allCoursesList.take(5).forEach { course ->
-                val daysDiff = (currentTime - course.timestamp) / (24 * 60 * 60 * 1000)
-                val isPremium = if (course.isPremium) "💎" else "🆓"
-                debugInfo.append("$isPremium ${course.title} (${daysDiff} días)\n")
-            }
+        if (filterName != null) {
+            activeFilterContainer?.visibility = View.VISIBLE
+            activeFilterText?.text = filterName
         } else {
-            debugInfo.append("❌ No hay cursos cargados\n")
+            activeFilterContainer?.visibility = View.GONE
         }
-        
-        val dialogBuilder = androidx.appcompat.app.AlertDialog.Builder(
-            androidx.appcompat.view.ContextThemeWrapper(requireContext(), R.style.DarkAlertDialogTheme)
-        )
-
-        dialogBuilder
-            .setTitle("🔍 Debug - Estadísticas")
-            .setMessage(debugInfo.toString())
-            .setPositiveButton("✅ OK", null)
-            .setNeutralButton("🔄 Actualizar") { _, _ ->
-                updateCourseStats()
-                loadCourses()
-                showDarkToast("Estadísticas actualizadas")
-            }
-
-        val dialog = dialogBuilder.create()
-        dialog.setOnShowListener {
-            dialog.window?.setBackgroundDrawableResource(R.drawable.dark_dialog_background)
-        }
-        dialog.show()
     }
 }

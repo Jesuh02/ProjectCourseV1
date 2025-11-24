@@ -1478,8 +1478,8 @@ WHERE ts.task_id = $taskId;
                     val subscriptions = supabase.fetchSubscriptions().let { list ->
                         if (orderBy != null) {
                             when (orderBy) {
-                                "subscriber_username" -> if (direction == "desc") list.sortedByDescending { it.subscriberUsername } else list.sortedBy { it.subscriberUsername }
-                                "creator_username" -> if (direction == "desc") list.sortedByDescending { it.creatorUsername } else list.sortedBy { it.creatorUsername }
+                                "subscriber_id" -> if (direction == "desc") list.sortedByDescending { it.subscriberId } else list.sortedBy { it.subscriberId }
+                                "creator_id" -> if (direction == "desc") list.sortedByDescending { it.creatorId } else list.sortedBy { it.creatorId }
                                 else -> list.sortedBy { it.subscriptionDate }
                             }
                         } else {
@@ -2566,7 +2566,7 @@ RESPONDE AHORA CON ESTE FORMATO EXACTO Y DIRECTO.
         if (subscriptions.isEmpty()) return "No se encontraron suscripciones."
         
         return subscriptions.joinToString("\n") { sub ->
-            "Suscriptor: ${sub.subscriberUsername}, Creador: ${sub.creatorUsername}"
+            "Suscriptor ID: ${sub.subscriberId}, Creador ID: ${sub.creatorId}"
         }
     }
 

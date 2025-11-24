@@ -7,12 +7,23 @@
     android:background="#000000"
     tools:context=".ui.VideoHomeFragment">
 
+    <!-- Main Content - Video Background -->
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/videoViewPager"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#000000"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <!-- Top Navigation Tabs Container -->
     <FrameLayout
         android:id="@+id/topNavContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#000000"
+        android:background="@android:color/transparent"
         app:layout_constraintTop_toTopOf="parent">
 
         <!-- Top Navigation Tabs (botones normales) -->
@@ -101,72 +112,77 @@
         </LinearLayout>
 
         <!-- Search Bar (ocupa todo el espacio cuando está visible) -->
-        <LinearLayout
+        <eightbitlab.com.blurview.BlurView
             android:id="@+id/searchBarContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="12dp"
-            android:background="@drawable/bg_liquid_glass"
             android:layout_margin="8dp"
             android:elevation="8dp"
-            android:visibility="gone">
+            android:visibility="gone"
+            app:blurOverlayColor="#4D000000">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-
-            <EditText
-                android:id="@+id/searchEditText"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:background="@android:color/transparent"
-                android:hint="Buscar videos..."
-                android:textColorHint="#CCFFFFFF"
-                android:textColor="#FFFFFF"
-                android:drawableStart="@android:drawable/ic_menu_search"
-                android:drawableTint="#FFFFFF"
-                android:drawablePadding="12dp"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:imeOptions="actionSearch"
-                android:inputType="text"
-                android:singleLine="true" />
-
-            <ImageButton
-                android:id="@+id/closeSearchButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginStart="8dp"
-                android:src="@android:drawable/ic_menu_close_clear_cancel"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Cancelar"
-                android:tint="#FFFFFF" />
-        </LinearLayout>
-
-        <!-- Search Filter Chips -->
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:scrollbars="none">
-
-            <com.google.android.material.chip.ChipGroup
-                android:id="@+id/searchFilterChipGroup"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:singleSelection="true"
-                app:selectionRequired="false">
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="12dp"
+                android:background="@drawable/bg_liquid_glass">
 
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/filterAllChip"
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Todos"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <EditText
+                        android:id="@+id/searchEditText"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:background="@android:color/transparent"
+                        android:hint="Buscar videos..."
+                        android:textColorHint="#CCFFFFFF"
+                        android:textColor="#FFFFFF"
+                        android:drawableStart="@android:drawable/ic_menu_search"
+                        android:drawableTint="#FFFFFF"
+                        android:drawablePadding="12dp"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:imeOptions="actionSearch"
+                        android:inputType="text"
+                        android:singleLine="true" />
+
+                    <ImageButton
+                        android:id="@+id/closeSearchButton"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="8dp"
+                        android:src="@android:drawable/ic_menu_close_clear_cancel"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Cancelar"
+                        android:tint="#FFFFFF" />
+                </LinearLayout>
+
+                <!-- Search Filter Chips -->
+                <HorizontalScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:scrollbars="none">
+
+                    <com.google.android.material.chip.ChipGroup
+                        android:id="@+id/searchFilterChipGroup"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:singleSelection="true"
+                        app:selectionRequired="false">
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/filterAllChip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Todos"
                     android:checked="true"
                     style="@style/Widget.MaterialComponents.Chip.Choice" />
 
@@ -193,20 +209,10 @@
             </com.google.android.material.chip.ChipGroup>
         </HorizontalScrollView>
     </LinearLayout>
+    </eightbitlab.com.blurview.BlurView>
     </FrameLayout>
 
-    <!-- Main Content - Video Background -->
-    <!-- Replace the ImageView with a ViewPager2 for video scrolling -->
-    <!-- Update the ViewPager2 section to better handle video display -->
-    <androidx.viewpager2.widget.ViewPager2
-        android:id="@+id/videoViewPager"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:background="#000000"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/topNavContainer" />
+
 
     <!-- Bottom Info Section removed - info is now handled by individual video items -->
 

@@ -175,6 +175,31 @@ class LocalLlamaService(private val context: Context) {
             } else {
                 createDynamicPromptWithMCPCapability(optimizedPrompt, mcpHttpClient != null, requiresData)
             }
+            
+            // Add SQL generation guidance for data queries - ALWAYS include if MCP is available
+            if (mcpHttpClient != null && !schemaProvided) {
+                enrichedPrompt = """
+                    |$enrichedPrompt
+                    |
+                    |**IMPORTANTE - GENERACIÓN DE SQL DINÁMICA:**
+                    |Tienes capacidad TOTAL para escribir y ejecutar scripts SQL de PostgreSQL.
+                    |El sistema ejecutará tu SQL en Supabase y te devolverá los resultados JSON.
+                    |
+                    |**SINTAXIS OBLIGATORIA:**
+                    |TOOL_CALL: query_database(query="SELECT ... FROM ...")
+                    |
+                    |**ESTRATEGIA DE RESPUESTA:**
+                    |1. Si necesitas explorar tablas -> TOOL_CALL: get_database_schema()
+                    |2. Si necesitas datos -> Escribe tu propio SQL (JOINs, GROUP BY, WHERE) y ejecútalo con query_database()
+                    |3. Analiza el JSON resultante y responde al usuario.
+                    |
+                    |**EJEMPLOS DE SQL VÁLIDO:**
+                    |1. Conteo: SELECT COUNT(*) as total FROM usuarios
+                    |2. JOIN: SELECT u.usuario, COUNT(c.id) as cursos FROM usuarios u LEFT JOIN courses c ON u.usuario = c.creator_username GROUP BY u.usuario
+                    |3. Filtrado: SELECT * FROM courses WHERE is_premium = true AND price > 0 ORDER BY created_at DESC LIMIT 10
+                    |4. Agregación: SELECT category, AVG(rating) as avg_rating FROM courses GROUP BY category HAVING AVG(rating) > 4.0
+                """.trimMargin()
+            }
             val toolExecutionHistory = StringBuilder()
 
             Log.d(TAG, "Attempting to generate response with LocalLlama")
@@ -360,8 +385,10 @@ Completed (1/1) *Nombre de la tarea*
             Log.d(TAG, response.take(500))
             
             // Try multiple patterns to be more flexible
+            // We use greedy matching (.*) for arguments to handle nested parentheses in SQL like COUNT(*)
+            // We assume the tool call is on a single line or the main part of the response
             val patterns = listOf(
-                Regex("""TOOL_CALL:\s*(\w+)\((.*?)\)""", RegexOption.IGNORE_CASE),
+                Regex("""TOOL_CALL:\s*(\w+)\((.*)\)""", RegexOption.IGNORE_CASE),
                 Regex("""usar.*?herramienta.*?(\w+)\(\)""", RegexOption.IGNORE_CASE),
                 Regex("""ejecutar.*?(\w+)\(""", RegexOption.IGNORE_CASE),
                 Regex("""necesito.*?(\w+)\(""", RegexOption.IGNORE_CASE)
@@ -371,19 +398,41 @@ Completed (1/1) *Nombre de la tarea*
                 val match = pattern.find(response)
                 if (match != null) {
                     val toolName = match.groupValues[1]
+                    // For the first pattern, group 2 is the arguments string
+                    // For others, it might not exist or be different, but our main target is TOOL_CALL
                     val argsString = if (match.groupValues.size > 2) match.groupValues[2] else ""
                     
-                    Log.d(TAG, "? Tool call detected: $toolName with args: '$argsString'")
+                    Log.d(TAG, "🔍 Tool call detected: $toolName with args: '$argsString'")
                     
-                    // Parse arguments
+                    // Parse arguments robustly handling SQL with commas/quotes
                     val arguments = mutableMapOf<String, String>()
                     if (argsString.isNotBlank()) {
-                        val argPattern = Regex("""(\w+)=["']?([^,"'\)]+)["']?""")
+                        // Match key="value" or key='value'
+                        // This regex captures the key and the value inside quotes
+                        // It handles escaped quotes if necessary, but for now simple greedy match until next quote is fine
+                        val argPattern = Regex("""(\w+)\s*=\s*(["'])(.*?)\2""")
+                        
+                        var foundArgs = false
                         argPattern.findAll(argsString).forEach { argMatch ->
+                            foundArgs = true
                             val key = argMatch.groupValues[1]
-                            val value = argMatch.groupValues[2].trim()
+                            // groupValues[2] is the quote type
+                            val value = argMatch.groupValues[3].trim()
                             arguments[key] = value
-                            Log.d(TAG, "  ?? Argument: $key = $value")
+                            Log.d(TAG, "  👉 Argument: $key = $value")
+                        }
+                        
+                        // Fallback: if no named arguments found, check if it's a single quoted string
+                        // This handles cases where LLM outputs: TOOL_CALL: query_database("SELECT ...")
+                        if (!foundArgs) {
+                            val fallbackMatch = Regex("""^["'](.*)["']$""").find(argsString.trim())
+                            if (fallbackMatch != null) {
+                                val value = fallbackMatch.groupValues[1].trim()
+                                // Default to "query" if tool is query_database, otherwise "default"
+                                val key = if (toolName == "query_database") "query" else "default"
+                                arguments[key] = value
+                                Log.d(TAG, "  👉 Fallback Argument: $key = $value")
+                            }
                         }
                     }
                     
@@ -391,7 +440,7 @@ Completed (1/1) *Nombre de la tarea*
                 }
             }
             
-            Log.d(TAG, "? No tool call pattern matched in response")
+            Log.d(TAG, "⚠️ No tool call pattern matched in response")
             return null
             
         } catch (e: Exception) {
@@ -405,13 +454,13 @@ Completed (1/1) *Nombre de la tarea*
      */
     private suspend fun executeToolViaMCP(toolCall: ToolCall, mcpClient: MCPHttpClient): String = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "??? Executing MCP tool: ${toolCall.toolName}")
+            Log.d(TAG, "🛠️ Executing MCP tool: ${toolCall.toolName}")
             
             val result = when (toolCall.toolName) {
                 "query_database" -> {
-                    val query = toolCall.arguments["query"] ?: return@withContext "? Error: falta el par�metro 'query'"
+                    val query = toolCall.arguments["query"] ?: return@withContext "⚠️ Error: falta el parámetro 'query'"
                     
-                    Log.d(TAG, "?? Querying database: $query")
+                    Log.d(TAG, "🔍 Querying database: $query")
                     val queryResult = mcpClient.queryDatabase(query)
 
                     if (queryResult.success) {
@@ -421,21 +470,29 @@ Completed (1/1) *Nombre de la tarea*
                         // VS Code style: Detect if result is a generic snapshot when specific data was requested
                         val isGenericSnapshot = isGenericSnapshotResult(queryResult.data, query)
                         
+                        // Check for explicit error in data
+                        val dataObj = queryResult.data as? org.json.JSONObject
+                        val isError = dataObj?.optBoolean("error") == true
+                        
                         buildString {
-                            append("? Consulta ejecutada exitosamente\n\n")
+                            if (isError) {
+                                append("⚠️ Error en la ejecución SQL\n\n")
+                            } else {
+                                append("✅ Consulta ejecutada exitosamente\n\n")
+                            }
                             append("**SQL generado:**\n")
                             append("```sql\n$sql\n```\n\n")
                             append("**Datos obtenidos:**\n")
                             append(formatMCPData(queryResult.data))
                             
                             if (!formattedSummary.isNullOrBlank()) {
-                                append("\n\n**An�lisis adicional:**\n")
+                                append("\n\n**Análisis adicional:**\n")
                                 append(formattedSummary)
                             }
                             
                             // VS Code behavior: If snapshot is generic but query was specific, suggest precise SQL
                             if (isGenericSnapshot) {
-                                append("\n\n?? **Nota:** El resultado es un snapshot gen�rico. ")
+                                append("\n\n💡 **Nota:** El resultado es un snapshot genérico. ")
                                 val preciseSql = generatePreciseSqlForQuery(query)
                                 if (preciseSql != null) {
                                     append("Para obtener la fila exacta, ejecuta:\n\n")
@@ -444,30 +501,30 @@ Completed (1/1) *Nombre de la tarea*
                             }
                         }.trim()
                     } else {
-                        "? Error en la consulta: ${queryResult.error}"
+                        "❌ Error en la consulta: ${queryResult.error}"
                     }
                 }
 
                 "get_database_schema" -> {
-                    Log.d(TAG, "?? Getting database schema")
+                    Log.d(TAG, "📋 Getting database schema")
                     val schemaResult = mcpClient.getDatabaseSchema()
 
                     if (schemaResult.success) {
-                        "? Esquema obtenido exitosamente:\n\n${schemaResult.schema}"
+                        "✅ Esquema obtenido exitosamente:\n\n${schemaResult.schema}"
                     } else {
-                        "? Error obteniendo esquema: ${schemaResult.error}"
+                        "❌ Error obteniendo esquema: ${schemaResult.error}"
                     }
                 }
 
-                else -> "? Error: Herramienta desconocida '${toolCall.toolName}'"
+                else -> "⚠️ Error: Herramienta desconocida '${toolCall.toolName}'"
             }
 
-            Log.d(TAG, "? Tool execution completed: ${toolCall.toolName}")
+            Log.d(TAG, "✅ Tool execution completed: ${toolCall.toolName}")
             return@withContext result
             
         } catch (e: Exception) {
-            Log.e(TAG, "? Error executing tool via MCP", e)
-            return@withContext "? Error ejecutando herramienta ${toolCall.toolName}: ${e.message}"
+            Log.e(TAG, "❌ Error executing tool via MCP", e)
+            return@withContext "❌ Error ejecutando herramienta ${toolCall.toolName}: ${e.message}"
         }
     }
 
@@ -504,9 +561,9 @@ Completed (1/1) *Nombre de la tarea*
             // Detect role query -> force JOIN with roles table
             if (baseQuery.contains(Regex("rol|role", RegexOption.IGNORE_CASE)) && 
                 baseQuery.contains(Regex("usuario|user|username", RegexOption.IGNORE_CASE))) {
-                append(". IMPORTANTE: Devu�lveme la fila exacta del usuario con LEFT JOIN a la tabla 'roles' para incluir el nombre del rol. ")
+                append(". IMPORTANTE: Devuélveme la fila exacta del usuario con LEFT JOIN a la tabla 'roles' para incluir el nombre del rol. ")
                 append("Campos requeridos: usuarios.id, usuarios.usuario, usuarios.persona_id, usuarios.rol_id, roles.name AS rol_nombre, usuarios.created_at. ")
-                append("NO devuelvas solo un snapshot gen�rico, ejecuta el JOIN espec�fico.")
+                append("NO devuelvas solo un snapshot genérico, ejecuta el JOIN específico.")
             } 
             // Detect "users without courses" query
             else if (baseQuery.contains(Regex("usuario.*nunca|usuario.*sin|users.*never|without.*course", RegexOption.IGNORE_CASE))) {
@@ -519,8 +576,8 @@ Completed (1/1) *Nombre de la tarea*
     private fun detectBusinessIntent(text: String): Boolean {
         val keywords = listOf(
             "inteligencia", "business intelligence", "bi ", "kpi", "indicador", "indicadores",
-            "marketing", "growth", "ventas", "retencion", "retenci�n", "estrategia", "funnel",
-            "conversion", "conversi�n", "campana", "campa�a", "churn", "retention"
+            "marketing", "growth", "ventas", "retencion", "retención", "estrategia", "funnel",
+            "conversion", "conversión", "campana", "campaña", "churn", "retention"
         )
         val lower = text.lowercase()
         return keywords.any { lower.contains(it) }
@@ -535,9 +592,9 @@ Completed (1/1) *Nombre de la tarea*
         
         // Conversational queries that DON'T need data
         val conversationalPatterns = listOf(
-            "hola", "hi", "hello", "buenos d�as", "buenas tardes",
-            "qu� puedes hacer", "ayuda", "help", "c�mo funciona",
-            "explica", "qu� es", "gracias", "thanks"
+            "hola", "hi", "hello", "buenos días", "buenas tardes",
+            "qué puedes hacer", "ayuda", "help", "cómo funciona",
+            "explica", "qué es", "gracias", "thanks"
         )
         
         // If it's a simple greeting/help, don't require data
@@ -547,13 +604,13 @@ Completed (1/1) *Nombre de la tarea*
         
         // Data query indicators - these ALWAYS need database access
         val dataIndicators = listOf(
-            "cu�ntos", "cuantos", "how many", "count",
+            "cuántos", "cuantos", "how many", "count",
             "usuarios", "users", "cursos", "courses", "videos",
             "lista", "list", "dame", "give me", "show", "muestra",
-            "todos", "all", "qu�", "que", "what", "which",
-            "estad�stica", "statistics", "an�lisis", "analysis",
+            "todos", "all", "qué", "que", "what", "which",
+            "estadística", "statistics", "análisis", "analysis",
             "nunca", "never", "sin", "without", "no tienen",
-            "top", "mejor", "best", "m�s", "mas", "most",
+            "top", "mejor", "best", "más", "mas", "most",
             "total", "suma", "sum", "promedio", "average"
         )
         
@@ -602,7 +659,18 @@ Completed (1/1) *Nombre de la tarea*
                 }
             }
             is org.json.JSONObject -> {
-                "Objeto JSON:\n${data.toString(2)}"
+                if (data.has("error") && data.optBoolean("error")) {
+                    val msg = data.optString("message", "Error desconocido")
+                    val hint = data.optString("hint", "")
+                    buildString {
+                        append("❌ ERROR DE EJECUCIÓN:\n$msg")
+                        if (hint.isNotEmpty()) {
+                            append("\n\n💡 SUGERENCIA:\n$hint")
+                        }
+                    }
+                } else {
+                    "Objeto JSON:\n${data.toString(2)}"
+                }
             }
             is List<*> -> {
                 if (data.isEmpty()) {
@@ -656,31 +724,8 @@ Completed (1/1) *Nombre de la tarea*
      * VS Code style: Generate precise SQL for common query patterns
      */
     private fun generatePreciseSqlForQuery(query: String): String? {
-        val lowerQuery = query.lowercase()
-        
-        // Pattern: role of user with username = X
-        if (lowerQuery.contains(Regex("rol|role")) && lowerQuery.contains(Regex("username|usuario"))) {
-            val usernameMatch = Regex("""username\s*[=:]\s*["']?(\w+)["']?|usuario\s*[=:]\s*["']?(\w+)["']?""").find(lowerQuery)
-            val username = usernameMatch?.groupValues?.firstOrNull { !it.isNullOrBlank() && it.length > 1 } ?: "nuevo"
-            
-            return """
-SELECT u.id, u.usuario, u.persona_id, u.rol_id, r.name AS rol_nombre, u.created_at
-FROM usuarios u
-LEFT JOIN roles r ON u.rol_id = r.id
-WHERE u.usuario = '$username';
-            """.trimIndent()
-        }
-        
-        // Pattern: users without courses
-        if (lowerQuery.contains(Regex("usuario.*sin|usuario.*nunca|users.*without|users.*never"))) {
-            return """
-SELECT u.id, u.usuario, u.email, u.persona_id, u.rol_id, u.created_at
-FROM usuarios u
-LEFT JOIN courses c ON u.usuario = c.creator_username
-WHERE c.creator_username IS NULL;
-            """.trimIndent()
-        }
-        
+        // Disable hardcoded queries that use JOINs as they are not supported by the current MCP backend
+        // The LLM will handle these using multiple simple queries as per the system prompt
         return null
     }
 
@@ -1011,22 +1056,65 @@ WHERE c.creator_username IS NULL;
     /**
      * Create flexible prompt that ENFORCES data validation via MCP
      * All responses with data MUST be backed by Supabase queries
+     * Enhanced to emphasize SQL generation capabilities
      */
     private fun createDynamicPromptWithMCPCapability(optimizedPrompt: String, hasToolAccess: Boolean, requiresData: Boolean = false): String {
         return if (hasToolAccess) {
             """
-Asistente DB con MCP. BD: TareaMov.
-${if (requiresData) "?? REQUIERE DATOS: TOOL_CALL: query_database() primero." else ""}
+Eres un Asistente de Base de Datos experto con acceso a herramientas MCP para Supabase (TareaMov).
 
-TOOLS: get_database_schema(), query_database(query="...")
+🔧 HERRAMIENTAS DISPONIBLES:
+1. get_database_schema() - Obtiene el esquema completo de la base de datos
+2. query_database(query="SQL") - Ejecuta consultas SQL en Supabase
+
+📋 TABLAS Y COLUMNAS CLAVE:
+- usuarios: id, usuario (NO username), rol_id, persona_id
+- personas: id, nombres, apellidos, email
+- courses: id, title, creator_username, is_premium
+- videos: id, title, url, course_id
+- subscriptions: id, user_id, course_id, active
+- task_submissions: id, user_id, task_id, content, grade
+
+⚠️ INSTRUCCIONES DE PENSAMIENTO (OBLIGATORIO):
+Antes de responder, DEBES pensar paso a paso:
+1. **ANÁLISIS**: ¿Qué datos necesito para responder la pregunta del usuario?
+2. **ESTRATEGIA**: ¿Qué tablas contienen esos datos?
+3. **ACCIÓN**: Genera la llamada a la herramienta `query_database` con el SQL preciso.
+
+💡 REGLAS CRÍTICAS PARA SQL (LEER ATENTAMENTE):
+1. ✅ USA SIEMPRE 'id', 'usuario' al consultar usuarios. El 'email' está en la tabla 'personas', NO en 'usuarios'.
+2. ✅ "Contenido" implica:
+   - Cursos creados (tabla 'courses', columna 'creator_username' coincide con 'usuario')
+   - Tareas enviadas (tabla 'task_submissions', columna 'user_id' coincide con 'id')
+3. ✅ PUEDES USAR SUBQUERIES SIMPLES (ej. WHERE id NOT IN (SELECT ...)).
+4. 🚫 EVITA JOINs COMPLEJOS si no estás seguro.
+5. ✅ USA NOMBRES DE COLUMNAS CORRECTOS:
+   - Tabla 'usuarios': usa 'usuario', NO 'username'.
+
+📝 EJEMPLO DE RESPUESTA CORRECTA:
+Thought: Busco usuarios sin contenido. Consulto usuarios que no están en courses ni task_submissions.
+TOOL_CALL: query_database(query="SELECT id, usuario FROM usuarios WHERE id NOT IN (SELECT user_id FROM task_submissions) AND usuario NOT IN (SELECT creator_username FROM courses)")
+
+🎯 CONSULTA DEL USUARIO:
+$optimizedPrompt
+
+${if (requiresData) "⚡ ACCIÓN REQUERIDA: El usuario pide datos. PIENSA y luego EJECUTA query_database()." else "💭 Si necesitas datos, usa query_database()."}
+
+⚠️ IMPORTANTE:
+- TU RESPUESTA FINAL NO DEBE INCLUIR EL LOG DE EJECUCIÓN (ej. "Ran query", "SQL generado", "Datos obtenidos").
+- SOLO MUESTRA EL RESULTADO FINAL INTERPRETADO.
+- Si te piden "lista de usuarios", EJECUTA: TOOL_CALL: query_database(query="SELECT id, usuario FROM usuarios LIMIT 50")
+- NO inventes datos, SIEMPRE usa las herramientas MCP
+- Si no conoces el esquema, ejecuta get_database_schema() primero
+            """.trimIndent()
+        } else {
+            """
+Asistente TareaMov (sin herramientas MCP disponibles).
 
 CONSULTA: $optimizedPrompt
 
-${if (requiresData) "Tu respuesta DEBE ser: TOOL_CALL: query_database(query=\"...\")" else "Si necesitas datos: TOOL_CALL: query_database(query=\"...\")"}
-NO escribas "Ran"/"Completed". NO inventes datos.
+⚠️ Sin acceso a herramientas MCP. Proporcionaré información general.
             """.trimIndent()
-        } else {
-            "Asistente TareaMov sin MCP.\nCONSULTA: $optimizedPrompt"
         }
     }
 

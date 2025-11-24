@@ -93,6 +93,8 @@ class ChatBotFragment : Fragment() {
     private lateinit var backButton: ImageButton
     private lateinit var clearChatButton: ImageButton
     private lateinit var loadingProgressBar: ProgressBar
+    private lateinit var activeContextValue: TextView
+    private lateinit var activeContextIcon: ImageView
 
     private lateinit var chatAdapter: ChatMessageAdapter
     private lateinit var database: AppDatabase
@@ -109,22 +111,96 @@ class ChatBotFragment : Fragment() {
                 || model.contains("Emulator") || model.contains("Android SDK built for"))
     }
 
-    private fun getMicroserviceBaseUrl(): String {
+    /**
+     * Obtiene la IP del host automáticamente usando DNS lookup
+     * Para emulador siempre usa 10.0.2.2 (mapeo especial de Android Emulator)
+     * Para dispositivo físico, intenta detectar la IP del servidor mediante múltiples estrategias
+     */
+    private fun getHostIpAddress(): String {
         return if (isRunningOnEmulator()) {
-            // Emulator default mapping to host machine
-            "http://10.0.2.2:3001/"
+            "10.0.2.2"  // IP especial del emulador Android para el host
         } else {
-            // Use your host LAN IP when testing from a physical device on same Wi-Fi
-            "http://10.169.165.181:3001/"
+            // Para dispositivos físicos, intentar varias estrategias para encontrar el servidor
+            // Estrategia 1: Obtener la IP de la puerta de enlace (gateway) y probar IPs cercanas
+            try {
+                val wifiManager = requireContext().applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                val dhcpInfo = wifiManager.dhcpInfo
+                
+                // Convertir la IP del gateway a formato legible
+                val gatewayInt = dhcpInfo.gateway
+                val gateway = String.format(
+                    "%d.%d.%d.%d",
+                    gatewayInt and 0xff,
+                    gatewayInt shr 8 and 0xff,
+                    gatewayInt shr 16 and 0xff,
+                    gatewayInt shr 24 and 0xff
+                )
+                
+                Log.d("ChatBotFragment", "Gateway IP detected: $gateway")
+                
+                // La IP del PC suele estar en la misma subred que el gateway
+                // Intentar con la IP del dispositivo actual para deducir la red
+                val myIpInt = dhcpInfo.ipAddress
+                val myIp = String.format(
+                    "%d.%d.%d.%d",
+                    myIpInt and 0xff,
+                    myIpInt shr 8 and 0xff,
+                    myIpInt shr 16 and 0xff,
+                    myIpInt shr 24 and 0xff
+                )
+                
+                Log.d("ChatBotFragment", "Device IP: $myIp")
+                
+                // Extraer la red base (primeros 3 octetos)
+                val networkBase = myIp.substringBeforeLast(".")
+                
+                // Probar IPs comunes en redes locales donde suele estar el servidor
+                // Generalmente los PCs tienen IPs más bajas que los móviles
+                val commonServerIps = listOf(
+                    "$networkBase.90",  // IP común para PCs
+                    "$networkBase.100",
+                    "$networkBase.1",   // A veces el router asigna .1 al primer PC
+                    "$networkBase.2",
+                    gateway             // El gateway mismo en algunos casos
+                )
+                
+                // Retornar la primera IP que funcione (en el futuro se puede hacer ping)
+                // Por ahora retornamos la más probable (.90 o .100)
+                return commonServerIps.firstOrNull { testConnection(it, 3001, 1000) } 
+                    ?: "$networkBase.90"  // Fallback a .90
+                    
+            } catch (e: Exception) {
+                Log.e("ChatBotFragment", "Error detecting host IP: ${e.message}")
+                // Fallback: usar IP común en redes 192.168.1.x
+                return "192.168.1.90"
+            }
+        }
+    }
+    
+    /**
+     * Prueba si hay conexión al servidor en la IP y puerto especificados
+     */
+    private fun testConnection(ip: String, port: Int, timeoutMs: Int): Boolean {
+        return try {
+            val socket = java.net.Socket()
+            socket.connect(java.net.InetSocketAddress(ip, port), timeoutMs)
+            socket.close()
+            Log.d("ChatBotFragment", "✅ Connection successful to $ip:$port")
+            true
+        } catch (e: Exception) {
+            Log.d("ChatBotFragment", "❌ Connection failed to $ip:$port - ${e.message}")
+            false
         }
     }
 
+    private fun getMicroserviceBaseUrl(): String {
+        val hostIp = getHostIpAddress()
+        return "http://$hostIp:3001/"
+    }
+
     private fun getOllamaUrl(): String {
-        return if (isRunningOnEmulator()) {
-            "http://10.0.2.2:11435"
-        } else {
-            "http://10.169.165.181:11435"
-        }
+        val hostIp = getHostIpAddress()
+        return "http://$hostIp:11435"
     }
     // Aumentar los timeouts para evitar que el chat cierre la espera antes de que el modelo responda
     private val microservicioApi: MicroservicioApi by lazy {
@@ -298,6 +374,8 @@ class ChatBotFragment : Fragment() {
         backButton = view.findViewById(R.id.backButton)
         clearChatButton = view.findViewById(R.id.clearChatButton)
         loadingProgressBar = view.findViewById(R.id.loadingProgressBar)
+        activeContextValue = view.findViewById(R.id.activeContextValue)
+        activeContextIcon = view.findViewById(R.id.activeContextIcon)
         
         // Initialize task overlay components
         taskListOverlay = view.findViewById(R.id.taskListOverlay)
@@ -348,6 +426,25 @@ class ChatBotFragment : Fragment() {
             Log.d("ChatBotFragment", "errorMessage: $errorMessage")
             Log.d("ChatBotFragment", "fileName: $fileName")
             Log.d("ChatBotFragment", "==============================================")
+
+            // Retrieve task info from arguments to update UI immediately
+            val argTaskName = args.getString("taskName")
+            val argTaskDescription = args.getString("taskDescription")
+            
+            if (!argTaskName.isNullOrEmpty()) {
+                taskName = argTaskName
+                if (::activeContextValue.isInitialized) {
+                    activeContextValue.text = taskName
+                    activeContextValue.setTextColor(android.graphics.Color.parseColor("#DDDDDD"))
+                    if (::activeContextIcon.isInitialized) {
+                        activeContextIcon.setColorFilter(android.graphics.Color.parseColor("#DDDDDD"))
+                    }
+                }
+            }
+            
+            if (!argTaskDescription.isNullOrEmpty()) {
+                taskDescription = argTaskDescription
+            }
 
             if (errorMessage != null) {
                 // Mostrar mensaje de error del archivo
@@ -478,11 +575,21 @@ class ChatBotFragment : Fragment() {
                         sessionId = sessionId
                     )
                 } else {
+                    // Preparar información del contexto de la tarea si está disponible
+                    val contextInfo = if (!currentFileContext!!.contentSummary.isNullOrBlank()) {
+                        "\n📝 Contexto: ${currentFileContext!!.contentSummary}"
+                    } else if (taskName.isNotEmpty()) {
+                        "\n📝 Tarea: $taskName"
+                    } else {
+                        ""
+                    }
+
                     ChatMessage(
                         message = "📁 **Archivo cargado exitosamente**\n\n" +
                                 "📄 Nombre: ${currentFileContext!!.fileName}\n" +
                                 "🔧 Tipo: ${currentFileContext!!.fileType}\n" +
-                                "📊 Contenido: ${currentFileContext!!.fileContent.length} caracteres\n\n" +
+                                "📊 Contenido: ${currentFileContext!!.fileContent.length} caracteres" +
+                                contextInfo + "\n\n" +
                                 "✅ Puedes hacerme preguntas sobre este archivo y te ayudaré con el análisis.",
                         isFromUser = false,
                         sessionId = sessionId
@@ -1998,11 +2105,12 @@ class ChatBotFragment : Fragment() {
      * Muestra el overlay con la lista de tareas del curso
      */
     private fun showTaskListOverlay(initialQuery: String = "") {
-        if (courseId == -1L) {
+        // Permitir mostrar tareas incluso si no hay curso seleccionado (mostrará todas)
+        /* if (courseId == -1L) {
             Toast.makeText(context, "No hay información del curso disponible", Toast.LENGTH_SHORT).show()
             // messageEditText.setText("") // Clear the # symbol
             return
-        }
+        } */
 
         lifecycleScope.launch {
             try {
@@ -2186,6 +2294,15 @@ class ChatBotFragment : Fragment() {
                 // ✅ CRÍTICO: Actualizar SIEMPRE las variables de instancia para que sendMessage las use
                 taskName = task.taskName
                 taskDescription = task.taskDescription ?: ""
+                
+                // Actualizar UI del contexto activo
+                if (::activeContextValue.isInitialized) {
+                    activeContextValue.text = taskName
+                    activeContextValue.setTextColor(android.graphics.Color.parseColor("#DDDDDD")) // Highlight
+                    if (::activeContextIcon.isInitialized) {
+                        activeContextIcon.setColorFilter(android.graphics.Color.parseColor("#DDDDDD"))
+                    }
+                }
                 
                 Log.d("ChatBotFragment", "🎯 Tarea seleccionada: $taskName")
                 Log.d("ChatBotFragment", "📝 Descripción: $taskDescription")
@@ -2452,8 +2569,7 @@ class ChatBotFragment : Fragment() {
                     val contextMessage = ChatMessage(
                         message = "📝 **Tarea seleccionada**\n\n" +
                                 "📌 Tarea: ${task.taskName}\n" +
-                                "ℹ️ Descripción: ${task.taskDescription}\n\n" +
-                                "⚠️ No hay entrega asociada o no se pudo cargar el contexto. El contexto se limita a la descripción de la tarea.",
+                                "ℹ️ Descripción: ${task.taskDescription}",
                         isFromUser = false,
                         sessionId = sessionId,
                         timestamp = System.currentTimeMillis()
@@ -2521,6 +2637,15 @@ class ChatBotFragment : Fragment() {
                     
                     Log.d("ChatBotFragment", "Información de tarea cargada: $taskName - $topicName - $courseTitle (courseId: $courseId)")
                     
+                    // Actualizar UI del contexto activo
+                    if (::activeContextValue.isInitialized) {
+                        activeContextValue.text = taskName
+                        activeContextValue.setTextColor(android.graphics.Color.parseColor("#DDDDDD"))
+                        if (::activeContextIcon.isInitialized) {
+                            activeContextIcon.setColorFilter(android.graphics.Color.parseColor("#DDDDDD"))
+                        }
+                    }
+
                     // Actualizar el adaptador con la nueva información
                     val taskInfoForAdapter = ChatMessageAdapter.TaskInfo(
                         taskName = taskName,

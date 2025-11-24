@@ -1652,8 +1652,8 @@ object SupabaseClient {
     suspend fun insertSubscriptionToSupabase(sub: Subscription): Boolean = withContext(Dispatchers.IO) {
         try {
             val map = mapOf(
-                "subscriber_username" to sub.subscriberUsername,
-                "creator_username" to sub.creatorUsername,
+                "subscriber_id" to sub.subscriberId,
+                "creator_id" to sub.creatorId,
                 "subscription_date" to sub.subscriptionDate
             )
             val body = gson.toJson(map).toRequestBody(jsonMedia)
@@ -1686,9 +1686,9 @@ object SupabaseClient {
 
 
     // Delete a subscription (unsubscribe) from Supabase
-    suspend fun deleteSubscriptionFromSupabase(subscriber: String, creator: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun deleteSubscriptionFromSupabase(subscriberId: Long, creatorId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
-            val url = "$baseUrl/rest/v1/subscriptions?subscriber_username=eq.'${subscriber.replace("'", "''")}'&creator_username=eq.'${creator.replace("'", "''")}'"
+            val url = "$baseUrl/rest/v1/subscriptions?subscriber_id=eq.$subscriberId&creator_id=eq.$creatorId"
             val request = Request.Builder()
                 .url(url)
                 .addHeader("apiKey", apiKey)
@@ -1708,12 +1708,9 @@ object SupabaseClient {
     }
 
     // Check if a user is subscribed to a creator via Supabase
-    suspend fun isSubscribedRemote(subscriber: String, creator: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun isSubscribedRemote(subscriberId: Long, creatorId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
-            // Try exact match first (eq). If none found, fall back to ilike case-insensitive search.
-            val escapedSubscriber = subscriber.replace("'", "''")
-            val escapedCreator = creator.replace("'", "''")
-            var url = "$baseUrl/rest/v1/subscriptions?subscriber_username=eq.'${escapedSubscriber}'&creator_username=eq.'${escapedCreator}'&select=subscriber_username"
+            val url = "$baseUrl/rest/v1/subscriptions?subscriber_id=eq.$subscriberId&creator_id=eq.$creatorId&select=subscriber_id"
             val request = Request.Builder()
                 .url(url)
                 .addHeader("apiKey", apiKey)
@@ -1725,26 +1722,7 @@ object SupabaseClient {
                 if (!resp.isSuccessful) return@withContext false
                 val body = resp.body?.string() ?: return@withContext false
                 val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
-                if (arr.size() > 0) return@withContext true
-                // Fallback: try ilike for case-insensitive match
-                try {
-                    val urlIlike = "$baseUrl/rest/v1/subscriptions?subscriber_username=ilike.'%${escapedSubscriber}%'&creator_username=ilike.'%${escapedCreator}%'&select=subscriber_username"
-                    val req2 = Request.Builder()
-                        .url(urlIlike)
-                        .addHeader("apiKey", apiKey)
-                        .addHeader("Authorization", "Bearer $apiKey")
-                        .get()
-                        .build()
-                    client.newCall(req2).execute().use { resp2 ->
-                        if (!resp2.isSuccessful) return@withContext false
-                        val body2 = resp2.body?.string() ?: return@withContext false
-                        val arr2 = com.google.gson.JsonParser.parseString(body2).asJsonArray
-                        return@withContext arr2.size() > 0
-                    }
-                } catch (t: Exception) {
-                    Log.w("SupabaseClient", "isSubscribedRemote ilike fallback failed", t)
-                    return@withContext false
-                }
+                return@withContext arr.size() > 0
             }
         } catch (e: Exception) {
             Log.w("SupabaseClient", "isSubscribedRemote failed", e)
@@ -2902,11 +2880,11 @@ object SupabaseClient {
     /**
      * Insert a subscription to Supabase
      */
-    suspend fun subscribeToCreator(subscriberUsername: String, creatorUsername: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun subscribeToCreator(subscriberId: Long, creatorId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             val subscription = Subscription(
-                subscriberUsername = subscriberUsername,
-                creatorUsername = creatorUsername,
+                subscriberId = subscriberId,
+                creatorId = creatorId,
                 subscriptionDate = System.currentTimeMillis()
             )
             
@@ -2939,10 +2917,10 @@ object SupabaseClient {
     /**
      * Delete a subscription from Supabase
      */
-    suspend fun unsubscribeFromCreator(subscriberUsername: String, creatorUsername: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun unsubscribeFromCreator(subscriberId: Long, creatorId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
-                .url("$baseUrl/rest/v1/subscriptions?subscriber_username=eq.$subscriberUsername&creator_username=eq.$creatorUsername")
+                .url("$baseUrl/rest/v1/subscriptions?subscriber_id=eq.$subscriberId&creator_id=eq.$creatorId")
                 .delete()
                 .addHeader("apikey", effectiveApiKey())
                 .addHeader("Authorization", "Bearer ${effectiveApiKey()}")

@@ -59,6 +59,7 @@ class CourseDetailFragment : Fragment() {
     private var isCurrentUserCreator: Boolean = false
     private var currentUsername: String? = null
     private var courseCreatorUsername: String? = null
+    private var creatorUserId: Long = -1
     private lateinit var courseViewModel: CourseViewModel
     private lateinit var sessionManager: SessionManager
     private lateinit var bottomNavBinding: ComponentBottomNavigationBinding
@@ -871,6 +872,7 @@ class CourseDetailFragment : Fragment() {
                     courseName = title
 
                     // Map creator username from creator_user_id
+                    creatorUserId = remoteCourse.creatorUserId
                     courseCreatorUsername = withContext(Dispatchers.IO) {
                         com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(remoteCourse.creatorUserId)
                     }
@@ -908,24 +910,27 @@ class CourseDetailFragment : Fragment() {
                     }
 
                     // Load creator info if the current user is not the creator
-                    if (!isCurrentUserCreator && !courseCreatorUsername.isNullOrEmpty()) {
+                    if (!isCurrentUserCreator && remoteCourse != null) {
+                        val creatorId = remoteCourse.creatorUserId
+                        val currentUserId = sessionManager.getUserId()
+
                         // Prefer remote subscription state when available
                         var subscriptionCount = withContext(Dispatchers.IO) {
-                            subscriptionDao.getSubscriptionCountForCreator(courseCreatorUsername!!)
+                            subscriptionDao.getSubscriptionCountForCreator(creatorId)
                         }
                         var isSubscribedLocal = withContext(Dispatchers.IO) {
-                            currentUsername?.let { username -> subscriptionDao.isSubscribed(username, courseCreatorUsername!!) } ?: false
+                            if (currentUserId != -1L) subscriptionDao.isSubscribed(currentUserId, creatorId) else false
                         }
                         var isSubscribedRemote = false
                         try {
                             val act = requireActivity()
-                            if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured() && currentUsername != null) {
-                                isSubscribedRemote = withContext(Dispatchers.IO) { act.syncRepository.isSubscribedRemote(currentUsername!!, courseCreatorUsername!!) }
+                            if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured() && currentUserId != -1L) {
+                                isSubscribedRemote = withContext(Dispatchers.IO) { act.syncRepository.isSubscribedRemote(currentUserId, creatorId) }
                                 // If remote is true but local count doesn't include this subscriber, adjust
                                 if (isSubscribedRemote && !isSubscribedLocal) {
                                     // persist locally
                                     withContext(Dispatchers.IO) {
-                                        subscriptionDao.insertSubscription(Subscription(subscriberUsername = currentUsername!!, creatorUsername = courseCreatorUsername!!, subscriptionDate = System.currentTimeMillis()))
+                                        subscriptionDao.insertSubscription(com.example.tareamov.data.entity.Subscription(subscriberId = currentUserId, creatorId = creatorId, subscriptionDate = System.currentTimeMillis()))
                                     }
                                     isSubscribedLocal = true
                                     subscriptionCount += 1
@@ -992,16 +997,34 @@ class CourseDetailFragment : Fragment() {
 
                     // Load creator info if the current user is not the creator
                     if (!isCurrentUserCreator && courseCreatorUsername != null) {
+                        val currentUserId = sessionManager.getUserId()
                         // Get subscription count using SubscriptionDao
-                        val subscriptionCount = withContext(Dispatchers.IO) {
-                            subscriptionDao.getSubscriptionCountForCreator(courseCreatorUsername!!)
+                        var subscriptionCount = withContext(Dispatchers.IO) {
+                            if (creatorUserId != -1L) subscriptionDao.getSubscriptionCountForCreator(creatorUserId) else 0
                         }
 
                         // Check if current user is subscribed using SubscriptionDao
-                        val isSubscribed = withContext(Dispatchers.IO) {
-                            currentUsername?.let { username ->
-                                subscriptionDao.isSubscribed(username, courseCreatorUsername!!)
-                            } ?: false
+                        var isSubscribed = withContext(Dispatchers.IO) {
+                            if (currentUserId != -1L && creatorUserId != -1L) {
+                                subscriptionDao.isSubscribed(currentUserId, creatorUserId)
+                            } else false
+                        }
+
+                        // Remote check and sync
+                        try {
+                            val act = requireActivity()
+                            if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured() && currentUserId != -1L && creatorUserId != -1L) {
+                                val isSubscribedRemote = withContext(Dispatchers.IO) { act.syncRepository.isSubscribedRemote(currentUserId, creatorUserId) }
+                                if (isSubscribedRemote && !isSubscribed) {
+                                    withContext(Dispatchers.IO) {
+                                        subscriptionDao.insertSubscription(com.example.tareamov.data.entity.Subscription(subscriberId = currentUserId, creatorId = creatorUserId, subscriptionDate = System.currentTimeMillis()))
+                                    }
+                                    isSubscribed = true
+                                    subscriptionCount += 1
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("CourseDetailFragment", "Remote subscription check failed", e)
                         }
 
                         loadCreatorInfo(
@@ -1291,13 +1314,15 @@ class CourseDetailFragment : Fragment() {
     private fun handleSubscription() {
         val currentUser = currentUsername
         val creatorUser = courseCreatorUsername
+        val currentUserId = sessionManager.getUserId()
+        val creatorId = creatorUserId
 
-        if (currentUser == null) {
+        if (currentUser == null || currentUserId == -1L) {
             Toast.makeText(context, "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
             return
         }
 
-        if (creatorUser == null) {
+        if (creatorUser == null || creatorId == -1L) {
             Toast.makeText(context, "Error: No se puede identificar al creador del curso", Toast.LENGTH_SHORT).show()
             return
         }
@@ -1311,7 +1336,7 @@ class CourseDetailFragment : Fragment() {
                 if (isSubscribed) {
                     // Desuscribirse
                     withContext(Dispatchers.IO) {
-                        subscriptionDao.deleteSubscription(currentUser, creatorUser)
+                        subscriptionDao.deleteSubscription(currentUserId, creatorId)
                     }
                     isSubscribed = false
 
@@ -1320,7 +1345,7 @@ class CourseDetailFragment : Fragment() {
 
                     // Actualizar contador de suscriptores
                     // val newCount = withContext(Dispatchers.IO) {
-                    //     subscriptionDao.getSubscriptionCountForCreator(creatorUser)
+                    //     subscriptionDao.getSubscriptionCountForCreator(creatorId)
                     // }
                     // subscriberCountTextView.text = formatSubscriberCount(newCount) // Moved to ExploreFragment cards
 
@@ -1328,8 +1353,8 @@ class CourseDetailFragment : Fragment() {
                 } else {
                     // Suscribirse
                     val subscription = Subscription(
-                        subscriberUsername = currentUser,
-                        creatorUsername = creatorUser,
+                        subscriberId = currentUserId,
+                        creatorId = creatorId,
                         subscriptionDate = System.currentTimeMillis()
                     )
 
@@ -1343,7 +1368,7 @@ class CourseDetailFragment : Fragment() {
 
                     // Actualizar contador de suscriptores
                     // val newCount = withContext(Dispatchers.IO) {
-                    //     subscriptionDao.getSubscriptionCountForCreator(creatorUser)
+                    //     subscriptionDao.getSubscriptionCountForCreator(creatorId)
                     // }
                     // subscriberCountTextView.text = formatSubscriberCount(newCount) // Moved to ExploreFragment cards
 

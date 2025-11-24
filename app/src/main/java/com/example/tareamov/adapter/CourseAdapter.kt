@@ -94,8 +94,12 @@ class CourseAdapter(
         
         Log.d("CourseAdapter", "Binding course: ${course.title}, creatorUserId: ${course.creatorUserId}, currentUsername: $currentUsername")
         
+        // CRITICAL: Check if user is creator FIRST before showing any UI
+        val isCreator = canUserModifyCourse(course)
+        
         // Default: hide enrollment-related UI to avoid brief flashes before ownership check completes
         holder.enrollButtonContainer?.visibility = View.GONE
+        holder.enrollButton?.visibility = View.GONE
         holder.enrolledStatusContainer?.visibility = View.GONE
         holder.ownerStatusContainer?.visibility = View.GONE
 
@@ -103,7 +107,6 @@ class CourseAdapter(
         loadEnrollmentCount(holder, course)
 
         // Handle subscription elements and CRUD actions based on user permissions
-        val isCreator = canUserModifyCourse(course)
         val creatorInfoContainer = holder.itemView.findViewById<android.widget.LinearLayout>(R.id.creatorInfoContainer)
         
         Log.d("CourseAdapter", "Is creator: $isCreator for course: ${course.title}")
@@ -121,7 +124,7 @@ class CourseAdapter(
                         }
                     withContext(Dispatchers.Main) {
                         holder.creatorTextView.text = if (!creatorUsername.isNullOrBlank()) {
-                            "Por: $creatorUsername"
+                            "Por: $creatorUsername (Tu curso)"
                         } else {
                             "Por: Tú"
                         }
@@ -135,8 +138,10 @@ class CourseAdapter(
                 }
             }
             
-            // Hide ALL enrollment UI for creators (both button and enrolled status)
+            // CRITICAL: Hide ALL enrollment UI for creators (both button and enrolled status)
+            // This ensures "Tu curso" owners never see enrollment options
             holder.enrollButtonContainer?.visibility = View.GONE
+            holder.enrollButton?.visibility = View.GONE
             holder.enrolledStatusContainer?.visibility = View.GONE
             
             // Show CRUD action buttons for creators
@@ -172,12 +177,27 @@ class CourseAdapter(
                             creatorUsernameCache[course.creatorUserId] = it
                         }
                     withContext(Dispatchers.Main) {
-                        holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"
-                        Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
-                        
-                        // Load subscription data with fetched username
-                        if (creatorUsername != null) {
-                            loadSubscriptionDataWithUsername(holder, course, creatorUsername)
+                        // Fallback: If username matches, treat as creator even if currentUserIdCached was null
+                        if (currentUsername != null && creatorUsername == currentUsername) {
+                            holder.creatorTextView.text = "Por: $creatorUsername (Tu curso)"
+                            holder.enrollButtonContainer?.visibility = View.GONE
+                            holder.enrollButton?.visibility = View.GONE
+                            holder.enrolledStatusContainer?.visibility = View.GONE
+                            holder.ownerStatusContainer?.visibility = View.VISIBLE
+                            holder.actionButtonsContainer?.visibility = View.VISIBLE
+                            creatorInfoContainer?.visibility = View.GONE
+                            
+                            // Setup listeners for the now-visible action buttons
+                            holder.editButton?.setOnClickListener { onEditClickListener?.invoke(course) }
+                            holder.deleteButton?.setOnClickListener { onDeleteClickListener?.invoke(course) }
+                            holder.changeThumbnailButton?.setOnClickListener { onThumbnailChangeClickListener?.invoke(course) }
+                        } else {
+                            holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"
+                            Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
+                            
+                            // Load subscription data with user IDs
+                            loadSubscriptionDataWithUserId(holder, course, course.creatorUserId)
+                            Unit
                         }
                     }
                 } catch (e: Exception) {
@@ -191,8 +211,12 @@ class CourseAdapter(
             // Load creator avatar (default for now)
             holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
             
-            // Check enrollment status and configure button
-            checkEnrollmentStatus(holder, course)
+            // ONLY check enrollment status for non-creators
+            // This prevents any enrollment UI from appearing on creator's own courses
+            if (!isCreator) {
+                checkEnrollmentStatus(holder, course)
+            }
+            
             // Ensure owner badge hidden for non-creators
             holder.ownerStatusContainer?.visibility = View.GONE
         }
@@ -236,7 +260,7 @@ class CourseAdapter(
                 return@setOnClickListener
             }
             
-            // Check if user is the creator - creators don't need enrollment
+            // CRITICAL: Check if user is the creator - creators don't need enrollment and have full access
             val isCreator = canUserModifyCourse(course)
             
             // Block access to paid courses (price > 0) for non-creators
@@ -416,10 +440,10 @@ class CourseAdapter(
     }
 
     /**
-     * Load subscription data asynchronously with username
+     * Load subscription data asynchronously with user IDs
      */
-    private fun loadSubscriptionDataWithUsername(holder: CourseViewHolder, course: Course, creatorUsername: String) {
-        if (currentUsername == null) {
+    private fun loadSubscriptionDataWithUserId(holder: CourseViewHolder, course: Course, creatorUserId: Long) {
+        if (currentUserIdCached == null) {
             // No user logged in
             holder.subscriberCountTextView.text = "0 suscriptores"
             holder.subscribeButton.text = "Iniciar sesión"
@@ -432,10 +456,10 @@ class CourseAdapter(
                 val db = AppDatabase.getDatabase(context)
                 
                 // Get subscriber count for this creator
-                val subscriberCount = db.subscriptionDao().getSubscriptionCountForCreator(creatorUsername)
+                val subscriberCount = db.subscriptionDao().getSubscriptionCountForCreator(creatorUserId)
                 
                 // Check if current user is subscribed to this creator
-                val isSubscribed = db.subscriptionDao().isUserSubscribedToCreator(currentUsername!!, creatorUsername)
+                val isSubscribed = db.subscriptionDao().isUserSubscribedToCreator(currentUserIdCached!!, creatorUserId)
                 
                 withContext(Dispatchers.Main) {
                     // Update subscriber count
@@ -504,6 +528,7 @@ class CourseAdapter(
                     Log.d("CourseAdapter", "User $userId is creator of course ${course.id}, hiding all enrollment UI")
                     withContext(Dispatchers.Main) {
                         holder.enrollButtonContainer?.visibility = View.GONE
+                        holder.enrollButton?.visibility = View.GONE
                         holder.enrolledStatusContainer?.visibility = View.GONE
                     }
                     return@launch
@@ -516,9 +541,22 @@ class CourseAdapter(
                 Log.d("CourseAdapter", "Enrollment result for userId=$userId courseId=${course.id}: $isEnrolled")
                 
                 withContext(Dispatchers.Main) {
+                    // FIX: Check if user is creator again, in case permissions updated while coroutine was running
+                    // Also check username match as fallback to ensure "Tu curso" logic is respected
+                    val creatorName = creatorUsernameCache[course.creatorUserId]
+                    val isCreatorByUsername = currentUsername != null && creatorName != null && currentUsername == creatorName
+                    
+                    if (canUserModifyCourse(course) || isCreatorByUsername) {
+                        holder.enrollButtonContainer?.visibility = View.GONE
+                        holder.enrollButton?.visibility = View.GONE
+                        holder.enrolledStatusContainer?.visibility = View.GONE
+                        return@withContext
+                    }
+
                     if (isEnrolled) {
                         // Already enrolled - Show enrolled status, hide enrollment container
                         holder.enrollButtonContainer?.visibility = View.GONE
+                        holder.enrollButton?.visibility = View.GONE
                         holder.enrolledStatusContainer?.visibility = View.VISIBLE
                         
                         Log.d("CourseAdapter", "User already enrolled in course ${course.id}, showing enrolled status")
@@ -528,6 +566,7 @@ class CourseAdapter(
                             // Paid course - Block enrollment
                             holder.enrolledStatusContainer?.visibility = View.GONE
                             holder.enrollButtonContainer?.visibility = View.VISIBLE
+                            holder.enrollButton?.visibility = View.VISIBLE
                             holder.enrollButton?.text = "Curso de pago - Requiere compra"
                             holder.enrollButton?.isEnabled = false
                             holder.enrollButton?.alpha = 0.5f
@@ -537,6 +576,7 @@ class CourseAdapter(
                             // Free course - Show enrollment section
                             holder.enrolledStatusContainer?.visibility = View.GONE
                             holder.enrollButtonContainer?.visibility = View.VISIBLE
+                            holder.enrollButton?.visibility = View.VISIBLE
                             holder.enrollButton?.text = "Inscribirse al curso"
                             holder.enrollButton?.isEnabled = true
                             holder.enrollButton?.alpha = 1.0f

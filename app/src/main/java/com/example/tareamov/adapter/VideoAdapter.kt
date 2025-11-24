@@ -8,8 +8,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
-import android.widget.VideoView
 import android.widget.ImageView
+import android.widget.VideoView
 import android.os.Handler
 import android.os.Looper
 import androidx.recyclerview.widget.RecyclerView
@@ -19,6 +19,7 @@ import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
 import java.io.File
 import kotlinx.coroutines.*
+import kotlin.math.abs // Use kotlin.math.abs to avoid ambiguity
 
 /**
  * Adaptador para mostrar videos en un ViewPager2 con estilo TikTok
@@ -176,8 +177,8 @@ class VideoAdapter(
                         val videoHeight = mp.videoHeight
                         if (videoWidth > 0 && videoHeight > 0) {
                             val parentWidth = (videoView.parent as View).width
-                            val aspectRatio = videoWidth.toFloat() / videoHeight
-                            val newHeight = (parentWidth / aspectRatio).toInt()
+                            val aspectRatio = videoWidth.toFloat() / videoHeight.toFloat()
+                            val newHeight = (parentWidth.toFloat() / aspectRatio).toInt()
                             val params = videoView.layoutParams
                             params.width = parentWidth
                             params.height = newHeight
@@ -367,9 +368,9 @@ class VideoAdapter(
                         val timeDiff = endTime - startTime
                         
                         // Check if it's a swipe gesture (not just a tap)
-                        if (timeDiff < 300 && Math.abs(diffX) > 100) {
+                        if (timeDiff < 300 && abs(diffX) > 100) {
                             // Check if it's a horizontal swipe (left)
-                            if (Math.abs(diffX) > Math.abs(diffY) && diffX < -100) {
+                            if (abs(diffX) > abs(diffY) && diffX < -100) {
                                 // Swipe left detected - navigate to course
                                 val position = adapterPosition
                                 if (position != RecyclerView.NO_POSITION && position < videos.size) {
@@ -378,7 +379,7 @@ class VideoAdapter(
                                     return@setOnTouchListener true
                                 }
                             }
-                        } else if (timeDiff < 200 && Math.abs(diffX) < 50 && Math.abs(diffY) < 50) {
+                        } else if (timeDiff < 200 && abs(diffX) < 50 && abs(diffY) < 50) {
                             // Single tap detected - toggle play/pause
                             togglePlayPause()
                         }

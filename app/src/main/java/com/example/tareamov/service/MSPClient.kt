@@ -1167,7 +1167,7 @@ Datos: ${formatMCPData(data)}
                         .take(5)
                     context.append("Suscripciones recientes:\n")
                     recentSubs.forEach { sub ->
-                        context.append("- ${sub.subscriberUsername} → ${sub.creatorUsername}\n")
+                        context.append("- ${sub.subscriberId} → ${sub.creatorId}\n")
                     }
                 }
                 
