@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Button
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
@@ -13,12 +14,34 @@ import com.example.tareamov.data.entity.Course
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.resource.bitmap.RoundedCorners
 import com.bumptech.glide.request.RequestOptions
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.example.tareamov.data.AppDatabase
+import android.util.Log
 
 class CourseAdapter(
     private val context: Context,
     private var courses: List<Course>,
-    private val onCourseClickListener: (Course) -> Unit
+    private val onCourseClickListener: (Course) -> Unit,
+    private val currentUsername: String? = null, // Current logged-in user for permission checks
+    private val onSubscriptionClickListener: ((Course, Boolean) -> Unit)? = null, // Subscription callback
+    private val onEditClickListener: ((Course) -> Unit)? = null, // Edit callback
+    private val onDeleteClickListener: ((Course) -> Unit)? = null, // Delete callback
+    private val onThumbnailChangeClickListener: ((Course) -> Unit)? = null, // Thumbnail change callback
+    private val onEnrollClickListener: ((Course) -> Unit)? = null // Enrollment callback
 ) : RecyclerView.Adapter<CourseAdapter.CourseViewHolder>() {
+
+    // Cache current user's id to avoid blocking lookups during bind
+    private var currentUserIdCached: Long? = null
+    fun setCurrentUserId(userId: Long?) {
+        currentUserIdCached = userId
+        notifyDataSetChanged()
+    }
+
+    // Cache for creator usernames by userId to reduce repeated network calls
+    private val creatorUsernameCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
 
     class CourseViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val thumbnailImageView: ImageView = itemView.findViewById(R.id.courseThumbnailImageView)
@@ -28,8 +51,25 @@ class CourseAdapter(
         val categoryTextView: TextView = itemView.findViewById(R.id.courseCategoryTextView)
         val ratingTextView: TextView = itemView.findViewById(R.id.courseRatingTextView)
         val priceTextView: TextView = itemView.findViewById(R.id.coursePriceTextView)
+        val originalPriceTextView: TextView = itemView.findViewById(R.id.originalPriceTextView)
         val enrollmentTextView: TextView = itemView.findViewById(R.id.courseEnrollmentTextView)
         val premiumBadge: View = itemView.findViewById(R.id.premiumBadge)
+        val overlayText: TextView = itemView.findViewById(R.id.overlayText)
+        // Subscription elements
+        val creatorAvatarImageView: de.hdodenhof.circleimageview.CircleImageView = itemView.findViewById(R.id.creatorAvatarImageView)
+        val subscriberCountTextView: TextView = itemView.findViewById(R.id.subscriberCountTextView)
+        val subscribeButton: Button = itemView.findViewById(R.id.subscribeButton)
+        // Enrollment elements
+        val enrollButtonContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.enrollButtonContainer)
+        val enrollButton: Button? = itemView.findViewById(R.id.enrollButton)
+        // Enrolled status elements
+        val enrolledStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.enrolledStatusContainer)
+        // CRUD action elements
+        val actionButtonsContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.actionButtonsContainer)
+        val editButton: android.widget.ImageButton? = itemView.findViewById(R.id.editButton)
+        val deleteButton: android.widget.ImageButton? = itemView.findViewById(R.id.deleteButton)
+        val changeThumbnailButton: android.widget.ImageButton? = itemView.findViewById(R.id.changeThumbnailButton)
+        val ownerStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.ownerStatusContainer)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CourseViewHolder {
@@ -48,48 +88,521 @@ class CourseAdapter(
         // Set course data
         holder.titleTextView.text = course.title
         holder.descriptionTextView.text = course.description
-        holder.creatorTextView.text = "Por: ${course.creatorUsername}"
+        // Don't set creatorTextView here - it will be set based on user permissions below
         holder.categoryTextView.text = course.category ?: "General"
-        holder.ratingTextView.text = "★ ${String.format("%.1f", course.rating)}"
-        holder.enrollmentTextView.text = "${course.enrollmentCount} estudiantes"
+        holder.ratingTextView.text = String.format("%.1f", course.rating)
+        
+        Log.d("CourseAdapter", "Binding course: ${course.title}, creatorUserId: ${course.creatorUserId}, currentUsername: $currentUsername")
+        
+        // CRITICAL: Check if user is creator FIRST before showing any UI
+        val isCreator = canUserModifyCourse(course)
+        
+        // Default: hide enrollment-related UI to avoid brief flashes before ownership check completes
+        holder.enrollButtonContainer?.visibility = View.GONE
+        holder.enrollButton?.visibility = View.GONE
+        holder.enrolledStatusContainer?.visibility = View.GONE
+        holder.ownerStatusContainer?.visibility = View.GONE
 
-        // Set price
+        // Load real enrollment count from progreso_estudiante table
+        loadEnrollmentCount(holder, course)
+
+        // Handle subscription elements and CRUD actions based on user permissions
+        val creatorInfoContainer = holder.itemView.findViewById<android.widget.LinearLayout>(R.id.creatorInfoContainer)
+        
+        Log.d("CourseAdapter", "Is creator: $isCreator for course: ${course.title}")
+        
+        if (isCreator) {
+            // Hide subscription info for course creators
+            creatorInfoContainer?.visibility = View.GONE
+            
+            // Set creator name for own courses - fetch username from user_id
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val creatorUsername = creatorUsernameCache[course.creatorUserId]
+                        ?: com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)?.also {
+                            creatorUsernameCache[course.creatorUserId] = it
+                        }
+                    withContext(Dispatchers.Main) {
+                        holder.creatorTextView.text = if (!creatorUsername.isNullOrBlank()) {
+                            "Por: $creatorUsername (Tu curso)"
+                        } else {
+                            "Por: Tú"
+                        }
+                        Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
+                    }
+                } catch (e: Exception) {
+                    Log.e("CourseAdapter", "Error loading creator username for course ${course.id}", e)
+                    withContext(Dispatchers.Main) {
+                        holder.creatorTextView.text = "Por: Tú"
+                    }
+                }
+            }
+            
+            // CRITICAL: Hide ALL enrollment UI for creators (both button and enrolled status)
+            // This ensures "Tu curso" owners never see enrollment options
+            holder.enrollButtonContainer?.visibility = View.GONE
+            holder.enrollButton?.visibility = View.GONE
+            holder.enrolledStatusContainer?.visibility = View.GONE
+            
+            // Show CRUD action buttons for creators
+            holder.actionButtonsContainer?.visibility = View.VISIBLE
+
+            // Show owner badge
+            holder.ownerStatusContainer?.visibility = View.VISIBLE
+            
+            // Set up CRUD button click listeners
+            holder.editButton?.setOnClickListener {
+                onEditClickListener?.invoke(course)
+            }
+            
+            holder.deleteButton?.setOnClickListener {
+                onDeleteClickListener?.invoke(course)
+            }
+            
+            holder.changeThumbnailButton?.setOnClickListener {
+                onThumbnailChangeClickListener?.invoke(course)
+            }
+        } else {
+            // Hide CRUD actions for non-creators
+            holder.actionButtonsContainer?.visibility = View.GONE
+            
+            // Show subscription info for other users' courses
+            creatorInfoContainer?.visibility = View.VISIBLE
+            
+            // Set creator info - fetch username from user_id
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val creatorUsername = creatorUsernameCache[course.creatorUserId]
+                        ?: com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)?.also {
+                            creatorUsernameCache[course.creatorUserId] = it
+                        }
+                    withContext(Dispatchers.Main) {
+                        // Fallback: If username matches, treat as creator even if currentUserIdCached was null
+                        if (currentUsername != null && creatorUsername == currentUsername) {
+                            holder.creatorTextView.text = "Por: $creatorUsername (Tu curso)"
+                            holder.enrollButtonContainer?.visibility = View.GONE
+                            holder.enrollButton?.visibility = View.GONE
+                            holder.enrolledStatusContainer?.visibility = View.GONE
+                            holder.ownerStatusContainer?.visibility = View.VISIBLE
+                            holder.actionButtonsContainer?.visibility = View.VISIBLE
+                            creatorInfoContainer?.visibility = View.GONE
+                            
+                            // Setup listeners for the now-visible action buttons
+                            holder.editButton?.setOnClickListener { onEditClickListener?.invoke(course) }
+                            holder.deleteButton?.setOnClickListener { onDeleteClickListener?.invoke(course) }
+                            holder.changeThumbnailButton?.setOnClickListener { onThumbnailChangeClickListener?.invoke(course) }
+                        } else {
+                            holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"
+                            Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
+                            
+                            // Load subscription data with user IDs
+                            loadSubscriptionDataWithUserId(holder, course, course.creatorUserId)
+                            Unit
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("CourseAdapter", "Error loading creator username for course ${course.id}", e)
+                    withContext(Dispatchers.Main) {
+                        holder.creatorTextView.text = "Creador desconocido"
+                    }
+                }
+            }
+            
+            // Load creator avatar (default for now)
+            holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+            
+            // ONLY check enrollment status for non-creators
+            // This prevents any enrollment UI from appearing on creator's own courses
+            if (!isCreator) {
+                checkEnrollmentStatus(holder, course)
+            }
+            
+            // Ensure owner badge hidden for non-creators
+            holder.ownerStatusContainer?.visibility = View.GONE
+        }
+
+        // Set price without discount logic
         if (course.isPremium && course.price > 0) {
             holder.priceTextView.text = "$${String.format("%.2f", course.price)}"
-            holder.priceTextView.visibility = View.VISIBLE
+            holder.originalPriceTextView.visibility = View.GONE
             holder.premiumBadge.visibility = View.VISIBLE
         } else {
             holder.priceTextView.text = "Gratis"
-            holder.priceTextView.visibility = View.VISIBLE
+            holder.originalPriceTextView.visibility = View.GONE
             holder.premiumBadge.visibility = View.GONE
         }
 
         // Load thumbnail image
         if (!course.thumbnailUri.isNullOrEmpty()) {
+            // Hide overlay text when real thumbnail is available
+            holder.overlayText.visibility = View.GONE
             Glide.with(context)
                 .load(course.thumbnailUri)
                 .apply(RequestOptions().transform(RoundedCorners(16)))
-                .placeholder(android.R.drawable.ic_menu_gallery)
-                .error(android.R.drawable.ic_menu_gallery)
+                .placeholder(R.drawable.bg_course_placeholder_card)
+                .error(R.drawable.bg_course_placeholder_card)
+                .centerCrop()
                 .into(holder.thumbnailImageView)
         } else {
-            holder.thumbnailImageView.setImageResource(android.R.drawable.ic_menu_gallery)
+            // Show placeholder image when no thumbnail is available (YouTube style)
+            holder.overlayText.visibility = View.GONE
+            holder.thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
         }
 
         // Apply dark mode colors to text views
         applyDarkModeTextColors(holder)
 
-        // Set click listener
+        // Set click listener with auto-enrollment for free courses
         holder.itemView.setOnClickListener {
-            onCourseClickListener(course)
+            // Check if user is logged in
+            if (currentUsername == null) {
+                android.widget.Toast.makeText(context, "¡Debes iniciar sesión para acceder al curso!", android.widget.Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            
+            // CRITICAL: Check if user is the creator - creators don't need enrollment and have full access
+            val isCreator = canUserModifyCourse(course)
+            
+            // Block access to paid courses (price > 0) for non-creators
+            if (course.price > 0 && !isCreator) {
+                android.widget.Toast.makeText(context, "❌ Este es un curso de pago. Debes realizar el pago para acceder.", android.widget.Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            
+            // If it's a free course and user is NOT the creator, auto-enroll before navigating
+            if (!course.isPremium && course.price == 0.0 && !isCreator) {
+                autoEnrollAndNavigate(course)
+            } else {
+                // Premium course or user is creator, just navigate
+                onCourseClickListener(course)
+            }
         }
+    }
+    
+    /**
+     * Auto-enroll user in a free course and navigate to course detail
+     */
+    private fun autoEnrollAndNavigate(course: Course) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                
+                // Get user ID from username
+                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                if (userId == null) {
+                    Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "Error: Usuario no encontrado", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                
+                // Check if already enrolled
+                val existingProgreso = db.progresoEstudianteDao().getProgreso(userId, course.id)
+                
+                if (existingProgreso == null) {
+                    // Ensure course exists in local DB
+                    val existingCourse = db.courseDao().getCourseById(course.id)
+                    if (existingCourse == null) {
+                        Log.d("CourseAdapter", "Course not in local DB, inserting: ${course.title}")
+                        db.courseDao().insertCourse(course)
+                    }
+                    
+                    // Get total tasks for this course
+                    val topics = db.topicDao().getTopicsByCourse(course.id)
+                    val topicIds = topics.map { it.id }
+                    val totalTasks = if (topicIds.isNotEmpty()) {
+                        db.taskDao().getTasksByTopicIds(topicIds).size
+                    } else {
+                        0
+                    }
+                    
+                    // Create initial progress record
+                    val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                        usuarioEstudiante = userId,
+                        cursoId = course.id,
+                        tareasCompletadas = 0,
+                        tareasTotales = totalTasks,
+                        porcentajeProgreso = 0f,
+                        calificacionPonderada = null,
+                        promedio = null,
+                        estado = "Perdido",
+                        ultimaCalculadaEn = System.currentTimeMillis()
+                    )
+                    
+                    // Save locally
+                    db.progresoEstudianteDao().insertProgreso(progreso)
+                    Log.d("CourseAdapter", "✅ Auto-enrolled $currentUsername in free course ${course.id}")
+                    
+                    // Sync to Supabase
+                    val syncRepo = createSyncRepository(db)
+                    val syncSuccess = syncRepo.syncProgresoToSupabase(progreso)
+                    
+                    withContext(Dispatchers.Main) {
+                        if (syncSuccess) {
+                            Log.d("CourseAdapter", "✅ Enrollment synced to Supabase")
+                            android.widget.Toast.makeText(context, "✅ ¡Inscrito automáticamente en ${course.title}!", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            Log.w("CourseAdapter", "⚠️ Failed to sync enrollment to Supabase")
+                        }
+                        
+                        // Navigate after enrollment
+                        onCourseClickListener(course)
+                    }
+                } else {
+                    // Already enrolled, just navigate
+                    withContext(Dispatchers.Main) {
+                        onCourseClickListener(course)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseAdapter", "❌ Error auto-enrolling in free course", e)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "❌ Error al inscribirse: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+    
+    /**
+     * Create SyncRepository instance (extracted to reduce duplication)
+     */
+    private fun createSyncRepository(db: AppDatabase): com.example.tareamov.data.sync.SyncRepository {
+        return com.example.tareamov.data.sync.SyncRepository(
+            db.usuarioDao(),
+            db.personaDao(),
+            db.topicDao(),
+            db.contentItemDao(),
+            db.taskDao(),
+            db.subscriptionDao(),
+            db.taskSubmissionDao(),
+            db.videoDao(),
+            db.courseDao(),
+            db.rolDao(),
+            db.recursoDao(),
+            db.rolRecursoDao(),
+            db.chatMessageDao(),
+            db.fileContextDao(),
+            db.progresoEstudianteDao()
+        )
     }
 
     override fun getItemCount(): Int = courses.size
 
     fun updateCourses(newCourses: List<Course>) {
+        // Always show newest courses first to match Supabase ordering
         courses = newCourses
+            .sortedWith(compareByDescending<Course> { it.timestamp }.thenByDescending { it.creationDate })
         notifyDataSetChanged()
+    }
+
+    /**
+     * Check if current user can modify the given course (i.e., is the creator)
+     */
+    private fun canUserModifyCourse(course: Course): Boolean {
+        val uid = currentUserIdCached
+        val can = uid != null && uid == course.creatorUserId
+        Log.d("CourseAdapter", "canUserModifyCourse: currentUserId=$uid, course.creatorUserId=${course.creatorUserId}, canModify=$can")
+        return can
+    }
+    
+    /**
+     * Check if current user can modify the given course (suspend version for coroutine contexts)
+     */
+    private suspend fun canUserModifyCourseSuspend(course: Course): Boolean {
+        if (currentUsername == null) return false
+        val currentUserId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+        return currentUserId != null && currentUserId == course.creatorUserId
+    }
+
+    /**
+     * Load real enrollment count from progreso_estudiante table
+     */
+    private fun loadEnrollmentCount(holder: CourseViewHolder, course: Course) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                
+                // Count real enrolled students from progreso_estudiante table
+                val enrolledCount = db.progresoEstudianteDao().contarEstudiantes(course.id)
+                
+                withContext(Dispatchers.Main) {
+                    val studentsText = if (enrolledCount == 1) "1 estudiante" else "$enrolledCount estudiantes"
+                    holder.enrollmentTextView.text = studentsText
+                }
+            } catch (e: Exception) {
+                Log.e("CourseAdapter", "Error loading enrollment count", e)
+                withContext(Dispatchers.Main) {
+                    holder.enrollmentTextView.text = "0 estudiantes"
+                }
+            }
+        }
+    }
+
+    /**
+     * Load subscription data asynchronously with user IDs
+     */
+    private fun loadSubscriptionDataWithUserId(holder: CourseViewHolder, course: Course, creatorUserId: Long) {
+        if (currentUserIdCached == null) {
+            // No user logged in
+            holder.subscriberCountTextView.text = "0 suscriptores"
+            holder.subscribeButton.text = "Iniciar sesión"
+            holder.subscribeButton.isEnabled = false
+            return
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                
+                // Get subscriber count for this creator
+                val subscriberCount = db.subscriptionDao().getSubscriptionCountForCreator(creatorUserId)
+                
+                // Check if current user is subscribed to this creator
+                val isSubscribed = db.subscriptionDao().isUserSubscribedToCreator(currentUserIdCached!!, creatorUserId)
+                
+                withContext(Dispatchers.Main) {
+                    // Update subscriber count
+                    val countText = if (subscriberCount == 1) "1 suscriptor" else "$subscriberCount suscriptores"
+                    holder.subscriberCountTextView.text = countText
+                    
+                    // Update subscription button
+                    if (isSubscribed) {
+                        holder.subscribeButton.text = "Suscrito"
+                        holder.subscribeButton.setBackgroundResource(R.drawable.button_subscribed)
+                    } else {
+                        holder.subscribeButton.text = "Suscribirse"
+                        holder.subscribeButton.setBackgroundResource(R.drawable.button_premium)
+                    }
+                    
+                    // Set button click listener
+                    holder.subscribeButton.setOnClickListener {
+                        onSubscriptionClickListener?.invoke(course, isSubscribed)
+                    }
+                    
+                    holder.subscribeButton.isEnabled = true
+                }
+            } catch (e: Exception) {
+                Log.e("CourseAdapter", "Error loading subscription data", e)
+                withContext(Dispatchers.Main) {
+                    holder.subscriberCountTextView.text = "0 suscriptores"
+                    holder.subscribeButton.text = "Suscribirse"
+                    holder.subscribeButton.isEnabled = true
+                }
+            }
+        }
+    }
+    
+    /**
+     * Check if user is enrolled in the course and configure button accordingly
+     */
+    private fun checkEnrollmentStatus(holder: CourseViewHolder, course: Course) {
+        if (currentUsername == null) {
+            holder.enrollButton?.text = "Iniciar sesión para inscribirse"
+            holder.enrollButton?.isEnabled = false
+            holder.enrollButton?.alpha = 0.6f
+            return
+        }
+
+        // Defensive guard: if current user is creator, ensure no enrollment UI appears
+        if (currentUserIdCached != null && currentUserIdCached == course.creatorUserId) {
+            holder.enrollButtonContainer?.visibility = View.GONE
+            holder.enrolledStatusContainer?.visibility = View.GONE
+            Log.d("CourseAdapter", "Creator detected; hiding enrollment UI for course ${course.id}")
+            return
+        }
+        
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                
+                // Get user ID from username
+                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                if (userId == null) {
+                    Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
+                    return@launch
+                }
+                
+                // CRITICAL: Double-check if user is the course creator
+                if (userId == course.creatorUserId) {
+                    Log.d("CourseAdapter", "User $userId is creator of course ${course.id}, hiding all enrollment UI")
+                    withContext(Dispatchers.Main) {
+                        holder.enrollButtonContainer?.visibility = View.GONE
+                        holder.enrollButton?.visibility = View.GONE
+                        holder.enrolledStatusContainer?.visibility = View.GONE
+                    }
+                    return@launch
+                }
+                
+                // Check if user is already enrolled (has progreso record)
+                // We check directly against Supabase as requested, avoiding Room cache issues
+                Log.d("CourseAdapter", "Checking enrollment for userId=$userId courseId=${course.id}")
+                val isEnrolled = com.example.tareamov.service.SupabaseClient.isUserEnrolled(userId, course.id)
+                Log.d("CourseAdapter", "Enrollment result for userId=$userId courseId=${course.id}: $isEnrolled")
+                
+                withContext(Dispatchers.Main) {
+                    // FIX: Check if user is creator again, in case permissions updated while coroutine was running
+                    // Also check username match as fallback to ensure "Tu curso" logic is respected
+                    val creatorName = creatorUsernameCache[course.creatorUserId]
+                    val isCreatorByUsername = currentUsername != null && creatorName != null && currentUsername == creatorName
+                    
+                    if (canUserModifyCourse(course) || isCreatorByUsername) {
+                        holder.enrollButtonContainer?.visibility = View.GONE
+                        holder.enrollButton?.visibility = View.GONE
+                        holder.enrolledStatusContainer?.visibility = View.GONE
+                        return@withContext
+                    }
+
+                    if (isEnrolled) {
+                        // Already enrolled - Show enrolled status, hide enrollment container
+                        holder.enrollButtonContainer?.visibility = View.GONE
+                        holder.enrollButton?.visibility = View.GONE
+                        holder.enrolledStatusContainer?.visibility = View.VISIBLE
+                        
+                        Log.d("CourseAdapter", "User already enrolled in course ${course.id}, showing enrolled status")
+                    } else {
+                        // Not enrolled yet - Check if it's a paid course
+                        if (course.price > 0) {
+                            // Paid course - Block enrollment
+                            holder.enrolledStatusContainer?.visibility = View.GONE
+                            holder.enrollButtonContainer?.visibility = View.VISIBLE
+                            holder.enrollButton?.visibility = View.VISIBLE
+                            holder.enrollButton?.text = "Curso de pago - Requiere compra"
+                            holder.enrollButton?.isEnabled = false
+                            holder.enrollButton?.alpha = 0.5f
+                            holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
+                            Log.d("CourseAdapter", "Course ${course.id} is paid, enrollment blocked")
+                        } else {
+                            // Free course - Show enrollment section
+                            holder.enrolledStatusContainer?.visibility = View.GONE
+                            holder.enrollButtonContainer?.visibility = View.VISIBLE
+                            holder.enrollButton?.visibility = View.VISIBLE
+                            holder.enrollButton?.text = "Inscribirse al curso"
+                            holder.enrollButton?.isEnabled = true
+                            holder.enrollButton?.alpha = 1.0f
+                            holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
+                            
+                            // Set click listener for enrollment (only once)
+                            holder.enrollButton?.setOnClickListener {
+                                // Disable button immediately to prevent double-clicks
+                                holder.enrollButton?.isEnabled = false
+                                holder.enrollButton?.alpha = 0.6f
+                                holder.enrollButton?.text = "Inscribiendo..."
+                                
+                                onEnrollClickListener?.invoke(course)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseAdapter", "Error checking enrollment status", e)
+                withContext(Dispatchers.Main) {
+                    holder.enrollButton?.text = "Inscribirse al curso"
+                    holder.enrollButton?.isEnabled = true
+                    holder.enrollButton?.alpha = 1.0f
+                }
+            }
+        }
     }
 
     private fun applyDarkModeTheme(view: View) {
@@ -109,10 +622,12 @@ class CourseAdapter(
 
         holder.titleTextView.setTextColor(primaryTextColor)
         holder.descriptionTextView.setTextColor(secondaryTextColor)
-        holder.creatorTextView.setTextColor(secondaryTextColor)
+        holder.creatorTextView.setTextColor(primaryTextColor)
         holder.categoryTextView.setTextColor(accentColor)
         holder.ratingTextView.setTextColor(ContextCompat.getColor(context, R.color.rating_color))
         holder.enrollmentTextView.setTextColor(secondaryTextColor)
         holder.priceTextView.setTextColor(accentColor)
+        // Subscription elements already have colors defined in layout
+        holder.subscriberCountTextView.setTextColor(ContextCompat.getColor(context, R.color.purple_500))
     }
 }

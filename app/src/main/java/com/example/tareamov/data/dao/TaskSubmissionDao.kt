@@ -35,4 +35,7 @@ interface TaskSubmissionDao {
 
     @Query("SELECT * FROM task_submissions")
     suspend fun getAllTaskSubmissions(): List<TaskSubmission>
+    
+    @Query("SELECT * FROM task_submissions")
+    fun getAllSubmissionsSync(): List<TaskSubmission>
 }

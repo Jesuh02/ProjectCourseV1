@@ -13,6 +13,8 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.VideoView
+import android.widget.Button
+import android.widget.LinearLayout
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
@@ -44,7 +46,7 @@ class CreatedCourseAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CourseViewHolder {
         val view = LayoutInflater.from(parent.context)
-            .inflate(R.layout.item_created_course, parent, false)
+            .inflate(R.layout.item_course_card, parent, false)
         return CourseViewHolder(view)
     }    override fun onBindViewHolder(holder: CourseViewHolder, position: Int) {
         holder.bind(courses[position])
@@ -69,13 +71,15 @@ class CreatedCourseAdapter(
         currentPlayingHolder = null
 
         val oldSize = courses.size
+        // Ensure newest items appear first in the feed
         courses = newCourses
+            .sortedWith(compareByDescending<VideoData> { it.timestamp }.thenByDescending { it.id })
 
         // Simpler and more reliable: always refresh entire dataset to avoid
         // subtle RecyclerView notification edge-cases that can hide items.
         notifyDataSetChanged()
 
-        Log.d("CreatedCourseAdapter", "Courses updated: ${newCourses.size} items (oldSize=$oldSize)")
+        Log.d("CreatedCourseAdapter", "Courses updated: ${courses.size} items (oldSize=$oldSize)")
     }
 
     /**
@@ -248,13 +252,19 @@ class CreatedCourseAdapter(
      * ViewHolder para mostrar un curso individual
      */
     inner class CourseViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val thumbnailImageView: ImageView = itemView.findViewById(R.id.courseVideoThumbnail)
-        private val videoView: VideoView = itemView.findViewById(R.id.courseVideoView)
-    private val titleTextView: TextView = itemView.findViewById(R.id.courseTitleTextView)
-    private val studentsTextView: TextView = itemView.findViewById(R.id.courseStudentsTextView)
-    private val categoryTextView: TextView = itemView.findViewById(R.id.courseCategoryTextView)
-    private val authorTextView: TextView = itemView.findViewById(R.id.courseAuthorTextView)
-    private val priceTextView: TextView = itemView.findViewById(R.id.coursePriceTextView)
+        private val thumbnailImageView: ImageView = itemView.findViewById(R.id.courseThumbnailImageView)
+        private val videoView: VideoView? = null // VideoView is not in item_course_card.xml
+        private val titleTextView: TextView = itemView.findViewById(R.id.courseTitleTextView)
+        private val studentsTextView: TextView = itemView.findViewById(R.id.courseEnrollmentTextView)
+        private val categoryTextView: TextView = itemView.findViewById(R.id.courseCategoryTextView)
+        private val authorTextView: TextView = itemView.findViewById(R.id.courseCreatorTextView)
+        private val priceTextView: TextView = itemView.findViewById(R.id.coursePriceTextView)
+        
+        // Subscription elements
+        private val creatorInfoContainer: LinearLayout = itemView.findViewById(R.id.creatorInfoContainer)
+        private val creatorAvatarImageView: de.hdodenhof.circleimageview.CircleImageView = itemView.findViewById(R.id.creatorAvatarImageView)
+        private val subscriberCountTextView: TextView = itemView.findViewById(R.id.subscriberCountTextView)
+        private val subscribeButton: Button = itemView.findViewById(R.id.subscribeButton)
 
         // New menu button next to category
         // private val optionsMenuButton: ImageView? = itemView.findViewById(R.id.courseOptionsMenuButton)
@@ -330,7 +340,7 @@ class CreatedCourseAdapter(
                 "Gratis"
             }
 
-            // FAST: Show/hide options menu button IMMEDIATELY based on permissions
+            // FAST: Show/hide options menu button and subscription UI based on permissions
             val isCreator = canUserModifyCourse(course)
             if (isCreator) {
                 categoryTextView.text = "Mis Cursos"
@@ -352,6 +362,10 @@ class CreatedCourseAdapter(
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error showing options menu button", e)
                 }
+                
+                // Hide subscription container for course creators
+                creatorInfoContainer.visibility = View.GONE
+                Log.d("CreatedCourseAdapter", "Creator view: Hiding subscription UI for course: ${course.title}")
             } else {
                 categoryTextView.text = "Tecnología"
                 categoryTextView.setBackgroundColor(android.graphics.Color.parseColor("#333333"))
@@ -370,6 +384,17 @@ class CreatedCourseAdapter(
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error hiding options menu button", e)
                 }
+                
+                // Show subscription container for other users' courses
+                creatorInfoContainer.visibility = View.VISIBLE
+                
+                // Setup subscription data
+                creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                subscriberCountTextView.text = "0 suscriptores" // Placeholder
+                subscribeButton.text = "Suscribirse"
+                subscribeButton.isEnabled = true
+                
+                Log.d("CreatedCourseAdapter", "Non-creator view: Showing subscription UI for course: ${course.title} by ${course.username}")
             }
 
             // ASYNC: Fetch student count in background (non-blocking)
@@ -377,7 +402,11 @@ class CreatedCourseAdapter(
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 try {
                     val db = com.example.tareamov.data.AppDatabase.getDatabase(itemView.context)
-                    val count = db.subscriptionDao().getSubscriptionCountForCreator(course.username)
+                    // Resolve creator ID from username since VideoData doesn't have creatorUserId
+                    val creatorUser = db.usuarioDao().getUsuarioByUsername(course.username)
+                    val creatorId = creatorUser?.id ?: -1L
+                    
+                    val count = if (creatorId > 0) db.subscriptionDao().getSubscriptionCountForCreator(creatorId) else 0
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
                         studentsTextView.text = if (count == 1) "1 estudiante" else "${count} estudiantes"
                     }
@@ -391,20 +420,20 @@ class CreatedCourseAdapter(
             Log.d("CreatedCourseAdapter", "Binding course: ${course.title} with URI: ${course.videoUriString ?: "null"}")
 
             // Reset views
-            videoView.visibility = View.GONE
+            // videoView is not available in item_course_card layout
             thumbnailImageView.visibility = View.VISIBLE
-            stopAutoPlay()            // ASYNC: Load thumbnail in background (non-blocking)
+            // stopAutoPlay() // No video playback in card view            // ASYNC: Load thumbnail in background (non-blocking)
             if (!course.thumbnailUri.isNullOrEmpty()) {
                 try {
                     Glide.with(context)
                         .load(Uri.parse(course.thumbnailUri))
-                        .placeholder(R.drawable.placeholder_image)
-                        .error(R.drawable.placeholder_image)
+                        .placeholder(R.drawable.bg_course_placeholder_card)
+                        .error(R.drawable.bg_course_placeholder_card)
                         .centerCrop()
                         .into(thumbnailImageView)
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error loading custom thumbnail", e)
-                    thumbnailImageView.setImageResource(R.drawable.placeholder_image)
+                    thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
                 }
             } else {
                 // Generate thumbnail asynchronously
@@ -418,8 +447,8 @@ class CreatedCourseAdapter(
         private fun loadOrGenerateVideoThumbnail(course: VideoData) {
             CoroutineScope(Dispatchers.Main).launch {
                 try {
-                    // First, set placeholder
-                    thumbnailImageView.setImageResource(R.drawable.placeholder_image)
+                    // First, set YouTube-style gray placeholder
+                    thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
 
                     // Check if thumbnail already exists
                     val existingThumbnailPath = withContext(Dispatchers.IO) {
@@ -447,15 +476,16 @@ class CreatedCourseAdapter(
                                 Log.d("CreatedCourseAdapter", "Generated and loaded new thumbnail for: ${course.title}")
                             } else {
                                 Log.w("CreatedCourseAdapter", "Could not generate thumbnail for: ${course.title}")
-                                // Keep placeholder
+                                // Keep purple book placeholder
                             }
                         } else {
                             Log.w("CreatedCourseAdapter", "No valid video URI for thumbnail generation: ${course.title}")
+                            // Keep purple book placeholder
                         }
                     }
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error in loadOrGenerateVideoThumbnail for ${course.title}", e)
-                    // Keep placeholder image
+                    // Keep purple book placeholder image
                 }
             }
         }
@@ -466,8 +496,8 @@ class CreatedCourseAdapter(
         private fun loadThumbnailWithGlide(thumbnailUri: String, course: VideoData) {
             try {
                 val requestOptions = RequestOptions()
-                    .placeholder(R.drawable.placeholder_image)
-                    .error(R.drawable.placeholder_image)
+                    .placeholder(R.drawable.bg_course_placeholder_card)
+                    .error(R.drawable.bg_course_placeholder_card)
                     .centerCrop()
                     .diskCacheStrategy(DiskCacheStrategy.ALL)
 
@@ -505,7 +535,7 @@ class CreatedCourseAdapter(
             } catch (e: Exception) {
                 Log.e("CreatedCourseAdapter", "Error loading thumbnail with Glide", e)
                 // Fallback to placeholder
-                thumbnailImageView.setImageResource(R.drawable.placeholder_image)
+                thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
             }
         }
 
@@ -584,13 +614,8 @@ class CreatedCourseAdapter(
             videoRunnable?.let { handler.removeCallbacks(it) }
             stopVideoRunnable?.let { handler.removeCallbacks(it) }
 
-            // Detener video si está reproduciéndose
-            if (videoView.isPlaying) {
-                videoView.stopPlayback()
-            }
-
+            // No video view in card layout
             // Resetear vistas
-            videoView.visibility = View.GONE
             thumbnailImageView.visibility = View.VISIBLE
 
             if (currentPlayingHolder == this) {
@@ -619,54 +644,16 @@ class CreatedCourseAdapter(
                     Log.d("CreatedCourseAdapter", "File exists: $path")
                 }
 
-                // Preparar el VideoView
-                videoView.setVideoURI(uri)
-
-                videoView.setOnPreparedListener { mediaPlayer ->
-                    Log.d("CreatedCourseAdapter", "Video prepared, starting playback")
-
-                    mediaPlayer.isLooping = false
-                    mediaPlayer.setVideoScalingMode(android.media.MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
-
-                    // Mostrar el video y ocultar la miniatura
-                    thumbnailImageView.visibility = View.GONE
-                    videoView.visibility = View.VISIBLE
-
-                    // Empezar reproducción
-                    videoView.start()
-
-                    // Programar detener el video después de 10 segundos
-                    stopVideoRunnable = Runnable {
-                        Log.d("CreatedCourseAdapter", "Stopping video after 10 seconds")
-                        stopVideoAndShowThumbnail()
-                    }
-                    handler.postDelayed(stopVideoRunnable!!, 10000)
-                }
-
-                videoView.setOnErrorListener { _, what, extra ->
-                    Log.e("CreatedCourseAdapter", "Video playback error: what=$what, extra=$extra, URI=${course.videoUriString ?: "null"}")
-                    stopVideoAndShowThumbnail()
-                    true                }
-
-                videoView.setOnCompletionListener {
-                    Log.d("CreatedCourseAdapter", "Video playback completed")
-                    stopVideoAndShowThumbnail()
-                }
-
-                // No necesitamos llamar prepareAsync() ya que setVideoURI() lo hace automáticamente
-
+                // Video playback disabled for card layout
+                Log.d("CreatedCourseAdapter", "Video playback disabled in card layout")
             } catch (e: Exception) {
-                Log.e("CreatedCourseAdapter", "Error starting video playback for ${course.title}", e)
-                stopVideoAndShowThumbnail()
+                Log.e("CreatedCourseAdapter", "Video playback disabled", e)
             }
-        }private fun stopVideoAndShowThumbnail() {
-            try {
-                Log.d("CreatedCourseAdapter", "Stopping video and showing thumbnail")
+        }
 
-                if (videoView.isPlaying) {
-                    videoView.stopPlayback()
-                }
-                videoView.visibility = View.GONE
+        private fun stopVideoAndShowThumbnail() {
+            try {
+                Log.d("CreatedCourseAdapter", "Video functionality disabled in card layout")
                 thumbnailImageView.visibility = View.VISIBLE
 
                 if (currentPlayingHolder == this@CourseViewHolder) {
@@ -676,7 +663,7 @@ class CreatedCourseAdapter(
                 // Limpiar callbacks
                 stopVideoRunnable?.let { handler.removeCallbacks(it) }
             } catch (e: Exception) {
-                Log.e("CreatedCourseAdapter", "Error stopping video", e)
+                Log.e("CreatedCourseAdapter", "Error in stopVideoAndShowThumbnail", e)
             }
         }
 
@@ -690,8 +677,8 @@ class CreatedCourseAdapter(
                             Log.d("CreatedCourseAdapter", "Using course thumbnailUri: ${course.thumbnailUri}")
                             Glide.with(context)
                                 .load(course.thumbnailUri)
-                                .placeholder(R.drawable.placeholder_image)
-                                .error(R.drawable.placeholder_image)
+                                .placeholder(R.drawable.bg_course_placeholder_card)
+                                .error(R.drawable.bg_course_placeholder_card)
                                 .centerCrop()
                                 .into(thumbnailImageView)
                         }
@@ -709,8 +696,8 @@ class CreatedCourseAdapter(
                                 // Si no se pudo extraer un frame, usar Glide para cargar directamente el video como thumbnail
                                 Glide.with(context)
                                     .load(uri)
-                                    .placeholder(R.drawable.placeholder_image)
-                                    .error(R.drawable.placeholder_image)
+                                    .placeholder(R.drawable.bg_course_placeholder_card)
+                                    .error(R.drawable.bg_course_placeholder_card)
                                     .centerCrop()
                                     .into(thumbnailImageView)
 
@@ -723,28 +710,28 @@ class CreatedCourseAdapter(
                             if (file.exists() && file.canRead()) {
                                 Glide.with(context)
                                     .load(file)
-                                    .placeholder(R.drawable.placeholder_image)
-                                    .error(R.drawable.placeholder_image)
+                                    .placeholder(R.drawable.bg_course_placeholder_card)
+                                    .error(R.drawable.bg_course_placeholder_card)
                                     .centerCrop()
                                     .into(thumbnailImageView)
 
                                 Log.d("CreatedCourseAdapter", "Using localFilePath as thumbnail: ${course.localFilePath}")
                             } else {
-                                thumbnailImageView.setImageResource(R.drawable.placeholder_image)
+                                thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
                                 Log.d("CreatedCourseAdapter", "Local file not found or not readable, using placeholder: ${course.localFilePath}")
                             }
                         }
                         // Si todo lo demás falla, usar el placeholder
                         else -> {
-                            thumbnailImageView.setImageResource(R.drawable.placeholder_image)
+                            thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
                             Log.d("CreatedCourseAdapter", "Using placeholder for course: ${course.title}")
                         }
                     }                } catch (e: SecurityException) {
                     Log.w("CreatedCourseAdapter", "Permission denied when loading thumbnail for course ${course.title}: ${e.message}")
-                    thumbnailImageView.setImageResource(R.drawable.placeholder_image)
+                    thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error loading thumbnail for course ${course.title}: ${e.message}")
-                    thumbnailImageView.setImageResource(R.drawable.placeholder_image)
+                    thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
                 }
             }
         }

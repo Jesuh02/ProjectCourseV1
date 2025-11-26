@@ -44,8 +44,8 @@
     <!-- Fondo superior con gradiente morado -->
     <View
         android:id="@+id/topBackground"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
+        android:layout_width="412dp"
+        android:layout_height="230dp"
         android:background="@drawable/gradient_header_login"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHeight_percent="0.35"

@@ -4,210 +4,339 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
+    android:background="#09090b"
     tools:context=".ui.VideoDetailsFragment">
 
-    <!-- Header with back button and title -->
-    <LinearLayout
-        android:id="@+id/headerLayout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="16dp"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <ImageButton
-            android:id="@+id/backButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:background="@android:color/transparent"
-            android:src="@android:drawable/ic_menu_close_clear_cancel"
-            android:contentDescription="@string/back_button_desc"
-            app:tint="#FFFFFF" />  <!-- Added proper closing tag -->
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="Agregar detalles"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/nextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="@android:color/transparent"
-            android:text="Siguiente"
-            android:textColor="#FFFFFF"
-            android:textStyle="bold" />
-    </LinearLayout>
-
-    <!-- Video Preview -->
-    <VideoView
-        android:id="@+id/videoPreview"
-        android:layout_width="0dp"
-        android:layout_height="200dp"
-        android:layout_marginTop="16dp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/headerLayout" />
-
-    <!-- Video Details Form -->
     <ScrollView
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_marginTop="16dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/videoPreview">
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipToPadding="false"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:paddingHorizontal="16dp"
+            android:paddingBottom="16dp"
+            android:paddingTop="80dp">
 
-            <!-- Title Input -->
+            <!-- Video Preview -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="200dp"
+                app:cardCornerRadius="12dp"
+                app:cardBackgroundColor="#000000"
+                app:cardElevation="0dp"
+                android:layout_marginBottom="24dp">
+                
+                <VideoView
+                    android:id="@+id/videoPreview"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_gravity="center" />
+                
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="VISTA PREVIA DEL VIDEO"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:layout_gravity="bottom|center_horizontal"
+                    android:layout_marginBottom="8dp"
+                    android:shadowColor="#000000"
+                    android:shadowDx="1"
+                    android:shadowDy="1"
+                    android:shadowRadius="2"/>
+            </androidx.cardview.widget.CardView>
+
+            <!-- Title -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Título"
                 android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"/>
 
             <EditText
                 android:id="@+id/titleEditText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:background="#1A1A1A"
-                android:hint="Crea un título (escribe @ para mencionar a otro canal)"
-                android:inputType="text"
-                android:padding="12dp"
+                android:background="@drawable/bg_rounded_input"
+                android:hint="Crea un título llamativo..."
+                android:textColorHint="#71717a"
                 android:textColor="#FFFFFF"
-                android:textColorHint="#AAAAAA" />
-
-            <!-- Description Input -->
+                android:padding="16dp"
+                android:textSize="15sp"
+                android:inputType="textCapSentences"
+                android:layout_marginBottom="4dp"/>
+            
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:text="0/100"
+                android:textColor="#71717a"
+                android:textSize="12sp"
+                android:layout_gravity="end"
+                android:layout_marginBottom="20dp"/>
+
+            <!-- Description -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:text="Descripción"
                 android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"/>
 
             <EditText
                 android:id="@+id/descriptionEditText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:background="#1A1A1A"
-                android:gravity="top"
-                android:hint="Agregar descripción"
-                android:inputType="textMultiLine"
-                android:lines="5"
-                android:padding="12dp"
+                android:background="@drawable/bg_rounded_input"
+                android:hint="Describe tu video y añade hashtags..."
+                android:textColorHint="#71717a"
                 android:textColor="#FFFFFF"
-                android:textColorHint="#AAAAAA" />
+                android:padding="16dp"
+                android:textSize="15sp"
+                android:gravity="top"
+                android:minLines="4"
+                android:inputType="textMultiLine|textCapSentences"
+                android:layout_marginBottom="24dp"/>
 
-            <!-- Additional options would go here -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#27272a"
+                android:layout_marginBottom="24dp"/>
+
+            <!-- Settings Rows -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:background="#1A1A1A"
                 android:orientation="horizontal"
-                android:padding="12dp">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Visibilidad"
-                    android:textColor="#FFFFFF" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Público"
-                    android:textColor="#AAAAAA" />
-
+                android:gravity="center_vertical"
+                android:layout_marginBottom="20dp">
+                
                 <ImageView
                     android:layout_width="24dp"
                     android:layout_height="24dp"
-                    android:layout_marginStart="8dp"
-                    android:src="@android:drawable/ic_menu_more"
-                    app:tint="#FFFFFF" />
+                    android:src="@android:drawable/ic_menu_compass"
+                    app:tint="#71717a"
+                    android:layout_marginEnd="16dp"/>
+                
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Visibilidad"
+                        android:textColor="#FFFFFF"
+                        android:textStyle="bold"
+                        android:textSize="15sp"/>
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Público"
+                        android:textColor="#71717a"
+                        android:textSize="13sp"/>
+                </LinearLayout>
+                
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Todos"
+                    android:textColor="#71717a"
+                    android:layout_marginEnd="8dp"/>
+                
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@android:drawable/ic_media_play"
+                    android:rotation="0"
+                    app:tint="#71717a"/>
             </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="1dp"
-                android:background="#1A1A1A"
                 android:orientation="horizontal"
-                android:padding="12dp">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Ubicación"
-                    android:textColor="#FFFFFF" />
+                android:gravity="center_vertical"
+                android:layout_marginBottom="32dp">
 
                 <ImageView
                     android:layout_width="24dp"
                     android:layout_height="24dp"
-                    android:src="@android:drawable/ic_menu_more"
-                    app:tint="#FFFFFF" />
+                    android:src="@android:drawable/ic_menu_mylocation"
+                    app:tint="#71717a"
+                    android:layout_marginEnd="16dp"/>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Ubicación"
+                        android:textColor="#FFFFFF"
+                        android:textStyle="bold"
+                        android:textSize="15sp"/>
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Sin ubicación"
+                        android:textColor="#71717a"
+                        android:textSize="13sp"/>
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@android:drawable/ic_media_play"
+                    app:tint="#71717a"/>
             </LinearLayout>
 
-            <!-- Free/Paid Toggle -->
+            <!-- Course Type -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Tipo de curso"
+                android:textColor="#71717a"
+                android:textSize="14sp"
+                android:layout_marginBottom="12dp"/>
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
                 android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:baselineAligned="false">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- Free Option -->
+                <LinearLayout
+                    android:id="@+id/optionFree"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:text="Tipo de curso:"
-                    android:textColor="#FFFFFF"
-                    android:textSize="16sp"
-                    android:layout_marginEnd="12dp"/>
-
-                <RadioGroup
-                    android:id="@+id/courseTypeRadioGroup"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-
-                    <RadioButton
-                        android:id="@+id/freeRadioButton"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:background="@drawable/bg_rounded_card_selected"
+                    android:padding="16dp"
+                    android:layout_marginEnd="8dp">
+                    
+                    <ImageView
+                        android:id="@+id/iconFree"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@android:drawable/ic_menu_view"
+                        app:tint="#3b82f6"
+                        android:layout_marginBottom="8dp"/>
+                    
+                    <TextView
+                        android:id="@+id/textFree"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Gratis"
                         android:textColor="#FFFFFF"
-                        android:checked="true"/>
+                        android:textStyle="bold"/>
+                </LinearLayout>
 
-                    <RadioButton
-                        android:id="@+id/paidRadioButton"
+                <!-- Paid Option -->
+                <LinearLayout
+                    android:id="@+id/optionPaid"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:background="@drawable/bg_rounded_input"
+                    android:padding="16dp"
+                    android:layout_marginStart="8dp">
+
+                    <ImageView
+                        android:id="@+id/iconPaid"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@android:drawable/ic_menu_manage"
+                        app:tint="#71717a"
+                        android:layout_marginBottom="8dp"/>
+
+                    <TextView
+                        android:id="@+id/textPaid"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Pago"
-                        android:textColor="#FFFFFF"
-                        android:layout_marginStart="16dp"/>
-                </RadioGroup>
+                        android:textColor="#71717a"
+                        android:textStyle="bold"/>
+                </LinearLayout>
+
             </LinearLayout>
+
         </LinearLayout>
     </ScrollView>
+
+    <!-- Header (Translucent Overlay) -->
+    <eightbitlab.com.blurview.BlurView
+        android:id="@+id/headerLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:blurOverlayColor="#33000000"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="12dp"
+            android:background="@drawable/bg_liquid_glass">
+
+            <ImageButton
+                android:id="@+id/backButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                android:contentDescription="@string/back_button_desc"
+                app:tint="#FFFFFF"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Agregar detalles"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"/>
+
+            <TextView
+                android:id="@+id/nextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Siguiente"
+                android:textColor="#3b82f6"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:padding="8dp"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"/>
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+    </eightbitlab.com.blurview.BlurView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

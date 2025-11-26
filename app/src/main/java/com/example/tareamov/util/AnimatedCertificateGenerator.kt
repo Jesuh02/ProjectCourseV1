@@ -27,7 +27,8 @@ object AnimatedCertificateGenerator {
         creatorUsername: String,
         courseName: String,
         courseTopic: String,
-        grade: String
+        grade: String,
+        courseId: Long
     ) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
@@ -80,6 +81,9 @@ object AnimatedCertificateGenerator {
 
                 // Open HTML file in browser
                 openHtmlFile(context, file)
+
+                // Update certificate issued date in database and sync to Supabase
+                CertificateGenerator.updateCertificateIssuedDate(context, studentUsername, courseId)
 
                 Toast.makeText(context, "Certificado animado generado con éxito", Toast.LENGTH_SHORT).show()
 
@@ -891,7 +895,7 @@ object AnimatedCertificateGenerator {
     private fun openHtmlFile(context: Context, file: File) {
         try {            val uri = FileProvider.getUriForFile(
                 context,
-                "${context.packageName}.service.fileprovider",
+                "${context.packageName}.fileprovider",
                 file
             )
 

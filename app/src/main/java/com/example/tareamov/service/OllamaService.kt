@@ -10,6 +10,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.util.NetworkUtils
 
 /**
  * Service to manage Ollama LLM initialization and connection
@@ -51,36 +52,16 @@ class OllamaService : Service() {
 
     private suspend fun tryStartOllama() {
         try {
-            // Try your current IP address first (from most recent ipconfig)
-            if (mspClient.isServerRunning("http://10.218.57.181:11435")) {
-                Log.d(TAG, "✅ Ollama is running at 10.218.57.181:11435")
-                
-                // Broadcast a notification that Ollama is running
-                val broadcastIntent = Intent("com.example.tareamov.OLLAMA_STATUS")
-                broadcastIntent.putExtra("status", "running")
-                broadcastIntent.putExtra("message", "Ollama está ejecutándose en 10.218.57.181:11435")
-                sendBroadcast(broadcastIntent)
-                return
-            }
+            // Obtener URLs dinámicamente basadas en la IP del dispositivo
+            val dynamicUrls = NetworkUtils.buildServerUrls(this, 11435)
+            Log.d(TAG, "🔍 Buscando Ollama en ${dynamicUrls.size} direcciones dinámicas")
             
-            // Try other addresses (including Windows Wi‑Fi / WSL addresses reported by the user)
-            val otherAddresses = listOf(
-                // Wi‑Fi and gateway addresses from Windows ipconfig
-                "http://10.218.57.181:11435" to "10.218.57.181:11435",
-                "http://10.218.57.109:11435" to "10.218.57.109:11435",
-                // WSL / Hyper‑V virtual adapter
-                "http://172.17.112.1:11435" to "172.17.112.1:11435",
-                // Local loopback alternatives
-                "http://localhost:11435" to "localhost:11435",
-                "http://127.0.0.1:11435" to "127.0.0.1:11435",
-                "http://0.0.0.0:11435" to "0.0.0.0:11435"
-            )
-            
-            for ((url, displayAddress) in otherAddresses) {
+            for (url in dynamicUrls) {
+                val displayAddress = url.removePrefix("http://").removeSuffix(":11435")
                 if (mspClient.isServerRunning(url)) {
-                    Log.d(TAG, "✅ Ollama is running at $displayAddress")
+                    Log.d(TAG, "✅ Ollama encontrado en $displayAddress")
                     
-                    // Broadcast a notification that Ollama is running
+                    // Broadcast que Ollama está corriendo
                     val broadcastIntent = Intent("com.example.tareamov.OLLAMA_STATUS")
                     broadcastIntent.putExtra("status", "running")
                     broadcastIntent.putExtra("message", "Ollama está ejecutándose en $displayAddress")
@@ -89,19 +70,19 @@ class OllamaService : Service() {
                 }
             }
 
-            // If we get here, Ollama is not running
-            Log.w(TAG, "⚠️ Ollama is not running on any expected address")
+            // Si no se encontró Ollama
+            Log.w(TAG, "⚠️ Ollama no está ejecutándose en ninguna dirección detectada")
 
-            // Broadcast a notification that Ollama needs to be started
+            // Broadcast que Ollama necesita iniciarse
             val broadcastIntent = Intent("com.example.tareamov.OLLAMA_STATUS")
             broadcastIntent.putExtra("status", "not_running")
             broadcastIntent.putExtra("message", "Ollama no está ejecutándose. Usando modelo local como respaldo.")
             sendBroadcast(broadcastIntent)
 
-            // Wait a bit to see if the user starts Ollama
+            // Esperar un poco para ver si el usuario inicia Ollama
             delay(2000)
         } catch (e: Exception) {
-            Log.e(TAG, "Error trying to start Ollama", e)
+            Log.e(TAG, "Error al intentar iniciar Ollama", e)
         }
     }
 
@@ -137,7 +118,10 @@ class OllamaService : Service() {
                     broadcastIntent.putExtra("message", "Modelo Llama3 inicializado correctamente")
                     sendBroadcast(broadcastIntent)
                     
-                    // Now that we know the model works, build the database context in background
+                    // REMOVED: No longer building database context in background
+                    // This was causing prompt truncation (exceeding 4096 tokens)
+                    // Database context should only be sent AFTER LLM requests data via MCP tools
+                    /*
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
                             Log.d(TAG, "Building database context in background...")
@@ -147,6 +131,7 @@ class OllamaService : Service() {
                             Log.e(TAG, "Error building database context in background", e)
                         }
                     }
+                    */
                 } catch (e: Exception) {
                     Log.e(TAG, "Error during model initialization", e)
                     connected = false
@@ -177,7 +162,28 @@ class OllamaService : Service() {
         return try {
             // Use the MSPClient to get the context directly
             val mspClient = MSPClient(this@OllamaService)
-            mspClient.buildDatabaseContext()
+            val baseContext = mspClient.buildDatabaseContext()
+
+            val snapshotBuilder = StringBuilder()
+            snapshotBuilder.append("\n\n// --- Supabase snapshots generados automáticamente ---\n")
+            val snapshotTables = listOf("usuarios", "personas", "courses", "videos", "subscriptions", "task_submissions")
+
+            for (table in snapshotTables) {
+                try {
+                    val records = SupabaseClient.fetchTableSnapshot(table, 3)
+                    if (records.isNotEmpty()) {
+                        snapshotBuilder.append("Tabla $table (primeros ${records.size} registros): \n")
+                        records.forEach { record ->
+                            snapshotBuilder.append("  · ${record}\n")
+                        }
+                        snapshotBuilder.append("\n")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "No se pudo obtener snapshot para $table", e)
+                }
+            }
+
+            baseContext + snapshotBuilder.toString()
         } catch (e: Exception) {
             Log.e(TAG, "Error building enhanced database context", e)
             "Error al obtener contexto de base de datos: ${e.message}"

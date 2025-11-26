@@ -8,8 +8,9 @@
 
     <VideoView
         android:id="@+id/videoView"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -28,18 +29,42 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Fullscreen Button -->
-    <ImageView
-        android:id="@+id/fullscreenButton"
-        android:layout_width="28dp"
-        android:layout_height="28dp"
-        android:layout_margin="16dp"
+    <!-- Fullscreen Button Container - Centrado horizontalmente -->
+    <LinearLayout
+        android:id="@+id/fullscreenButtonContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
         android:background="@drawable/rounded_button_background"
-        android:padding="4dp"
-        android:src="@drawable/ic_fullscreen_minimal"
-        android:alpha="0.7"
+        android:paddingStart="12dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:alpha="0.0"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toTopOf="@+id/rightActionButtons"
+        app:layout_constraintBottom_toBottomOf="@+id/rightActionButtons">
+
+        <ImageView
+            android:id="@+id/fullscreenButton"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_fullscreen_minimal"
+            android:scaleType="centerInside"
+            android:layout_marginEnd="8dp" />
+
+        <TextView
+            android:id="@+id/fullscreenText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Pantalla completa"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+    </LinearLayout>
 
     <!-- Error Placeholder (initially invisible) -->
     <TextView

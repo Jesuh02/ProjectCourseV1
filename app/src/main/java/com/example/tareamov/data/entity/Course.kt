@@ -2,6 +2,7 @@ package com.example.tareamov.data.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.google.gson.annotations.SerializedName
 
 @Entity(tableName = "courses")
 data class Course(
@@ -9,7 +10,8 @@ data class Course(
     val id: Long = 0,
     val title: String,
     val description: String,
-    val creatorUsername: String,
+    @SerializedName("creator_user_id")
+    val creatorUserId: Long, // Foreign key to usuarios.id
     val thumbnailUri: String? = null,
     val videoUri: String? = null, // Maps to VideoData.videoUriString
     val localFilePath: String? = null,

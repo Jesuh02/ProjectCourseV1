@@ -167,11 +167,11 @@ class ChatMessageAdapter(
                 appendLine()
                 
                 val gradeValue = extractGradeFromMessage(message.message)
-                val gradePercentage = if (gradeValue != null) (gradeValue * 10).toInt() else 87
+                val finalGrade = gradeValue?.coerceIn(0f, 10f) ?: 8.7f
                 
                 appendLine("🎯 **CALIFICACIÓN SUGERIDA**")
-                appendLine("📊 Puntuación: $gradePercentage/100")
-                appendLine("⭐ Nivel: ${getQualityLabel(gradePercentage)}")
+                appendLine("📊 Puntuación: ${if (finalGrade % 1 == 0f) finalGrade.toInt().toString() else String.format("%.1f", finalGrade)}/10")
+                appendLine("⭐ Nivel: ${getQualityLabel((finalGrade * 10).toInt())}")
                 appendLine()
                 appendLine("---")
                 appendLine()

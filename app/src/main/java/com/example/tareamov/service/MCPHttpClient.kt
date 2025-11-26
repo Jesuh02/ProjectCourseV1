@@ -10,8 +10,10 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.LinkedHashSet
 
 /**
  * MCP HTTP Client
@@ -24,10 +26,13 @@ class MCPHttpClient(private val context: Context) {
     private val tag = "MCPHttpClient"
     private val requestId = AtomicInteger(0)
     private var isInitialized = false
+    @Volatile private var activeBaseUrl: String? = null
+    
+    init {
+        ServerEndpointResolver.initialize(context.applicationContext)
+    }
     
     companion object {
-        // Special IP for Android Emulator to access host machine's localhost
-        private const val MCP_SERVER_URL = "http://10.0.2.2:3000"
         private const val CONNECT_TIMEOUT = 10L // seconds
         private const val READ_TIMEOUT = 60L // seconds
         private const val WRITE_TIMEOUT = 30L // seconds
@@ -40,12 +45,69 @@ class MCPHttpClient(private val context: Context) {
         .build()
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+    private suspend fun obtainActiveBase(forceDiscovery: Boolean = false): String? {
+        if (!forceDiscovery) {
+            activeBaseUrl?.let { return it }
+        }
+        val resolved = ServerEndpointResolver.getMcpBaseUrl(forceDiscovery)
+        if (resolved != null) {
+            activeBaseUrl = resolved
+        }
+        return resolved
+    }
+
+    private suspend fun <T> withMcpBase(action: suspend (String) -> T): T? {
+        val attempted = LinkedHashSet<String>()
+        val discoverySteps = listOf(false, true)
+        for (force in discoverySteps) {
+            val base = obtainActiveBase(force) ?: continue
+            if (!attempted.add(base)) {
+                continue
+            }
+
+            try {
+                val result = action(base)
+                activeBaseUrl = base
+                return result
+            } catch (e: Exception) {
+                Log.w(tag, "MCP request failed on $base", e)
+                if (!force) {
+                    activeBaseUrl = null
+                }
+            }
+        }
+        return null
+    }
+
+    private fun buildUrl(base: String, path: String): String {
+        return "${base.trimEnd('/')}$path"
+    }
+
+    private suspend fun executeRpcRaw(path: String, payload: JSONObject): String? {
+        return withMcpBase { base ->
+            val request = Request.Builder()
+                .url(buildUrl(base, path))
+                .post(payload.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: ""
+                if (!response.isSuccessful) {
+                    throw IOException("HTTP ${response.code}: ${response.message}")
+                }
+                body
+            }
+        }
+    }
     
     data class MCPQueryResult(
         val success: Boolean,
-        val data: Any?,
-        val sqlScript: String?,
-        val error: String?
+        val data: Any? = null,
+        val sqlScript: String? = null,
+        val error: String? = null,
+        val formattedSummary: String? = null,
+        val metadata: JSONObject? = null
     )
     
     data class MCPSchemaResult(
@@ -58,51 +120,51 @@ class MCPHttpClient(private val context: Context) {
      * Initialize MCP server connection
      */
     suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
-        try {
-            if (isInitialized) {
-                Log.d(tag, "MCP client already initialized")
-                return@withContext true
-            }
-            
-            Log.d(tag, "🚀 Connecting to MCP HTTP server at $MCP_SERVER_URL...")
-            
-            // Test health endpoint first
+        if (isInitialized) {
+            Log.d(tag, "MCP client already initialized")
+            return@withContext true
+        }
+
+        val result = withMcpBase { base ->
+            Log.d(tag, "🚀 Connecting to MCP HTTP server at $base...")
+
             val healthRequest = Request.Builder()
-                .url("$MCP_SERVER_URL/health")
+                .url(buildUrl(base, "/health"))
                 .get()
                 .build()
-            
-            val healthResponse = httpClient.newCall(healthRequest).execute()
-            if (!healthResponse.isSuccessful) {
-                Log.e(tag, "❌ MCP server health check failed: ${healthResponse.code}")
-                return@withContext false
+
+            httpClient.newCall(healthRequest).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("Health check HTTP ${response.code}")
+                }
+                val body = response.body?.string()
+                Log.d(tag, "✅ MCP server is healthy: $body")
             }
-            
-            val healthBody = healthResponse.body?.string()
-            Log.d(tag, "✅ MCP server is healthy: $healthBody")
-            
-            // Send initialize request
-            val initRequest = buildJsonRpcRequest("initialize", JSONObject())
-            val initRequestBody = Request.Builder()
-                .url("$MCP_SERVER_URL/initialize")
-                .post(initRequest.toString().toRequestBody(jsonMediaType))
+
+            val initPayload = buildJsonRpcRequest("initialize", JSONObject())
+            val initRequest = Request.Builder()
+                .url(buildUrl(base, "/initialize"))
+                .post(initPayload.toString().toRequestBody(jsonMediaType))
                 .build()
-            
-            val initResponse = httpClient.newCall(initRequestBody).execute()
-            if (!initResponse.isSuccessful) {
-                Log.e(tag, "❌ MCP initialize failed: ${initResponse.code}")
-                return@withContext false
+
+            httpClient.newCall(initRequest).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("Initialize HTTP ${response.code}")
+                }
+                val initResult = response.body?.string()
+                Log.d(tag, "✅ MCP initialized: $initResult")
             }
-            
-            val initResult = initResponse.body?.string()
-            Log.d(tag, "✅ MCP initialized: $initResult")
-            
+
             isInitialized = true
-            return@withContext true
-            
-        } catch (e: Exception) {
-            Log.e(tag, "❌ Failed to initialize MCP client", e)
-            return@withContext false
+            true
+        }
+
+        return@withContext when (result) {
+            true -> true
+            else -> {
+                Log.e(tag, "❌ Failed to initialize MCP client")
+                false
+            }
         }
     }
     
@@ -134,25 +196,19 @@ class MCPHttpClient(private val context: Context) {
             }
             
             val request = buildJsonRpcRequest("tools/call", params)
-            val requestBody = Request.Builder()
-                .url("$MCP_SERVER_URL/tools/call")
-                .post(request.toString().toRequestBody(jsonMediaType))
-                .build()
-            
-            val response = httpClient.newCall(requestBody).execute()
-            if (!response.isSuccessful) {
-                Log.e(tag, "❌ Query failed with HTTP ${response.code}")
+            val responseBody = executeRpcRaw("/tools/call", request)
+            if (responseBody == null) {
+                Log.e(tag, "❌ No reachable MCP server for query_database")
                 return@withContext MCPQueryResult(
                     success = false,
                     data = null,
                     sqlScript = null,
-                    error = "HTTP ${response.code}: ${response.message}"
+                    error = "MCP server not reachable"
                 )
             }
-            
-            val responseBody = response.body?.string() ?: ""
+
             Log.d(tag, "📦 MCP Response: ${responseBody.take(200)}...")
-            
+
             val jsonResponse = JSONObject(responseBody)
             
             // Check for JSON-RPC error
@@ -191,18 +247,32 @@ class MCPHttpClient(private val context: Context) {
             // Get the text content
             val textContent = content.getJSONObject(0).optString("text", "")
             val mcpResult = JSONObject(textContent)
-            
-            // Extract data and SQL script
-            val data = mcpResult.opt("data")
-            val sqlScript = mcpResult.optString("sql_script", null)
-            
-            Log.d(tag, "✅ Query successful, data type: ${data?.javaClass?.simpleName}")
-            
+
+            // Extract data and SQL script, handling null payloads gracefully
+            val rawData = mcpResult.opt("data")
+            val data = if (rawData == null || rawData == JSONObject.NULL) null else rawData
+            val sqlScript = mcpResult.optString("sql_script", null)?.takeIf { it.isNotBlank() }
+            val metadata = mcpResult.optJSONObject("metadata")
+            val formattedSummary = mcpResult.optString("formatted_summary", "").takeIf { it.isNotBlank() }
+            val successFlag = metadata?.optBoolean("success", data != null) ?: (data != null)
+            val errorMessage = if (successFlag) {
+                null
+            } else {
+                val metadataMessage = metadata?.optString("message")?.takeIf { it.isNotBlank() }
+                val note = mcpResult.optString("note")
+                val noteMessage = note.takeIf { it.isNotBlank() }
+                metadataMessage ?: noteMessage ?: "No se recuperaron datos de Supabase para la consulta solicitada."
+            }
+
+            Log.d(tag, "✅ Query processed | success=$successFlag | dataType=${data?.javaClass?.simpleName ?: "null"}")
+
             return@withContext MCPQueryResult(
-                success = true,
+                success = successFlag,
                 data = data,
                 sqlScript = sqlScript,
-                error = null
+                error = errorMessage,
+                formattedSummary = formattedSummary,
+                metadata = metadata
             )
             
         } catch (e: Exception) {
@@ -238,25 +308,10 @@ class MCPHttpClient(private val context: Context) {
             }
             
             val request = buildJsonRpcRequest("tools/call", params)
-            val requestBody = Request.Builder()
-                .url("$MCP_SERVER_URL/tools/call")
-                .post(request.toString().toRequestBody(jsonMediaType))
-                .build()
-            
-            val response = httpClient.newCall(requestBody).execute()
-            if (!response.isSuccessful) {
-                Log.e(tag, "❌ Schema request failed: ${response.code}")
-                return@withContext MCPSchemaResult(
-                    success = false,
-                    schema = null,
-                    error = "HTTP ${response.code}: ${response.message}"
-                )
-            }
-            
-            val responseBody = response.body?.string() ?: return@withContext MCPSchemaResult(
+            val responseBody = executeRpcRaw("/tools/call", request) ?: return@withContext MCPSchemaResult(
                 success = false,
                 schema = null,
-                error = "Empty response"
+                error = "MCP server not reachable"
             )
             val jsonResponse = JSONObject(responseBody)
             
@@ -320,18 +375,8 @@ class MCPHttpClient(private val context: Context) {
             Log.d(tag, "📋 Listing available tools")
             
             val request = buildJsonRpcRequest("tools/list", JSONObject())
-            val requestBody = Request.Builder()
-                .url("$MCP_SERVER_URL/tools/list")
-                .post(request.toString().toRequestBody(jsonMediaType))
-                .build()
+            val responseBody = executeRpcRaw("/tools/list", request) ?: return@withContext emptyList()
             
-            val response = httpClient.newCall(requestBody).execute()
-            if (!response.isSuccessful) {
-                Log.e(tag, "❌ Tools list failed: ${response.code}")
-                return@withContext emptyList()
-            }
-            
-            val responseBody = response.body?.string() ?: return@withContext emptyList()
             Log.d(tag, "📦 Tools response: ${responseBody.take(300)}...")
             
             val jsonResponse = JSONObject(responseBody)
@@ -393,22 +438,12 @@ class MCPHttpClient(private val context: Context) {
             }
             
             val request = buildJsonRpcRequest("tools/call", params)
-            val requestBody = Request.Builder()
-                .url("$MCP_SERVER_URL/tools/call")
-                .post(request.toString().toRequestBody(jsonMediaType))
-                .build()
+            val responseBody = executeRpcRaw("/tools/call", request) ?: return@withContext MCPQueryResult(
+                success = false,
+                data = null,
+                error = "MCP server not reachable"
+            )
             
-            val response = httpClient.newCall(requestBody).execute()
-            if (!response.isSuccessful) {
-                return@withContext MCPQueryResult(
-                    success = false,
-                    data = null,
-                    sqlScript = null,
-                    error = "HTTP ${response.code}: ${response.message}"
-                )
-            }
-            
-            val responseBody = response.body?.string() ?: ""
             val jsonResponse = JSONObject(responseBody)
             
             if (jsonResponse.has("error")) {

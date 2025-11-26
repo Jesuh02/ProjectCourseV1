@@ -8,8 +8,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
-import android.widget.VideoView
 import android.widget.ImageView
+import android.widget.VideoView
 import android.os.Handler
 import android.os.Looper
 import androidx.recyclerview.widget.RecyclerView
@@ -19,6 +19,7 @@ import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
 import java.io.File
 import kotlinx.coroutines.*
+import kotlin.math.abs // Use kotlin.math.abs to avoid ambiguity
 
 /**
  * Adaptador para mostrar videos en un ViewPager2 con estilo TikTok
@@ -59,6 +60,7 @@ class VideoAdapter(
         private val errorPlaceholder: TextView = itemView.findViewById(R.id.errorPlaceholder)
         private val profileButton: de.hdodenhof.circleimageview.CircleImageView = itemView.findViewById(R.id.profileButton)
         private val playPauseOverlay: android.widget.ImageView? = itemView.findViewById(R.id.playPauseOverlay)
+        private val fullscreenButtonContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.fullscreenButtonContainer)
         private val fullscreenButton: android.widget.ImageView? = itemView.findViewById(R.id.fullscreenButton)
         private val likeButton: android.widget.ImageView? = itemView.findViewById(R.id.likeButton)
         private val shareButton: android.widget.ImageView? = itemView.findViewById(R.id.shareButton)
@@ -77,7 +79,6 @@ class VideoAdapter(
             errorPlaceholder.visibility = View.VISIBLE
             Log.e("VideoAdapter", "Showing error placeholder")
         }        fun bind(videoData: VideoData) {
-            usernameText.text = videoData.username
             descriptionText.text = videoData.description
             titleText.text = videoData.title
 
@@ -96,31 +97,45 @@ class VideoAdapter(
             // Setup button listeners
             setupButtonListeners()
 
-            // Setup profile button click
-            profileButton.setOnClickListener {
-                onProfileClick?.invoke(videoData.username)
-            }
-
-            // Setup username text click to navigate to course
-            usernameText.setOnClickListener {
-                onUsernameClick?.invoke(videoData)
-            }
-
-            // Also make the title clickable to navigate to the course details
-            titleText.setOnClickListener {
-                onUsernameClick?.invoke(videoData)
-            }
-
-            // --- AVATAR LOADING LOGIC ---
+            // --- OBTENER USERNAME DESDE COURSE_ID ---
             currentJob?.cancel()
             profileButton.setImageResource(R.drawable.ic_profile)
+            usernameText.text = "Cargando..." // Placeholder mientras se carga
 
             currentJob = CoroutineScope(Dispatchers.Main).launch {
                 try {
+                    // Obtener username desde course_id
+                    val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
+                        withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
+                        }
+                    } else {
+                        videoData.username // Fallback para compatibilidad
+                    }
+
+                    // Actualizar UI con el username obtenido
+                    usernameText.text = username ?: "Usuario desconocido"
+
+                    // Setup profile button click con el username correcto
+                    profileButton.setOnClickListener {
+                        onProfileClick?.invoke(username ?: "")
+                    }
+
+                    // Setup username text click to navigate to course
+                    usernameText.setOnClickListener {
+                        onUsernameClick?.invoke(videoData)
+                    }
+
+                    // Also make the title clickable to navigate to the course details
+                    titleText.setOnClickListener {
+                        onUsernameClick?.invoke(videoData)
+                    }
+
+                    // --- AVATAR LOADING LOGIC ---
                     val context = itemView.context.applicationContext
                     val db = AppDatabase.getDatabase(context)
                     val persona = withContext(Dispatchers.IO) {
-                        db.personaDao().getPersonaByUsername(videoData.username)
+                        db.personaDao().getPersonaByUsername(username ?: "")
                     }
                     if (persona != null && !persona.avatar.isNullOrEmpty()) {
                         Glide.with(itemView)
@@ -141,6 +156,18 @@ class VideoAdapter(
             if (bestUri != null) {
                 try {
                     Log.d("VideoAdapter", "Setting video URI: $bestUri")
+                    
+                    // Check if it's a local file URI and if the file exists
+                    if (bestUri.scheme == "file") {
+                        val file = File(bestUri.path ?: "")
+                        if (!file.exists()) {
+                            Log.e("VideoAdapter", "Local video file does not exist: ${bestUri.path}")
+                            showErrorPlaceholder()
+                            errorPlaceholder.text = "Video no disponible en este dispositivo"
+                            return
+                        }
+                    }
+                    
                     videoView.setVideoURI(bestUri)
 
                     videoView.setOnPreparedListener { mp ->
@@ -150,8 +177,8 @@ class VideoAdapter(
                         val videoHeight = mp.videoHeight
                         if (videoWidth > 0 && videoHeight > 0) {
                             val parentWidth = (videoView.parent as View).width
-                            val aspectRatio = videoWidth.toFloat() / videoHeight
-                            val newHeight = (parentWidth / aspectRatio).toInt()
+                            val aspectRatio = videoWidth.toFloat() / videoHeight.toFloat()
+                            val newHeight = (parentWidth.toFloat() / aspectRatio).toInt()
                             val params = videoView.layoutParams
                             params.width = parentWidth
                             params.height = newHeight
@@ -233,6 +260,8 @@ class VideoAdapter(
                     videoView.pause()
                     isVideoPaused = true
                     showPlayPauseOverlay(R.drawable.ic_play_overlay)
+                    // Mostrar botón de pantalla completa durante 2 segundos al pausar
+                    showFullscreenButtonTemporarily()
                     Log.d("VideoAdapter", "Video paused by user tap")
                 } else {
                     videoView.start()
@@ -262,6 +291,32 @@ class VideoAdapter(
             }
         }
 
+        /**
+         * Muestra el botón de pantalla completa transparente durante 2 segundos al pausar
+         */
+        private fun showFullscreenButtonTemporarily() {
+            fullscreenButtonContainer?.let { container ->
+                // Hacer el contenedor semi-transparente y visible
+                container.alpha = 0.0f
+                container.visibility = View.VISIBLE
+                container.animate()
+                    .alpha(0.9f)
+                    .setDuration(200)
+                    .start()
+                
+                // Ocultar después de 2 segundos
+                overlayHandler.postDelayed({
+                    container.animate()
+                        .alpha(0.0f)
+                        .setDuration(300)
+                        .withEndAction {
+                            container.visibility = View.GONE
+                        }
+                        .start()
+                }, 2000)
+            }
+        }
+
         private fun setupButtonListeners() {
             // Like button
             likeButton?.setOnClickListener {
@@ -281,8 +336,8 @@ class VideoAdapter(
                 setMuteState(isMuted)
             }
 
-            // Fullscreen button
-            fullscreenButton?.setOnClickListener {
+            // Fullscreen button container
+            fullscreenButtonContainer?.setOnClickListener {
                 // Navigate to fullscreen activity
                 navigateToFullscreen()
             }
@@ -313,9 +368,9 @@ class VideoAdapter(
                         val timeDiff = endTime - startTime
                         
                         // Check if it's a swipe gesture (not just a tap)
-                        if (timeDiff < 300 && Math.abs(diffX) > 100) {
+                        if (timeDiff < 300 && abs(diffX) > 100) {
                             // Check if it's a horizontal swipe (left)
-                            if (Math.abs(diffX) > Math.abs(diffY) && diffX < -100) {
+                            if (abs(diffX) > abs(diffY) && diffX < -100) {
                                 // Swipe left detected - navigate to course
                                 val position = adapterPosition
                                 if (position != RecyclerView.NO_POSITION && position < videos.size) {
@@ -324,7 +379,7 @@ class VideoAdapter(
                                     return@setOnTouchListener true
                                 }
                             }
-                        } else if (timeDiff < 200 && Math.abs(diffX) < 50 && Math.abs(diffY) < 50) {
+                        } else if (timeDiff < 200 && abs(diffX) < 50 && abs(diffY) < 50) {
                             // Single tap detected - toggle play/pause
                             togglePlayPause()
                         }
@@ -370,7 +425,15 @@ class VideoAdapter(
                     intent.putExtra("video_path", videoData.localFilePath ?: videoData.videoUriString)
                     intent.putExtra("video_title", videoData.title)
                     intent.putExtra("video_description", videoData.description)
-                    intent.putExtra("username", videoData.username)
+                    // Obtener username desde course_id para el intent
+                    val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
+                        runBlocking {
+                            com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
+                        }
+                    } else {
+                        videoData.username
+                    }
+                    intent.putExtra("username", username ?: "")
                     
                     // Pause current video before switching
                     pauseVideo()

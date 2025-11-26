@@ -8,19 +8,19 @@ import kotlinx.coroutines.withContext
 class SubscriptionRepository(private val database: AppDatabase) {
     private val subscriptionDao = database.subscriptionDao()
 
-    suspend fun toggleSubscription(subscriberUsername: String, creatorUsername: String): Boolean {
+    suspend fun toggleSubscription(subscriberId: Long, creatorId: Long): Boolean {
         return withContext(Dispatchers.IO) {
-            val isSubscribed = subscriptionDao.isSubscribed(subscriberUsername, creatorUsername)
+            val isSubscribed = subscriptionDao.isSubscribed(subscriberId, creatorId)
 
             if (isSubscribed) {
                 // Desuscribir
-                subscriptionDao.deleteSubscription(subscriberUsername, creatorUsername)
+                subscriptionDao.deleteSubscription(subscriberId, creatorId)
                 false
             } else {
                 // Suscribir
                 val subscription = Subscription(
-                    subscriberUsername = subscriberUsername,
-                    creatorUsername = creatorUsername
+                    subscriberId = subscriberId,
+                    creatorId = creatorId
                 )
                 subscriptionDao.insertSubscription(subscription)
                 true
@@ -28,28 +28,28 @@ class SubscriptionRepository(private val database: AppDatabase) {
         }
     }
 
-    suspend fun getSubscriptionCount(creatorUsername: String): Int {
+    suspend fun getSubscriptionCount(creatorId: Long): Int {
         return withContext(Dispatchers.IO) {
-            subscriptionDao.getSubscriptionCountForCreator(creatorUsername)
+            subscriptionDao.getSubscriptionCountForCreator(creatorId)
         }
     }
 
-    suspend fun isUserSubscribed(subscriberUsername: String, creatorUsername: String): Boolean {
+    suspend fun isUserSubscribed(subscriberId: Long, creatorId: Long): Boolean {
         return withContext(Dispatchers.IO) {
-            subscriptionDao.isSubscribed(subscriberUsername, creatorUsername)
+            subscriptionDao.isSubscribed(subscriberId, creatorId)
         }
     }
 
-    suspend fun getSubscriptionsByUser(subscriberUsername: String): List<Subscription> {
+    suspend fun getSubscriptionsByUser(subscriberId: Long): List<Subscription> {
         return withContext(Dispatchers.IO) {
-            subscriptionDao.getSubscriptionsBySubscriber(subscriberUsername)
+            subscriptionDao.getSubscriptionsBySubscriber(subscriberId)
         }
     }
 
     // Fix the method that's causing type mismatch errors
-    suspend fun getSubscribersByCreator(creatorUsername: String): List<Subscription> {
+    suspend fun getSubscribersByCreator(creatorId: Long): List<Subscription> {
         return withContext(Dispatchers.IO) {
-            subscriptionDao.getSubscribersByCreator(creatorUsername)
+            subscriptionDao.getSubscribersByCreator(creatorId)
         }
     }
 }

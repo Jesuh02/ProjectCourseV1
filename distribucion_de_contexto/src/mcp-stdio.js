@@ -247,31 +247,31 @@ async function handleRequest(request) {
   console.error(`📨 Received: ${method}`);
   
   switch (method) {
-    case 'initialize':
-      await handleInitialize(id, params);
-      break;
+  case 'initialize':
+    await handleInitialize(id, params);
+    break;
     
-    case 'tools/list':
-      await handleToolsList(id);
-      break;
+  case 'tools/list':
+    await handleToolsList(id);
+    break;
     
-    case 'tools/call':
-      await handleToolsCall(id, params);
-      break;
+  case 'tools/call':
+    await handleToolsCall(id, params);
+    break;
     
-    case 'resources/list':
-      await handleResourcesList(id);
-      break;
+  case 'resources/list':
+    await handleResourcesList(id);
+    break;
     
-    case 'resources/read':
-      await handleResourcesRead(id, params);
-      break;
+  case 'resources/read':
+    await handleResourcesRead(id, params);
+    break;
     
-    default:
-      sendResponse(id, null, {
-        code: -32601,
-        message: `Method not found: ${method}`
-      });
+  default:
+    sendResponse(id, null, {
+      code: -32601,
+      message: `Method not found: ${method}`
+    });
   }
 }
 

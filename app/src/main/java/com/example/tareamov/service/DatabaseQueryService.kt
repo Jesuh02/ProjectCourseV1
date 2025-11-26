@@ -203,8 +203,12 @@ class DatabaseQueryService(private val context: Context) {
         if (!result.success) {
             return "❌ Error ejecutando consulta: ${result.error ?: "Error desconocido"}"
         }
+
+        // REMOVED: Direct formatted_summary passthrough - LLM will analyze raw data instead
+        // Old behavior: if (formattedSummary) return formattedSummary + metrics + SQL
+        // New behavior: Return raw data for LocalLlamaService to analyze
         
-        // Build formatted response
+        // Build formatted response from RAW DATA
         val response = StringBuilder()
         
         // Format the data based on type

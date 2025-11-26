@@ -98,7 +98,7 @@ class LoginFragment : Fragment() {
                     val syncRepo = com.example.tareamov.data.sync.SyncRepository(
                         db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
                         db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-                        db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
+                        db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
                     )
 
                     existsOnSupabase = withContext(Dispatchers.IO) {
@@ -179,7 +179,7 @@ class LoginFragment : Fragment() {
                     val syncRepo = com.example.tareamov.data.sync.SyncRepository(
                         db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
                         db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-                        db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao()
+                        db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
                     )
 
                     // Attempt to fetch remote user (this will try even if isConfigured() previously returned false)

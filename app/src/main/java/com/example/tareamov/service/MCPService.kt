@@ -1691,7 +1691,7 @@ $tableList
     /**
      * Check the status of the Ollama server
      */
-    private fun checkServerStatus(): String {
+    private suspend fun checkServerStatus(): String {
         return try {
             val isRunning = mspClient.isServerRunning()
             if (isRunning) {
@@ -1810,7 +1810,7 @@ $tableList
             if (subscriptions.isNotEmpty()) {
                 contextBuilder.append("Ejemplos de suscripciones:\n")
                 subscriptions.take(5).forEach { subscription ->
-                    contextBuilder.append("- Suscriptor: ${subscription.subscriberUsername}, Creador: ${subscription.creatorUsername}, Fecha: ${subscription.subscriptionDate}\n")
+                    contextBuilder.append("- Suscriptor ID: ${subscription.subscriberId}, Creador ID: ${subscription.creatorId}, Fecha: ${subscription.subscriptionDate}\n")
                 }
                 contextBuilder.append("\n")
             }

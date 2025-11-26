@@ -7,88 +7,7 @@
     android:background="#000000"
     tools:context=".ui.VideoHomeFragment">
 
-    <!-- Top Navigation Tabs -->
-    <LinearLayout
-        android:id="@+id/topNavTabs"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <!-- Existing tabs remain unchanged -->
-        <TextView
-            android:id="@+id/siguiendoTab"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp" />
-
-        <TextView
-            android:id="@+id/enVivoTab"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp" />
-
-        <TextView
-            android:id="@+id/clipsTab"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-
-        <!-- Enhanced Courses Button with Glow Effect -->
-        <ImageView
-            android:id="@+id/coursesButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_gravity="center_vertical"
-            android:layout_marginEnd="12dp"
-            android:padding="10dp"
-            android:src="@drawable/ic_courses_enhanced"
-            android:background="@drawable/bg_courses_button_glow"
-            android:contentDescription="Acceder a Cursos - Iniciar Sesión"
-            android:clickable="true"
-            android:focusable="true"
-            android:elevation="8dp"
-            android:scaleType="centerInside"
-            android:hapticFeedbackEnabled="true" />
-
-        <!-- Animated Database Orbit Button -->
-        <ImageView
-            android:id="@+id/databaseOrbitButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_gravity="center_vertical"
-            android:layout_marginEnd="8dp"
-            android:src="@drawable/ic_database_orbit_animated_avd"
-            android:contentDescription="Database Orbit"
-            android:background="@android:color/transparent" />
-
-        <!-- Profile Avatars -->
-        <de.hdodenhof.circleimageview.CircleImageView
-            android:id="@+id/profileAvatars"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_gravity="center_vertical"
-            android:layout_marginEnd="16dp"
-            android:src="@drawable/ic_profile_avatars"
-            app:civ_border_color="#FFFFFF"
-            app:civ_border_width="1dp" />
-    </LinearLayout>
-
     <!-- Main Content - Video Background -->
-    <!-- Replace the ImageView with a ViewPager2 for video scrolling -->
-    <!-- Update the ViewPager2 section to better handle video display -->
     <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/videoViewPager"
         android:layout_width="0dp"
@@ -97,7 +16,203 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/topNavTabs" />
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Top Navigation Tabs Container -->
+    <FrameLayout
+        android:id="@+id/topNavContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@android:color/transparent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- Top Navigation Tabs (botones normales) -->
+        <LinearLayout
+            android:id="@+id/topNavTabs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:visibility="visible">
+
+            <!-- Existing tabs remain unchanged -->
+
+            <ImageButton
+                android:id="@+id/toggleSearchButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="8dp"
+                android:background="@android:color/transparent"
+                android:contentDescription="Buscar videos"
+                android:src="@android:drawable/ic_menu_search"
+                android:tint="#FFFFFF" />
+
+            <TextView
+                android:id="@+id/enVivoTab"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/clipsTab"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <!-- Search Icon Button (to toggle search bar) -->
+
+            <!-- Enhanced Courses Button with Glow Effect -->
+
+            <ImageView
+                android:id="@+id/coursesButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="12dp"
+                android:padding="10dp"
+                android:src="@drawable/ic_courses_enhanced"
+                android:background="@drawable/bg_courses_button_glow"
+                android:contentDescription="Acceder a Cursos - Iniciar Sesión"
+                android:clickable="true"
+                android:focusable="true"
+                android:elevation="8dp"
+                android:scaleType="centerInside"
+                android:hapticFeedbackEnabled="true" />
+
+            <!-- Animated Database Orbit Button -->
+            <ImageView
+                android:id="@+id/databaseOrbitButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="8dp"
+                android:src="@drawable/ic_database_orbit_animated_avd"
+                android:contentDescription="Database Orbit"
+                android:background="@android:color/transparent" />
+
+            <!-- Profile Avatars -->
+            <de.hdodenhof.circleimageview.CircleImageView
+                android:id="@+id/profileAvatars"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="16dp"
+                android:src="@drawable/ic_profile_avatars"
+                app:civ_border_color="#FFFFFF"
+                app:civ_border_width="1dp" />
+        </LinearLayout>
+
+        <!-- Search Bar (ocupa todo el espacio cuando está visible) -->
+        <eightbitlab.com.blurview.BlurView
+            android:id="@+id/searchBarContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="8dp"
+            android:elevation="8dp"
+            android:visibility="gone"
+            app:blurOverlayColor="#4D000000">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="12dp"
+                android:background="@drawable/bg_liquid_glass">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <EditText
+                        android:id="@+id/searchEditText"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:background="@android:color/transparent"
+                        android:hint="Buscar videos..."
+                        android:textColorHint="#CCFFFFFF"
+                        android:textColor="#FFFFFF"
+                        android:drawableStart="@android:drawable/ic_menu_search"
+                        android:drawableTint="#FFFFFF"
+                        android:drawablePadding="12dp"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:imeOptions="actionSearch"
+                        android:inputType="text"
+                        android:singleLine="true" />
+
+                    <ImageButton
+                        android:id="@+id/closeSearchButton"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="8dp"
+                        android:src="@android:drawable/ic_menu_close_clear_cancel"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Cancelar"
+                        android:tint="#FFFFFF" />
+                </LinearLayout>
+
+                <!-- Search Filter Chips -->
+                <HorizontalScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:scrollbars="none">
+
+                    <com.google.android.material.chip.ChipGroup
+                        android:id="@+id/searchFilterChipGroup"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:singleSelection="true"
+                        app:selectionRequired="false">
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/filterAllChip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Todos"
+                    android:checked="true"
+                    style="@style/Widget.MaterialComponents.Chip.Choice" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/filterTitleChip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Título"
+                    style="@style/Widget.MaterialComponents.Chip.Choice" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/filterUsernameChip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Usuario"
+                    style="@style/Widget.MaterialComponents.Chip.Choice" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/filterCategoryChip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Categoría"
+                    style="@style/Widget.MaterialComponents.Chip.Choice" />
+            </com.google.android.material.chip.ChipGroup>
+        </HorizontalScrollView>
+    </LinearLayout>
+    </eightbitlab.com.blurview.BlurView>
+    </FrameLayout>
+
+
 
     <!-- Bottom Info Section removed - info is now handled by individual video items -->
 

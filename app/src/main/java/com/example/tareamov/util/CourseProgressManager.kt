@@ -91,22 +91,26 @@ class CourseProgressManager(private val context: Context) {
                 0
             }
 
-            // Calculate average grade
+            // Calculate average grade - Ahora considera TODAS las tareas, incluso sin submission (calificación 0)
             var totalGrade = 0f
-            var gradedSubmissionsCount = 0
-
-            for (submission in submissions) {
-                submission.grade?.let { grade ->
-                    totalGrade += grade
-                    gradedSubmissionsCount++
-                }
+            val taskSubmissionMap = submissions.associateBy { it.taskId }
+            
+            // Para cada tarea, usar la calificación de la submission o 0 si no existe
+            for (task in tasks) {
+                val submission = taskSubmissionMap[task.id]
+                val grade = submission?.grade ?: 0f // Si no hay submission, calificación es 0
+                totalGrade += grade
             }
 
-            val averageGrade = if (gradedSubmissionsCount > 0) {
-                totalGrade / gradedSubmissionsCount
+            // El promedio se calcula sobre TODAS las tareas (no solo las que tienen submission)
+            val averageGrade = if (totalTasks > 0) {
+                totalGrade / totalTasks
             } else {
                 0f
             }
+            
+            // Contar cuántas tareas tienen calificación diferente de 0 (para mostrar info adicional)
+            val gradedSubmissionsCount = submissions.count { (it.grade ?: 0f) > 0f }
 
             // Update UI
             progressContainer.visibility = View.VISIBLE

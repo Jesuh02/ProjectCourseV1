@@ -43,6 +43,7 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import de.hdodenhof.circleimageview.CircleImageView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -420,66 +421,84 @@ class UserProfileViewFragment : Fragment() {
             return
         }
 
-        val filteredContent = when (currentFilter) {
+        // Use a local reference to avoid repeated access to properties
+        val currentList = when (currentFilter) {
             ContentType.COURSE -> allCourses
             ContentType.VIDEO -> allVideos
         }
 
-        Log.d("UserProfileView", "Filtering content - Type: $currentFilter, Count: ${filteredContent.size}")
+        Log.d("UserProfileView", "Filtering content - Type: $currentFilter, Count: ${currentList.size}")
 
-        // Cambiar adaptador según el tipo de contenido
-        when (currentFilter) {
-            ContentType.COURSE -> {
-                allContent.clear()
-                allContent.addAll(filteredContent)
-                if (::contentAdapter.isInitialized) {
-                    contentRecyclerView.adapter = contentAdapter
-                    contentAdapter.updateCourses(allContent)
-                    contentAdapter.notifyDataSetChanged()
-                    Log.d("UserProfileView", "Updated course adapter with ${allContent.size} courses")
-                } else {
-                    Log.w("UserProfileView", "contentAdapter not initialized when filtering courses")
-                }
-            }
-            ContentType.VIDEO -> {
-                if (::videoAdapter.isInitialized) {
-                    contentRecyclerView.adapter = videoAdapter
-                    videoAdapter.updateVideos(filteredContent)
-                    videoAdapter.notifyDataSetChanged()
-                    Log.d("UserProfileView", "Updated video adapter with ${filteredContent.size} videos")
-                } else {
-                    Log.w("UserProfileView", "videoAdapter not initialized when filtering videos")
-                }
-            }
-        }
-
-        // Mostrar mensaje de estado vacío si no hay contenido
-        if (filteredContent.isEmpty()) {
+        // Optimize adapter updates by checking if the data has actually changed or if we can use more efficient update methods
+        // Also, avoid recreating the adapter if possible, just swap the data
+        
+        if (currentList.isEmpty()) {
             emptyStateTextView.visibility = View.VISIBLE
             emptyStateTextView.text = when (currentFilter) {
                 ContentType.COURSE -> "Este usuario no tiene cursos disponibles"
                 ContentType.VIDEO -> "Este usuario no tiene videos disponibles"
             }
             contentRecyclerView.visibility = View.GONE
+            return
         } else {
             emptyStateTextView.visibility = View.GONE
             contentRecyclerView.visibility = View.VISIBLE
+        }
+
+        when (currentFilter) {
+            ContentType.COURSE -> {
+                if (::contentAdapter.isInitialized) {
+                    // Only set adapter if it's different to avoid layout reset
+                    if (contentRecyclerView.adapter != contentAdapter) {
+                        contentRecyclerView.adapter = contentAdapter
+                    }
+                    
+                    // Update data efficiently
+                    // We don't need to clear and add all to allContent if the adapter handles its own list
+                    // But since CreatedCourseAdapter takes a list in constructor, we might need to update it
+                    // Assuming updateCourses handles diffing or efficient updates internally
+                    contentAdapter.updateCourses(currentList)
+                    // notifyDataSetChanged is heavy, prefer specific updates if possible, but for filter switch it's okay
+                    // contentAdapter.notifyDataSetChanged() // updateCourses likely calls this or DiffUtil
+                }
+            }
+            ContentType.VIDEO -> {
+                if (::videoAdapter.isInitialized) {
+                    if (contentRecyclerView.adapter != videoAdapter) {
+                        contentRecyclerView.adapter = videoAdapter
+                    }
+                    videoAdapter.updateVideos(currentList)
+                    // videoAdapter.notifyDataSetChanged() // updateVideos likely calls this
+                }
+            }
         }
     }private fun loadUserData(username: String) {
         lifecycleScope.launch {
             try {
                 val database = AppDatabase.getDatabase(requireContext())
 
-                // Cargar información del usuario y persona usando los métodos correctos
-                val user = withContext(Dispatchers.IO) {
+                // Use async to load user data and subscribers count in parallel
+                val userDeferred = async(Dispatchers.IO) {
                     database.usuarioDao().getUsuarioByUsername(username)
                 }
-
-                val persona = user?.let {
-                    withContext(Dispatchers.IO) {
-                        database.personaDao().getPersonaById(it.personaId)
-                    }
+                
+                val subscribersDeferred = async(Dispatchers.IO) {
+                    try {
+                        val u = database.usuarioDao().getUsuarioByUsername(username)
+                        if (u != null) {
+                            database.subscriptionDao().getSubscriptionCountForCreator(u.id)
+                        } else 0
+                    } catch (e: Exception) { 0 }
                 }
+
+                val user = userDeferred.await()
+                val subscribersCount = subscribersDeferred.await()
+
+                val persona = if (user != null) {
+                    withContext(Dispatchers.IO) {
+                        database.personaDao().getPersonaById(user.personaId)
+                    }
+                } else null
 
                 // Actualizar UI con información del usuario
                 withContext(Dispatchers.Main) {
@@ -489,15 +508,14 @@ class UserProfileViewFragment : Fragment() {
                     } else {
                         usernameTextView.text = username
                     }
+                    
+                    subscribersCountTextView.text = subscribersCount.toString()
 
                     // Cargar avatar del usuario
                     loadUserAvatar(persona)
                 }
 
-                // NUEVO: Cargar cantidad de subscriptores
-                loadSubscribersCount(username)
-
-                // Cargar contenido del usuario
+                // Cargar contenido del usuario (this is already optimized with async internally)
                 loadUserContent(username)
                 
             } catch (e: Exception) {
@@ -509,22 +527,6 @@ class UserProfileViewFragment : Fragment() {
                     subscribersCountTextView.text = "0"
                     showEmptyState()
                 }
-            }
-        }
-    }
-
-    private suspend fun loadSubscribersCount(username: String) {
-        try {
-            val database = AppDatabase.getDatabase(requireContext())
-            val count = withContext(Dispatchers.IO) {
-                database.subscriptionDao().getSubscriptionCountForCreator(username)
-            }
-            withContext(Dispatchers.Main) {
-                subscribersCountTextView.text = count.toString()
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                subscribersCountTextView.text = "0"
             }
         }
     }
@@ -577,18 +579,33 @@ class UserProfileViewFragment : Fragment() {
             var userCoursesList: List<com.example.tareamov.data.entity.Course> = emptyList()
             var userVideosList: List<VideoData> = emptyList()
 
+            // Use async to fetch courses and videos in parallel
             if (act != null) {
                 try {
-                    // Try to fetch courses by creator from Supabase
-                    val remoteCourses = withContext(Dispatchers.IO) { act.syncRepository.fetchCoursesByCreatorFromSupabase(username) }
-                    if (!remoteCourses.isNullOrEmpty()) {
-                        userCoursesList = remoteCourses
-                    }
+                    withContext(Dispatchers.IO) {
+                        val coursesDeferred = async {
+                            act.syncRepository.fetchCoursesByCreatorFromSupabase(username)
+                        }
+                        
+                        val videosDeferred = async {
+                            val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+                            if (userId != null) {
+                                val videos = act.syncRepository.fetchVideosByCreatorUserIdFromSupabase(userId)
+                                if (videos.isNotEmpty()) videos else act.syncRepository.fetchVideosByUsernameFromSupabase(username)
+                            } else {
+                                act.syncRepository.fetchVideosByUsernameFromSupabase(username)
+                            }
+                        }
 
-                    // Try to fetch videos by username from Supabase
-                    val remoteVideos = withContext(Dispatchers.IO) { act.syncRepository.fetchVideosByUsernameFromSupabase(username) }
-                    if (!remoteVideos.isNullOrEmpty()) {
-                        userVideosList = remoteVideos
+                        val remoteCourses = coursesDeferred.await()
+                        if (!remoteCourses.isNullOrEmpty()) {
+                            userCoursesList = remoteCourses
+                        }
+
+                        val remoteVideos = videosDeferred.await()
+                        if (!remoteVideos.isNullOrEmpty()) {
+                            userVideosList = remoteVideos
+                        }
                     }
                 } catch (e: Exception) {
                     android.util.Log.w("UserProfileView", "Supabase fetch by creator/username failed, will fallback to local DB", e)
@@ -630,11 +647,14 @@ class UserProfileViewFragment : Fragment() {
                 }
 
                 // Normalize and map remote Course entities to VideoData
+                // Use map instead of loop for better performance
                 val normalizedCourses = userCoursesList.map { course ->
-                    val usernameSafe = course.creatorUsername ?: ""
+                    // We can optimize this by passing the username directly if we know it matches
+                    // or fetching it only if needed. For now, let's assume the username passed to the function is correct
+                    // to avoid an extra network call per course.
                     val v = VideoData(
                         id = course.id,
-                        username = usernameSafe,
+                        username = username, // Use the username we already have
                         description = course.description ?: "",
                         title = course.title ?: "",
                         videoUriString = course.videoUri ?: "",

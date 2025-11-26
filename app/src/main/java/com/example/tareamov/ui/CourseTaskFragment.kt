@@ -55,7 +55,8 @@ class CourseTaskFragment : Fragment() {
             AppDatabase.getDatabase(requireContext()).recursoDao(),
             AppDatabase.getDatabase(requireContext()).rolRecursoDao(),
             AppDatabase.getDatabase(requireContext()).chatMessageDao(),
-            AppDatabase.getDatabase(requireContext()).fileContextDao()
+            AppDatabase.getDatabase(requireContext()).fileContextDao(),
+            AppDatabase.getDatabase(requireContext()).progresoEstudianteDao()
         )
     }
 
@@ -72,8 +73,6 @@ class CourseTaskFragment : Fragment() {
     private lateinit var documentPickerLauncher: ActivityResultLauncher<Intent>
 
     private lateinit var sessionManager: SessionManager
-    private var isCourseCreator: Boolean = false
-    private var courseCreatorUsername: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,6 +84,8 @@ class CourseTaskFragment : Fragment() {
         }
         uriPermissionManager = UriPermissionManager(requireContext())
         videoManager = VideoManager(requireContext())
+
+        sessionManager = SessionManager.getInstance(requireContext())
 
         videoPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
@@ -134,8 +135,11 @@ class CourseTaskFragment : Fragment() {
 
         backButton.setOnClickListener { findNavController().navigateUp() }
         saveTaskButton.setOnClickListener { saveTask() }
+
         addVideoButton.setOnClickListener { openGalleryForVideo() }
         addDocumentButton.setOnClickListener { openDocumentPicker() }
+        // addVideoButton.setOnClickListener { openGalleryForVideo() }
+        // addDocumentButton.setOnClickListener { openDocumentPicker() }
 
         if (taskId != -1L) {
             taskTitleTextView.text = "Editar Tarea"
@@ -185,20 +189,15 @@ class CourseTaskFragment : Fragment() {
         // Save content items
         currentTask.contentItems.clear()
         for (i in 0 until contentContainer.childCount) {
-            val contentView = contentContainer.getChildAt(i)
-            val uri = contentView.tag as? Uri
-            val type = contentView.getTag(R.id.content_type_tag) as? String
-            val nameView = contentView.findViewById<TextView>(R.id.contentNameView)
-            val name = nameView?.text?.toString() ?: "Contenido ${i + 1}"
-
-            if (uri != null && type != null) {
-                val tempContentItem = CourseCreationViewModel.TemporaryContentItem().apply {
-                    this.name = name
-                    this.uriString = uri.toString()
-                    this.contentType = type
-                    this.orderIndex = i
-                }
-                currentTask.contentItems.add(tempContentItem)
+            val itemView = contentContainer.getChildAt(i)
+            val contentUri = itemView.tag as? Uri
+            val contentType = itemView.getTag(R.id.content_type_tag) as? String
+            if (contentUri != null && contentType != null) {
+                val contentItem = CourseCreationViewModel.TemporaryContentItem()
+                contentItem.uriString = contentUri.toString()
+                contentItem.contentType = contentType
+                contentItem.name = getFileName(contentUri) ?: "Contenido sin título"
+                currentTask.contentItems.add(contentItem)
             }
         }
     }
@@ -211,9 +210,9 @@ class CourseTaskFragment : Fragment() {
 
             // Load content items
             contentContainer.removeAllViews()
-            for (tempContentItem in currentTask.contentItems) {
-                val uri = Uri.parse(tempContentItem.uriString)
-                addContentItemView(uri, tempContentItem.contentType, tempContentItem.name)
+            for (contentItem in currentTask.contentItems) {
+                val uri = Uri.parse(contentItem.uriString)
+                addContentItemView(uri, contentItem.contentType)
             }
         }
     }
@@ -243,7 +242,8 @@ class CourseTaskFragment : Fragment() {
                         AppDatabase.getDatabase(requireContext()).recursoDao(),
                         AppDatabase.getDatabase(requireContext()).rolRecursoDao(),
                         AppDatabase.getDatabase(requireContext()).chatMessageDao(),
-                        AppDatabase.getDatabase(requireContext()).fileContextDao()
+                        AppDatabase.getDatabase(requireContext()).fileContextDao(),
+                        AppDatabase.getDatabase(requireContext()).progresoEstudianteDao()
                     )
                     if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
                         val remote = withContext(Dispatchers.IO) { syncRepo.fetchTaskByIdFromSupabase(taskId) }
@@ -308,11 +308,10 @@ class CourseTaskFragment : Fragment() {
             taskDescriptionEditText.setText(task.description ?: "")
             topicId = task.topicId // Ensure topicId is set from the loaded task
 
-            // Load associated content items
+            // Load content items
             val contentItems = withContext(Dispatchers.IO) { contentItemDao.getContentItemsByTaskId(taskId) }
-            contentContainer.removeAllViews()
-            contentItems.sortedBy { it.orderIndex }.forEach { item ->
-                addContentItemView(Uri.parse(item.uriString), item.contentType, item.name, item.id)
+            for (contentItem in contentItems) {
+                addContentItemView(Uri.parse(contentItem.uriString), contentItem.contentType)
             }
         }
     }
@@ -347,7 +346,7 @@ class CourseTaskFragment : Fragment() {
                             appDatabase.contentItemDao(), appDatabase.taskDao(), appDatabase.subscriptionDao(),
                             appDatabase.taskSubmissionDao(), appDatabase.videoDao(), appDatabase.courseDao(),
                             appDatabase.rolDao(), appDatabase.recursoDao(), appDatabase.rolRecursoDao(),
-                            appDatabase.chatMessageDao(), appDatabase.fileContextDao()
+                            appDatabase.chatMessageDao(), appDatabase.fileContextDao(), appDatabase.progresoEstudianteDao()
                         )
                     
                     // Fetch the topic to get the courseId
@@ -356,7 +355,7 @@ class CourseTaskFragment : Fragment() {
                             // First try local DB
                             topicDao.getTopicById(topicId) ?: 
                             // Then try Supabase
-                            com.example.tareamov.service.SupabaseClient.fetchTopicById(topicId.toInt())
+                            com.example.tareamov.service.SupabaseClient.fetchTopicById(topicId)
                         } catch (e: Exception) {
                             Log.w("CourseTaskFragment", "Error fetching topic", e)
                             null
@@ -381,7 +380,7 @@ class CourseTaskFragment : Fragment() {
                         appDatabase.contentItemDao(), appDatabase.taskDao(), appDatabase.subscriptionDao(),
                         appDatabase.taskSubmissionDao(), appDatabase.videoDao(), appDatabase.courseDao(),
                         appDatabase.rolDao(), appDatabase.recursoDao(), appDatabase.rolRecursoDao(),
-                        appDatabase.chatMessageDao(), appDatabase.fileContextDao()
+                        appDatabase.chatMessageDao(), appDatabase.fileContextDao(), appDatabase.progresoEstudianteDao()
                     )
 
                 val resolvedCourseId = withContext(Dispatchers.IO) {
@@ -420,7 +419,7 @@ class CourseTaskFragment : Fragment() {
                         }
                         
                         // If not in local DB, check Supabase
-                        val remoteTopic = com.example.tareamov.service.SupabaseClient.fetchTopicById(topicId.toInt())
+                        val remoteTopic = com.example.tareamov.service.SupabaseClient.fetchTopicById(topicId)
                         if (remoteTopic != null) {
                             Log.d("CourseTaskFragment", "Topic $topicId found in Supabase")
                             return@withContext true
@@ -468,7 +467,9 @@ class CourseTaskFragment : Fragment() {
                                 null
                             }
                         } else {
-                            Log.d("CourseTaskFragment", "Inserting new task")
+                            Log.d("CourseTaskFragment", "Inserting new task: topicId=${remoteTask.topicId}, title='${remoteTask.name}'")
+                            
+                            // Insert task (creator metadata not needed since tasks table doesn't have those columns)
                             val result = syncRepo.insertTaskRemote(remoteTask)
                             if (result != null) {
                                 Log.d("CourseTaskFragment", "Task inserted with id=$result")
@@ -495,69 +496,90 @@ class CourseTaskFragment : Fragment() {
                     return@launch
                 }
 
-                // In the saveTask method, when creating content items:
-
-                // Save content items to Supabase (not just local Room)
+                // Save content items for all tasks (new and existing)
                 val contentItemsToSave = mutableListOf<ContentItem>()
+                val currentUsername = sessionManager.getUsername()
+                val currentUserId = withContext(Dispatchers.IO) {
+                    currentUsername?.let { username ->
+                        AppDatabase.getDatabase(requireContext()).usuarioDao()
+                            .getUsuarioByUsername(username)?.id
+                    }
+                }
+                
                 for (i in 0 until contentContainer.childCount) {
-                    val contentView = contentContainer.getChildAt(i)
-                    val uri = contentView.tag as? Uri
-                    val type = contentView.getTag(R.id.content_type_tag) as? String
-                    val nameView = contentView.findViewById<TextView>(R.id.contentNameView)
-                    val name = nameView?.text?.toString() ?: "Contenido ${i + 1}"
-
-                    if (uri != null && type != null) {
+                    val itemView = contentContainer.getChildAt(i)
+                    val contentUri = itemView.tag as? Uri
+                    val contentType = itemView.getTag(R.id.content_type_tag) as? String
+                    if (contentUri != null && contentType != null) {
                         contentItemsToSave.add(
                             ContentItem(
-                                id = 0, // Let Supabase generate the ID
-                                topicId = savedTopicId,
+                                id = 0,
+                                topicId = 0, // Se deja en 0 porque pertenece a una tarea
                                 taskId = savedTaskId,
-                                name = name,
-                                uriString = uri.toString(),
-                                contentType = type,
-                                orderIndex = i
+                                name = getFileName(contentUri) ?: "Contenido sin título",
+                                contentType = contentType,
+                                uriString = contentUri.toString(),
+                                orderIndex = i,
+                                creator_usuario_id = currentUserId,
+                                creator_username = currentUsername
                             )
                         )
                     }
                 }
 
+                var successCount = 0
                 if (contentItemsToSave.isNotEmpty()) {
-                    var successCount = 0
                     withContext(Dispatchers.IO) {
                         contentItemsToSave.forEach { item ->
                             try {
-                                // Save to Supabase first
+                                // Save to Supabase only - no local insertion needed
                                 val remoteId = syncRepo.insertContentItemRemote(item)
                                 if (remoteId != null) {
-                                    // Then save locally with the remote ID
-                                    val localItem = item.copy(id = remoteId)
-                                    contentItemDao.insertContentItem(localItem)
                                     successCount++
+                                    Log.d("CourseTaskFragment", "Saved content item to Supabase: ${item.name} with id=$remoteId")
                                 } else {
                                     Log.w("CourseTaskFragment", "Failed to save content item to Supabase: ${item.name}")
                                 }
                             } catch (e: Exception) {
-                                Log.e("CourseTaskFragment", "Error saving content item: ${item.name}", e)
+                                Log.e("CourseTaskFragment", "Error saving content item to Supabase: ${item.name}", e)
                             }
                         }
                     }
-                    Log.d("CourseTaskFragment", "Saved $successCount/${contentItemsToSave.size} content items for task ID: $savedTaskId")
-                    
-                    if (successCount < contentItemsToSave.size) {
-                        Toast.makeText(context, "Tarea guardada, pero algunos contenidos no se pudieron guardar", Toast.LENGTH_LONG).show()
-                    } else {
-                        Toast.makeText(context, "Tarea guardada exitosamente", Toast.LENGTH_SHORT).show()
-                    }
+                    Log.d("CourseTaskFragment", "Saved $successCount/${contentItemsToSave.size} content items to Supabase for task ID: $savedTaskId")
+                }
+                
+                // Show appropriate message
+                if (contentItemsToSave.isNotEmpty() && successCount < contentItemsToSave.size) {
+                    Toast.makeText(context, "Tarea guardada, pero algunos contenidos no se pudieron guardar", Toast.LENGTH_LONG).show()
                 } else {
                     Toast.makeText(context, "Tarea guardada exitosamente", Toast.LENGTH_SHORT).show()
                 }
 
-                // Notify CourseDetailFragment to refresh from Supabase
-                findNavController().previousBackStackEntry?.savedStateHandle?.set("task_created", savedTaskId)
-                findNavController().previousBackStackEntry?.savedStateHandle?.set("refresh_from_supabase", true)
+                // NUEVO: Crear submissions automáticas con calificación 0 para todos los estudiantes inscritos
+                if (taskId <= 0 && courseId > 0) { // Solo para tareas nuevas
+                    Log.d("CourseTaskFragment", "Creating default submissions for new task $savedTaskId in course $courseId")
+                    val createdCount = withContext(Dispatchers.IO) {
+                        syncRepo.createDefaultSubmissionsForTask(savedTaskId, courseId)
+                    }
+                    Log.i("CourseTaskFragment", "Created $createdCount default submissions with grade 0")
+                }
+                
+                // IMPORTANTE: Recalcular progreso de todos los estudiantes después de agregar/editar tarea
+                if (courseId > 0) {
+                    Log.d("CourseTaskFragment", "🔄 Recalculating student progress for course $courseId")
+                    val updatedStudents = withContext(Dispatchers.IO) {
+                        syncRepo.recalculateAllStudentProgressForCourse(courseId)
+                    }
+                    Log.i("CourseTaskFragment", "✅ Updated progress for $updatedStudents students")
+                }
 
-                // Navigate back
-                findNavController().navigateUp()
+                // Notify CourseDetailFragment to refresh from Supabase and switch to tasks tab
+                // Only set force_reload_topics to avoid duplicate refresh calls
+                findNavController().previousBackStackEntry?.savedStateHandle?.set("switch_to_tasks_tab", true)
+                findNavController().previousBackStackEntry?.savedStateHandle?.set("force_reload_topics", true)
+
+                // Navigate back to CourseDetailFragment specifically, clearing this fragment
+                findNavController().popBackStack(R.id.courseDetailFragment, false)
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error saving task", e)
                 Toast.makeText(context, "Error al guardar la tarea", Toast.LENGTH_SHORT).show()

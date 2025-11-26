@@ -1,106 +1,192 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginBottom="8dp"
-    app:cardBackgroundColor="#1E1E2E"
-    app:cardCornerRadius="8dp"
-    app:cardElevation="2dp">
+    android:layout_marginTop="10dp"
+    android:layout_marginBottom="10dp"
+    android:layout_marginLeft="0dp"
+    android:layout_marginRight="0dp"
+    app:cardBackgroundColor="@android:color/transparent"
+    app:cardCornerRadius="16dp"
+    app:cardUseCompatPadding="false"
+    app:cardElevation="6dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="0dp"
+        android:background="@drawable/bg_card_premium"
+        android:animateLayoutChanges="true">
 
         <LinearLayout
+            android:id="@+id/taskHeaderRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:paddingTop="18dp"
+            android:paddingBottom="14dp"
+            android:paddingEnd="16dp">
 
             <View
                 android:id="@+id/taskIndicator"
                 android:layout_width="4dp"
                 android:layout_height="match_parent"
-                android:background="#4CAF50" />
+                android:background="@drawable/bg_task_indicator" />
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:layout_marginStart="14dp"
                 android:orientation="vertical"
-                android:layout_marginStart="8dp">
+                android:paddingEnd="12dp">
+
+                <LinearLayout
+                    android:id="@+id/taskBadgeRow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:id="@+id/taskBadgeChip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_stat_pill"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:paddingTop="5dp"
+                        android:paddingBottom="5dp"
+                        android:text="Tarea"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:includeFontPadding="false" />
+
+                    <TextView
+                        android:id="@+id/taskDueChip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_stat_pill"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:paddingTop="5dp"
+                        android:paddingBottom="5dp"
+                        android:text="Hoy"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:includeFontPadding="false"
+                        android:visibility="gone"
+                        tools:text="Vence hoy"
+                        tools:visibility="visible" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/taskNameTextView"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Nombre de la Tarea"
+                    android:layout_marginTop="10dp"
                     android:textColor="#FFFFFF"
                     android:textSize="16sp"
-                    android:textStyle="bold" />
+                    android:textStyle="bold"
+                    android:letterSpacing="0.01"
+                    android:includeFontPadding="false"
+                    tools:text="Nombre de la Tarea" />
 
                 <TextView
                     android:id="@+id/taskDescriptionTextView"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Descripción de la tarea"
-                    android:textColor="#AAAAAA"
-                    android:textSize="14sp"
-                    android:layout_marginTop="4dp" />
+                    android:layout_marginTop="6dp"
+                    android:textColor="#C9C1FF"
+                    android:textSize="13sp"
+                    android:lineSpacingExtra="3dp"
+                    android:includeFontPadding="false"
+                    tools:text="Descripción de la tarea" />
 
-                <!-- Add grade status text view -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="10dp"
+                    android:background="#2EFFFFFF" />
+
                 <TextView
                     android:id="@+id/gradeStatusTextView"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Calificación: 0/10"
-                    android:textColor="#4CAF50"
+                    android:textColor="#9FFFCF"
                     android:textSize="14sp"
                     android:textStyle="bold"
-                    android:layout_marginTop="4dp"
-                    android:visibility="gone" />
+                    android:includeFontPadding="false"
+                    android:visibility="gone"
+                    tools:text="Calificación: 9.5/10"
+                    tools:visibility="visible" />
             </LinearLayout>
 
             <ImageButton
                 android:id="@+id/editTaskButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@drawable/bg_nav_button"
+                android:contentDescription="Editar tarea"
+                android:padding="12dp"
+                android:scaleType="centerInside"
                 android:src="@android:drawable/ic_menu_edit"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#AAAAAA"
-                android:padding="8dp"
-                android:contentDescription="Edit Task" />
-        </LinearLayout>        <LinearLayout
+                android:tint="#FFFFFF"
+                android:alpha="0.9" />
+        </LinearLayout>
+
+        <View
+            android:id="@+id/contentSeparator"
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginStart="18dp"
+            android:layout_marginEnd="18dp"
+            android:layout_marginTop="4dp"
+            android:background="#2EFFFFFF" />
+
+        <TextView
+            android:id="@+id/taskContentLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="18dp"
+            android:layout_marginTop="14dp"
+            android:text="Contenido de la Tarea"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-medium" />
+
+        <LinearLayout
             android:id="@+id/taskContentContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:layout_marginTop="8dp">
-
-            <!-- Content preview section for tasks -->
-            <TextView
-                android:id="@+id/taskContentLabel"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Archivos adjuntos:"
-                android:textColor="#AAAAAA"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="8dp"
-                android:visibility="gone" />
-
-            <!-- This will be populated programmatically with content items -->
-        </LinearLayout>
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="12dp" />
 
         <Button
             android:id="@+id/uploadSubmissionButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Subir Tarea"
             android:layout_gravity="end"
-            android:layout_marginTop="8dp"
-            android:backgroundTint="#3F51B5" />
+            android:layout_marginEnd="18dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="18dp"
+            android:background="@drawable/button_premium"
+            android:drawableStart="@drawable/ic_upload_outline"
+            android:drawablePadding="10dp"
+            android:fontFamily="sans-serif-medium"
+            android:text="Subir Tarea"
+            android:textColor="#FFFFFF" />
     </LinearLayout>
 </androidx.cardview.widget.CardView>

@@ -37,6 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.io.File
 import com.bumptech.glide.Glide
 import de.hdodenhof.circleimageview.CircleImageView
 
@@ -48,6 +49,7 @@ class TaskSubmissionsFragment : Fragment() {
     private lateinit var fileConverterService: FileConverterService
     private lateinit var mcpService: MCPService
     private lateinit var database: com.example.tareamov.data.AppDatabase
+    private lateinit var syncRepository: com.example.tareamov.data.sync.SyncRepository
     private var taskId: Long = -1
     private var taskName: String = ""
     private var courseCreatorUsername: String? = null
@@ -127,6 +129,25 @@ class TaskSubmissionsFragment : Fragment() {
         // Initialize database
         database = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
 
+        // Initialize SyncRepository with database DAOs
+        syncRepository = com.example.tareamov.data.sync.SyncRepository(
+            usuarioDao = database.usuarioDao(),
+            personaDao = database.personaDao(),
+            topicDao = database.topicDao(),
+            contentItemDao = database.contentItemDao(),
+            taskDao = database.taskDao(),
+            subscriptionDao = database.subscriptionDao(),
+            taskSubmissionDao = database.taskSubmissionDao(),
+            videoDao = database.videoDao(),
+            courseDao = database.courseDao(),
+            rolDao = database.rolDao(),
+            recursoDao = database.recursoDao(),
+            rolRecursoDao = database.rolRecursoDao(),
+            chatMessageDao = database.chatMessageDao(),
+            fileContextDao = database.fileContextDao(),
+            progresoEstudianteDao = database.progresoEstudianteDao()
+        )
+
         val titleTextView = view.findViewById<TextView>(R.id.taskTitleTextView)
         titleTextView.text = taskName
 
@@ -154,20 +175,17 @@ class TaskSubmissionsFragment : Fragment() {
         val submitFileButton = view.findViewById<Button>(R.id.submitFileButton)
         val selectedFileNameTextView = view.findViewById<TextView>(R.id.selectedFileNameTextView)
         val mySubmissionStatusTextView = view.findViewById<TextView>(R.id.mySubmissionStatusTextView)
-        val emptyStateTextView = view.findViewById<TextView>(R.id.emptyStateTextView)
-
+        
         // Configure visibility based on user role
         if (isCourseCreator) {
             // Course creator sees progress of all students
             progressSection.visibility = View.VISIBLE
             uploadSection.visibility = View.GONE
-            emptyStateTextView.text = "No hay entregas para esta tarea"
             loadTaskProgress()
         } else {
             // Regular student sees their own progress
             progressSection.visibility = View.VISIBLE
             uploadSection.visibility = View.VISIBLE
-            emptyStateTextView.text = "No has entregado esta tarea aún"
             selectFileButton.setOnClickListener { openFilePicker() }
             submitFileButton.setOnClickListener { submitTaskFile() }
 
@@ -264,11 +282,12 @@ class TaskSubmissionsFragment : Fragment() {
                     }
                 } else {
                     Log.w("TaskSubmissionsFragment", "No se encontró entrega del usuario para aplicar la calificación")
-                    Toast.makeText(
+                    // Toast suprimido para evitar mensajes molestos si la entrega aún no se ha sincronizado
+                    /* Toast.makeText(
                         context, 
                         "⚠️ No se encontró tu entrega para aplicar la calificación", 
                         Toast.LENGTH_SHORT
-                    ).show()
+                    ).show() */
                 }
 
             } catch (e: Exception) {
@@ -350,8 +369,23 @@ class TaskSubmissionsFragment : Fragment() {
                 val students = withContext(Dispatchers.IO) {
                     try {
                         val subs = SupabaseClient.fetchSubscriptions()
-                        val creator = courseCreatorUsername ?: SupabaseClient.fetchCourseById(courseId)?.creatorUsername
-                        subs.filter { it.creatorUsername.equals(creator, ignoreCase = true) }.map { it.subscriberUsername }
+                        val creatorUsername = courseCreatorUsername
+                        
+                        // Resolve creator ID
+                        val creatorId = if (creatorUsername != null) {
+                            SupabaseClient.fetchUsuarioWithRoleByUsername(creatorUsername).first?.id ?: -1L
+                        } else {
+                            val course = SupabaseClient.fetchCourseById(courseId)
+                            course?.creatorUserId ?: -1L
+                        }
+
+                        if (creatorId != -1L) {
+                            val subscriberIds = subs.filter { it.creatorId == creatorId }.map { it.subscriberId }
+                            // Resolve usernames from IDs
+                            subscriberIds.mapNotNull { id -> SupabaseClient.getUsernameFromUserId(id) }
+                        } else {
+                            emptyList<String>()
+                        }
                     } catch (e: Exception) {
                         Log.e("TaskSubmissionsFragment", "Error fetching subscriptions from Supabase", e)
                         emptyList<String>()
@@ -509,8 +543,15 @@ class TaskSubmissionsFragment : Fragment() {
                         SupabaseClient.updateTaskSubmissionRemote(updatedSubmission)
                     }
                     if (pushed) {
-                        Log.i("TaskSubmissionsFragment", "Updated submission pushed to Supabase.")
+                        Log.i("TaskSubmissionsFragment", "✅ Updated submission pushed to Supabase.")
                         Toast.makeText(context, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
+                        
+                        // Trigger progress update event for the graded student
+                        triggerProgressUpdateEvent(submission.studentUsername, taskId)
+                        
+                        // IMPORTANTE: Recalcular progreso de TODOS los estudiantes del curso
+                        // No solo del estudiante actual, para mantener consistencia
+                        recalculateAllStudentsProgressForCourse()
                     } else {
                         Log.w("TaskSubmissionsFragment", "Failed to push updated submission to Supabase.")
                         Toast.makeText(context, "Calificación guardada localmente; se reintentará subirla más tarde.", Toast.LENGTH_SHORT).show()
@@ -531,6 +572,188 @@ class TaskSubmissionsFragment : Fragment() {
         }
     }
 
+    /**
+     * Recalcula el progreso de TODOS los estudiantes del curso.
+     * Debe llamarse después de actualizar calificaciones para mantener consistencia.
+     */
+    private suspend fun recalculateAllStudentsProgressForCourse() {
+        try {
+            Log.d("TaskSubmissionsFragment", "🔄 Recalculating progress for all students in course")
+            
+            // Obtener courseId desde la tarea actual
+            val courseId = withContext(Dispatchers.IO) {
+                try {
+                    val task = SupabaseClient.fetchTaskById(taskId)
+                    val topic = task?.topicId?.let { tid -> 
+                        SupabaseClient.fetchTopics().firstOrNull { it.id == tid } 
+                    }
+                    topic?.courseId
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "Error getting courseId from Supabase", e)
+                    null
+                }
+            }
+
+            if (courseId == null) {
+                Log.w("TaskSubmissionsFragment", "❌ Could not determine courseId, skipping progress recalculation")
+                return
+            }
+
+            Log.d("TaskSubmissionsFragment", "📚 Found courseId: $courseId")
+            
+            // Recalcular progreso de todos los estudiantes
+            val updatedCount = withContext(Dispatchers.IO) {
+                syncRepository.recalculateAllStudentProgressForCourse(courseId)
+            }
+            
+            Log.i("TaskSubmissionsFragment", "✅ Updated progress for $updatedCount students")
+        } catch (e: Exception) {
+            Log.e("TaskSubmissionsFragment", "❌ Error recalculating all students progress", e)
+        }
+    }
+
+    /**
+     * (DEPRECATED: Usar recalculateAllStudentsProgressForCourse en su lugar)
+     * Recalcula el progreso del estudiante y lo sincroniza a Supabase.
+     * Este método se llama cuando:
+     * - Se actualiza una calificación de una entrega
+     * - Se crea una nueva entrega del estudiante
+     */
+    private suspend fun recalculateAndSyncStudentProgress(studentUsername: String) {
+        try {
+            Log.d("TaskSubmissionsFragment", "🔄 Starting progress recalculation for student: $studentUsername")
+            
+            // Obtener courseId desde la tarea actual
+            val courseId = withContext(Dispatchers.IO) {
+                try {
+                    val task = SupabaseClient.fetchTaskById(taskId)
+                    val topic = task?.topicId?.let { tid -> 
+                        SupabaseClient.fetchTopics().firstOrNull { it.id == tid } 
+                    }
+                    topic?.courseId
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "Error getting courseId from Supabase", e)
+                    null
+                }
+            }
+
+            if (courseId == null) {
+                Log.w("TaskSubmissionsFragment", "❌ Could not determine courseId, skipping progress sync")
+                return
+            }
+
+            Log.d("TaskSubmissionsFragment", "📚 Found courseId: $courseId")
+
+            // Obtener todas las submissions del estudiante en el curso DESDE SUPABASE
+            val submissions = withContext(Dispatchers.IO) {
+                try {
+                    val allSubmissions = SupabaseClient.fetchTaskSubmissions()
+                    // Filtrar submissions del estudiante en este curso
+                    val courseTopics = SupabaseClient.fetchTopicsByCourse(courseId)
+                    val topicIds = courseTopics.map { it.id }
+                    val courseTasks = if (topicIds.isNotEmpty()) {
+                        SupabaseClient.fetchTasksByTopicIds(topicIds)
+                    } else {
+                        emptyList()
+                    }
+                    val taskIds = courseTasks.map { it.id }.toSet()
+                    
+                    allSubmissions.filter { 
+                        it.studentUsername.equals(studentUsername, ignoreCase = true) && 
+                        it.taskId in taskIds 
+                    }
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "Error fetching submissions from Supabase", e)
+                    emptyList()
+                }
+            }
+
+            // Obtener todas las tareas del curso DESDE SUPABASE
+            val allTasks = withContext(Dispatchers.IO) {
+                try {
+                    val topics = SupabaseClient.fetchTopicsByCourse(courseId)
+                    val topicIds = topics.map { it.id }
+                    if (topicIds.isNotEmpty()) {
+                        SupabaseClient.fetchTasksByTopicIds(topicIds)
+                    } else {
+                        emptyList()
+                    }
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "Error fetching tasks from Supabase", e)
+                    emptyList()
+                }
+            }
+
+            Log.d("TaskSubmissionsFragment", "📊 Tasks in course: ${allTasks.size}, Submissions: ${submissions.size}")
+
+            // Calcular métricas
+            val tareasTotales = allTasks.size
+            val tareasCompletadas = submissions.count { (it.grade ?: 0f) > 0f }
+            val porcentajeProgreso = if (tareasTotales > 0) {
+                (tareasCompletadas.toFloat() / tareasTotales.toFloat()) * 100f
+            } else {
+                0f
+            }
+
+            val totalGrade = submissions.mapNotNull { it.grade }.sum()
+            val taskCount = submissions.size
+            val promedio = if (taskCount > 0) totalGrade / taskCount else 0f
+
+            Log.d("TaskSubmissionsFragment", "📈 Calculated: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$promedio")
+
+            // Get user ID from username
+            val userId = withContext(Dispatchers.IO) {
+                com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(studentUsername)
+            }
+            if (userId == null) {
+                Log.e("TaskSubmissionsFragment", "Failed to get user ID for username: $studentUsername")
+                return
+            }
+
+            // Crear ProgresoEstudiante actualizado
+            val updatedProgreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                usuarioEstudiante = userId,
+                cursoId = courseId,
+                tareasTotales = tareasTotales,
+                tareasCompletadas = tareasCompletadas,
+                porcentajeProgreso = porcentajeProgreso,
+                promedio = promedio,
+                calificacionPonderada = promedio,
+                ultimaCalculadaEn = System.currentTimeMillis(),
+                certificadoEmitidoEn = null,
+                creadoEn = System.currentTimeMillis()
+            )
+
+            // Actualizar en base de datos local
+            withContext(Dispatchers.IO) {
+                try {
+                    database.progresoEstudianteDao().upsert(updatedProgreso)
+                    Log.d("TaskSubmissionsFragment", "✅ Updated local database")
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "Error updating local database", e)
+                }
+            }
+
+            // Sincronizar DIRECTAMENTE a Supabase
+            val synced = withContext(Dispatchers.IO) {
+                try {
+                    SupabaseClient.upsertProgresoEstudiante(updatedProgreso)
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "Error calling upsertProgresoEstudiante", e)
+                    false
+                }
+            }
+
+            if (synced) {
+                Log.i("TaskSubmissionsFragment", "✅ Synced progress to Supabase for student=$studentUsername: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$promedio")
+            } else {
+                Log.w("TaskSubmissionsFragment", "⚠️ Failed to sync progress to Supabase for student=$studentUsername")
+            }
+        } catch (e: Exception) {
+            Log.e("TaskSubmissionsFragment", "❌ Error recalculating/syncing student progress", e)
+        }
+    }
+
     private fun submitTaskFile() {
         val uri = selectedFileUri
         if (uri == null) {
@@ -548,6 +771,26 @@ class TaskSubmissionsFragment : Fragment() {
         val fileName = getFileName(uri) ?: uri.lastPathSegment ?: "archivo_tarea"
         Log.d("TaskSubmissionsFragment", "📎 Nombre del archivo obtenido: $fileName")
         
+        // IMPORTANTE: Intentar persistir permisos del URI para evitar errores de seguridad
+        try {
+            requireContext().contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            Log.d("TaskSubmissionsFragment", "✅ Permisos URI persistidos correctamente")
+        } catch (e: SecurityException) {
+            Log.w("TaskSubmissionsFragment", "⚠️ No se pudieron persistir permisos URI: ${e.message}")
+            // No es crítico, continuamos
+        }
+        
+        // Copiar archivo a almacenamiento interno si es necesario (para evitar problemas de permisos)
+        val finalUri = try {
+            copyFileToInternalStorage(uri, fileName)
+        } catch (e: Exception) {
+            Log.w("TaskSubmissionsFragment", "⚠️ No se pudo copiar a almacenamiento interno, usando URI original", e)
+            uri
+        }
+        
         // Mostrar progreso mientras se procesa
         progressSection.visibility = View.VISIBLE
         progressBar.isIndeterminate = true
@@ -555,8 +798,12 @@ class TaskSubmissionsFragment : Fragment() {
         
         val submission = TaskSubmission(
             taskId = taskId,
+
             studentId = currentUserId,
             fileUri = uri.toString(),
+
+            studentUsername = username,
+            fileUri = finalUri.toString(),
             fileName = fileName,
             submissionDate = System.currentTimeMillis(),
             grade = 0.0f, // Nota por defecto 0 en lugar de null
@@ -603,12 +850,18 @@ class TaskSubmissionsFragment : Fragment() {
                 
                 try {
                     // Directly insert submission to Supabase
+                    Log.d("TaskSubmissionsFragment", "📤 Intentando insertar TaskSubmission en Supabase...")
+                    Log.d("TaskSubmissionsFragment", "📤 Datos: taskId=$taskId, studentUsername=$username, fileName=$fileName")
+                    
                     val remoteId = withContext(Dispatchers.IO) {
                         SupabaseClient.insertTaskSubmission(submission)
                     }
                     if (remoteId != null) {
-                        Log.i("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned remote id=$remoteId")
+                        Log.i("TaskSubmissionsFragment", "✅ Supabase insertTaskSubmission returned remote id=$remoteId")
                         Toast.makeText(context, "Tarea subida a servidor (id=$remoteId)", Toast.LENGTH_SHORT).show()
+
+                        // Trigger progress update event after successful submission
+                        triggerProgressUpdateEvent(username, taskId)
 
                         // Poll Supabase for the newly created submission (the backend may be eventually consistent)
                         val created = withContext(Dispatchers.IO) {
@@ -664,11 +917,15 @@ class TaskSubmissionsFragment : Fragment() {
                                     Log.d("TaskSubmissionsFragment", "✅ FileContext guardado en BD local para submission $createdSubmissionId")
                                     
                                     // 2. Enviar a Supabase
+                                    Log.d("TaskSubmissionsFragment", "📤 Intentando insertar FileContext en Supabase...")
+                                    Log.d("TaskSubmissionsFragment", "📤 Datos: submissionId=$createdSubmissionId, fileName=${fileContext.fileName}, contentLength=${fileContext.fileContent.length}")
+                                    
                                     val remoteFileContextId = SupabaseClient.insertFileContext(fileContext)
                                     if (remoteFileContextId != null) {
                                         Log.d("TaskSubmissionsFragment", "✅ FileContext enviado a Supabase con ID remoto: ${remoteFileContextId}")
                                     } else {
                                         Log.w("TaskSubmissionsFragment", "⚠️ FileContext no pudo ser enviado a Supabase (quedó solo en BD local)")
+                                        Log.w("TaskSubmissionsFragment", "⚠️ Esto puede causar que el contexto no esté disponible al seleccionar la tarea con #")
                                     }
                                 } catch (e: Exception) {
                                     Log.e("TaskSubmissionsFragment", "❌ Error guardando/enviando FileContext", e)
@@ -677,6 +934,9 @@ class TaskSubmissionsFragment : Fragment() {
                             
                             progressTextView.text = "¡Tarea enviada exitosamente!"
                             progressBar.progress = 100
+                            
+                            // IMPORTANTE: Recalcular y sincronizar progreso del estudiante
+                            recalculateAndSyncStudentProgress(username)
                             
                             // Refresh the submissions list from Supabase to ensure frontend data comes from server
                             loadSubmissions()
@@ -829,6 +1089,96 @@ class TaskSubmissionsFragment : Fragment() {
             "${sanitizedBase}.$normalizedExtension"
         } else {
             sanitizedBase
+        }
+    }
+
+    /**
+     * Triggers an asynchronous event to recalculate student progress after submission
+     * This replaces the database trigger approach to avoid SQL ambiguity issues (error 42702)
+     */
+    private fun triggerProgressUpdateEvent(username: String, submittedTaskId: Long) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.d("TaskSubmissionsFragment", "🔄 Triggering progress update event for $username, task $submittedTaskId")
+                
+                // Get course ID from task
+                val task = database.taskDao().getTaskById(submittedTaskId)
+                if (task == null) {
+                    Log.e("TaskSubmissionsFragment", "❌ Task not found: $submittedTaskId")
+                    return@launch
+                }
+                
+                val topic = database.topicDao().getTopicById(task.topicId)
+                if (topic == null) {
+                    Log.e("TaskSubmissionsFragment", "❌ Topic not found: ${task.topicId}")
+                    return@launch
+                }
+                
+                val courseId = topic.courseId
+                
+                // Recalculate progress for this student
+                // Get all topics for this course, then all tasks for those topics
+                val allTopics = database.topicDao().getTopicsByCourse(courseId)
+                val topicIds = allTopics.map { it.id }
+                val allTasksInCourse = database.taskDao().getTasksByTopicIds(topicIds)
+                val totalTasks = allTasksInCourse.size
+                
+                // Get all submissions by this student
+                val allSubmissions = database.taskSubmissionDao()
+                    .getSubmissionsByStudent(username)
+                
+                // Filter submissions that belong to tasks in this course
+                val taskIdsInCourse = allTasksInCourse.map { it.id }.toSet()
+                val courseSubmissions = allSubmissions.filter { it.taskId in taskIdsInCourse }
+                
+                val completedTasks = courseSubmissions.count { (it.grade ?: 0f) > 0 }
+                
+                val progressPct = if (totalTasks > 0) {
+                    (completedTasks.toFloat() / totalTasks.toFloat()) * 100
+                } else 0f
+                
+                val gradesOnly = courseSubmissions.mapNotNull { it.grade }.filter { it > 0 }
+                val avgGrade = if (gradesOnly.isNotEmpty()) {
+                    gradesOnly.average().toFloat()
+                } else 0f
+                
+                // Get user ID from username
+                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+                if (userId == null) {
+                    Log.e("TaskSubmissionsFragment", "Failed to get user ID for username: $username")
+                    return@launch
+                }
+                
+                // Update progress in database and Supabase
+                var progreso = database.progresoEstudianteDao()
+                    .getProgresoByUsuarioAndCurso(userId, courseId)
+                
+                if (progreso != null) {
+                    // Create updated copy since properties are val
+                    val updatedProgreso = progreso.copy(
+                        tareasTotales = totalTasks,
+                        tareasCompletadas = completedTasks,
+                        porcentajeProgreso = progressPct,
+                        promedio = avgGrade,
+                        calificacionPonderada = avgGrade,
+                        ultimaCalculadaEn = System.currentTimeMillis()
+                    )
+                    
+                    database.progresoEstudianteDao().updateProgreso(updatedProgreso)
+                    
+                    // Sync to Supabase
+                    val synced = syncRepository.syncProgresoToSupabase(updatedProgreso)
+                    if (synced) {
+                        Log.i("TaskSubmissionsFragment", "✅ Progress synced: $completedTasks/$totalTasks tasks, ${progressPct.toInt()}%, avg=$avgGrade")
+                    } else {
+                        Log.w("TaskSubmissionsFragment", "⚠️ Progress updated locally but failed to sync to Supabase")
+                    }
+                } else {
+                    Log.w("TaskSubmissionsFragment", "⚠️ No progreso record found for $username in course $courseId")
+                }
+            } catch (e: Exception) {
+                Log.e("TaskSubmissionsFragment", "❌ Error in progress update event", e)
+            }
         }
     }
 
@@ -1177,6 +1527,8 @@ class TaskSubmissionsFragment : Fragment() {
                         }
                     }
                     putString("fileName", fileContext.fileName)
+                    putString("taskName", taskName)
+                    putString("taskDescription", taskDescription)
                 }
                 
                 // Navegar al chat solo si no estamos ya ahí
@@ -1301,7 +1653,8 @@ class TaskSubmissionsFragment : Fragment() {
                 
                 // Manejar calificación IA - solo mostrar si hay calificación real del usuario (mayor a 0)
                 if (submission.grade != null && submission.grade > 0) {
-                    val aiGrade = (submission.grade * 10).toInt() // Convertir de 0-10 a 0-100
+                    // Asegurar que la calificación esté en el rango 0-10
+                    val aiGrade = submission.grade.coerceIn(0f, 10f)
                     
                     // Mostrar elementos de calificación
                     aiGradeTextView.visibility = View.VISIBLE
@@ -1309,15 +1662,22 @@ class TaskSubmissionsFragment : Fragment() {
                     gradeProgressBar.visibility = View.VISIBLE
                     noGradeTextView.visibility = View.GONE
                     
-                    aiGradeTextView.text = aiGrade.toString()
-                    gradeProgressBar.progress = aiGrade
+                    // Mostrar calificación con 1 decimal si es necesario
+                    aiGradeTextView.text = if (aiGrade % 1 == 0f) {
+                        aiGrade.toInt().toString()
+                    } else {
+                        String.format("%.1f", aiGrade)
+                    }
                     
-                    // Determinar calidad basada en la calificación
+                    // Configurar progress bar (convertir 0-10 a 0-100 para la barra)
+                    gradeProgressBar.progress = (aiGrade * 10).toInt()
+                    
+                    // Determinar calidad basada en la calificación (escala 0-10)
                     val qualityLabel = when {
-                        aiGrade >= 90 -> "⭐ Excelente"
-                        aiGrade >= 80 -> "⭐ Muy Bueno"
-                        aiGrade >= 70 -> "⭐ Bueno"
-                        aiGrade >= 60 -> "⭐ Regular"
+                        aiGrade >= 9.0 -> "⭐ Excelente"
+                        aiGrade >= 8.0 -> "⭐ Muy Bueno"
+                        aiGrade >= 7.0 -> "⭐ Bueno"
+                        aiGrade >= 6.0 -> "⭐ Regular"
                         else -> "⭐ Necesita Mejora"
                     }
                     qualityLabelTextView.text = qualityLabel
@@ -1481,72 +1841,159 @@ class TaskSubmissionsFragment : Fragment() {
     private fun getFileName(uri: Uri): String? {
         val contentResolver = requireContext().contentResolver
         
-        // Estrategia 1: Intentar obtener DISPLAY_NAME del cursor
+        Log.d("TaskSubmissionsFragment", "🔍 Obteniendo nombre para URI: $uri")
+        Log.d("TaskSubmissionsFragment", "🔍 URI scheme: ${uri.scheme}, authority: ${uri.authority}")
+        
+        // Estrategia 1: Query usando OpenableColumns (estándar para URIs de documentos)
         try {
-            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            contentResolver.query(
+                uri,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE),
+                null,
+                null,
+                null
+            )?.use { cursor ->
                 if (cursor.moveToFirst()) {
-                    // Intentar obtener DISPLAY_NAME
-                    val displayNameIndex = cursor.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
-                    if (displayNameIndex != -1) {
-                        val displayName = cursor.getString(displayNameIndex)
-                        if (!displayName.isNullOrEmpty()) {
-                            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via DISPLAY_NAME: $displayName")
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex != -1) {
+                        val displayName = cursor.getString(nameIndex)
+                        if (!displayName.isNullOrEmpty() && !displayName.startsWith("msf:") && 
+                            !displayName.startsWith("content:") && !displayName.matches(Regex("^[0-9]+$"))) {
+                            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via OpenableColumns.DISPLAY_NAME: $displayName")
                             return displayName
                         }
                     }
-                    
-                    // Intentar obtener _DISPLAY_NAME (alternativa)
-                    val displayNameIndex2 = cursor.getColumnIndex("_display_name")
-                    if (displayNameIndex2 != -1) {
-                        val displayName = cursor.getString(displayNameIndex2)
-                        if (!displayName.isNullOrEmpty()) {
-                            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via _display_name: $displayName")
-                            return displayName
-                        }
-                    }
-                    
-                    // Log todas las columnas disponibles para debugging
-                    Log.d("TaskSubmissionsFragment", "📋 Columnas disponibles en cursor: ${cursor.columnNames.joinToString()}")
                 }
             }
         } catch (e: Exception) {
-            Log.e("TaskSubmissionsFragment", "Error obteniendo nombre via cursor: ${e.message}")
+            Log.e("TaskSubmissionsFragment", "Error obteniendo nombre via OpenableColumns: ${e.message}")
         }
         
-        // Estrategia 2: Usar el path del URI
+        // Estrategia 2: Query con todas las columnas para obtener DISPLAY_NAME
+        try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    // Log todas las columnas para debugging
+                    Log.d("TaskSubmissionsFragment", "📋 Columnas disponibles: ${cursor.columnNames.joinToString()}")
+                    
+                    // Intentar diferentes variantes de nombres de columnas
+                    val possibleColumns = listOf(
+                        android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
+                        "_display_name",
+                        "title",
+                        "_data"
+                    )
+                    
+                    for (columnName in possibleColumns) {
+                        try {
+                            val columnIndex = cursor.getColumnIndex(columnName)
+                            if (columnIndex != -1) {
+                                val value = cursor.getString(columnIndex)
+                                if (!value.isNullOrEmpty()) {
+                                    // Extraer solo el nombre del archivo si es una ruta completa
+                                    val fileName = if (value.contains("/")) {
+                                        value.substringAfterLast('/')
+                                    } else {
+                                        value
+                                    }
+                                    
+                                    // Validar que no sea un ID o esquema raro
+                                    if (!fileName.startsWith("msf:") && 
+                                        !fileName.startsWith("content:") && 
+                                        !fileName.matches(Regex("^[0-9]+$")) &&
+                                        fileName.contains('.')) {
+                                        Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via columna '$columnName': $fileName")
+                                        return fileName
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.d("TaskSubmissionsFragment", "No se pudo leer columna $columnName: ${e.message}")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("TaskSubmissionsFragment", "Error obteniendo nombre via cursor genérico: ${e.message}")
+        }
+        
+        // Estrategia 3: Parsear el path del URI
         val path = uri.path
         if (!path.isNullOrEmpty()) {
-            val fileName = path.substringAfterLast('/')
-            if (fileName.isNotEmpty() && fileName.contains('.')) {
-                Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via URI path: $fileName")
-                return fileName
+            Log.d("TaskSubmissionsFragment", "🔍 URI path: $path")
+            
+            // Buscar el nombre del archivo en el path
+            val segments = path.split('/')
+            for (segment in segments.reversed()) {
+                if (segment.isNotEmpty() && segment.contains('.') && 
+                    !segment.startsWith("msf:") && !segment.matches(Regex("^[0-9]+$"))) {
+                    // Decodificar URL encoding si existe
+                    val decodedName = try {
+                        java.net.URLDecoder.decode(segment, "UTF-8")
+                    } catch (e: Exception) {
+                        segment
+                    }
+                    Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via URI path: $decodedName")
+                    return decodedName
+                }
             }
         }
         
-        // Estrategia 3: lastPathSegment
+        // Estrategia 4: lastPathSegment (decodificado)
         val lastSegment = uri.lastPathSegment
-        if (!lastSegment.isNullOrEmpty() && lastSegment.contains('.')) {
-            Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via lastPathSegment: $lastSegment")
-            return lastSegment
+        if (!lastSegment.isNullOrEmpty() && !lastSegment.startsWith("msf:") && 
+            !lastSegment.matches(Regex("^[0-9]+$"))) {
+            
+            // Intentar extraer nombre si hay separadores de path en el segment
+            val cleanSegment = if (lastSegment.contains('/')) {
+                lastSegment.substringAfterLast('/')
+            } else if (lastSegment.contains(':')) {
+                // Para casos como "msf:1004/document/primary:Download/archivo.pdf"
+                lastSegment.substringAfterLast(':')
+            } else {
+                lastSegment
+            }
+            
+            // Decodificar URL encoding
+            val decodedSegment = try {
+                java.net.URLDecoder.decode(cleanSegment, "UTF-8")
+            } catch (e: Exception) {
+                cleanSegment
+            }
+            
+            if (decodedSegment.contains('.')) {
+                Log.d("TaskSubmissionsFragment", "✅ Nombre obtenido via lastPathSegment: $decodedSegment")
+                return decodedSegment
+            }
         }
         
-        // Estrategia 4: Intentar obtener el tipo MIME y generar un nombre
+        // Estrategia 5: Generar nombre usando MIME type
         try {
             val mimeType = contentResolver.getType(uri)
+            Log.d("TaskSubmissionsFragment", "🔍 MIME type detectado: $mimeType")
+            
             if (!mimeType.isNullOrEmpty()) {
                 val extension = when {
                     mimeType.contains("pdf") -> "pdf"
+                    mimeType.contains("wordprocessingml") || mimeType.contains("msword") -> "docx"
+                    mimeType.contains("spreadsheetml") || mimeType.contains("excel") -> "xlsx"
+                    mimeType.contains("presentationml") || mimeType.contains("powerpoint") -> "pptx"
+                    mimeType.contains("image/jpeg") -> "jpg"
+                    mimeType.contains("image/png") -> "png"
                     mimeType.contains("image") -> "jpg"
-                    mimeType.contains("text") -> "txt"
-                    mimeType.contains("sql") -> "sql"
-                    mimeType.contains("json") -> "json"
-                    mimeType.contains("xml") -> "xml"
-                    mimeType.contains("python") -> "py"
-                    mimeType.contains("java") -> "java"
+                    mimeType.contains("text/plain") -> "txt"
+                    mimeType.contains("text/sql") || mimeType.contains("sql") -> "sql"
+                    mimeType.contains("application/json") || mimeType.contains("json") -> "json"
+                    mimeType.contains("application/xml") || mimeType.contains("xml") -> "xml"
+                    mimeType.contains("text/x-python") || mimeType.contains("python") -> "py"
+                    mimeType.contains("text/x-java") || mimeType.contains("java") -> "java"
                     mimeType.contains("javascript") -> "js"
+                    mimeType.contains("text/") -> "txt"
                     else -> mimeType.substringAfterLast('/').takeIf { it.length <= 5 } ?: "dat"
                 }
-                val generatedName = "archivo_${System.currentTimeMillis()}.$extension"
+                
+                val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(java.util.Date())
+                val generatedName = "documento_${timestamp}.$extension"
                 Log.d("TaskSubmissionsFragment", "⚠️ Nombre generado desde MIME type ($mimeType): $generatedName")
                 return generatedName
             }
@@ -1554,10 +2001,47 @@ class TaskSubmissionsFragment : Fragment() {
             Log.e("TaskSubmissionsFragment", "Error obteniendo MIME type: ${e.message}")
         }
         
-        // Fallback final: nombre genérico con timestamp
-        val fallbackName = "archivo_${System.currentTimeMillis()}.dat"
+        // Fallback final: nombre descriptivo con timestamp
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(java.util.Date())
+        val fallbackName = "archivo_${timestamp}.dat"
         Log.w("TaskSubmissionsFragment", "⚠️ No se pudo obtener nombre real, usando fallback: $fallbackName")
-        Log.w("TaskSubmissionsFragment", "⚠️ URI problemático: $uri")
+        Log.w("TaskSubmissionsFragment", "⚠️ URI completo: $uri")
         return fallbackName
+    }
+    
+    /**
+     * Copia un archivo al almacenamiento interno de la app para evitar problemas de permisos
+     * Retorna el URI del archivo copiado
+     */
+    private fun copyFileToInternalStorage(sourceUri: Uri, fileName: String): Uri {
+        try {
+            val contentResolver = requireContext().contentResolver
+            val inputStream = contentResolver.openInputStream(sourceUri)
+                ?: throw IllegalArgumentException("No se pudo abrir el archivo de origen")
+            
+            // Crear directorio de tareas si no existe
+            val tasksDir = File(requireContext().filesDir, "task_submissions")
+            if (!tasksDir.exists()) {
+                tasksDir.mkdirs()
+            }
+            
+            // Sanitizar el nombre del archivo
+            val sanitizedFileName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            val timestamp = System.currentTimeMillis()
+            val destinationFile = File(tasksDir, "${timestamp}_$sanitizedFileName")
+            
+            // Copiar el archivo
+            inputStream.use { input ->
+                destinationFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            
+            Log.i("TaskSubmissionsFragment", "✅ Archivo copiado a almacenamiento interno: ${destinationFile.absolutePath}")
+            return Uri.fromFile(destinationFile)
+        } catch (e: Exception) {
+            Log.e("TaskSubmissionsFragment", "❌ Error copiando archivo a almacenamiento interno", e)
+            throw e
+        }
     }
 }

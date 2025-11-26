@@ -183,6 +183,9 @@ class DatabaseChatAdapter(
         }
         
         private fun setupBotMessageActions(message: ChatMessage) {
+            copyButton.setImageResource(R.drawable.ic_copy_minimal)
+            shareButton.setImageResource(R.drawable.ic_share_minimal)
+
             copyButton.setOnClickListener {
                 copyToClipboard(message.text)
             }
@@ -193,6 +196,9 @@ class DatabaseChatAdapter(
         }
         
         private fun setupUserMessageActions(message: ChatMessage) {
+            editUserMessageButton.setImageResource(R.drawable.ic_edit_minimal)
+            copyUserMessageButton.setImageResource(R.drawable.ic_copy_minimal)
+
             // Edit button
             editUserMessageButton.setOnClickListener {
                 onEditUserMessageClick(message)
