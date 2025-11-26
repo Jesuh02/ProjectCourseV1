@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.example.tareamov.util.SessionManager
 import java.text.DecimalFormat
 
 class StudentProgressManager(private val context: Context) {
@@ -91,7 +92,10 @@ class StudentProgressManager(private val context: Context) {
                     }
 
                     // Local fallback if Supabase not available or empty
-                    val localSubs = db.taskSubmissionDao().getStudentSubmissionsForCourse(username, courseId)
+                    // Resolve username -> userId for Room DAO
+                    val studentId = db.usuarioDao().getUsuarioByUsername(username)?.id
+                        ?: SessionManager.getInstance(context).getUserId()
+                    val localSubs = db.taskSubmissionDao().getStudentSubmissionsForCourse(studentId, courseId)
                     Log.d("StudentProgressManager", "Local submissions count for user=$username course=$courseId=${localSubs?.size ?: 0}")
                     localSubs
                 }

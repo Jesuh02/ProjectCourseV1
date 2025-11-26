@@ -58,7 +58,10 @@ class CourseProgressLoader(private val context: Context) {
 
                 // Load all submissions for this student
                 val allSubmissions: List<TaskSubmission> = withContext(Dispatchers.IO) {
-                    db.taskSubmissionDao().getSubmissionsByStudent(username)
+                    // Resolve username -> userId for Room DAO which expects Long studentId
+                    val studentId = db.usuarioDao().getUsuarioByUsername(username)?.id
+                        ?: com.example.tareamov.util.SessionManager.getInstance(context).getUserId()
+                    db.taskSubmissionDao().getSubmissionsByStudent(studentId)
                 }
 
                 // Filter submissions to only include those for tasks in this course

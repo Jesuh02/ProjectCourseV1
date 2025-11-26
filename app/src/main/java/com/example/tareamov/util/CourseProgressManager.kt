@@ -75,7 +75,10 @@ class CourseProgressManager(private val context: Context) {
             }
 
             if (submissions.isEmpty()) {
-                submissions = withContext(Dispatchers.IO) { db.taskSubmissionDao().getStudentSubmissionsForCourse(username, courseId) }
+                // Resolve username -> userId for local DAO
+                val studentId = withContext(Dispatchers.IO) { db.usuarioDao().getUsuarioByUsername(username)?.id }
+                    ?: com.example.tareamov.util.SessionManager.getInstance(context).getUserId()
+                submissions = withContext(Dispatchers.IO) { db.taskSubmissionDao().getStudentSubmissionsForCourse(studentId, courseId) }
                 android.util.Log.d("CourseProgressManager", "Local fallback submissions=${submissions.size}")
             }
 

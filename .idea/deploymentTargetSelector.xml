@@ -4,14 +4,10 @@
     <selectionStates>
       <SelectionState runConfigName="app">
         <option name="selectionMode" value="DROPDOWN" />
- perico
-        <DropdownSelection timestamp="2025-10-25T01:13:13.900752400Z">
-
-        <DropdownSelection timestamp="2025-10-14T04:18:15.611401900Z">
- main
+        <DropdownSelection timestamp="2025-11-24T00:46:00.471871Z">
           <Target type="DEFAULT_BOOT">
             <handle>
-              <DeviceId pluginId="Default" identifier="serial=R28M60JDDBM;connection=81fb2437" />
+              <DeviceId pluginId="PhysicalDevice" identifier="serial=R28M60JDDBM" />
             </handle>
           </Target>
         </DropdownSelection>

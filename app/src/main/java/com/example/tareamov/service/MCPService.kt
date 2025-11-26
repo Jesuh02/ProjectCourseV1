@@ -1226,10 +1226,8 @@ $tableList
             "suggestions": [
                 "Si es un archivo de Google Drive, descárgalo primero a tu dispositivo",
                 "Verifica que tienes permiso para acceder al archivo",
-                "Asegúrate de que el servidor MCP esté ejecutándose correctamente",
-                ${if (!isSupported) """"Convierte el archivo a un formato soportado (PDF, DOCX, TXT, etc.)"""" else ""},
-                ${if (fileType.contains("powerpoint")) """"Si es una presentación, considera exportarla como PDF"""" else ""},
-                ${if (fileType.startsWith("image")) """"Si es una imagen con texto, asegúrate de que sea legible"""" else ""}
+                "Asegúrate de que el servidor MCP esté ejecutándose correctamente"
+                ${if (!isSupported) ", ${JSONObject.quote("Convierte el archivo a un formato soportado (PDF, DOCX, TXT, etc.)")}" else ""}${if (fileType.contains("powerpoint")) ", ${JSONObject.quote("Si es una presentación, considera exportarla como PDF")}" else ""}${if (fileType.startsWith("image")) ", ${JSONObject.quote("Si es una imagen con texto, asegúrate de que sea legible")}" else ""}
             ]
         }
         """.trimIndent()
@@ -1764,7 +1762,8 @@ $tableList
                 contextBuilder.append("Ejemplos de usuarios:\n")
                 usuarios.take(5).forEach { usuario ->
                     val persona = database.personaDao().getPersonaById(usuario.persona_id)
-                    contextBuilder.append("- ID: ${usuario.id}, Usuario: ${usuario.usuario}, Persona: ${persona?.nombres ?: ""} ${persona?.apellidos ?: ""}\n")
+                    val personaName = if (persona != null) "${persona.nombres} ${persona.apellidos}" else "Desconocido"
+                    contextBuilder.append("- ID: ${usuario.id}, Usuario: ${usuario.usuario}, Persona: $personaName\n")
                 }
                 contextBuilder.append("\n")
             }
@@ -1781,7 +1780,8 @@ $tableList
                 contextBuilder.append("Ejemplos de temas:\n")
                 topics.take(5).forEach { topic ->
                     val video = database.videoDao().getVideoById(topic.courseId)
-                    contextBuilder.append("- ID: ${topic.id}, Nombre: ${topic.name}, Curso: ${video?.title ?: "Desconocido"}, Descripción: ${topic.description}\n")
+                    val courseTitle = video?.title ?: "Desconocido"
+                    contextBuilder.append("- ID: ${topic.id}, Nombre: ${topic.name}, Curso: $courseTitle, Descripción: ${topic.description}\n")
                 }
                 contextBuilder.append("\n")
             }
@@ -1799,7 +1799,9 @@ $tableList
                 contextBuilder.append("Ejemplos de tareas:\n")
                 tasks.take(5).forEach { task ->
                     val topic = database.topicDao().getTopicById(task.topicId)
-                    contextBuilder.append("- ID: ${task.id}, Nombre: ${task.name}, Tema: ${topic?.name ?: "Desconocido"}, Descripción: ${task.description ?: "Sin descripción"}, Orden: ${task.orderIndex}\n")
+                    val topicName = topic?.name ?: "Desconocido"
+                    val taskDesc = task.description ?: "Sin descripción"
+                    contextBuilder.append("- ID: ${task.id}, Nombre: ${task.name}, Tema: $topicName, Descripción: $taskDesc, Orden: ${task.orderIndex}\n")
                 }
                 contextBuilder.append("\n")
             }
@@ -1814,16 +1816,22 @@ $tableList
             }
 
             // Add TaskSubmission examples
-            if (taskSubmissions.isNotEmpty()) {
+                if (taskSubmissions.isNotEmpty()) {
                 contextBuilder.append("Ejemplos de envíos de tareas:\n")
                 taskSubmissions.take(5).forEach { submission ->
                     val task = database.taskDao().getTaskById(submission.taskId)
                     val topic = task?.let { database.topicDao().getTopicById(it.topicId) }
-                    contextBuilder.append("- ID: ${submission.id}, Estudiante: ${submission.studentUsername}, " +
-                            "Tarea: ${task?.name ?: "Desconocida"}, " +
-                            "Tema: ${topic?.name ?: "Desconocido"}, " +
-                            "Calificación: ${submission.grade ?: "Sin calificar"}, " +
-                            "Archivo: ${submission.fileName}\n")
+                    // Resolve studentId -> username when possible
+                    val studentName = try {
+                        val u = database.usuarioDao().getUsuarioById(submission.studentId)
+                        u?.usuario ?: submission.studentId.toString()
+                    } catch (e: Exception) {
+                        submission.studentId.toString()
+                    }
+                    val taskName = task?.name ?: "Desconocida"
+                    val topicName = topic?.name ?: "Desconocido"
+                    val gradeStr = submission.grade ?: "Sin calificar"
+                    contextBuilder.append("- ID: ${submission.id}, Estudiante: $studentName, Tarea: $taskName, Tema: $topicName, Calificación: $gradeStr, Archivo: ${submission.fileName}\n")
                 }
                 contextBuilder.append("\n")
             }
@@ -1834,11 +1842,11 @@ $tableList
                 contentItems.take(5).forEach { item ->
                     val topic = database.topicDao().getTopicById(item.topicId)
                     val task = item.taskId?.let { database.taskDao().getTaskById(it) }
-                    contextBuilder.append("- ID: ${item.id}, Nombre: ${item.name ?: "Sin nombre"}, " +
-                            "Tipo: ${item.contentType}, " +
-                            "Tema: ${topic?.name ?: "Ninguno"}, " +
-                            "Tarea: ${task?.name ?: "Ninguna"}, " +
-                            "URI: ${item.uriString.take(30)}${if (item.uriString.length > 30) "..." else ""}\n")
+                    val name = item.name ?: "Sin nombre"
+                    val topicName = topic?.name ?: "Ninguno"
+                    val taskName = task?.name ?: "Ninguna"
+                    val uriPreview = if (item.uriString.length > 30) item.uriString.take(30) + "..." else item.uriString
+                    contextBuilder.append("- ID: ${item.id}, Nombre: $name, Tipo: ${item.contentType}, Tema: $topicName, Tarea: $taskName, URI: $uriPreview\n")
                 }
                 contextBuilder.append("\n")
             }
@@ -1851,7 +1859,7 @@ $tableList
             contextBuilder.append("- Cada Task está asociado a un Topic (Task.topicId -> Topic.id)\n")
             contextBuilder.append("- Cada Subscription conecta un usuario suscriptor con un usuario creador\n")
             contextBuilder.append("- Cada ContentItem está asociado a un Topic o una Task (ContentItem.topicId -> Topic.id o ContentItem.taskId -> Task.id)\n")
-            contextBuilder.append("- Cada TaskSubmission está asociado a una Task (TaskSubmission.taskId -> Task.id) y un estudiante (TaskSubmission.studentUsername -> Usuario.usuario)\n")
+            contextBuilder.append("- Cada TaskSubmission está asociado a una Task (TaskSubmission.taskId -> Task.id) y un estudiante (TaskSubmission.studentId -> usuarios.id -> usuarios.usuario)\n")
 
         } catch (e: Exception) {
             Log.e(TAG, "Error gathering database context", e)

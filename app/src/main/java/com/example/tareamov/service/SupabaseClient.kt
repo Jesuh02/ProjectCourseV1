@@ -707,8 +707,9 @@ object SupabaseClient {
             if (submission.id != null && submission.id != 0L) {
                 android.util.Log.w("SupabaseClient", "Not sending local id=${submission.id} to server for task_submissions (will let DB assign id)")
             }
-            map["task_id"] = submission.taskId
-            map["student_username"] = submission.studentUsername
+                map["task_id"] = submission.taskId
+                // Send numeric student_id (long) instead of student_username string
+                map["student_id"] = submission.studentId
             map["file_uri"] = submission.fileUri
             map["file_name"] = submission.fileName
             map["submission_date"] = submission.submissionDate
@@ -904,7 +905,7 @@ object SupabaseClient {
                 // As we don't have submission details here, attempt to query by id may have failed because remote id differs.
                 // The caller can optionally re-call with more context; here we attempt a best-effort using submissionId as task_id if needed.
                 // For a reliable fallback, callers should provide taskId/studentUsername/submissionDate; we will attempt a broad update by id alternative.
-                url = "$baseUrl/rest/v1/task_submissions?id=eq.$submissionId"
+                    url = "$baseUrl/rest/v1/task_submissions?id=eq.$submissionId"
                 request = Request.Builder()
                     .url(url)
                     .patch(fallbackBody)
@@ -969,8 +970,8 @@ object SupabaseClient {
             try {
                 val fallbackBody = gson.toJson(map).toRequestBody(jsonMedia)
                 // Build filter query - string values should be quoted
-                val studentEscaped = submission.studentUsername.replace("'", "''")
-                url = "$baseUrl/rest/v1/task_submissions?task_id=eq.${submission.taskId}&student_username=eq.'${studentEscaped}'&submission_date=eq.${submission.submissionDate}"
+                    // Use numeric student_id in the filter
+                    url = "$baseUrl/rest/v1/task_submissions?task_id=eq.${submission.taskId}&student_id=eq.${submission.studentId}&submission_date=eq.${submission.submissionDate}"
                 request = Request.Builder()
                     .url(url)
                     .patch(fallbackBody)

@@ -17,21 +17,21 @@ interface TaskSubmissionDao {
     @Query("SELECT * FROM task_submissions WHERE taskId = :taskId ORDER BY submissionDate DESC")
     fun getSubmissionsByTask(taskId: Long): List<TaskSubmission>
 
-    @Query("SELECT * FROM task_submissions WHERE taskId = :taskId AND studentUsername = :username LIMIT 1")
-    fun getUserSubmissionForTask(taskId: Long, username: String): TaskSubmission?
+    @Query("SELECT * FROM task_submissions WHERE taskId = :taskId AND studentId = :studentId LIMIT 1")
+    fun getUserSubmissionForTask(taskId: Long, studentId: Long): TaskSubmission?
 
     @Query("SELECT * FROM task_submissions WHERE id = :submissionId")
     suspend fun getSubmissionById(submissionId: Long): TaskSubmission?
 
-    @Query("SELECT * FROM task_submissions WHERE studentUsername = :username")
-    suspend fun getSubmissionsByStudent(username: String): List<TaskSubmission>
+    @Query("SELECT * FROM task_submissions WHERE studentId = :studentId")
+    suspend fun getSubmissionsByStudent(studentId: Long): List<TaskSubmission>
 
     @Query("SELECT * FROM task_submissions WHERE taskId IN (SELECT id FROM tasks WHERE topicId IN (SELECT id FROM topics WHERE courseId = :courseId))")
     suspend fun getSubmissionsByCourse(courseId: Long): List<TaskSubmission>
 
     // New method to get all submissions for a specific student in a course
-    @Query("SELECT * FROM task_submissions WHERE studentUsername = :username AND taskId IN (SELECT id FROM tasks WHERE topicId IN (SELECT id FROM topics WHERE courseId = :courseId))")
-    suspend fun getStudentSubmissionsForCourse(username: String, courseId: Long): List<TaskSubmission>
+    @Query("SELECT * FROM task_submissions WHERE studentId = :studentId AND taskId IN (SELECT id FROM tasks WHERE topicId IN (SELECT id FROM topics WHERE courseId = :courseId))")
+    suspend fun getStudentSubmissionsForCourse(studentId: Long, courseId: Long): List<TaskSubmission>
 
     @Query("SELECT * FROM task_submissions")
     suspend fun getAllTaskSubmissions(): List<TaskSubmission>
