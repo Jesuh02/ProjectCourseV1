@@ -954,6 +954,23 @@ class ChatBotFragment : Fragment() {
                     val referencedTask = currentCourseTasks.firstOrNull { it.index == idx }
                     if (referencedTask != null) {
                         Log.d("ChatBotFragment", "🔗 Tarea referenciada por #: ${referencedTask.taskName} (id=${referencedTask.taskId})")
+
+                        val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                        val userId = session.getUserId()
+                        val username = session.getUsername()
+                        if (userId > 0L) {
+                                withContext(Dispatchers.IO) {
+                                    try {
+                                        // Preferir Supabase for submissions and file contexts
+                                        val supabaseClient = com.example.tareamov.service.SupabaseClient
+                                        var submission: com.example.tareamov.data.entity.TaskSubmission? = null
+                                        if (supabaseClient.isConfigured()) {
+                                            val remoteSubs = supabaseClient.fetchTaskSubmissions()
+                                            submission = remoteSubs.firstOrNull { it.taskId == referencedTask.taskId && it.studentId == userId }
+                                        }
+                                        if (submission == null) {
+                                            submission = database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, userId)
+                                        }
                         val username = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUsername()
                         if (!username.isNullOrEmpty()) {
                             withContext(Dispatchers.IO) {
@@ -967,6 +984,7 @@ class ChatBotFragment : Fragment() {
                                     } else null
                                     
                                     val submission = remoteSubmission ?: database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, username)
+
 
                                     if (submission != null) {
                                         // Try to get file context from Supabase first
@@ -1633,7 +1651,12 @@ class ChatBotFragment : Fragment() {
                                     Log.d("ChatBotFragment", "✅ TaskSubmission actualizada (local/remote seguirá):")
                                     Log.d("ChatBotFragment", "   - ID: $targetSubmissionId")
                                     Log.d("ChatBotFragment", "   - Tarea: $taskName")
-                                    Log.d("ChatBotFragment", "   - Estudiante: ${taskSubmission.studentUsername}")
+                                    val studentName = try {
+                                        database.usuarioDao().getUsuarioById(taskSubmission.studentId)?.usuario ?: taskSubmission.studentId.toString()
+                                    } catch (e: Exception) {
+                                        taskSubmission.studentId.toString()
+                                    }
+                                    Log.d("ChatBotFragment", "   - Estudiante: $studentName")
                                     Log.d("ChatBotFragment", "   - Grade: $gradeFloat")
                                     Log.d("ChatBotFragment", "   - Feedback: $feedback")
 

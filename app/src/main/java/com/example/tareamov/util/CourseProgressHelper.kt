@@ -94,7 +94,10 @@ class CourseProgressHelper(private val activity: FragmentActivity) {
 
                 // Get all submissions for this student in this course
                 val submissions = withContext(Dispatchers.IO) {
-                    db.taskSubmissionDao().getStudentSubmissionsForCourse(username, courseId)
+                    // Resolve username -> userId for local DB (Room) which now stores studentId as Long
+                    val studentId = db.usuarioDao().getUsuarioByUsername(username)?.id
+                        ?: SessionManager.getInstance(activity).getUserId()
+                    db.taskSubmissionDao().getStudentSubmissionsForCourse(studentId, courseId)
                 }
 
                 // Calculate progress

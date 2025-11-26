@@ -1595,8 +1595,16 @@ class SyncRepository(
     suspend fun fetchUserSubmissionForTaskFromSupabase(taskId: Long, username: String): TaskSubmission? {
         return try {
             if (!supabaseClient.isConfigured()) return null
+            // Resolve username -> user id on Supabase, then match by numeric studentId
+            val remoteUser = try {
+                withContext(Dispatchers.IO) { supabaseClient.fetchUsuarioByUsername(username) }
+            } catch (e: Exception) {
+                Log.w("SyncRepository", "fetchUsuarioByUsername failed for $username: ${e.message}")
+                null
+            }
+            val userId = remoteUser?.id ?: return null
             val all = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissions() }
-            all.firstOrNull { it.taskId == taskId && it.studentUsername.equals(username, ignoreCase = true) }
+            all.firstOrNull { it.taskId == taskId && it.studentId == userId }
         } catch (e: Exception) {
             Log.w("SyncRepository", "fetchUserSubmissionForTaskFromSupabase failed for taskId=$taskId username=$username", e)
             null
@@ -1628,7 +1636,15 @@ class SyncRepository(
             } else emptySet()
 
             Log.d("SyncRepository", "fetchStudentSubmissionsForCourseFromSupabase: fetched allSubs=${all.size}, remoteTopics=${remoteTopicIds.size}, remoteTasks=${remoteTaskIds.size}")
-            val filtered = all.filter { it.studentUsername.equals(username, ignoreCase = true) && remoteTaskIds.contains(it.taskId) }
+            // Resolve username -> user id and filter by studentId
+            val remoteUser = try {
+                withContext(Dispatchers.IO) { supabaseClient.fetchUsuarioByUsername(username) }
+            } catch (e: Exception) {
+                Log.w("SyncRepository", "fetchUsuarioByUsername failed for $username: ${e.message}")
+                null
+            }
+            val userId = remoteUser?.id
+            val filtered = if (userId != null) all.filter { it.studentId == userId && remoteTaskIds.contains(it.taskId) } else emptyList()
             Log.d("SyncRepository", "fetchStudentSubmissionsForCourseFromSupabase: filteredSubs=${filtered.size}")
             filtered
         } catch (e: Exception) {

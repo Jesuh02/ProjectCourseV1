@@ -17,14 +17,14 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index("taskId"),
-        Index("studentUsername")
+        Index("studentId")
     ]
 )
 data class TaskSubmission(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val taskId: Long = 0,
-    val studentUsername: String = "",
+    val studentId: Long = 0,
     val submissionDate: Long = 0,
     val fileUri: String = "",
     val fileName: String = "",

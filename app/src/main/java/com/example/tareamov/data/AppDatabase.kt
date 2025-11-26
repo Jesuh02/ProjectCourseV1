@@ -572,10 +572,44 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // Define migration from version 17 to 18 (Add Purchase table)
+        // Migration 17 -> 18: Replace studentUsername (TEXT) with studentId (INTEGER) in task_submissions
+        // Also create purchases table and add isPaid column to videos as part of the same version bump
         private val MIGRATION_17_18 = object : Migration(17, 18) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Create purchases table
+                // Create new table with studentId column (nullable initially)
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `task_submissions_new` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `taskId` INTEGER NOT NULL,
+                    `studentId` INTEGER,
+                    `submissionDate` INTEGER NOT NULL,
+                    `fileUri` TEXT NOT NULL,
+                    `fileName` TEXT NOT NULL,
+                    `grade` REAL,
+                    `feedback` TEXT,
+                    FOREIGN KEY(`taskId`) REFERENCES `tasks`(`id`) ON DELETE CASCADE,
+                    FOREIGN KEY(`studentId`) REFERENCES `usuarios`(`id`) ON DELETE SET NULL
+                )"""
+                )
+
+                // Copy data from old table, resolving studentUsername -> studentId via usuarios table
+                db.execSQL(
+                    """INSERT INTO task_submissions_new (id, taskId, studentId, submissionDate, fileUri, fileName, grade, feedback)
+                    SELECT ts.id, ts.taskId,
+                      (SELECT u.id FROM usuarios u WHERE lower(u.usuario) = lower(ts.studentUsername) LIMIT 1) as studentId,
+                      ts.submissionDate, ts.fileUri, ts.fileName, ts.grade, ts.feedback
+                    FROM task_submissions ts"""
+                )
+
+                // Drop old table and rename new
+                db.execSQL("DROP TABLE IF EXISTS task_submissions")
+                db.execSQL("ALTER TABLE task_submissions_new RENAME TO task_submissions")
+
+                // Recreate indices for task_submissions
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_task_submissions_taskId` ON `task_submissions` (`taskId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_task_submissions_studentId` ON `task_submissions` (`studentId`)")
+
+                // Create purchases table as part of this migration
                 db.execSQL(
                     """CREATE TABLE IF NOT EXISTS `purchases` (
                     `username` TEXT NOT NULL,
@@ -596,7 +630,7 @@ abstract class AppDatabase : RoomDatabase() {
                     // Column might already exist, which is fine
                 }
 
-                Log.i(TAG, "Migration 17 to 18 completed: Added purchases table and isPaid column")
+                Log.i(TAG, "Migration 17 to 18: Replaced studentUsername with studentId and added purchases/isPaid changes")
             }
         }
 

@@ -1061,7 +1061,14 @@ WHERE t.id = $taskId;
                         "-- Consulta fallida\nSELECT * FROM public.courses WHERE id = ${topic.courseId};")
                 }
                 
-                val studentsList = submissions.joinToString(", ") { it.studentUsername }
+                // Resolve student IDs to usernames (fetch usuarios once to avoid many remote calls)
+                val usuarios = try {
+                    supabase.fetchUsuarios()
+                } catch (e: Exception) {
+                    emptyList<com.example.tareamov.data.entity.Usuario>()
+                }
+                val userMap = usuarios.associateBy { it.id }
+                val studentsList = submissions.map { sub -> userMap[sub.studentId]?.usuario ?: sub.studentId.toString() }.joinToString(", ")
                 
                 val result = """
                     📋 INFORMACIÓN COMPLETA:
@@ -2604,9 +2611,9 @@ RESPONDE AHORA CON ESTE FORMATO EXACTO Y DIRECTO.
 
     private fun formatTaskSubmissionsData(submissions: List<com.example.tareamov.data.entity.TaskSubmission>): String {
         if (submissions.isEmpty()) return "No se encontraron entregas de tareas."
-        
+
         return submissions.joinToString("\n") { submission ->
-            "ID: ${submission.id}, Tarea ID: ${submission.taskId}, Usuario: ${submission.studentUsername}"
+            "ID: ${submission.id}, Tarea ID: ${submission.taskId}, UsuarioId: ${submission.studentId}"
         }
     }
 
