@@ -116,7 +116,7 @@ class TaskSubmissionsFragment : Fragment() {
         fileAnalysisService = FileAnalysisService(requireContext())
     fileConverterService = FileConverterService(requireContext())
         mcpService = MCPService(requireContext())
-        val currentUsername = sessionManager.getUsername()
+    val currentUsername = sessionManager.getUsername()
         isCourseCreator = (courseCreatorUsername != null && courseCreatorUsername == currentUsername)
     }
 
@@ -246,6 +246,12 @@ class TaskSubmissionsFragment : Fragment() {
                     return@launch
                 }
 
+                val currentUserId = sessionManager.getUserId()
+                if (currentUserId == null) {
+                    Log.e("TaskSubmissionsFragment", "No se pudo obtener el userId actual")
+                    return@launch
+                }
+
                 val userSubmission = withContext(Dispatchers.IO) {
                     // Fetch submissions from Supabase and find the user's submission for this task
                     val all = try {
@@ -253,7 +259,7 @@ class TaskSubmissionsFragment : Fragment() {
                     } catch (e: Exception) {
                         emptyList<com.example.tareamov.data.entity.TaskSubmission>()
                     }
-                    all.firstOrNull { it.taskId == taskId && it.studentUsername.equals(currentUsername, ignoreCase = true) }
+                    all.firstOrNull { it.taskId == taskId && it.studentId == currentUserId }
                 }
 
                 if (userSubmission != null) {
@@ -420,13 +426,13 @@ class TaskSubmissionsFragment : Fragment() {
     }
 
     private fun checkUserSubmission(statusTextView: TextView) {
-        val username = sessionManager.getUsername() ?: return
+        val currentUserId = sessionManager.getUserId() ?: return
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 val submission = withContext(Dispatchers.IO) {
                     try {
-                        SupabaseClient.fetchTaskSubmissions().firstOrNull { it.taskId == taskId && it.studentUsername.equals(username, ignoreCase = true) }
+                        SupabaseClient.fetchTaskSubmissions().firstOrNull { it.taskId == taskId && it.studentId == currentUserId }
                     } catch (e: Exception) {
                         Log.e("TaskSubmissionsFragment", "Error fetching user submission from Supabase", e)
                         null
@@ -501,8 +507,8 @@ class TaskSubmissionsFragment : Fragment() {
                         }
                         if (isCourseCreator) all
                         else {
-                            val username = sessionManager.getUsername()
-                            if (username != null) all.filter { it.studentUsername.equals(username, ignoreCase = true) } else emptyList()
+                            val userId = sessionManager.getUserId()
+                                if (userId != null) all.filter { it.studentId == userId } else emptyList()
                         }
                     } catch (e: Exception) {
                         Log.e("TaskSubmissionsFragment", "Error fetching submissions from Supabase", e)
@@ -755,8 +761,8 @@ class TaskSubmissionsFragment : Fragment() {
             return
         }
 
-        val username = sessionManager.getUsername()
-        if (username == null) {
+        val currentUserId = sessionManager.getUserId()
+        if (currentUserId == null) {
             Toast.makeText(context, "Debes iniciar sesión para enviar tareas", Toast.LENGTH_SHORT).show()
             return
         }
@@ -792,6 +798,10 @@ class TaskSubmissionsFragment : Fragment() {
         
         val submission = TaskSubmission(
             taskId = taskId,
+
+            studentId = currentUserId,
+            fileUri = uri.toString(),
+
             studentUsername = username,
             fileUri = finalUri.toString(),
             fileName = fileName,
@@ -1618,7 +1628,22 @@ class TaskSubmissionsFragment : Fragment() {
                     taskDescriptionDisplayTextView.text = "Cargando descripción..."
                 }
                 
-                studentNameTextView.text = submission.studentUsername
+                // Resolve username by studentId (submission now stores studentId)
+                CoroutineScope(Dispatchers.Main).launch {
+                    val usernameResolved = withContext(Dispatchers.IO) {
+                        try {
+                            val usuarios = SupabaseClient.fetchUsuarios()
+                            usuarios.firstOrNull { it.id == submission.studentId }?.usuario
+                        } catch (e: Exception) {
+                            Log.e("TaskSubmissionsFragment", "Error fetching username for id ${submission.studentId}", e)
+                            null
+                        }
+                    }
+                    val displayName = usernameResolved ?: "Usuario ${submission.studentId}"
+                    studentNameTextView.text = displayName
+                    // Load avatar using resolved username (or fallback)
+                    loadUserAvatar(usernameResolved ?: "")
+                }
 
                 val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
                 submissionDateTextView.text = "Entregado: ${dateFormat.format(submission.submissionDate)}"
@@ -1666,8 +1691,7 @@ class TaskSubmissionsFragment : Fragment() {
                     qualityLabelTextView.text = "⏳ Pendiente de calificación"
                 }
 
-                // Load user avatar
-                loadUserAvatar(submission.studentUsername)
+                // Avatar is loaded as part of username resolution above
 
                 viewFileButton.setOnClickListener {
                     openSubmissionFile(submission.fileUri)

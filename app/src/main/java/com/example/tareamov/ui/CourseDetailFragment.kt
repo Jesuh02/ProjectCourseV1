@@ -1911,11 +1911,12 @@ class CourseDetailFragment : Fragment() {
             submitTaskButton.text = "Ver Entregas"
             submitTaskButton.visibility = View.VISIBLE
             gradeStatusTextView?.visibility = View.GONE
-            submitTaskButton.setOnClickListener {
+                submitTaskButton.setOnClickListener {
                 val bundle = Bundle().apply {
                     putLong("taskId", task.id)
                     putString("taskName", task.name)
-                    putString("courseCreatorUsername", courseCreatorUsername)
+                    // Ensure we pass a String (navigation expects a string). Use empty string as fallback.
+                    putString("courseCreatorUsername", courseCreatorUsername ?: "")
                 }
                 findNavController().navigate(R.id.action_courseDetailFragment_to_taskSubmissionFragment, bundle)
             }
@@ -1924,11 +1925,12 @@ class CourseDetailFragment : Fragment() {
             submitTaskButton.text = "Subir Tarea"
             submitTaskButton.visibility = View.VISIBLE
             checkStudentSubmission(task.id, gradeStatusTextView)
-            submitTaskButton.setOnClickListener {
+                submitTaskButton.setOnClickListener {
                 val bundle = Bundle().apply {
                     putLong("taskId", task.id)
                     putString("taskName", task.name)
-                    putString("courseCreatorUsername", courseCreatorUsername)
+                    // Ensure we pass a String (navigation expects a string). Use empty string as fallback.
+                    putString("courseCreatorUsername", courseCreatorUsername ?: "")
                 }
                 findNavController().navigate(R.id.action_courseDetailFragment_to_taskSubmissionFragment, bundle)
             }
@@ -2003,23 +2005,25 @@ class CourseDetailFragment : Fragment() {
     private fun checkStudentSubmission(taskId: Long, gradeStatusTextView: TextView?) {
         if (gradeStatusTextView == null) return
 
-        val username = sessionManager.getUsername() ?: return
+    val username = sessionManager.getUsername()
+    val userId = sessionManager.getUserId()
+    if (userId <= 0L) return
 
-        CoroutineScope(Dispatchers.Main).launch {
+    CoroutineScope(Dispatchers.Main).launch {
             try {
                 // Always fetch submission from Supabase (task_submissions are remote-authoritative)
                 var submission: com.example.tareamov.data.entity.TaskSubmission? = null
-                try {
-                    val act = requireActivity()
-                    if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                        submission = withContext(Dispatchers.IO) { act.syncRepository.fetchUserSubmissionForTaskFromSupabase(taskId, username) }
-                        Log.d("CourseDetailFragment", "Supabase fetch for taskId=$taskId username=$username -> submission=${submission}")
-                    } else {
-                        // If Supabase not configured or MainActivity not available, attempt the local DAO as a last resort
-                        val db = AppDatabase.getDatabase(requireContext())
-                        submission = withContext(Dispatchers.IO) { db.taskSubmissionDao().getUserSubmissionForTask(taskId, username) }
-                        Log.d("CourseDetailFragment", "Local fallback fetch for taskId=$taskId username=$username -> submission=${submission}")
-                    }
+                    try {
+                        val act = requireActivity()
+                        if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                            submission = withContext(Dispatchers.IO) { act.syncRepository.fetchUserSubmissionForTaskFromSupabase(taskId, username ?: "") }
+                            Log.d("CourseDetailFragment", "Supabase fetch for taskId=$taskId username=$username -> submission=${submission}")
+                        } else {
+                            // If Supabase not configured or MainActivity not available, attempt the local DAO as a last resort
+                            val db = AppDatabase.getDatabase(requireContext())
+                            submission = withContext(Dispatchers.IO) { db.taskSubmissionDao().getUserSubmissionForTask(taskId, userId) }
+                            Log.d("CourseDetailFragment", "Local fallback fetch for taskId=$taskId userId=$userId -> submission=${submission}")
+                        }
                 } catch (e: Exception) {
                     Log.w("CourseDetailFragment", "Error fetching submission for taskId=$taskId username=$username", e)
                 }
