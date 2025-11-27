@@ -865,11 +865,11 @@ class MCPService(private val context: Context) {
 $tableList
 
         CAPACIDADES:
-        - Consultas sobre CUALQUIERA de las tablas disponibles
-        - Análisis de datos y estadísticas completas
+        - Consultas directas a tablas (SELECT * FROM tabla)
+        - Análisis manual de datos (Divide y Vencerás)
+        - ⛔ NO SOPORTA: JOINs, GROUP BY o Consultas Complejas (Modo Strict)
         - Generación de gráficos avanzados
-        - Búsquedas específicas y filtrados complejos
-        - Análisis de relaciones entre tablas
+        - Búsquedas específicas y filtrados simples
 
         TIPOS DE GRÁFICOS DISPONIBLES:
         - GRAPH_REQUEST:USER_VIDEOS - Usuarios con más videos

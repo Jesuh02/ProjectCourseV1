@@ -83,7 +83,7 @@ export class MCPService {
                     throw error;
                 }
 
-                metrics[key] = count ? ? 0;
+                metrics[key] = (count !== null && count !== undefined) ? count : 0;
             } catch (error) {
                 logger.warn(`Count query failed for ${key}: ${error.message}`);
             }
@@ -231,13 +231,13 @@ export class MCPService {
         }
 
         const recommendedActions = [];
-        if (insights.top_creators_by_courses ? .length) {
+        if (insights.top_creators_by_courses && insights.top_creators_by_courses.length) {
             recommendedActions.push('Consolidar colaboraciones con los creadores con más cursos publicados para impulsar campañas conjuntas.');
         }
-        if (insights.top_creators_by_videos ? .length) {
+        if (insights.top_creators_by_videos && insights.top_creators_by_videos.length) {
             recommendedActions.push('Reutilizar los videos de mayor volumen para anuncios o secuencias de email nurturing.');
         }
-        if (insights.subscribers_activity ? .length) {
+        if (insights.subscribers_activity && insights.subscribers_activity.length) {
             recommendedActions.push('Segmentar comunicaciones personalizadas a los suscriptores más activos para mejorar retención.');
         }
 
@@ -292,11 +292,41 @@ export class MCPService {
                 } catch (sqlError) {
                     logger.error('SQL execution failed.', sqlError);
 
+                    let hint = "";
+                    const msg = sqlError.message || "";
+
+                    if (msg.includes("column") && msg.includes("does not exist")) {
+                        hint = "SCHEMA ERROR: A column you requested does not exist. Use `get_database_schema` to check column names.";
+                    } else if (msg.includes("relation") && msg.includes("does not exist")) {
+                        hint = "SCHEMA ERROR: A table you requested does not exist. Use `get_database_schema` to check table names.";
+                    } else if (msg.includes("missing FROM-clause")) {
+                        hint = "SQL SYNTAX ERROR: You used an alias without defining it in the FROM clause (e.g. `SELECT t.id FROM table` instead of `FROM table t`).";
+                    } else if (msg.includes('syntax error at or near "<"')) {
+                        hint = "SQL SYNTAX ERROR: You are using placeholders like `<ID>` or `<CREADOR_ID>`. You MUST use actual values (e.g. `WHERE id = 1`) or standard SQL parameters if supported. Do NOT use angle brackets.";
+                    } else {
+                        hint = "Complex queries (JOIN, GROUP BY, SUBQUERIES) are NOT supported. You MUST retrieve raw data (e.g., 'SELECT student_id FROM task_submissions') and perform aggregations/joins in your reasoning.";
+                    }
+
+                    // Specific hint for the common hallucination about creator_user_id in usuarios
+                    if (msg.includes('usuarios.creator_user_id')) {
+                        hint = "CRITICAL SCHEMA ERROR: The 'usuarios' table does NOT have a 'creator_user_id' column. That column belongs to 'courses'. To find creators, check 'courses.creator_user_id'.";
+                    }
+
+                    // Specific hint for task_submissions.student_username error
+                    if (sqlError.message && sqlError.message.includes('task_submissions.student_username')) {
+                        hint = "CRITICAL SCHEMA ERROR: The 'task_submissions' table does NOT have a 'student_username' column. It uses 'student_id' (Foreign Key to usuarios.id). Please use 'student_id' instead.";
+                    }
+
+                    // Specific hint for grouping error 42803 or general complex query attempts
+                    if (sqlError.code === '42803' || (sqlError.message && (sqlError.message.includes('GROUP BY') || sqlError.message.includes('STRICT MODE')))) {
+                        hint = "SQL ERROR: You are trying to use aggregations (COUNT, GROUP BY) or SUBQUERIES which are forbidden. STRATEGY: 1) Select all raw IDs (SELECT student_id FROM ...). 2) Count them in your head. 3) Select the user details for the top ID.";
+                    }
+
                     // Return explicit error instead of generic snapshot to avoid confusing the LLM
                     data = {
                         error: true,
                         message: `Error executing SQL: ${sqlError.message}`,
-                        hint: "Complex queries (JOIN, GROUP BY) require the 'execute_sql' RPC function in Supabase. Try a simpler query or use get_database_schema() to understand the structure.",
+                        hint: hint,
                         query: query,
                         reason: 'execution-error'
                     };
@@ -330,7 +360,7 @@ export class MCPService {
                 metadata: {
                     ragEnabled: includeRAG,
                     success: data !== null,
-                    isBusinessQuestion: data ? .isBusinessQuestion || false
+                    isBusinessQuestion: (data && data.isBusinessQuestion) || false
                 }
             }; // REMOVED: Automatic formatted_summary generation
             // The LLM will now analyze raw data and generate its own narrative
@@ -358,12 +388,12 @@ export class MCPService {
 
         const tools = [{
                 name: "get_database_schema",
-                description: "Get the complete database schema with all tables and columns. Use this first to understand the database structure.",
+                description: "CRITICAL: ALWAYS EXECUTE THIS FIRST. Returns the exact table names and columns. You MUST use this before writing any SQL to avoid 'cursos'/'suscripciones' errors.",
                 parameters: { type: "object", properties: {} }
             },
             {
                 name: "query_database",
-                description: "Execute a SQL query on the database. Use this to fetch data.",
+                description: "Execute a SQL query. RULES: 1. 'subscriptions' table uses 'subscriber_id' and 'creator_id' (NOT user_id/course_id). WARNING: 'subscriptions' does NOT have 'course_id'. 2. 'courses' table uses 'creator_user_id'. 3. 'progreso_estudiante' uses 'usuario_estudiante' and 'curso_id'. 4. NO placeholders. 5. Check schema first.",
                 parameters: {
                     type: "object",
                     properties: {
@@ -380,6 +410,12 @@ export class MCPService {
         ];
 
         let response = await this.llmService.generateResponse(messages, tools);
+        // If the user's query requires data, ensure the agent called at least one tool.
+        const requiresData = this.detectIfQueryRequiresData(query);
+        if (requiresData && (!response || !response.tool_calls || response.tool_calls.length === 0)) {
+            throw new Error('La consulta requiere datos de Supabase pero el agente no invocó ninguna herramienta MCP. Se requiere ejecutar "get_database_schema" o "query_database" antes de generar explicaciones.');
+        }
+
         let steps = 0;
         const maxSteps = 5;
 
@@ -418,6 +454,7 @@ export class MCPService {
 
     /**
      * Extract SQL query from natural language
+     * SIMPLIFIED: Only detects raw SQL. No regex-based intent detection.
      */
     async extractSQLFromQuery(query) {
         const lowerQuery = query.toLowerCase().trim();
@@ -429,179 +466,12 @@ export class MCPService {
             lowerQuery.startsWith('update ') ||
             lowerQuery.startsWith('delete ') ||
             lowerQuery.startsWith('with ')) {
+
             logger.info('✅ Matched: raw_sql');
             return { operation: 'raw_sql', sql: query };
         }
 
-        // VS Code style enriched queries: detect JOIN instructions from LocalLlamaService
-        // Pattern: "rol|role" + "usuario|user" + "IMPORTANTE" + "LEFT JOIN" + "roles"
-        if ((lowerQuery.includes('rol') || lowerQuery.includes('role')) &&
-            (lowerQuery.includes('usuario') || lowerQuery.includes('user') || lowerQuery.includes('username')) &&
-            lowerQuery.includes('importante') &&
-            lowerQuery.includes('left join') &&
-            lowerQuery.includes('roles')) {
-
-            // Extract username if specified (pattern: username = 'X' or usuario = 'X')
-            const usernameMatch = query.match(/(?:username|usuario)\s*[=:]\s*["']?(\w+)["']?/i);
-            const username = usernameMatch ? usernameMatch[1] : null;
-
-            if (username) {
-                logger.info(`✅ Enriched role query detected for username: ${username}`);
-                const sql = `SELECT u.id, u.usuario, u.persona_id, u.rol_id, r.name AS rol_nombre, u.created_at FROM usuarios u LEFT JOIN roles r ON u.rol_id = r.id WHERE u.usuario = '${username}'`;
-                return { operation: 'raw_sql', sql };
-            }
-        }
-
-        // Alternative pattern: simple "rol del usuario X" or "role of user X" (without IMPORTANTE)
-        if ((lowerQuery.includes('rol') || lowerQuery.includes('role')) &&
-            (lowerQuery.includes('usuario') || lowerQuery.includes('user') || lowerQuery.includes('username'))) {
-
-            const usernameMatch = query.match(/(?:username|usuario)\s*[=:]\s*["']?(\w+)["']?/i);
-            if (usernameMatch) {
-                const username = usernameMatch[1];
-                logger.info(`✅ Role query detected for username: ${username}`);
-                const sql = `SELECT u.id, u.usuario, u.persona_id, u.rol_id, r.name AS rol_nombre, u.created_at FROM usuarios u LEFT JOIN roles r ON u.rol_id = r.id WHERE u.usuario = '${username}'`;
-                return { operation: 'raw_sql', sql };
-            }
-        }
-
-        // Pattern matching for common queries
-
-        // "usuarios que no tienen registro en ninguna tabla que no sea usuarios y personas"
-        // "usuarios sin registros en otras tablas" or "usuarios aislados"
-        // "cuales son los usuarios de los cuales no se tiene registro"
-        if ((lowerQuery.includes('usuario')) &&
-            (lowerQuery.includes('no tiene') || lowerQuery.includes('sin registro') ||
-                lowerQuery.includes('aislado') || lowerQuery.includes('solo en usuarios') ||
-                lowerQuery.includes('ninguna tabla') ||
-                (lowerQuery.includes('cuales') && lowerQuery.includes('no se tiene')))) {
-            // Make sure it's not asking about courses specifically
-            if (!lowerQuery.includes('curso') && !lowerQuery.includes('course')) {
-                logger.info('✅ Matched: isolated_users');
-                return { table: 'usuarios', operation: 'isolated_users' };
-            }
-        }
-
-        // "dame usuarios que no aparecen en courses" or "usuarios sin cursos" or "usuarios que nunca han creado un curso"
-        // "lista de usuarios que nunca han creado un curso"
-        // "lista de usuario" - broad match for any user list
-        if ((lowerQuery.includes('usuarios') || lowerQuery.includes('usuario') || lowerQuery.includes('lista')) &&
-            (lowerQuery.includes('no aparecen') || lowerQuery.includes('sin') || lowerQuery.includes('not in') ||
-                lowerQuery.includes('nunca') || lowerQuery.includes('never') || lowerQuery.includes('no han') || lowerQuery.includes('no ha')) &&
-            (lowerQuery.includes('curso') || lowerQuery.includes('course') || lowerQuery.includes('creado') || lowerQuery.includes('crear'))) {
-            logger.info('✅ Matched: not_in_courses');
-            return { table: 'usuarios', operation: 'not_in_courses' };
-        }
-
-        // "lista de usuario" or "todos los usuarios" - generic user list (only if not asking about courses)
-        if ((lowerQuery.includes('lista') || lowerQuery.includes('todos') || lowerQuery.includes('dame')) &&
-            (lowerQuery.includes('usuario') || lowerQuery.includes('user')) &&
-            !lowerQuery.includes('curso') && !lowerQuery.includes('course')) {
-            logger.info('✅ Matched: select_all usuarios');
-            return { table: 'usuarios', operation: 'select_all' };
-        }
-
-        // "dame lista única/distinta de creator_username en courses"
-        if ((lowerQuery.includes('única') || lowerQuery.includes('unica') || lowerQuery.includes('distinta') || lowerQuery.includes('distinct')) &&
-            lowerQuery.includes('creator_username') &&
-            lowerQuery.includes('course')) {
-            return { table: 'courses', operation: 'distinct_creators' };
-        }
-
-        // Direct SQL queries - check for SELECT statements
-        if (lowerQuery.includes('select') && lowerQuery.includes('from')) {
-            // Handle LEFT JOIN queries
-            if (lowerQuery.includes('left join') && lowerQuery.includes('where') && lowerQuery.includes('is null')) {
-                // Extract table info for LEFT JOIN
-                if (lowerQuery.includes('usuarios') && lowerQuery.includes('courses')) {
-                    return { table: 'usuarios', operation: 'not_in_courses' };
-                }
-            }
-
-            // Handle NOT IN queries
-            if (lowerQuery.includes('not in') && lowerQuery.includes('usuarios')) {
-                return { table: 'usuarios', operation: 'not_in_courses' };
-            }
-
-            // Handle DISTINCT queries
-            if (lowerQuery.includes('distinct') && lowerQuery.includes('creator_username')) {
-                return { table: 'courses', operation: 'distinct_creators' };
-            }
-        }
-
-        // "dame todos los videos" -> SELECT * FROM videos
-        if ((lowerQuery.includes('todos') || lowerQuery.includes('all')) && lowerQuery.includes('video')) {
-            return { table: 'videos', operation: 'select_all' };
-        }
-
-        // "dame el video con id=2" -> SELECT * FROM videos WHERE id = 2
-        if (lowerQuery.includes('video') && lowerQuery.includes('id') && !lowerQuery.includes('más') && !lowerQuery.includes('mas') && !lowerQuery.includes('antiguo')) {
-            const idMatch = lowerQuery.match(/id[=:\s]+(\d+)/);
-            if (idMatch) {
-                const id = idMatch[1];
-                return { table: 'videos', operation: 'select_by_id', id: parseInt(id) };
-            }
-        }
-
-        // "dame el video más antiguo" or "video más antiguo" -> SELECT * FROM videos ORDER BY created_at ASC LIMIT 1
-        if (lowerQuery.includes('video') && (lowerQuery.includes('antiguo') || lowerQuery.includes('oldest') || lowerQuery.includes('first'))) {
-            return { table: 'videos', operation: 'oldest' };
-        }
-
-        // "dame el video más reciente" or "video más nuevo" -> SELECT * FROM videos ORDER BY created_at DESC LIMIT 1
-        if (lowerQuery.includes('video') && (lowerQuery.includes('reciente') || lowerQuery.includes('nuevo') || lowerQuery.includes('latest') || lowerQuery.includes('newest'))) {
-            return { table: 'videos', operation: 'newest' };
-        }
-
-        // "dame todos los usuarios" -> SELECT * FROM usuarios
-        if ((lowerQuery.includes('todos') || lowerQuery.includes('all')) && (lowerQuery.includes('usuarios') || lowerQuery.includes('users'))) {
-            return { table: 'usuarios', operation: 'select_all' };
-        }
-
-        // "dame todos los cursos" or "dame las filas de courses" -> SELECT * FROM courses
-        if ((lowerQuery.includes('todos') || lowerQuery.includes('all') || lowerQuery.includes('filas') || lowerQuery.includes('primeras')) &&
-            (lowerQuery.includes('curso') || lowerQuery.includes('course'))) {
-            // Check if limit is specified
-            const limitMatch = lowerQuery.match(/(\d+)\s*(filas|rows)/);
-            if (limitMatch) {
-                return { table: 'courses', operation: 'select_all', limit: parseInt(limitMatch[1]) };
-            }
-            return { table: 'courses', operation: 'select_all' };
-        }
-
-        // "dame el curso con id=X" -> SELECT * FROM courses WHERE id = X
-        if (lowerQuery.includes('curso') && lowerQuery.includes('id')) {
-            const idMatch = lowerQuery.match(/id[=:\s]+(\d+)/);
-            if (idMatch) {
-                const id = idMatch[1];
-                return { table: 'courses', operation: 'select_by_id', id: parseInt(id) };
-            }
-        }
-
-        // "cuantos videos hay" -> SELECT COUNT(*) FROM videos
-        if (lowerQuery.includes('cuantos') || lowerQuery.includes('cuántos') || lowerQuery.includes('how many')) {
-            if (lowerQuery.includes('video')) {
-                logger.info('✅ Matched: count videos');
-                return { table: 'videos', operation: 'count' };
-            }
-            if (lowerQuery.includes('usuario')) {
-                logger.info('✅ Matched: count usuarios');
-                return { table: 'usuarios', operation: 'count' };
-            }
-            if (lowerQuery.includes('curso')) {
-                logger.info('✅ Matched: count courses');
-                return { table: 'courses', operation: 'count' };
-            }
-        }
-
-        // "usuarios sin contenido" or "usuarios que no han subido nada"
-        if ((lowerQuery.includes('usuario')) &&
-            (lowerQuery.includes('sin contenido') || lowerQuery.includes('no han subido') || lowerQuery.includes('nada') || lowerQuery.includes('no content'))) {
-            logger.info('✅ Matched: no_content_users');
-            return { table: 'usuarios', operation: 'no_content_users' };
-        }
-
-        logger.warn(`⚠️ No pattern matched for query: "${lowerQuery}"`);
+        logger.warn(`⚠️ No SQL pattern matched for query: "${lowerQuery}"`);
         return null;
     }
 
@@ -611,262 +481,22 @@ export class MCPService {
     async executeQuery(queryPlan) {
         try {
             const { table, operation, id, limit, sql } = queryPlan;
-            let query = table ? this.supabase.client.from(table) : null;
-            let sqlDescription = '';
 
-            switch (operation) {
-                case 'raw_sql':
-                    // Execute raw SQL query directly
-                    try {
-                        const result = await this.supabase.executeRawSQL(sql);
-                        return {
-                            data: result,
-                            sql: sql
-                        };
-                    } catch (error) {
-                        logger.error('Raw SQL execution failed:', error);
-                        throw error;
-                    }
-
-                case 'select_all':
-                    query = query.select('*');
-                    if (limit) {
-                        query = query.limit(limit);
-                        sqlDescription = `SELECT * FROM ${table} LIMIT ${limit}`;
-                    } else {
-                        sqlDescription = `SELECT * FROM ${table}`;
-                    }
-                    break;
-
-                case 'select_by_id':
-                    query = query.select('*').eq('id', id).single();
-                    sqlDescription = `SELECT * FROM ${table} WHERE id = ${id}`;
-                    break;
-
-                case 'oldest':
-                    query = query.select('*').order('created_at', { ascending: true }).limit(1).single();
-                    sqlDescription = `SELECT * FROM ${table} ORDER BY created_at ASC LIMIT 1`;
-                    break;
-
-                case 'newest':
-                    query = query.select('*').order('created_at', { ascending: false }).limit(1).single();
-                    sqlDescription = `SELECT * FROM ${table} ORDER BY created_at DESC LIMIT 1`;
-                    break;
-
-                case 'count':
-                    query = query.select('*', { count: 'exact', head: true });
-                    sqlDescription = `SELECT COUNT(*) FROM ${table}`;
-                    break;
-
-                case 'no_content_users':
-                    // Get all usuarios
-                    const { data: allUsers, error: usersErr } = await this.supabase.client
-                        .from('usuarios')
-                        .select('id, usuario');
-
-                    if (usersErr) throw usersErr;
-
-                    // Get creators from courses
-                    const { data: courseCreators, error: courseErr } = await this.supabase.client
-                        .from('courses')
-                        .select('creator_username');
-
-                    if (courseErr) throw courseErr;
-
-                    // Get submitters from task_submissions
-                    const { data: taskSubmitters, error: taskErr } = await this.supabase.client
-                        .from('task_submissions')
-                        .select('user_id');
-
-                    if (taskErr) throw taskErr;
-
-                    const creatorsSet = new Set(courseCreators.map(c => c.creator_username).filter(Boolean));
-                    const submittersSet = new Set(taskSubmitters.map(t => t.user_id).filter(Boolean));
-
-                    const noContentUsers = allUsers.filter(u =>
-                        !creatorsSet.has(u.usuario) && !submittersSet.has(u.id)
-                    );
-
-                    sqlDescription = `SELECT id, usuario FROM usuarios WHERE usuario NOT IN (SELECT creator_username FROM courses) AND id NOT IN (SELECT user_id FROM task_submissions)`;
-
+            if (operation === 'raw_sql') {
+                // Execute raw SQL query directly
+                try {
+                    const result = await this.supabase.executeRawSQL(sql);
                     return {
-                        data: noContentUsers,
-                        sql: sqlDescription
+                        data: result,
+                        sql: sql
                     };
-                case 'not_in_courses':
-                    // Get all usuarios
-                    const { data: usuarios, error: usuariosError } = await this.supabase.client
-                        .from('usuarios')
-                        .select('id, usuario, persona_id, rol_id, created_at');
-
-                    if (usuariosError) throw usuariosError;
-
-                    // Get distinct creator_username from courses
-                    const { data: courses, error: coursesError } = await this.supabase.client
-                        .from('courses')
-                        .select('creator_username');
-
-                    if (coursesError) throw coursesError;
-
-                    // Extract unique creator usernames
-                    const creatorUsernames = new Set(courses.map(c => c.creator_username).filter(Boolean));
-
-                    // Filter usuarios not in courses
-                    const usuariosNotInCourses = usuarios.filter(u => !creatorUsernames.has(u.usuario));
-
-                    sqlDescription = `SELECT u.id, u.usuario, u.persona_id, u.rol_id, u.created_at FROM usuarios u LEFT JOIN courses c ON u.usuario = c.creator_username WHERE c.creator_username IS NULL`;
-
-                    return {
-                        data: usuariosNotInCourses,
-                        sql: sqlDescription
-                    };
-
-                case 'isolated_users':
-                    // Get all usuarios with persona data
-                    const { data: allUsuarios, error: allUsuariosError } = await this.supabase.client
-                        .from('usuarios')
-                        .select(`
-              id,
-              usuario,
-              persona_id,
-              personas!usuarios_persona_id_fkey(id, nombres, apellidos, email)
-            `);
-
-                    if (allUsuariosError) throw allUsuariosError;
-
-                    // Get all tables that might reference usuarios
-                    const tablesToCheck = [
-                        { table: 'videos', columns: ['creator_username', 'username', 'uploader', 'creator_usuario_id', 'uploader_id'] },
-                        { table: 'content_items', columns: ['creator_username', 'creator_usuario_id'] },
-                        { table: 'courses', columns: ['creator_username'] },
-                        { table: 'topics', columns: ['creator_username', 'creator_usuario_id'] },
-                        { table: 'subscriptions', columns: ['creator_username', 'subscriber_username'] },
-                        { table: 'task_submissions', columns: ['usuario_id', 'creator_username'] },
-                        { table: 'tasks', columns: ['creator_username', 'usuario_id'] },
-                        { table: 'chat_messages', columns: ['usuario_id', 'username'] },
-                        { table: 'file_contexts', columns: ['usuario_id', 'creator_usuario_id', 'username'] }
-                    ];
-
-                    // Check each user against all tables
-                    const isolatedUsers = [];
-
-                    for (const user of allUsuarios) {
-                        let hasReferences = false;
-
-                        // Check each table for references to this user
-                        for (const { table: tableName, columns }
-                            of tablesToCheck) {
-                            if (hasReferences) break;
-
-                            try {
-                                // Build query to check if user exists in this table
-                                let query = this.supabase.client.from(tableName).select('id', { count: 'exact', head: true });
-
-                                // Check all possible column references
-                                const orConditions = [];
-                                for (const col of columns) {
-                                    if (col.includes('_id')) {
-                                        // ID-based reference
-                                        orConditions.push({ column: col, value: user.id });
-                                    } else {
-                                        // Username-based reference
-                                        orConditions.push({ column: col, value: user.usuario });
-                                    }
-                                }
-
-                                // Execute OR query for each column
-                                for (const { column, value }
-                                    of orConditions) {
-                                    const { count } = await this.supabase.client
-                                        .from(tableName)
-                                        .select('id', { count: 'exact', head: true })
-                                        .eq(column, value);
-
-                                    if (count > 0) {
-                                        hasReferences = true;
-                                        break;
-                                    }
-                                }
-                            } catch (error) {
-                                // If table/column doesn't exist, skip it
-                                logger.error(`Error checking ${tableName}:`, error.message);
-                            }
-                        }
-
-                        // If no references found, user is isolated
-                        if (!hasReferences) {
-                            isolatedUsers.push({
-                                id: user.id,
-                                usuario: user.usuario,
-                                nombres: user.personas ? .nombres,
-                                apellidos: user.personas ? .apellidos,
-                                email: user.personas ? .email
-                            });
-                        }
-                    }
-
-                    sqlDescription = `
-SELECT u.id, u.usuario, p.nombres, p.apellidos, p.email
-FROM usuarios u
-LEFT JOIN personas p ON p.id = u.persona_id
-WHERE NOT EXISTS (SELECT 1 FROM videos v WHERE v.creator_username = u.usuario OR v.username = u.usuario OR v.uploader = u.usuario OR v.creator_usuario_id = u.id OR v.uploader_id = u.id)
-  AND NOT EXISTS (SELECT 1 FROM content_items ci WHERE ci.creator_username = u.usuario OR ci.creator_usuario_id = u.id)
-  AND NOT EXISTS (SELECT 1 FROM courses c WHERE c.creator_username = u.usuario)
-  AND NOT EXISTS (SELECT 1 FROM topics t WHERE t.creator_username = u.usuario OR t.creator_usuario_id = u.id)
-  AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.creator_username = u.usuario OR s.subscriber_username = u.usuario)
-  AND NOT EXISTS (SELECT 1 FROM task_submissions ts WHERE ts.usuario_id = u.id OR ts.creator_username = u.usuario)
-  AND NOT EXISTS (SELECT 1 FROM tasks t2 WHERE t2.creator_username = u.usuario OR t2.usuario_id = u.id)
-  AND NOT EXISTS (SELECT 1 FROM chat_messages cm WHERE cm.usuario_id = u.id OR cm.username = u.usuario)
-  AND NOT EXISTS (SELECT 1 FROM file_contexts fc WHERE fc.usuario_id = u.id OR fc.creator_usuario_id = u.id OR fc.username = u.usuario)
-ORDER BY u.id;
-          `.trim();
-
-                    return {
-                        data: isolatedUsers,
-                        sql: sqlDescription
-                    };
-
-
-                case 'distinct_creators':
-                    const { data: distinctCreators, error: distinctError } = await this.supabase.client
-                        .from('courses')
-                        .select('creator_username');
-
-                    if (distinctError) throw distinctError;
-
-                    // Get unique creator usernames
-                    const uniqueCreators = [...new Set(distinctCreators.map(c => c.creator_username).filter(Boolean))];
-
-                    sqlDescription = `SELECT DISTINCT creator_username FROM courses`;
-
-                    return {
-                        data: uniqueCreators.map(username => ({ creator_username: username })),
-                        sql: sqlDescription
-                    };
-
-                default:
-                    throw new Error(`Unknown operation: ${operation}`);
+                } catch (error) {
+                    logger.error('Raw SQL execution failed:', error);
+                    throw error;
+                }
             }
 
-            const { data, error, count } = await query;
-
-            if (error) {
-                logger.error('Query execution error:', error);
-                throw error;
-            }
-
-            // For count operation, return the count
-            if (operation === 'count') {
-                return {
-                    data: { count: count || 0 },
-                    sql: sqlDescription
-                };
-            }
-
-            return {
-                data: data,
-                sql: sqlDescription
-            };
+            throw new Error(`Unknown or unsupported operation: ${operation}`);
         } catch (error) {
             logger.error('Error executing query:', error);
             throw error;

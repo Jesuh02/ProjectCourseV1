@@ -1710,25 +1710,59 @@ object SupabaseClient {
     // Check if a user is subscribed to a creator via Supabase
     suspend fun isSubscribedRemote(subscriberId: Long, creatorId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
-            val url = "$baseUrl/rest/v1/subscriptions?subscriber_id=eq.$subscriberId&creator_id=eq.$creatorId&select=subscriber_id"
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("apiKey", apiKey)
-                .addHeader("Authorization", "Bearer $apiKey")
-                .get()
-                .build()
-
-            client.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext false
-                val body = resp.body?.string() ?: return@withContext false
-                val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
-                return@withContext arr.size() > 0
+            val url = "$baseUrl/rest/v1/subscriptions?subscriber_id=eq.$subscriberId&creator_id=eq.$creatorId&select=*"
+            val request = buildGetRequest(url) // Using helper if possible, but buildGetRequest takes path not full url?
+            // buildGetRequest takes path. Let's check buildGetRequest implementation.
+            // private fun buildGetRequest(path: String): Request { val url = "$baseUrl/rest/v1/$path" ... }
+            // So we should pass "subscriptions?subscriber_id=eq.$subscriberId&creator_id=eq.$creatorId&select=*"
+            
+            val path = "subscriptions?subscriber_id=eq.$subscriberId&creator_id=eq.$creatorId&select=*"
+            val req = buildGetRequest(path)
+            
+            client.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val body = response.body?.string() ?: return@withContext false
+                val list = gson.fromJson(body, Array<Any>::class.java)
+                return@withContext list.isNotEmpty()
             }
         } catch (e: Exception) {
-            Log.w("SupabaseClient", "isSubscribedRemote failed", e)
-            return@withContext false
+            Log.e("SupabaseClient", "Error checking subscription status", e)
+            false
         }
     }
+
+    // Fetch subscriber count for a creator
+    suspend fun fetchSubscriberCount(creatorId: Long): Long = withContext(Dispatchers.IO) {
+        try {
+            // Use HEAD request or GET with count=exact
+            // We use GET with limit=1 and Prefer: count=exact to get the total count in Content-Range header
+            val path = "subscriptions?creator_id=eq.$creatorId&select=subscriber_id&limit=1"
+            val url = "$baseUrl/rest/v1/$path"
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Range", "0-0")
+                .addHeader("Prefer", "count=exact")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val rangeHeader = response.header("Content-Range")
+                // Format: 0-0/5 (where 5 is the total)
+                if (rangeHeader != null && rangeHeader.contains("/")) {
+                    val total = rangeHeader.substringAfter("/").toLongOrNull() ?: 0L
+                    return@withContext total
+                }
+                0L
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching subscriber count", e)
+            0L
+        }
+    }
+
     suspend fun fetchTaskSubmissions(): List<TaskSubmission> = fetchList("task_submissions", Array<TaskSubmission>::class.java)
 
     // Fetch a single TaskSubmission by taskId and studentUsername
@@ -2923,7 +2957,7 @@ object SupabaseClient {
                 .url("$baseUrl/rest/v1/subscriptions?subscriber_id=eq.$subscriberId&creator_id=eq.$creatorId")
                 .delete()
                 .addHeader("apikey", effectiveApiKey())
-                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Authorization", "Bearer $apiKey")
                 .build()
 
             requestListener?.invoke("DELETE $baseUrl/rest/v1/subscriptions")
@@ -3034,6 +3068,35 @@ object SupabaseClient {
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error fetching enrolled course IDs", e)
             return@withContext emptyList()
+        }
+    }
+
+    // Fetch subscription count for a user (following)
+    suspend fun fetchSubscriptionCount(subscriberId: Long): Long = withContext(Dispatchers.IO) {
+        try {
+            val path = "subscriptions?subscriber_id=eq.$subscriberId&select=creator_id&limit=1"
+            val url = "$baseUrl/rest/v1/$path"
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Range", "0-0")
+                .addHeader("Prefer", "count=exact")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val rangeHeader = response.header("Content-Range")
+                if (rangeHeader != null && rangeHeader.contains("/")) {
+                    val total = rangeHeader.substringAfter("/").toLongOrNull() ?: 0L
+                    return@withContext total
+                }
+                0L
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching subscription count", e)
+            0L
         }
     }
 }

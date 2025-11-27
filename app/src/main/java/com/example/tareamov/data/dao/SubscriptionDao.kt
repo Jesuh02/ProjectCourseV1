@@ -20,6 +20,9 @@ interface SubscriptionDao {
     @Query("SELECT COUNT(*) FROM subscriptions WHERE creatorId = :creatorId")
     suspend fun getSubscriptionCountForCreator(creatorId: Long): Int
 
+    @Query("SELECT COUNT(*) FROM subscriptions WHERE subscriberId = :subscriberId")
+    suspend fun getSubscriptionCountForSubscriber(subscriberId: Long): Int
+
     @Query("SELECT * FROM subscriptions WHERE subscriberId = :subscriberId")
     suspend fun getSubscriptionsBySubscriber(subscriberId: Long): List<Subscription>
 

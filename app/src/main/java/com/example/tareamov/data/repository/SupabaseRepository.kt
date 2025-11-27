@@ -41,6 +41,29 @@ class SupabaseRepository(
             else -> null
         }
     }
+    
+    // Lightweight SQL validation to avoid sending obviously malformed SQL to the RPC
+    private fun validateSql(sql: String): Pair<Boolean, String?> {
+        if (sql.isBlank()) return Pair(false, "Empty SQL")
+
+        var depth = 0
+        for (ch in sql) {
+            if (ch == '(') depth++
+            else if (ch == ')') {
+                depth--
+                if (depth < 0) return Pair(false, "Unbalanced parentheses (extra ')')")
+            }
+        }
+        if (depth != 0) return Pair(false, "Unbalanced parentheses (missing ')')")
+
+        val emptyIn = Regex("\\bIN\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE)
+        if (emptyIn.containsMatchIn(sql)) return Pair(false, "Empty IN() clause detected")
+
+        val fromParen = Regex("from\\s*\\)", RegexOption.IGNORE_CASE)
+        if (fromParen.containsMatchIn(sql)) return Pair(false, "Unexpected ')' after FROM")
+
+        return Pair(true, null)
+    }
 
     // Simple function to upsert an object into a table using PostgREST upsert (on conflict) via RPC headers
     // Upsert wrapper: instead of relying on individual tables existing in Supabase,
@@ -383,6 +406,12 @@ class SupabaseRepository(
      */
     suspend fun executeRawQuery(sql: String): List<Map<String, Any?>> {
         return try {
+            // Basic validation to catch common LLM-generated syntax issues
+            val (ok, reason) = validateSql(sql)
+            if (!ok) {
+                throw Exception("Invalid SQL: $reason")
+            }
+            
             Log.d("SupabaseRepository", "Executing raw SQL: $sql")
             
             // Use the Supabase RPC endpoint to execute raw SQL

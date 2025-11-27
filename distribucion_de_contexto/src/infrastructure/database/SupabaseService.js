@@ -290,10 +290,10 @@ export class SupabaseService {
                 trimmedQuery = trimmedQuery.slice(0, -1).trim();
             }
 
-            const lowerQuery = trimmedQuery.toLowerCase();
+            const lowerTrimmedQuery = trimmedQuery.toLowerCase();
 
             // Match: SELECT ... FROM table_name ...
-            const selectMatch = lowerQuery.match(/^select\s+(.+?)\s+from\s+(\w+)(.*)$/i);
+            const selectMatch = lowerTrimmedQuery.match(/^select\s+(.+?)\s+from\s+(\w+)(.*)$/i);
 
             if (selectMatch) {
                 const columns = selectMatch[1].trim();
@@ -306,8 +306,8 @@ export class SupabaseService {
                 }
 
                 // Check for unsupported complex clauses in fallback mode
-                if (rest.includes('join') || rest.includes('group by')) {
-                    throw new Error("Complex queries (JOIN, GROUP BY) are not supported in client-side fallback mode. Please create the 'execute_sql' RPC function in Supabase or use simple SELECT queries.");
+                if (rest.includes('join') || rest.includes('group by') || rest.includes('select') || rest.includes('(')) {
+                    throw new Error("⛔ STRICT MODE ERROR: Complex queries (JOIN, GROUP BY, SUBQUERIES) are FORBIDDEN. STOP RETRYING THIS QUERY. You MUST use the 'RAW DATA' strategy: 1. Select raw IDs (e.g. 'SELECT student_id FROM task_submissions'). 2. Count/Filter in your head. 3. Select details for specific IDs.");
                 }
 
                 // Build query using Supabase client
@@ -396,7 +396,7 @@ export class SupabaseService {
             }
 
             // If we can't parse it, throw error
-            throw new Error('Complex SQL queries (JOIN, GROUP BY) require the "execute_sql" RPC function in Supabase. Please create it or use simple SELECT queries.');
+            throw new Error('Complex SQL queries (JOIN, GROUP BY, SUBQUERIES) are NOT supported. You MUST retrieve raw data and perform aggregations/joins in your reasoning.');
 
         } catch (error) {
             logger.error('Error executing raw SQL:', error);

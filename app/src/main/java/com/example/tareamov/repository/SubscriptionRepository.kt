@@ -2,6 +2,7 @@ package com.example.tareamov.repository
 
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Subscription
+import com.example.tareamov.service.SupabaseClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -28,9 +29,27 @@ class SubscriptionRepository(private val database: AppDatabase) {
         }
     }
 
-    suspend fun getSubscriptionCount(creatorId: Long): Int {
+    suspend fun getSubscriberCount(creatorId: Long): Int {
         return withContext(Dispatchers.IO) {
-            subscriptionDao.getSubscriptionCountForCreator(creatorId)
+            try {
+                // Try to fetch from Supabase first
+                SupabaseClient.fetchSubscriberCount(creatorId).toInt()
+            } catch (e: Exception) {
+                // Fallback to local DB
+                subscriptionDao.getSubscriptionCountForCreator(creatorId)
+            }
+        }
+    }
+
+    suspend fun getSubscriptionCount(subscriberId: Long): Int {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Try to fetch from Supabase first
+                SupabaseClient.fetchSubscriptionCount(subscriberId).toInt()
+            } catch (e: Exception) {
+                // Fallback to local DB
+                subscriptionDao.getSubscriptionCountForSubscriber(subscriberId)
+            }
         }
     }
 

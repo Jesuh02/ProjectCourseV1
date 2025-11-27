@@ -568,10 +568,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         // ALWAYS use LLM with MCP tool calling for ANY query (including "hola", "qué es", etc.)
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                Log.d("DatabaseQueryFragment", "Delegating ALL queries to MCP Server (Node.js Agent)")
+                Log.d("DatabaseQueryFragment", "Delegating ALL queries to Local LLM with MCP Tools")
                 
-                // Use the remote MCP server which has the Agentic Workflow (LangChain + OpenAI)
-                val result = processQueryWithMCPServer(query)
+                // Use LocalLlamaService which calls MCP tools
+                val result = processQueryWithLLMToolCalling(query)
 
                 Log.d("DatabaseQueryFragment", "=== FINAL RESULT LOG ===")
                 Log.d("DatabaseQueryFragment", "Result Length: ${result.length} characters")
@@ -608,9 +608,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                     if (result.isNullOrBlank()) {
                         addMessageToChat("⚠️ No se recibió respuesta del sistema. Intente reformular su consulta.", false)
                     } else {
-                        // Format and display the response
-                        val formattedResult = formatRAGResponse(result)
-                        addMessageToChat(formattedResult, false)
+                        // Display the response exactly as received (VS Code style)
+                        addMessageToChat(result, false)
                     }
                 }
 
@@ -710,7 +709,7 @@ INSTRUCCIONES - Responde EXACTAMENTE como Visual Studio Code Copilot con estas s
 - Visualization: [descripción]
 - Access: [descripción]
 
-## Ejemplos de SQL (SOLO CONSULTAS SIMPLES - NO JOINs)
+## Ejemplos de SQL
 ```sql
 -- [Descripción query 1]
 SELECT * FROM tabla WHERE ...;
@@ -718,7 +717,7 @@ SELECT * FROM tabla WHERE ...;
 -- [Descripción query 2]
 SELECT id, campo FROM tabla WHERE ...;
 ```
-[5 ejemplos SQL basados en el esquema real. IMPORTANTE: NO USES JOIN NI GROUP BY. La base de datos no lo soporta en este modo. Usa consultas simples.]
+[5 ejemplos SQL basados en el esquema real. Puedes usar JOIN y GROUP BY si es necesario para métricas avanzadas.]
 
 ## Plan corto de implementación (2–4 semanas)
 1. Semana 0–1: [tareas]
@@ -739,12 +738,12 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
         
         Log.d("DatabaseQueryFragment", "Sending BI prompt to LLM with MCP enabled")
         
-        // Allow LIMITED tool use (max 2) for specific data queries
+        // Allow EXTENDED tool use (max 15) for specific data queries
         // Schema is already provided, so LLM shouldn't need get_database_schema again
         val response = localLlamaService.generateResponse(
             prompt = vsCodePrompt,
             mcpHttpClient = mcpHttpClient, // ✅ ENABLE MCP tools
-            maxToolIterations = 2 // Limit to prevent loops (schema already provided)
+            maxToolIterations = 15 // Increased to 15 to prevent loops
         )
         
         Log.d("DatabaseQueryFragment", "BI response received (${response.length} chars)")
@@ -780,7 +779,7 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
             return@withContext localLlamaService.generateResponse(
                 prompt = query,
                 mcpHttpClient = mcpHttpClient,
-                maxToolIterations = 3
+                maxToolIterations = 15
             )
             
         } catch (e: Exception) {
@@ -1707,16 +1706,17 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
         val welcomeText = """
 🎯 ¡Bienvenido/a, $username!
 
-Estás conectado al sistema de Consulta Inteligente.
+Estás conectado al sistema de Consulta Inteligente con IA Privada (Llama 3).
 
 💬 **¿Cómo funciona?**
-Simplemente escribe tu consulta en lenguaje natural. El sistema analizará tu petición y consultará la base de datos automáticamente.
+Simplemente escribe tu consulta en lenguaje natural. El modelo Llama 3 ejecutándose en nuestros servidores seguros analizará tu petición y consultará la base de datos automáticamente.
 
 📊 **Capacidades:**
   • Consultas a la base de datos en tiempo real
   • Análisis de esquemas y relaciones
   • Generación de gráficos y visualizaciones
   • Respuestas contextuales
+  • Privacidad total (Servidores Seguros)
 
 ✨ Escribe tu consulta para empezar.
         """.trimIndent()

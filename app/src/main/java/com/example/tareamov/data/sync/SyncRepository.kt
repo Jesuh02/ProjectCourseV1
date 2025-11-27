@@ -1122,7 +1122,7 @@ class SyncRepository(
                         supabaseClient.insertTask(task, creatorUsername, creatorUserId)
                     }
                     if (insertedId != null) {
-                        Log.i("SyncRepository", "Task inserted successfully with remote id=$insertedId (local was ${task.id})")
+                        Log.i("SyncRepository", "Task inserted successfully with remote id=$insertedId, name='${task.name}', topicId=${task.topicId}")
                         return true
                     } else {
                         Log.e("SyncRepository", "Failed to insert task ${task.id} as fallback")
@@ -1166,13 +1166,12 @@ class SyncRepository(
     }
 
     suspend fun isSubscribedRemote(subscriberId: Long, creatorId: Long): Boolean {
-        return try {
-            if (!supabaseClient.isConfigured()) return false
-            withContext(Dispatchers.IO) { supabaseClient.isSubscribedRemote(subscriberId, creatorId) }
-        } catch (e: Exception) {
-            Log.w("SyncRepository", "isSubscribedRemote failed", e)
-            false
-        }
+        return supabaseClient.isSubscribedRemote(subscriberId, creatorId)
+    }
+
+    // Fetch subscriber count for a creator from Supabase
+    suspend fun fetchSubscriberCountFromSupabase(creatorId: Long): Long {
+        return supabaseClient.fetchSubscriberCount(creatorId)
     }
 
     // New: sincronizar a Supabase via REST

@@ -41,6 +41,7 @@ import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
+import com.example.tareamov.service.SupabaseClient
 import de.hdodenhof.circleimageview.CircleImageView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -486,9 +487,15 @@ class UserProfileViewFragment : Fragment() {
                     try {
                         val u = database.usuarioDao().getUsuarioByUsername(username)
                         if (u != null) {
-                            database.subscriptionDao().getSubscriptionCountForCreator(u.id)
-                        } else 0
-                    } catch (e: Exception) { 0 }
+                            // Try to get from Supabase first for accuracy
+                            try {
+                                SupabaseClient.fetchSubscriberCount(u.id)
+                            } catch (e: Exception) {
+                                // Fallback to local DB if Supabase fails
+                                database.subscriptionDao().getSubscriptionCountForCreator(u.id).toLong()
+                            }
+                        } else 0L
+                    } catch (e: Exception) { 0L }
                 }
 
                 val user = userDeferred.await()

@@ -136,9 +136,13 @@ app.post('/tools/list', async(req, res) => {
 
 **BEST PRACTICES:**
 - Always select 'id', 'usuario', 'email' for user queries.
-- To check content creation:
-  - Courses: match 'courses.creator_username' with 'usuarios.usuario'
-  - Tasks: match 'task_submissions.user_id' with 'usuarios.id'
+- To check content creation (users who posted content):
+  - Courses: match 'courses.creator_user_id' with 'usuarios.id'
+  - Tasks: match 'task_submissions.student_username' with 'usuarios.usuario'
+- For "users without content" (usuarios sin contenido), you MUST check BOTH tables:
+  SELECT id, usuario FROM usuarios 
+  WHERE id NOT IN (SELECT creator_user_id FROM courses) 
+  AND usuario NOT IN (SELECT student_username FROM task_submissions)
 - Use WHERE clauses for filtering
 - Use ORDER BY and LIMIT for top/bottom results
 

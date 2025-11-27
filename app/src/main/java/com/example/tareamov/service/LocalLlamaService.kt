@@ -112,9 +112,9 @@ class LocalLlamaService(private val context: Context) {
      * MODE: LLM responses are ALWAYS backed by real Supabase data when applicable
      */
     suspend fun generateResponse(
-        prompt: String, 
+        prompt: String,
         mcpHttpClient: MCPHttpClient? = null,
-        maxToolIterations: Int = 5  // Increased for complex queries like VS Code
+        maxToolIterations: Int = 15  // Increased to 15 to avoid iteration limits on complex queries
     ): String = withContext(Dispatchers.IO) {
         if (!isModelLoaded.get()) {
             val initialized = initializeModel()
@@ -292,20 +292,18 @@ ARGUMENTOS: ${toolCall.arguments}
 RESULTADO:
 $toolResult
 
-Con esta informaci�n, proporciona tu respuesta final al usuario siguiendo el formato:
-
-Completed (1/1) *Nombre de la tarea*
-
-## Resultados � [t�tulo descriptivo]
-
-[Presenta los datos de forma clara y estructurada]
+INSTRUCCIONES FINALES:
+Usa la información de arriba para responder la pregunta original del usuario.
+Responde en lenguaje natural, claro y conciso.
+NO inventes datos. Usa solo lo que ves en RESULTADO.
+Si el resultado es una lista de IDs, di que encontraste esos registros.
                     """.trimIndent()
                     
                     iteration++
                 } else {
                     // No tool call or no MCP client - validate response quality before accepting
                     if (isRawSnapshotResponse(response) && iteration + 1 < effectiveMaxToolIterations) {
-                        Log.w(TAG, "LLM devolvi� un snapshot sin an�lisis; reforzando instrucciones")
+                        Log.w(TAG, "LLM devolvió un snapshot sin análisis; reforzando instrucciones")
                         enrichedPrompt = reinforcePromptForAnalysis(enrichedPrompt, response)
                         iteration++
                         continue
@@ -316,7 +314,7 @@ Completed (1/1) *Nombre de la tarea*
             }
             
             // Return final response with tool execution history if applicable
-            val result = finalResponse ?: "? Error: Se alcanz� el l�mite de iteraciones de herramientas"
+            val result = finalResponse ?: "⚠️ Error: Se alcanzó el límite de iteraciones de herramientas"
             
             // CRITICAL: Validate that data queries have MCP backing
             if (requiresData && toolExecutionHistory.isEmpty()) {
@@ -1062,54 +1060,66 @@ Completed (1/1) *Nombre de la tarea*
         return if (hasToolAccess) {
             """
 Eres un Asistente de Base de Datos experto con acceso a herramientas MCP para Supabase (TareaMov).
+Estás ejecutándote en los servidores seguros de TareaMov usando Llama 3.
 
 🔧 HERRAMIENTAS DISPONIBLES:
-1. get_database_schema() - Obtiene el esquema completo de la base de datos
-2. query_database(query="SQL") - Ejecuta consultas SQL en Supabase
+1. get_database_schema() - Obtiene el esquema completo de la base de datos. ÚSALO SIEMPRE al inicio si no conoces la estructura o nombres de tablas.
+2. query_database(query="SQL") - Ejecuta consultas SQL en Supabase.
 
-📋 TABLAS Y COLUMNAS CLAVE:
-- usuarios: id, usuario (NO username), rol_id, persona_id
-- personas: id, nombres, apellidos, email
-- courses: id, title, creator_username, is_premium
-- videos: id, title, url, course_id
-- subscriptions: id, user_id, course_id, active
-- task_submissions: id, user_id, task_id, content, grade
+📋 TABLAS Y COLUMNAS CLAVE (Resumen):
+- usuarios: id, usuario (NO username), rol_id, persona_id (NO tiene creator_user_id)
+- courses: id, title, creator_user_id (FK a usuarios.id)
+- task_submissions: id, student_id (FK a usuarios.id), task_id
+- subscriptions: subscriber_id, creator_id
+- videos: id, title, course_id
 
 ⚠️ INSTRUCCIONES DE PENSAMIENTO (OBLIGATORIO):
-Antes de responder, DEBES pensar paso a paso:
-1. **ANÁLISIS**: ¿Qué datos necesito para responder la pregunta del usuario?
+1. **ANÁLISIS**: ¿Qué datos necesito?
 2. **ESTRATEGIA**: ¿Qué tablas contienen esos datos?
-3. **ACCIÓN**: Genera la llamada a la herramienta `query_database` con el SQL preciso.
+3. **ACCIÓN**: Genera la llamada a la herramienta `query_database` o `get_database_schema`.
 
-💡 REGLAS CRÍTICAS PARA SQL (LEER ATENTAMENTE):
-1. ✅ USA SIEMPRE 'id', 'usuario' al consultar usuarios. El 'email' está en la tabla 'personas', NO en 'usuarios'.
-2. ✅ "Contenido" implica:
-   - Cursos creados (tabla 'courses', columna 'creator_username' coincide con 'usuario')
-   - Tareas enviadas (tabla 'task_submissions', columna 'user_id' coincide con 'id')
-3. ✅ PUEDES USAR SUBQUERIES SIMPLES (ej. WHERE id NOT IN (SELECT ...)).
-4. 🚫 EVITA JOINs COMPLEJOS si no estás seguro.
-5. ✅ USA NOMBRES DE COLUMNAS CORRECTOS:
-   - Tabla 'usuarios': usa 'usuario', NO 'username'.
+💡 REGLAS PARA SQL:
+1. ✅ Puedes usar JOIN, GROUP BY, HAVING, UNION, SUBQUERIES si es necesario.
+   La base de datos intentará ejecutar consultas complejas.
+   
+   ESTRATEGIA "RAW DATA" (SI FALLA LA CONSULTA COMPLEJA):
+   Si una consulta compleja falla, usa esta estrategia:
+   1. EJECUTA: `SELECT student_id FROM task_submissions LIMIT 1000`
+   2. ANALIZA (Mentalmente): Cuenta las repeticiones de cada ID en la lista devuelta.
+   3. EJECUTA: `SELECT usuario FROM usuarios WHERE id = 6`
+   4. RESPONDE: "El usuario X (ID 6) envió 15 tareas."
 
-📝 EJEMPLO DE RESPUESTA CORRECTA:
-Thought: Busco usuarios sin contenido. Consulto usuarios que no están en courses ni task_submissions.
-TOOL_CALL: query_database(query="SELECT id, usuario FROM usuarios WHERE id NOT IN (SELECT user_id FROM task_submissions) AND usuario NOT IN (SELECT creator_username FROM courses)")
+2. ✅ Consultas permitidas:
+   - `SELECT * FROM tabla`
+   - `SELECT * FROM tabla WHERE col = val`
+   - `SELECT * FROM tabla ORDER BY col LIMIT n`
+   - Consultas complejas con JOIN/GROUP BY (Soportadas experimentalmente)
+
+3. ⛔ SI UNA CONSULTA FALLA:
+   - ¡DETENTE! NO la repitas exactamente igual.
+   - CAMBIA a la estrategia "RAW DATA" (Paso 1).
+   - CAMBIA INMEDIATAMENTE a la estrategia "RAW DATA" (Paso 1).
+
+4. ✅ USA SIEMPRE 'id', 'usuario' al consultar usuarios.
+5. ⛔ ERROR COMÚN: La tabla 'usuarios' NO tiene columna 'creator_user_id'. Esa columna está en 'courses'.
+
+📝 EJEMPLO DE USO DE HERRAMIENTA:
+TOOL_CALL: query_database(query="SELECT * FROM usuarios LIMIT 5")
 
 🎯 CONSULTA DEL USUARIO:
 $optimizedPrompt
 
-${if (requiresData) "⚡ ACCIÓN REQUERIDA: El usuario pide datos. PIENSA y luego EJECUTA query_database()." else "💭 Si necesitas datos, usa query_database()."}
+${if (requiresData) "⚡ ACCIÓN REQUERIDA: El usuario pide datos. EJECUTA UNA HERRAMIENTA AHORA." else "💭 Si necesitas datos, usa una herramienta."}
 
 ⚠️ IMPORTANTE:
-- TU RESPUESTA FINAL NO DEBE INCLUIR EL LOG DE EJECUCIÓN (ej. "Ran query", "SQL generado", "Datos obtenidos").
-- SOLO MUESTRA EL RESULTADO FINAL INTERPRETADO.
-- Si te piden "lista de usuarios", EJECUTA: TOOL_CALL: query_database(query="SELECT id, usuario FROM usuarios LIMIT 50")
-- NO inventes datos, SIEMPRE usa las herramientas MCP
-- Si no conoces el esquema, ejecuta get_database_schema() primero
+- SOLO responde con TOOL_CALL si necesitas datos.
+- NO expliques tu plan, solo ejecuta la herramienta.
+- Si te preguntan qué modelo eres, di que eres Llama 3 ejecutándose en los servidores de TareaMov.
             """.trimIndent()
         } else {
             """
 Asistente TareaMov (sin herramientas MCP disponibles).
+Estás ejecutándote en los servidores seguros de TareaMov usando Llama 3.
 
 CONSULTA: $optimizedPrompt
 
