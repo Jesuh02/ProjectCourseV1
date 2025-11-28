@@ -1771,6 +1771,38 @@ object SupabaseClient {
         }
     }
 
+    // Fetch enrolled student count for a course
+    suspend fun fetchEnrolledCount(courseId: Long): Long = withContext(Dispatchers.IO) {
+        try {
+            Log.d("SupabaseClient", "Fetching enrolled count for courseId: $courseId")
+            // Use GET with limit=1 and Prefer: count=exact to get the total count in Content-Range header
+            val path = "progreso_estudiante?course_id=eq.$courseId&select=id&limit=1"
+            val url = "$baseUrl/rest/v1/$path"
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Range", "0-0")
+                .addHeader("Prefer", "count=exact")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val rangeHeader = response.header("Content-Range")
+                // Format: 0-0/5 (where 5 is the total)
+                if (rangeHeader != null && rangeHeader.contains("/")) {
+                    val total = rangeHeader.substringAfter("/").toLongOrNull() ?: 0L
+                    return@withContext total
+                }
+                0L
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching enrolled count for courseId $courseId", e)
+            0L
+        }
+    }
+
     suspend fun fetchTaskSubmissions(): List<TaskSubmission> = fetchList("task_submissions", Array<TaskSubmission>::class.java)
 
     // Fetch a single TaskSubmission by taskId and studentId

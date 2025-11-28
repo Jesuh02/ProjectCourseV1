@@ -294,7 +294,7 @@ class UserProfileViewFragment : Fragment() {
                 allContent,
                 onCourseClickListener = { course ->
                     Log.d("UserProfileView", "Course clicked: ${course.title} by ${course.username}")
-                    handleContentClick(course)
+                    handleCourseClickWithEnrollment(course)
                 },
                 currentUsername = currentUserUsername, // Para verificar permisos de edición
                 onEditCourseListener = { course ->
@@ -308,6 +308,68 @@ class UserProfileViewFragment : Fragment() {
                 onChangeThumbnailListener = { course ->
                     Log.d("UserProfileView", "Change thumbnail requested: ${course.title}")
                     changeThumbnail(course)
+                },
+                onSubscriptionClickListener = { course, isSubscribed ->
+                    // Convert VideoData to Course entity for subscription logic
+                    val courseEntity = com.example.tareamov.data.entity.Course(
+                        id = course.id,
+                        title = course.title,
+                        description = course.description,
+                        creatorUserId = -1L, // Will be resolved in handleSubscriptionClick
+                        category = "General",
+                        thumbnailUri = course.thumbnailUri,
+                        videoUri = course.videoUriString,
+                        price = course.price ?: 0.0,
+                        isPremium = course.isPaid,
+                        rating = 0.0f,
+                        creationDate = course.timestamp.toString(),
+                        timestamp = course.timestamp,
+                        localFilePath = course.localFilePath
+                    )
+                    
+                    // We need to resolve creatorUserId first
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        val creatorId = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                        }
+                        if (creatorId != null) {
+                            val updatedCourse = courseEntity.copy(creatorUserId = creatorId)
+                            handleSubscriptionClick(updatedCourse, isSubscribed)
+                        } else {
+                            showDarkToast("Error al procesar suscripción: Usuario no encontrado")
+                        }
+                    }
+                },
+                onEnrollClickListener = { course ->
+                    // Convert VideoData to Course entity for enrollment logic
+                    val courseEntity = com.example.tareamov.data.entity.Course(
+                        id = course.id,
+                        title = course.title,
+                        description = course.description,
+                        creatorUserId = -1L, // Will be resolved in handleEnrollmentClick
+                        category = "General",
+                        thumbnailUri = course.thumbnailUri,
+                        videoUri = course.videoUriString,
+                        price = course.price ?: 0.0,
+                        isPremium = course.isPaid,
+                        rating = 0.0f,
+                        creationDate = course.timestamp.toString(),
+                        timestamp = course.timestamp,
+                        localFilePath = course.localFilePath
+                    )
+                    
+                    // We need to resolve creatorUserId first
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        val creatorId = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                        }
+                        if (creatorId != null) {
+                            val updatedCourse = courseEntity.copy(creatorUserId = creatorId)
+                            handleEnrollmentClick(updatedCourse)
+                        } else {
+                            showDarkToast("Error al procesar inscripción: Usuario no encontrado")
+                        }
+                    }
                 }
             )
 
@@ -729,7 +791,382 @@ class UserProfileViewFragment : Fragment() {
         videosCountTextView.text = "0"
         updateCountBadges()
         filterContent()
-    }    private fun handleContentClick(content: VideoData) {
+    }
+
+    /**
+     * Show custom dark themed Toast message (from ExploreFragment)
+     */
+    private fun showDarkToast(message: String, duration: Int = Toast.LENGTH_SHORT) {
+        val toast = Toast.makeText(requireContext(), message, duration)
+        val view = toast.view
+        view?.background = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.dark_toast_background)
+        view?.findViewById<TextView>(android.R.id.message)?.apply {
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 16f
+            setPadding(32, 16, 32, 16)
+        }
+        toast.show()
+    }
+
+    /**
+     * Handle subscription button click (from ExploreFragment)
+     */
+    private fun handleSubscriptionClick(course: com.example.tareamov.data.entity.Course, isCurrentlySubscribed: Boolean) {
+        val currentUserUsername = getCurrentUsername()
+        if (currentUserUsername == null) {
+            showDarkToast("⚠️ Debes iniciar sesión para suscribirte")
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Get current user ID
+                val currentUserId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                }
+
+                if (currentUserId == null) {
+                    showDarkToast("❌ Error: No se pudo obtener tu ID de usuario")
+                    return@launch
+                }
+
+                val creatorUserId = course.creatorUserId
+                
+                if (currentUserId == creatorUserId) {
+                    showDarkToast("❌ No puedes suscribirte a tu propio curso")
+                    return@launch
+                }
+                
+                val db = AppDatabase.getDatabase(requireContext())
+                
+                if (isCurrentlySubscribed) {
+                    // Unsubscribe
+                    db.subscriptionDao().unsubscribeFromCreator(currentUserId, creatorUserId)
+                    
+                    // Also sync to Supabase
+                    syncUnsubscriptionToSupabase(currentUserId, creatorUserId)
+                    
+                    showDarkToast("✅ Te has desuscrito")
+                    Log.d("UserProfileView", "User $currentUserId unsubscribed from $creatorUserId")
+                } else {
+                    // Subscribe
+                    db.subscriptionDao().subscribeToCreator(currentUserId, creatorUserId)
+                    
+                    // Also sync to Supabase
+                    syncSubscriptionToSupabase(currentUserId, creatorUserId)
+                    
+                    showDarkToast("🎉 Te has suscrito")
+                    Log.d("UserProfileView", "User $currentUserId subscribed to $creatorUserId")
+                }
+                
+                // Refresh the adapter to update subscription states
+                contentAdapter.notifyDataSetChanged()
+                
+                // Also refresh user data to update subscriber count in header
+                username?.let { loadUserData(it) }
+                
+            } catch (e: Exception) {
+                Log.e("UserProfileView", "Error handling subscription", e)
+                showDarkToast("❌ Error al procesar la suscripción")
+            }
+        }
+    }
+    
+    /**
+     * Handle enrollment click - Create initial progress record when student enrolls (from ExploreFragment)
+     */
+    private fun handleEnrollmentClick(course: com.example.tareamov.data.entity.Course) {
+        val currentUserUsername = getCurrentUsername()
+        if (currentUserUsername == null) {
+            showDarkToast("¡Debes iniciar sesión para inscribirte!")
+            return
+        }
+        
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Get creator username from user_id
+                val creatorUsername = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                }
+                
+                if (creatorUsername == null) {
+                    showDarkToast("❌ Error: No se pudo obtener el nombre del creador")
+                    return@launch
+                }
+                
+                if (currentUserUsername == creatorUsername) {
+                    showDarkToast("No puedes inscribirte en tu propio curso")
+                    return@launch
+                }
+        
+                // Block enrollment for paid courses (price > 0)
+                if (course.isPremium && course.price > 0) {
+                    showDarkToast("❌ Este es un curso de pago. Debes realizar el pago para acceder.", Toast.LENGTH_LONG)
+                    return@launch
+                }
+        
+                val db = AppDatabase.getDatabase(requireContext())
+                
+                // Get user ID from username
+                val userId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                }
+                
+                if (userId == null) {
+                    showDarkToast("Error: Usuario no encontrado")
+                    Log.e("UserProfileView", "Failed to get user ID for username: $currentUserUsername")
+                    return@launch
+                }
+                
+                // Check if already enrolled
+                val existingProgreso = withContext(Dispatchers.IO) {
+                    db.progresoEstudianteDao().getProgreso(userId, course.id)
+                }
+                
+                if (existingProgreso != null) {
+                    showDarkToast("Ya estás inscrito en este curso")
+                    return@launch
+                }
+                
+                // Ensure course exists in local DB before creating progress
+                withContext(Dispatchers.IO) {
+                    val existingCourse = db.courseDao().getCourseById(course.id)
+                    if (existingCourse == null) {
+                        Log.d("UserProfileView", "Course not in local DB, inserting: ${course.title}")
+                        db.courseDao().insertCourse(course)
+                    }
+                }
+                
+                // Get total tasks for this course
+                val topics = withContext(Dispatchers.IO) {
+                    db.topicDao().getTopicsByCourse(course.id)
+                }
+                
+                val topicIds = topics.map { it.id }
+                val totalTasks = if (topicIds.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        db.taskDao().getTasksByTopicIds(topicIds).size
+                    }
+                } else {
+                    0
+                }
+                
+                // Create initial progress record
+                val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                    usuarioEstudiante = userId,
+                    cursoId = course.id,
+                    tareasCompletadas = 0,
+                    tareasTotales = totalTasks,
+                    porcentajeProgreso = 0f,
+                    calificacionPonderada = 0f,
+                    promedio = 0f,
+                    estado = "Pendiente",
+                    ultimaCalculadaEn = System.currentTimeMillis(),
+                    certificadoEmitidoEn = null,
+                    creadoEn = System.currentTimeMillis()
+                )
+                
+                // Save locally
+                withContext(Dispatchers.IO) {
+                    db.progresoEstudianteDao().insertProgreso(progreso)
+                }
+                
+                Log.d("UserProfileView", "✅ Progress record created locally for $currentUserUsername in course ${course.id}")
+                
+                // Sync to Supabase
+                val syncRepo = getSyncRepository()
+                val syncSuccess = withContext(Dispatchers.IO) {
+                    syncRepo.syncProgresoToSupabase(progreso)
+                }
+                
+                if (syncSuccess) {
+                    showDarkToast("✅ Inscripción exitosa. ¡Comienza tu aprendizaje!")
+                    Log.d("UserProfileView", "✅ Progress synced to Supabase for user $userId in course ${course.id}")
+                    
+                    // Refresh content to show enrollment status
+                    username?.let { loadUserData(it) }
+                } else {
+                    showDarkToast("✅ Inscrito localmente. Se sincronizará con el servidor más tarde.")
+                    Log.w("UserProfileView", "⚠️ Progress created locally but not synced to Supabase")
+                }
+                
+            } catch (e: Exception) {
+                Log.e("UserProfileView", "Error enrolling in course", e)
+                showDarkToast("❌ Error al inscribirse en el curso")
+            }
+        }
+    }
+
+    /**
+     * Sync subscription to Supabase (from ExploreFragment)
+     */
+    private suspend fun syncSubscriptionToSupabase(subscriberId: Long, creatorId: Long) {
+        try {
+            val sub = com.example.tareamov.data.entity.Subscription(
+                subscriberId = subscriberId,
+                creatorId = creatorId,
+                subscriptionDate = System.currentTimeMillis()
+            )
+            com.example.tareamov.service.SupabaseClient.insertSubscriptionToSupabase(sub)
+            Log.d("UserProfileView", "Subscription synced to Supabase: $subscriberId -> $creatorId")
+        } catch (e: Exception) {
+            Log.e("UserProfileView", "Error syncing subscription to Supabase", e)
+        }
+    }
+
+    /**
+     * Sync unsubscription to Supabase (from ExploreFragment)
+     */
+    private suspend fun syncUnsubscriptionToSupabase(subscriberId: Long, creatorId: Long) {
+        try {
+            com.example.tareamov.service.SupabaseClient.deleteSubscriptionFromSupabase(subscriberId, creatorId)
+            Log.d("UserProfileView", "Unsubscription synced to Supabase: $subscriberId -> $creatorId")
+        } catch (e: Exception) {
+            Log.e("UserProfileView", "Error syncing unsubscription to Supabase", e)
+        }
+    }
+
+    // Helper to obtain a SyncRepository instance (from ExploreFragment)
+    private fun getSyncRepository(): com.example.tareamov.data.sync.SyncRepository {
+        val db = AppDatabase.getDatabase(requireContext())
+        return com.example.tareamov.data.sync.SyncRepository(
+            usuarioDao = db.usuarioDao(),
+            personaDao = db.personaDao(),
+            topicDao = db.topicDao(),
+            contentItemDao = db.contentItemDao(),
+            taskDao = db.taskDao(),
+            subscriptionDao = db.subscriptionDao(),
+            taskSubmissionDao = db.taskSubmissionDao(),
+            videoDao = db.videoDao(),
+            courseDao = db.courseDao(),
+            rolDao = db.rolDao(),
+            recursoDao = db.recursoDao(),
+            rolRecursoDao = db.rolRecursoDao(),
+            chatMessageDao = db.chatMessageDao(),
+            fileContextDao = db.fileContextDao(),
+            progresoEstudianteDao = db.progresoEstudianteDao()
+        )
+    }
+
+    private fun handleCourseClickWithEnrollment(course: VideoData) {
+        val currentUserUsername = getCurrentUsername()
+        
+        // If not logged in, just navigate (or show login prompt)
+        if (currentUserUsername == null) {
+            showDarkToast("¡Debes iniciar sesión para acceder al curso!")
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Check if user is creator
+                val isCreator = if (currentUserUsername == course.username) {
+                    true
+                } else {
+                    val currentUserId = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                    }
+                    val creatorUserId = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                    }
+                    currentUserId != null && currentUserId == creatorUserId
+                }
+
+                if (isCreator) {
+                    handleContentClick(course)
+                    return@launch
+                }
+
+                // Check if paid
+                if (course.isPaid && (course.price ?: 0.0) > 0) {
+                    // Check if enrolled
+                     val db = AppDatabase.getDatabase(requireContext())
+                     val currentUserId = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                    }
+                    
+                    if (currentUserId != null) {
+                        val isEnrolled = withContext(Dispatchers.IO) {
+                            db.progresoEstudianteDao().estaInscrito(currentUserId, course.id)
+                        }
+                        
+                        if (isEnrolled) {
+                            handleContentClick(course)
+                        } else {
+                            showDarkToast("❌ Este es un curso de pago. Debes realizar el pago para acceder.", Toast.LENGTH_LONG)
+                        }
+                    }
+                    return@launch
+                }
+
+                // Free course: Auto-enroll if needed
+                val db = AppDatabase.getDatabase(requireContext())
+                val currentUserId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                }
+
+                if (currentUserId != null) {
+                    val isEnrolled = withContext(Dispatchers.IO) {
+                        db.progresoEstudianteDao().estaInscrito(currentUserId, course.id)
+                    }
+
+                    if (!isEnrolled) {
+                        Log.d("UserProfileView", "Auto-enrolling user $currentUserUsername in course ${course.title}")
+                        
+                        // Get total tasks
+                        val topics = withContext(Dispatchers.IO) {
+                            db.topicDao().getTopicsByCourse(course.id)
+                        }
+                        val topicIds = topics.map { it.id }
+                        val totalTasks = if (topicIds.isNotEmpty()) {
+                            withContext(Dispatchers.IO) {
+                                db.taskDao().getTasksByTopicIds(topicIds).size
+                            }
+                        } else {
+                            0
+                        }
+
+                        // Create progress
+                        val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                            usuarioEstudiante = currentUserId,
+                            cursoId = course.id,
+                            tareasCompletadas = 0,
+                            tareasTotales = totalTasks,
+                            porcentajeProgreso = 0f,
+                            calificacionPonderada = 0f,
+                            promedio = 0f,
+                            estado = "Pendiente",
+                            ultimaCalculadaEn = System.currentTimeMillis(),
+                            certificadoEmitidoEn = null,
+                            creadoEn = System.currentTimeMillis()
+                        )
+
+                        // Save locally
+                        withContext(Dispatchers.IO) {
+                            db.progresoEstudianteDao().insertProgreso(progreso)
+                        }
+
+                        // Sync
+                        val syncRepo = getSyncRepository()
+                        withContext(Dispatchers.IO) {
+                            syncRepo.syncProgresoToSupabase(progreso)
+                        }
+                        
+                        showDarkToast("✅ ¡Inscrito automáticamente en ${course.title}!")
+                    }
+                }
+                
+                // Navigate
+                handleContentClick(course)
+
+            } catch (e: Exception) {
+                Log.e("UserProfileView", "Error in auto-enrollment", e)
+                handleContentClick(course) // Fallback to navigation
+            }
+        }
+    }
+
+    private fun handleContentClick(content: VideoData) {
         // Verificar si el click es en un curso o video basándose en el filtro actual
         when (currentFilter) {
             ContentType.COURSE -> {
@@ -749,6 +1186,31 @@ class UserProfileViewFragment : Fragment() {
                 }
                 findNavController().navigate(R.id.action_userProfileViewFragment_to_videoHomeFragment, bundle)
             }
+        }
+    }
+
+    private fun navigateToCourseDetail(course: VideoData) {
+        lifecycleScope.launch {
+            // Check if current user is the course creator by comparing user IDs
+            val currentUserUsername = getCurrentUsername()
+            val isCreator = if (currentUserUsername != null) {
+                val currentUserId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                }
+                val creatorUserId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                }
+                currentUserId != null && currentUserId == creatorUserId
+            } else {
+                false
+            }
+
+            val bundle = Bundle().apply {
+                putLong("courseId", course.id)
+                putString("courseTitle", course.title)
+                putBoolean("isCreator", isCreator)
+            }
+            findNavController().navigate(R.id.action_userProfileViewFragment_to_courseDetailFragment, bundle)
         }
     }
 

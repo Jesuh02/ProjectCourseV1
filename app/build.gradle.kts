@@ -135,7 +135,6 @@ dependencies {
     ksp("androidx.room:room-compiler:$roomVersion")
 
     // Kotlin components
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22") // Updated to match KSP version
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 

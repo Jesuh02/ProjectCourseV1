@@ -38,11 +38,32 @@ class CreatedCourseAdapter(
     private val currentUsername: String? = null, // Current logged-in user for permission checks
     private val onEditCourseListener: ((VideoData) -> Unit)? = null, // Callback for editing course
     private val onDeleteCourseListener: ((VideoData) -> Unit)? = null, // Callback for deleting course
-    private val onChangeThumbnailListener: ((VideoData) -> Unit)? = null // Callback for changing thumbnail
+    private val onChangeThumbnailListener: ((VideoData) -> Unit)? = null, // Callback for changing thumbnail
+    private val onSubscriptionClickListener: ((VideoData, Boolean) -> Unit)? = null, // Subscription callback
+    private val onEnrollClickListener: ((VideoData) -> Unit)? = null // Enrollment callback
 ) : RecyclerView.Adapter<CreatedCourseAdapter.CourseViewHolder>() {
 
     private var currentPlayingHolder: CourseViewHolder? = null
     private val thumbnailManager = ThumbnailManager(context)
+    
+    // Cache for creator usernames by userId to reduce repeated network calls
+    private val creatorUsernameCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
+    
+    // Cache current user's id to avoid blocking lookups during bind
+    private var currentUserIdCached: Long? = null
+    
+    init {
+        // Initialize currentUserIdCached if username is provided
+        if (currentUsername != null) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    currentUserIdCached = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername)
+                } catch (e: Exception) {
+                    Log.e("CreatedCourseAdapter", "Error fetching current user ID", e)
+                }
+            }
+        }
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CourseViewHolder {
         val view = LayoutInflater.from(parent.context)
@@ -266,6 +287,12 @@ class CreatedCourseAdapter(
         private val subscriberCountTextView: TextView = itemView.findViewById(R.id.subscriberCountTextView)
         private val subscribeButton: Button = itemView.findViewById(R.id.subscribeButton)
 
+        // Enrollment elements
+        private val enrollButtonContainer: LinearLayout? = itemView.findViewById(R.id.enrollButtonContainer)
+        private val enrollButton: Button? = itemView.findViewById(R.id.enrollButton)
+        private val enrolledStatusContainer: LinearLayout? = itemView.findViewById(R.id.enrolledStatusContainer)
+        private val ownerStatusContainer: LinearLayout? = itemView.findViewById(R.id.ownerStatusContainer)
+
         // New menu button next to category
         // private val optionsMenuButton: ImageView? = itemView.findViewById(R.id.courseOptionsMenuButton)
 
@@ -279,8 +306,9 @@ class CreatedCourseAdapter(
             itemView.setOnClickListener {
                 val position = bindingAdapterPosition
                 if (position != RecyclerView.NO_POSITION) {
-                    Log.d("CreatedCourseAdapter", "Course clicked: ID=${courses[position].id}, Title=${courses[position].title}")
-                    onCourseClickListener(courses[position])
+                    val course = courses[position]
+                    Log.d("CreatedCourseAdapter", "Course clicked: ID=${course.id}, Title=${course.title}")
+                    onCourseClickListener(course)
                 }
             }
 
@@ -342,6 +370,7 @@ class CreatedCourseAdapter(
 
             // FAST: Show/hide options menu button and subscription UI based on permissions
             val isCreator = canUserModifyCourse(course)
+            
             if (isCreator) {
                 categoryTextView.text = "Mis Cursos"
                 categoryTextView.setBackgroundColor(android.graphics.Color.parseColor("#4CAF50"))
@@ -365,6 +394,12 @@ class CreatedCourseAdapter(
                 
                 // Hide subscription container for course creators
                 creatorInfoContainer.visibility = View.GONE
+                
+                // Show owner status, hide enrollment stuff
+                ownerStatusContainer?.visibility = View.VISIBLE
+                enrollButtonContainer?.visibility = View.GONE
+                enrolledStatusContainer?.visibility = View.GONE
+                
                 Log.d("CreatedCourseAdapter", "Creator view: Hiding subscription UI for course: ${course.title}")
             } else {
                 categoryTextView.text = "Tecnología"
@@ -388,11 +423,17 @@ class CreatedCourseAdapter(
                 // Show subscription container for other users' courses
                 creatorInfoContainer.visibility = View.VISIBLE
                 
+                // Hide owner status
+                ownerStatusContainer?.visibility = View.GONE
+                
                 // Setup subscription data
                 creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
-                subscriberCountTextView.text = "0 suscriptores" // Placeholder
-                subscribeButton.text = "Suscribirse"
-                subscribeButton.isEnabled = true
+                
+                // Load subscription data asynchronously
+                loadSubscriptionData(course)
+                
+                // Check enrollment status asynchronously
+                checkEnrollmentStatus(course)
                 
                 Log.d("CreatedCourseAdapter", "Non-creator view: Showing subscription UI for course: ${course.title} by ${course.username}")
             }
@@ -401,16 +442,14 @@ class CreatedCourseAdapter(
             studentsTextView.text = "..."
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 try {
-                    val db = com.example.tareamov.data.AppDatabase.getDatabase(itemView.context)
-                    // Resolve creator ID from username since VideoData doesn't have creatorUserId
-                    val creatorUser = db.usuarioDao().getUsuarioByUsername(course.username)
-                    val creatorId = creatorUser?.id ?: -1L
+                    // Fetch enrolled count from Supabase
+                    val enrolledCount = com.example.tareamov.service.SupabaseClient.fetchEnrolledCount(course.id)
                     
-                    val count = if (creatorId > 0) db.subscriptionDao().getSubscriptionCountForCreator(creatorId) else 0
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        studentsTextView.text = if (count == 1) "1 estudiante" else "${count} estudiantes"
+                        studentsTextView.text = if (enrolledCount == 1L) "1 estudiante" else "$enrolledCount estudiantes"
                     }
                 } catch (e: Exception) {
+                    Log.e("CreatedCourseAdapter", "Error fetching student count", e)
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
                         studentsTextView.text = "0 estudiantes"
                     }
@@ -438,6 +477,117 @@ class CreatedCourseAdapter(
             } else {
                 // Generate thumbnail asynchronously
                 loadOrGenerateVideoThumbnail(course)
+            }
+        }
+        
+        /**
+         * Check enrollment status and update UI
+         */
+        private fun checkEnrollmentStatus(course: VideoData) {
+            // Default state: show enroll button, hide enrolled status
+            enrollButtonContainer?.visibility = View.VISIBLE
+            enrolledStatusContainer?.visibility = View.GONE
+            
+            enrollButton?.setOnClickListener {
+                onEnrollClickListener?.invoke(course)
+            }
+
+            if (currentUsername == null) return
+
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val db = com.example.tareamov.data.AppDatabase.getDatabase(context)
+                    val currentUserId = currentUserIdCached ?: com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername)
+                    
+                    if (currentUserId != null) {
+                        val isEnrolled = db.progresoEstudianteDao().estaInscrito(currentUserId, course.id)
+                        
+                        withContext(Dispatchers.Main) {
+                            if (isEnrolled) {
+                                enrollButtonContainer?.visibility = View.GONE
+                                enrolledStatusContainer?.visibility = View.VISIBLE
+                            } else {
+                                enrollButtonContainer?.visibility = View.VISIBLE
+                                enrolledStatusContainer?.visibility = View.GONE
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("CreatedCourseAdapter", "Error checking enrollment status", e)
+                }
+            }
+        }
+        
+        /**
+         * Load subscription data asynchronously
+         */
+        private fun loadSubscriptionData(course: VideoData) {
+            if (currentUsername == null) {
+                subscriberCountTextView.text = "0 suscriptores"
+                subscribeButton.text = "Iniciar sesión"
+                subscribeButton.isEnabled = false
+                return
+            }
+
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val db = com.example.tareamov.data.AppDatabase.getDatabase(context)
+                    
+                    // Resolve creator ID from username
+                    // Try local DB first, then Supabase
+                    var creatorUser = db.usuarioDao().getUsuarioByUsername(course.username)
+                    var creatorId = creatorUser?.id ?: -1L
+                    
+                    if (creatorId == -1L) {
+                         creatorId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username) ?: -1L
+                    }
+                    
+                    if (creatorId != -1L) {
+                        // Get subscriber count from Supabase (Priority)
+                        val subscriberCount = try {
+                            com.example.tareamov.service.SupabaseClient.fetchSubscriberCount(creatorId)
+                        } catch (e: Exception) {
+                            Log.e("CreatedCourseAdapter", "Error fetching subscriber count from Supabase, falling back to local", e)
+                            db.subscriptionDao().getSubscriptionCountForCreator(creatorId)
+                        }
+                        
+                        // Check if current user is subscribed to this creator
+                        val currentUserId = currentUserIdCached ?: com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername)
+                        
+                        val isSubscribed = if (currentUserId != null) {
+                            db.subscriptionDao().isUserSubscribedToCreator(currentUserId, creatorId)
+                        } else false
+                        
+                        withContext(Dispatchers.Main) {
+                            // Update subscriber count
+                            val countText = if (subscriberCount == 1L) "1 suscriptor" else "$subscriberCount suscriptores"
+                            subscriberCountTextView.text = countText
+                            
+                            // Update subscription button
+                            if (isSubscribed) {
+                                subscribeButton.text = "Suscrito"
+                                subscribeButton.setBackgroundResource(R.drawable.button_subscribed)
+                            } else {
+                                subscribeButton.text = "Suscribirse"
+                                subscribeButton.setBackgroundResource(R.drawable.button_premium)
+                            }
+                            
+                            // Set button click listener
+                            subscribeButton.setOnClickListener {
+                                onSubscriptionClickListener?.invoke(course, isSubscribed)
+                            }
+                            
+                            subscribeButton.isEnabled = true
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("CreatedCourseAdapter", "Error loading subscription data", e)
+                    withContext(Dispatchers.Main) {
+                        subscriberCountTextView.text = "0 suscriptores"
+                        subscribeButton.text = "Suscribirse"
+                        subscribeButton.isEnabled = true
+                    }
+                }
             }
         }
 

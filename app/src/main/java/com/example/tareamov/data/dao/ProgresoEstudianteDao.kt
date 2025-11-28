@@ -68,4 +68,7 @@ interface ProgresoEstudianteDao {
      */
     @Query("SELECT COUNT(*) FROM progreso_estudiante WHERE cursoId = :courseId")
     suspend fun contarEstudiantes(courseId: Long): Int
+
+    @Query("SELECT EXISTS(SELECT 1 FROM progreso_estudiante WHERE usuarioEstudiante = :userId AND cursoId = :courseId)")
+    suspend fun estaInscrito(userId: Long, courseId: Long): Boolean
 }
