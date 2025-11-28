@@ -32,11 +32,11 @@ class SubscriptionRepository(private val database: AppDatabase) {
     suspend fun getSubscriberCount(creatorId: Long): Int {
         return withContext(Dispatchers.IO) {
             try {
-                // Try to fetch from Supabase first
+                // Fetch from Supabase only
                 SupabaseClient.fetchSubscriberCount(creatorId).toInt()
             } catch (e: Exception) {
-                // Fallback to local DB
-                subscriptionDao.getSubscriptionCountForCreator(creatorId)
+                android.util.Log.e("SubscriptionRepository", "Error fetching subscriber count from Supabase for creatorId=$creatorId", e)
+                0
             }
         }
     }
@@ -44,11 +44,11 @@ class SubscriptionRepository(private val database: AppDatabase) {
     suspend fun getSubscriptionCount(subscriberId: Long): Int {
         return withContext(Dispatchers.IO) {
             try {
-                // Try to fetch from Supabase first
+                // Fetch from Supabase only
                 SupabaseClient.fetchSubscriptionCount(subscriberId).toInt()
             } catch (e: Exception) {
-                // Fallback to local DB
-                subscriptionDao.getSubscriptionCountForSubscriber(subscriberId)
+                android.util.Log.e("SubscriptionRepository", "Error fetching subscription count from Supabase for subscriberId=$subscriberId", e)
+                0
             }
         }
     }

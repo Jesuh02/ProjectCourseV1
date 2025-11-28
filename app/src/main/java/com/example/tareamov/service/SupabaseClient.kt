@@ -813,8 +813,8 @@ object SupabaseClient {
                 return@withContext null
             }
             
-            if (submission.studentUsername.isBlank()) {
-                android.util.Log.e("SupabaseClient", "❌ Empty studentUsername for task submission")
+            if (submission.studentId == 0L) {
+                android.util.Log.e("SupabaseClient", "❌ Invalid studentId (0) for task submission")
                 return@withContext null
             }
             
@@ -865,7 +865,7 @@ object SupabaseClient {
                     if (bodyStr.contains("42501") || bodyStr.contains("row-level security policy", ignoreCase = true)) {
                         android.util.Log.e("SupabaseClient", "🔒 RLS POLICY ERROR: Las políticas de seguridad de Supabase están bloqueando el INSERT")
                         android.util.Log.e("SupabaseClient", "🔒 Solución: Ejecutar el script supabase/migrations/20251120_fix_rls_policies.sql en Supabase SQL Editor")
-                        android.util.Log.e("SupabaseClient", "🔒 Usuario: ${submission.studentUsername}, TaskId: ${submission.taskId}")
+                        android.util.Log.e("SupabaseClient", "🔒 Usuario ID: ${submission.studentId}, TaskId: ${submission.taskId}")
                     }
 
                     // If Postgres sequence is out-of-sync, PostgREST may return 23505 duplicate key error.
@@ -1735,10 +1735,13 @@ object SupabaseClient {
     // Fetch subscriber count for a creator
     suspend fun fetchSubscriberCount(creatorId: Long): Long = withContext(Dispatchers.IO) {
         try {
+            Log.d("SupabaseClient", "Fetching subscriber count for creatorId: $creatorId")
             // Use HEAD request or GET with count=exact
             // We use GET with limit=1 and Prefer: count=exact to get the total count in Content-Range header
             val path = "subscriptions?creator_id=eq.$creatorId&select=subscriber_id&limit=1"
             val url = "$baseUrl/rest/v1/$path"
+            
+            Log.d("SupabaseClient", "Request URL: $url")
             
             val request = Request.Builder()
                 .url(url)
@@ -1750,26 +1753,30 @@ object SupabaseClient {
                 .build()
 
             client.newCall(request).execute().use { response ->
+                Log.d("SupabaseClient", "Response code: ${response.code}")
                 val rangeHeader = response.header("Content-Range")
+                Log.d("SupabaseClient", "Content-Range header: $rangeHeader")
                 // Format: 0-0/5 (where 5 is the total)
                 if (rangeHeader != null && rangeHeader.contains("/")) {
                     val total = rangeHeader.substringAfter("/").toLongOrNull() ?: 0L
+                    Log.d("SupabaseClient", "Subscriber count for creatorId $creatorId: $total")
                     return@withContext total
                 }
+                Log.w("SupabaseClient", "No Content-Range header found or invalid format")
                 0L
             }
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching subscriber count", e)
+            Log.e("SupabaseClient", "Error fetching subscriber count for creatorId $creatorId", e)
             0L
         }
     }
 
     suspend fun fetchTaskSubmissions(): List<TaskSubmission> = fetchList("task_submissions", Array<TaskSubmission>::class.java)
 
-    // Fetch a single TaskSubmission by taskId and studentUsername
-    suspend fun fetchTaskSubmissionByTaskId(taskId: Long, username: String): TaskSubmission? = withContext(Dispatchers.IO) {
+    // Fetch a single TaskSubmission by taskId and studentId
+    suspend fun fetchTaskSubmissionByTaskId(taskId: Long, studentId: Long): TaskSubmission? = withContext(Dispatchers.IO) {
         try {
-            val url = "$baseUrl/rest/v1/task_submissions?task_id=eq.$taskId&student_username=eq.$username&select=*"
+            val url = "$baseUrl/rest/v1/task_submissions?task_id=eq.$taskId&student_id=eq.$studentId&select=*"
             val request = buildGetRequest(url)
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
@@ -3075,8 +3082,11 @@ object SupabaseClient {
     // Fetch subscription count for a user (following)
     suspend fun fetchSubscriptionCount(subscriberId: Long): Long = withContext(Dispatchers.IO) {
         try {
+            Log.d("SupabaseClient", "Fetching subscription count (following) for subscriberId: $subscriberId")
             val path = "subscriptions?subscriber_id=eq.$subscriberId&select=creator_id&limit=1"
             val url = "$baseUrl/rest/v1/$path"
+            
+            Log.d("SupabaseClient", "Request URL: $url")
             
             val request = Request.Builder()
                 .url(url)
@@ -3088,15 +3098,19 @@ object SupabaseClient {
                 .build()
 
             client.newCall(request).execute().use { response ->
+                Log.d("SupabaseClient", "Response code: ${response.code}")
                 val rangeHeader = response.header("Content-Range")
+                Log.d("SupabaseClient", "Content-Range header: $rangeHeader")
                 if (rangeHeader != null && rangeHeader.contains("/")) {
                     val total = rangeHeader.substringAfter("/").toLongOrNull() ?: 0L
+                    Log.d("SupabaseClient", "Subscription count for subscriberId $subscriberId: $total")
                     return@withContext total
                 }
+                Log.w("SupabaseClient", "No Content-Range header found or invalid format")
                 0L
             }
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching subscription count", e)
+            Log.e("SupabaseClient", "Error fetching subscription count for subscriberId $subscriberId", e)
             0L
         }
     }

@@ -192,15 +192,9 @@ dependencies {
     // Add MPAndroidChart dependency
     implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
- 
 
-    // Google Drive API and Google Play Services
-    implementation("com.google.android.gms:play-services-drive:17.0.0")
-    implementation("com.google.android.gms:play-services-auth:21.0.0")
-    implementation("com.google.apis:google-api-services-drive:v3-rev20220815-2.0.0")
-    implementation("com.google.api-client:google-api-client-android:2.2.0")
-    implementation("com.google.oauth-client:google-oauth-client-jetty:1.34.1")
-    implementation("com.google.http-client:google-http-client-gson:1.43.3")
+    // Note: Google Drive API dependencies removed - using native Android Storage Access Framework
+    // which provides access to Google Drive files without requiring Google Play Services authentication
 
     // BCrypt for password hashing
     implementation("at.favre.lib:bcrypt:0.9.0")

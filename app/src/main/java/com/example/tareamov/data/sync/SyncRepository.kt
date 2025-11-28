@@ -1171,7 +1171,10 @@ class SyncRepository(
 
     // Fetch subscriber count for a creator from Supabase
     suspend fun fetchSubscriberCountFromSupabase(creatorId: Long): Long {
-        return supabaseClient.fetchSubscriberCount(creatorId)
+        Log.d("SyncRepository", "Fetching subscriber count from Supabase for creatorId: $creatorId")
+        val count = supabaseClient.fetchSubscriberCount(creatorId)
+        Log.d("SyncRepository", "Subscriber count result: $count")
+        return count
     }
 
     // New: sincronizar a Supabase via REST
@@ -1610,6 +1613,41 @@ class SyncRepository(
         }
     }
 
+    // Fetch all submissions for a student within a given course from Supabase (using userId)
+    suspend fun fetchStudentSubmissionsForCourseFromSupabase(userId: Long, courseId: Long): List<TaskSubmission> {
+        return try {
+            if (!supabaseClient.isConfigured()) return emptyList()
+            val all = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissions() }
+            // Determine taskIds belonging to the course using Supabase (remote-authoritative)
+            val remoteTopicIds = try {
+                withContext(Dispatchers.IO) {
+                    supabaseClient.fetchTopicsByCourse(courseId).map { it.id }
+                }
+            } catch (e: Exception) {
+                Log.w("SyncRepository", "Failed to fetch topics from Supabase for courseId=$courseId", e)
+                emptyList<Long>()
+            }
+
+            val remoteTaskIds = if (remoteTopicIds.isNotEmpty()) {
+                try {
+                    withContext(Dispatchers.IO) { supabaseClient.fetchTasksByTopicIds(remoteTopicIds).map { it.id }.toSet() }
+                } catch (e: Exception) {
+                    Log.w("SyncRepository", "Failed to fetch tasks from Supabase for topicIds=$remoteTopicIds", e)
+                    emptySet<Long>()
+                }
+            } else emptySet()
+
+            Log.d("SyncRepository", "fetchStudentSubmissionsForCourseFromSupabase: fetched allSubs=${all.size}, remoteTopics=${remoteTopicIds.size}, remoteTasks=${remoteTaskIds.size}")
+            
+            val filtered = all.filter { it.studentId == userId && remoteTaskIds.contains(it.taskId) }
+            Log.d("SyncRepository", "fetchStudentSubmissionsForCourseFromSupabase: filteredSubs=${filtered.size}")
+            filtered
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchStudentSubmissionsForCourseFromSupabase failed for userId=$userId courseId=$courseId", e)
+            emptyList()
+        }
+    }
+
     // Fetch all submissions for a student within a given course from Supabase
     suspend fun fetchStudentSubmissionsForCourseFromSupabase(username: String, courseId: Long): List<TaskSubmission> {
         return try {
@@ -1731,7 +1769,7 @@ class SyncRepository(
             
             // Obtener todas las task submissions (para identificar estudiantes únicos)
             val allSubmissions = taskSubmissionDao.getAllSubmissionsSync()
-            val uniqueStudents = allSubmissions.map { it.studentUsername }.distinct()
+            val uniqueStudents = allSubmissions.map { it.studentId }.distinct()
             Log.d("SyncRepository", "Found ${uniqueStudents.size} unique students with submissions")
             
             // Por cada combinación curso-estudiante, calcular y subir progreso
@@ -1747,11 +1785,11 @@ class SyncRepository(
                 
                 // Filtrar estudiantes que tienen submissions en este curso
                 val courseSubmissions = allSubmissions.filter { it.taskId in courseTaskIds }
-                val courseStudents = courseSubmissions.map { it.studentUsername }.distinct()
+                val courseStudents = courseSubmissions.map { it.studentId }.distinct()
                 
-                for (student in courseStudents) {
+                for (studentId in courseStudents) {
                     try {
-                        val studentSubmissions = courseSubmissions.filter { it.studentUsername == student }
+                        val studentSubmissions = courseSubmissions.filter { it.studentId == studentId }
                         
                         // Calcular progreso
                         val completedTasks = courseTasks.count { task ->
@@ -1772,8 +1810,8 @@ class SyncRepository(
                             null
                         }
                         
-                        // Get user ID from username
-                        val userId = supabaseClient.getUserIdFromUsername(student) ?: continue
+                        // Use studentId directly
+                        val userId = studentId
                         
                         val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
                             usuarioEstudiante = userId,
@@ -1793,13 +1831,13 @@ class SyncRepository(
                         val success = supabaseClient.upsertProgresoEstudiante(progreso)
                         if (success) {
                             migratedCount++
-                            Log.d("SyncRepository", "Migrated progress: $student in course ${course.title} (${course.id})")
+                            Log.d("SyncRepository", "Migrated progress: $userId in course ${course.title} (${course.id})")
                         } else {
-                            Log.w("SyncRepository", "Failed to migrate progress: $student in course ${course.id}")
+                            Log.w("SyncRepository", "Failed to migrate progress: $userId in course ${course.id}")
                         }
                         
                     } catch (e: Exception) {
-                        Log.e("SyncRepository", "Error migrating progress for $student in course ${course.id}", e)
+                        Log.e("SyncRepository", "Error migrating progress for $studentId in course ${course.id}", e)
                     }
                 }
             }
@@ -1836,22 +1874,15 @@ class SyncRepository(
             for (progreso in enrolledStudents) {
                 val userId = progreso.usuarioEstudiante
                 
-                // Get username from userId
-                val username = supabaseClient.getUsernameFromUserId(userId)
-                if (username == null) {
-                    Log.w("SyncRepository", "Could not find username for userId=$userId, skipping")
-                    continue
-                }
-                
                 // Verificar si ya existe una submission para este estudiante y tarea
-                val existingSubmission = taskSubmissionDao.getUserSubmissionForTask(taskId, username)
+                val existingSubmission = taskSubmissionDao.getUserSubmissionForTask(taskId, userId)
                 
                 if (existingSubmission == null) {
                     // Crear submission con calificación 0 por defecto
                     val defaultSubmission = TaskSubmission(
                         id = 0,
                         taskId = taskId,
-                        studentUsername = username,
+                        studentId = userId,
                         submissionDate = System.currentTimeMillis(),
                         fileUri = "", // Sin archivo adjunto inicialmente
                         fileName = "", // Sin nombre de archivo inicialmente
@@ -1862,16 +1893,16 @@ class SyncRepository(
                     try {
                         // Insertar en base de datos local
                         val localId = taskSubmissionDao.insertSubmission(defaultSubmission)
-                        Log.d("SyncRepository", "Created local submission id=$localId for student=$username")
+                        Log.d("SyncRepository", "Created local submission id=$localId for studentId=$userId")
                         
                         // Intentar sincronizar con Supabase
                         if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
                             try {
                                 val remoteSuccess = supabaseRepo.upsert("task_submissions", defaultSubmission.copy(id = localId))
                                 if (remoteSuccess) {
-                                    Log.d("SyncRepository", "Synced submission to Supabase for student=$username")
+                                    Log.d("SyncRepository", "Synced submission to Supabase for studentId=$userId")
                                 } else {
-                                    Log.w("SyncRepository", "Failed to sync submission to Supabase for student=$username")
+                                    Log.w("SyncRepository", "Failed to sync submission to Supabase for studentId=$userId")
                                 }
                             } catch (e: Exception) {
                                 Log.w("SyncRepository", "Error syncing submission to Supabase", e)
@@ -1881,13 +1912,13 @@ class SyncRepository(
                         successCount++
                         
                         // Actualizar el progreso del estudiante
-                        updateStudentProgressAfterTaskCreation(username, courseId)
+                        updateStudentProgressAfterTaskCreation(userId, courseId)
                         
                     } catch (e: Exception) {
-                        Log.e("SyncRepository", "Error creating submission for student=$username", e)
+                        Log.e("SyncRepository", "Error creating submission for studentId=$userId", e)
                     }
                 } else {
-                    Log.d("SyncRepository", "Submission already exists for student=$username, task=$taskId")
+                    Log.d("SyncRepository", "Submission already exists for studentId=$userId, task=$taskId")
                 }
             }
             
@@ -1919,13 +1950,12 @@ class SyncRepository(
      * Actualiza el progreso del estudiante después de crear una nueva tarea.
      * Recalcula el promedio, tareas totales, completadas y porcentaje de progreso.
      */
-    private suspend fun updateStudentProgressAfterTaskCreation(username: String, courseId: Long) {
+    private suspend fun updateStudentProgressAfterTaskCreation(userId: Long, courseId: Long) {
         try {
-            val userId = supabaseClient.getUserIdFromUsername(username) ?: return
             val progreso = progresoEstudianteDao.getProgreso(userId, courseId)
             if (progreso != null) {
                 // Obtener todas las submissions del estudiante en el curso
-                val submissions = taskSubmissionDao.getStudentSubmissionsForCourse(username, courseId)
+                val submissions = taskSubmissionDao.getStudentSubmissionsForCourse(userId, courseId)
                 
                 // Obtener todas las tareas del curso (a través de topics)
                 val topics = topicDao.getTopicsByCourse(courseId)
@@ -1969,7 +1999,7 @@ class SyncRepository(
                 // Sincronizar con Supabase
                 syncProgresoToSupabase(updatedProgreso)
                 
-                Log.d("SyncRepository", "Updated progress for student=$username: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$newPromedio")
+                Log.d("SyncRepository", "Updated progress for studentId=$userId: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$newPromedio")
             }
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error updating student progress", e)
@@ -2039,12 +2069,9 @@ class SyncRepository(
                 try {
                     val userId = student.usuarioEstudiante
                     
-                    // Get username from userId
-                    val studentUsername = supabaseClient.getUsernameFromUserId(userId) ?: continue
-                    
                     // Filtrar submissions del estudiante
                     val studentSubmissions = allSubmissions.filter { 
-                        it.studentUsername.equals(studentUsername, ignoreCase = false)
+                        it.studentId == userId
                     }
                     
                     // Calcular métricas
@@ -2065,7 +2092,7 @@ class SyncRepository(
                     }
                     val promedio = totalGrade / tareasTotales
                     
-                    Log.d("SyncRepository", "📊 Student=$studentUsername: total=$tareasTotales, completed=$tareasCompletadas, avg=$promedio")
+                    Log.d("SyncRepository", "📊 StudentId=$userId: total=$tareasTotales, completed=$tareasCompletadas, avg=$promedio")
                     
                     // Actualizar progreso
                     val updatedProgreso = student.copy(
@@ -2084,13 +2111,13 @@ class SyncRepository(
                     val synced = try {
                         supabaseClient.upsertProgresoEstudiante(updatedProgreso)
                     } catch (e: Exception) {
-                        Log.e("SyncRepository", "Error syncing to Supabase for student=$studentUsername", e)
+                        Log.e("SyncRepository", "Error syncing to Supabase for studentId=$userId", e)
                         false
                     }
                     
                     if (synced) {
                         updatedCount++
-                        Log.d("SyncRepository", "✅ Updated progress for student=$studentUsername")
+                        Log.d("SyncRepository", "✅ Updated progress for studentId=$userId")
                     }
                 } catch (e: Exception) {
                     Log.e("SyncRepository", "Error updating progress for student=${student.usuarioEstudiante}", e)
@@ -2153,17 +2180,9 @@ class SyncRepository(
             
             // Recalcular y sincronizar progreso para cada estudiante inscrito
             for (userId in studentUserIds) {
-                var username: String? = null
                 try {
-                    // Get username from userId
-                    username = supabaseClient.getUsernameFromUserId(userId)
-                    if (username == null) {
-                        Log.w("SyncRepository", "Could not find username for userId=$userId, skipping")
-                        continue
-                    }
-                    
                     // Obtener todas las submissions del estudiante en el curso (ya no incluye la tarea eliminada)
-                    val submissions = taskSubmissionDao.getStudentSubmissionsForCourse(username, courseId)
+                    val submissions = taskSubmissionDao.getStudentSubmissionsForCourse(userId, courseId)
                     
                     // Obtener todas las tareas restantes del curso
                     val topics = topicDao.getTopicsByCourse(courseId)
@@ -2204,10 +2223,10 @@ class SyncRepository(
                         // Sincronizar con Supabase
                         syncProgresoToSupabase(updatedProgreso)
                         
-                        Log.d("SyncRepository", "Updated progress after task deletion for student=$username: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$promedio")
+                        Log.d("SyncRepository", "Updated progress after task deletion for studentId=$userId: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$promedio")
                     }
                 } catch (e: Exception) {
-                    Log.e("SyncRepository", "Error updating progress for student=$username after task deletion", e)
+                    Log.e("SyncRepository", "Error updating progress for studentId=$userId after task deletion", e)
                 }
             }
             
@@ -2264,13 +2283,16 @@ class SyncRepository(
 
     suspend fun getSubmissionAndContextForTask(taskId: Long, username: String): Pair<TaskSubmission?, com.example.tareamov.data.entity.FileContext?> {
         return withContext(Dispatchers.IO) {
+            // Get userId from username
+            val userId = supabaseClient.getUserIdFromUsername(username) ?: return@withContext Pair(null, null)
+            
             // Try local first
-            var submission = taskSubmissionDao.getSubmissionsByTask(taskId).firstOrNull { it.studentUsername == username }
+            var submission = taskSubmissionDao.getSubmissionsByTask(taskId).firstOrNull { it.studentId == userId }
             var fileContext: com.example.tareamov.data.entity.FileContext? = null
             
             if (submission == null) {
                 // Try remote
-                submission = supabaseClient.fetchTaskSubmissionByTaskId(taskId, username)
+                submission = supabaseClient.fetchTaskSubmissionByTaskId(taskId, userId)
             }
             
             if (submission != null) {

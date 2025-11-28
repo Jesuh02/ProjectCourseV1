@@ -81,12 +81,18 @@ class StudentProgressManager(private val context: Context) {
                     try {
                         val actActivity = (context as? android.app.Activity)
                         if (actActivity is com.example.tareamov.MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                            val remoteSubs = actActivity.syncRepository.fetchStudentSubmissionsForCourseFromSupabase(username, courseId)
-                            Log.d("StudentProgressManager", "Supabase submissions fetched for user=$username course=$courseId count=${remoteSubs.size}")
-                            // Log a sample of returned submissions (first 5 ids)
-                            val sampleIds = remoteSubs.take(5).map { it.id }
-                            Log.d("StudentProgressManager", "Sample remote submission ids: $sampleIds")
-                            if (remoteSubs.isNotEmpty()) return@withContext remoteSubs
+                            // Resolve userId from username for the repo call
+                            val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+                            if (userId != null) {
+                                val remoteSubs = actActivity.syncRepository.fetchStudentSubmissionsForCourseFromSupabase(userId, courseId)
+                                Log.d("StudentProgressManager", "Supabase submissions fetched for user=$username (id=$userId) course=$courseId count=${remoteSubs.size}")
+                                // Log a sample of returned submissions (first 5 ids)
+                                val sampleIds = remoteSubs.take(5).map { it.id }
+                                Log.d("StudentProgressManager", "Sample remote submission ids: $sampleIds")
+                                if (remoteSubs.isNotEmpty()) return@withContext remoteSubs
+                            } else {
+                                Log.w("StudentProgressManager", "Could not resolve userId for username=$username, skipping Supabase fetch")
+                            }
                         }
                     } catch (e: Exception) {
                         Log.w("StudentProgressManager", "Error fetching submissions from Supabase for $username course=$courseId", e)

@@ -485,21 +485,27 @@ class UserProfileViewFragment : Fragment() {
                 
                 val subscribersDeferred = async(Dispatchers.IO) {
                     try {
-                        val u = database.usuarioDao().getUsuarioByUsername(username)
-                        if (u != null) {
-                            // Try to get from Supabase first for accuracy
-                            try {
-                                SupabaseClient.fetchSubscriberCount(u.id)
-                            } catch (e: Exception) {
-                                // Fallback to local DB if Supabase fails
-                                database.subscriptionDao().getSubscriptionCountForCreator(u.id).toLong()
-                            }
-                        } else 0L
-                    } catch (e: Exception) { 0L }
+                        // Get userId from Supabase directly
+                        val userId = SupabaseClient.getUserIdFromUsername(username)
+                        if (userId != null) {
+                            // Get subscriber count from Supabase only
+                            SupabaseClient.fetchSubscriberCount(userId)
+                        } else {
+                            Log.w("UserProfileView", "Could not find userId for username: $username")
+                            0L
+                        }
+                    } catch (e: Exception) {
+                        Log.e("UserProfileView", "Error fetching subscriber count from Supabase", e)
+                        0L
+                    }
                 }
 
                 val user = userDeferred.await()
                 val subscribersCount = subscribersDeferred.await()
+                
+                Log.d("UserProfileView", "Loaded data for username: $username")
+                Log.d("UserProfileView", "User found: ${user != null}")
+                Log.d("UserProfileView", "Subscribers count from Supabase: $subscribersCount")
 
                 val persona = if (user != null) {
                     withContext(Dispatchers.IO) {
@@ -517,6 +523,7 @@ class UserProfileViewFragment : Fragment() {
                     }
                     
                     subscribersCountTextView.text = subscribersCount.toString()
+                    Log.d("UserProfileView", "UI updated - Displaying subscribers count: $subscribersCount")
 
                     // Cargar avatar del usuario
                     loadUserAvatar(persona)

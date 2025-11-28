@@ -18,7 +18,7 @@ class CourseProgressManager(private val context: Context) {
 
     suspend fun calculateAndDisplayCourseProgress(
         courseId: Long,
-        username: String,
+        userId: Long,
         progressContainer: LinearLayout,
         progressBar: ProgressBar,
         progressPercentTextView: TextView,
@@ -40,7 +40,7 @@ class CourseProgressManager(private val context: Context) {
                         topics = withContext(Dispatchers.IO) { repo.fetchTopicsByCourseFromSupabase(courseId) }
                         val topicIds = topics.map { it.id }
                         tasks = if (topicIds.isNotEmpty()) withContext(Dispatchers.IO) { repo.fetchTasksByTopicIdsFromSupabase(topicIds) } else emptyList()
-                        submissions = withContext(Dispatchers.IO) { repo.fetchStudentSubmissionsForCourseFromSupabase(username, courseId) }
+                        submissions = withContext(Dispatchers.IO) { repo.fetchStudentSubmissionsForCourseFromSupabase(userId, courseId) }
                         android.util.Log.d("CourseProgressManager", "Supabase: topics=${topics.size} tasks=${tasks.size} subs=${submissions.size}")
                         try {
                             val gson = Gson()
@@ -75,10 +75,7 @@ class CourseProgressManager(private val context: Context) {
             }
 
             if (submissions.isEmpty()) {
-                // Resolve username -> userId for local DAO
-                val studentId = withContext(Dispatchers.IO) { db.usuarioDao().getUsuarioByUsername(username)?.id }
-                    ?: com.example.tareamov.util.SessionManager.getInstance(context).getUserId()
-                submissions = withContext(Dispatchers.IO) { db.taskSubmissionDao().getStudentSubmissionsForCourse(studentId, courseId) }
+                submissions = withContext(Dispatchers.IO) { db.taskSubmissionDao().getStudentSubmissionsForCourse(userId, courseId) }
                 android.util.Log.d("CourseProgressManager", "Local fallback submissions=${submissions.size}")
             }
 

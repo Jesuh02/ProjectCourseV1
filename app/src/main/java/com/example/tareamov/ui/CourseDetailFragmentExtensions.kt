@@ -51,6 +51,7 @@ private val paymentApi by lazy {
 fun Fragment.initializeAndLoadCourseProgress(
     courseId: Long,
     username: String?,
+    userId: Long,
     isCurrentUserCreator: Boolean
 ) {
     // Find views
@@ -68,7 +69,7 @@ fun Fragment.initializeAndLoadCourseProgress(
     val certificateButton = view.findViewById<Button>(R.id.certificateButton)
 
     // Only show progress for students (non-creators) who are logged in
-    if (isCurrentUserCreator || username == null) {
+    if (isCurrentUserCreator || username == null || userId == -1L) {
         progressContainer.visibility = View.GONE
         return
     }
@@ -80,7 +81,7 @@ fun Fragment.initializeAndLoadCourseProgress(
     CoroutineScope(Dispatchers.Main).launch {
         val averageGrade = progressManager.calculateAndDisplayCourseProgress(
             courseId = courseId,
-            username = username,
+            userId = userId,
             progressContainer = progressContainer,
             progressBar = progressBar,
             progressPercentTextView = progressPercentTextView,

@@ -954,6 +954,7 @@ class CourseDetailFragment : Fragment() {
                         initializeAndLoadCourseProgress(
                             courseId = effectiveCourseId,
                             username = currentUsername,
+                            userId = currentUserId,
                             isCurrentUserCreator = isCurrentUserCreator
                         )
                     } else {
@@ -1042,6 +1043,7 @@ class CourseDetailFragment : Fragment() {
                         initializeAndLoadCourseProgress(
                             courseId = courseId,
                             username = currentUsername,
+                            userId = currentUserId,
                             isCurrentUserCreator = isCurrentUserCreator
                         )
                     } else {
@@ -2213,10 +2215,17 @@ class CourseDetailFragment : Fragment() {
                             return@withContext
                         }
                         
+                        // Get user ID from username
+                        val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+                        if (userId == null) {
+                            Log.e("CourseDetailFragment", "Failed to get user ID for username: $username")
+                            return@withContext
+                        }
+
                         // Obtener todas las entregas del estudiante para este curso
                         val allSubmissions = com.example.tareamov.service.SupabaseClient.fetchTaskSubmissions()
                         val studentSubmissions = allSubmissions.filter { submission -> 
-                            submission.studentUsername.equals(username, ignoreCase = true) && 
+                            submission.studentId == userId && 
                             allTasks.any { task -> task.id == submission.taskId }
                         }
                         
@@ -2254,13 +2263,6 @@ class CourseDetailFragment : Fragment() {
                         }
                         
                         Log.d("CourseDetailFragment", "📈 Calculated metrics: totales=$tareasTotales, completadas=$tareasCompletadas, progreso=$porcentajeProgreso%, promedio=$promedio")
-                        
-                        // Get user ID from username
-                        val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
-                        if (userId == null) {
-                            Log.e("CourseDetailFragment", "Failed to get user ID for username: $username")
-                            return@withContext
-                        }
                         
                         // Actualizar en Supabase
                         val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(

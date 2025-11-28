@@ -6,14 +6,6 @@ import android.net.Uri
 import android.util.Log
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.FileContext
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.Scope
-import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
-import com.google.api.client.http.javanet.NetHttpTransport
-import com.google.api.client.json.gson.GsonFactory
-import com.google.api.services.drive.Drive
-import com.google.api.services.drive.DriveScopes
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
@@ -43,10 +35,6 @@ class MCPService(private val context: Context) {
     
     // System context to maintain conversation state
     private var conversationContext: String = "general"
-    
-    // Google Drive API components
-    private var driveService: Drive? = null
-    private var googleAccountCredential: GoogleAccountCredential? = null
 
     companion object {
         private const val TAG = "MCPService"
@@ -78,8 +66,6 @@ class MCPService(private val context: Context) {
     init {
         // Start the Ollama service when MCPService is initialized
         startOllamaService()
-        // Initialize Google Drive service
-        initializeGoogleDriveService()
     }
 
     private val client: OkHttpClient by lazy {
@@ -98,80 +84,6 @@ class MCPService(private val context: Context) {
             Log.d(TAG, "Started OllamaService")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start OllamaService", e)
-        }
-    }
-
-    /**
-     * Inicializa el servicio de Google Drive con autenticación
-     */
-    private fun initializeGoogleDriveService() {
-        try {
-            // Configurar credenciales de Google Account
-            googleAccountCredential = GoogleAccountCredential.usingOAuth2(
-                context,
-                listOf(DriveScopes.DRIVE_READONLY)
-            )
-            
-            // Verificar si ya tenemos una cuenta autenticada
-            val lastSignedInAccount = GoogleSignIn.getLastSignedInAccount(context)
-            if (lastSignedInAccount != null) {
-                googleAccountCredential?.selectedAccount = lastSignedInAccount.account
-                
-                // Crear el servicio de Drive
-                driveService = Drive.Builder(
-                    NetHttpTransport(),
-                    GsonFactory(),
-                    googleAccountCredential
-                )
-                    .setApplicationName("TareaMov")
-                    .build()
-                
-                Log.d(TAG, "✅ Google Drive service initialized successfully")
-            } else {
-                Log.d(TAG, "⚠️ No Google account found, user will need to sign in")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error initializing Google Drive service", e)
-            driveService = null
-        }
-    }
-
-    /**
-     * Verifica si el usuario está autenticado con Google Drive
-     */
-    fun isGoogleDriveAuthenticated(): Boolean {
-        return driveService != null && googleAccountCredential?.selectedAccount != null
-    }
-
-    /**
-     * Obtiene las opciones de Google Sign-In para autenticación con Drive
-     */
-    fun getGoogleSignInOptions(): GoogleSignInOptions {
-        return GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestScopes(Scope(DriveScopes.DRIVE_READONLY))
-            .requestEmail()
-            .build()
-    }
-
-    /**
-     * Configura la cuenta de Google después de la autenticación
-     */
-    fun setGoogleAccount(account: com.google.android.gms.auth.api.signin.GoogleSignInAccount) {
-        try {
-            googleAccountCredential?.selectedAccount = account.account
-            
-            // Recrear el servicio de Drive con la nueva cuenta
-            driveService = Drive.Builder(
-                NetHttpTransport(),
-                GsonFactory(),
-                googleAccountCredential
-            )
-                .setApplicationName("TareaMov")
-                .build()
-            
-            Log.d(TAG, "✅ Google account configured successfully: ${account.email}")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error configuring Google account", e)
         }
     }
 

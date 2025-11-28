@@ -866,7 +866,9 @@ class ChatBotFragment : Fragment() {
                 // Si TODAVÍA no hay contenido de archivo pero hay tarea seleccionada, intentar cargar contexto asociado
                 if (effectiveFileContent.isEmpty() && courseId != -1L) {
                     val username = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUsername()
-                    if (!username.isNullOrEmpty()) {
+                    val userId = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUserId()
+                    
+                    if (!username.isNullOrEmpty() && userId != -1L) {
                         withContext(Dispatchers.IO) {
                             try {
                                 val supabaseClient = com.example.tareamov.service.SupabaseClient
@@ -889,12 +891,12 @@ class ChatBotFragment : Fragment() {
                                 if (task != null) {
                                     val finalTask = task
                                     // 2. Buscar submission (local o remota)
-                                    val localSubmission = database.taskSubmissionDao().getUserSubmissionForTask(finalTask.id, username)
+                                    val localSubmission = database.taskSubmissionDao().getUserSubmissionForTask(finalTask.id, userId)
                                     
                                     val submission = if (localSubmission == null && supabaseClient.isConfigured()) {
                                         try {
                                             val remoteSubs = supabaseClient.fetchTaskSubmissions()
-                                            remoteSubs.firstOrNull { it.taskId == finalTask.id && it.studentUsername.equals(username, ignoreCase = true) }
+                                            remoteSubs.firstOrNull { it.taskId == finalTask.id && it.studentId == userId }
                                         } catch (e: Exception) {
                                             Log.w("ChatBotFragment", "Error buscando submission remota: ${e.message}")
                                             null
@@ -955,22 +957,6 @@ class ChatBotFragment : Fragment() {
                     if (referencedTask != null) {
                         Log.d("ChatBotFragment", "🔗 Tarea referenciada por #: ${referencedTask.taskName} (id=${referencedTask.taskId})")
 
-                        val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-                        val userId = session.getUserId()
-                        val username = session.getUsername()
-                        if (userId > 0L) {
-                                withContext(Dispatchers.IO) {
-                                    try {
-                                        // Preferir Supabase for submissions and file contexts
-                                        val supabaseClient = com.example.tareamov.service.SupabaseClient
-                                        var submission: com.example.tareamov.data.entity.TaskSubmission? = null
-                                        if (supabaseClient.isConfigured()) {
-                                            val remoteSubs = supabaseClient.fetchTaskSubmissions()
-                                            submission = remoteSubs.firstOrNull { it.taskId == referencedTask.taskId && it.studentId == userId }
-                                        }
-                                        if (submission == null) {
-                                            submission = database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, userId)
-                                        }
                         val username = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUsername()
                         if (!username.isNullOrEmpty()) {
                             withContext(Dispatchers.IO) {
@@ -979,11 +965,13 @@ class ChatBotFragment : Fragment() {
                                     val supabaseClient = com.example.tareamov.service.SupabaseClient
                                     
                                     val remoteSubmission = if (supabaseClient.isConfigured()) {
+                                        val userId = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUserId()
                                         val remoteSubs = supabaseClient.fetchTaskSubmissions()
-                                        remoteSubs.firstOrNull { it.taskId == referencedTask.taskId && it.studentUsername.equals(username, ignoreCase = true) }
+                                        remoteSubs.firstOrNull { it.taskId == referencedTask.taskId && it.studentId == userId }
                                     } else null
                                     
-                                    val submission = remoteSubmission ?: database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, username)
+                                    val userId = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUserId()
+                                    val submission = remoteSubmission ?: database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, userId)
 
 
                                     if (submission != null) {
@@ -1976,8 +1964,8 @@ class ChatBotFragment : Fragment() {
                 
                 Log.d("ChatBotFragment", "Cargando tareas calificadas...")
                 
-                val username = try {
-                    sessionManager.getUsername()
+                val userId = try {
+                    sessionManager.getUserId()
                 } catch (e: Exception) {
                     null
                 }
@@ -1986,10 +1974,10 @@ class ChatBotFragment : Fragment() {
                 var allSubmissions: List<TaskSubmission> = emptyList()
                 var loadedFromSupabase = false
                 
-                if (courseId != -1L && !username.isNullOrEmpty()) {
+                if (courseId != -1L && userId != null) {
                     try {
-                        Log.d("ChatBotFragment", "Intentando obtener submissions desde Supabase para curso $courseId y usuario $username")
-                        val remoteSubmissions = syncRepository.fetchStudentSubmissionsForCourseFromSupabase(username, courseId)
+                        Log.d("ChatBotFragment", "Intentando obtener submissions desde Supabase para curso $courseId y usuario $userId")
+                        val remoteSubmissions = syncRepository.fetchStudentSubmissionsForCourseFromSupabase(userId, courseId)
                         if (remoteSubmissions.isNotEmpty()) {
                             Log.d("ChatBotFragment", "Submissions obtenidas de Supabase: ${remoteSubmissions.size}")
                             allSubmissions = remoteSubmissions
@@ -2358,10 +2346,12 @@ class ChatBotFragment : Fragment() {
                 
                 // Intentar cargar submission y contexto usando el taskId y usuario actual
                 val username = sessionManager.getUsername() ?: ""
+                val userId = sessionManager.getUserId()
                 
                 Log.d("ChatBotFragment", "🔍 Buscando submission para:")
                 Log.d("ChatBotFragment", "   - taskId: ${task.taskId}")
                 Log.d("ChatBotFragment", "   - username: '$username'")
+                Log.d("ChatBotFragment", "   - userId: $userId")
                 
                 // Lógica mejorada para obtener la submission y el contexto
                 var fileContext: FileContext? = null
@@ -2397,27 +2387,14 @@ class ChatBotFragment : Fragment() {
                     
                     // Log de todas las submissions encontradas
                     allTaskSubmissions.forEachIndexed { index, sub ->
-                        val match = if (sub.studentUsername.equals(username, ignoreCase = true)) " ← Detectará este aunque sea '${sub.studentUsername}' vs '$username'" else ""
-                        Log.d("ChatBotFragment", "   [$index] id=${sub.id}, username='${sub.studentUsername}', file='${sub.fileName}'$match")
+                        val match = if (sub.studentId == userId) " ← Detectará este" else ""
+                        Log.d("ChatBotFragment", "   [$index] id=${sub.id}, studentId='${sub.studentId}', file='${sub.fileName}'$match")
                     }
                     
-                    // Comparación case-insensitive para username
-                    // IMPORTANTE: Primero buscar match exacto, luego intentar match parcial
+                    // Comparación por studentId
                     var localSubmissions = allTaskSubmissions
-                        .filter { it.studentUsername.equals(username, ignoreCase = true) }
+                        .filter { it.studentId == userId }
                         .sortedByDescending { it.submissionDate }
-                    
-                    // Si no se encontró match exacto, intentar match parcial (ej: 'jesus' en 'jesus1')
-                    if (localSubmissions.isEmpty() && username.isNotBlank()) {
-                        Log.d("ChatBotFragment", "⚠️ No hubo match exacto, intentando match parcial...")
-                        localSubmissions = allTaskSubmissions
-                            .filter { it.studentUsername.contains(username, ignoreCase = true) }
-                            .sortedByDescending { it.submissionDate }
-                        
-                        if (localSubmissions.isNotEmpty()) {
-                            Log.d("ChatBotFragment", "✅ Encontrado con match parcial: '${localSubmissions.first().studentUsername}' contiene '$username'")
-                        }
-                    }
                     
                     Log.d("ChatBotFragment", "✅ Submissions del usuario actual: ${localSubmissions.size}")
                     
@@ -2499,7 +2476,7 @@ class ChatBotFragment : Fragment() {
                             """
                             |=== INFORMACIÓN DEL ARCHIVO (LEÍDO DESDE ALMACENAMIENTO) ===
                             |Nombre del archivo: ${submission!!.fileName}
-                            |Estudiante: ${submission!!.studentUsername}
+                            |Estudiante ID: ${submission!!.studentId}
                             |Fecha de entrega: ${java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault()).format(submission!!.submissionDate)}
                             |=== CONTENIDO DEL ARCHIVO ===
                             |
@@ -2510,7 +2487,7 @@ class ChatBotFragment : Fragment() {
                             |=== INFORMACIÓN DE LA ENTREGA (CONTEXTO LIMITADO) ===
                             |⚠️ ADVERTENCIA: El contenido completo del archivo no está disponible
                             |
-                            |Estudiante: ${submission!!.studentUsername}
+                            |Estudiante ID: ${submission!!.studentId}
                             |Fecha: ${java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault()).format(submission!!.submissionDate)}
                             |Archivo adjunto: ${submission!!.fileName}
                             |URI del archivo: ${submission!!.fileUri}
