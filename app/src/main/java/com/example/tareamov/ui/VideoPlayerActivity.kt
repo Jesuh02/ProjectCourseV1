@@ -208,16 +208,23 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     // Interaction: any tap shows controls and resets auto-hide timer
         controlsOverlay.setOnClickListener {
-            showControls()
-            // Also toggle play/pause feedback like many players do
-            if (videoView.isPlaying) {
-                videoView.pause()
-                showCenterOverlay(R.drawable.ic_play_overlay)
+            if (isControlsVisible) {
+                hideControls()
             } else {
-                videoView.start()
-                showCenterOverlay(R.drawable.ic_pause_overlay)
+                showControls()
             }
         }
+
+        playPauseOverlay.setOnClickListener {
+            if (videoView.isPlaying) {
+                videoView.pause()
+            } else {
+                videoView.start()
+            }
+            updatePlayPauseIcon()
+            scheduleAutoHide()
+        }
+
         backButton.setOnClickListener {
             try {
                 // Instead of finishing the app, navigate back to the VideoHomeFragment hosted by MainActivity
@@ -320,12 +327,14 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun showControls() {
         cancelAutoHide()
+        updatePlayPauseIcon()
         if (!isControlsVisible) {
             isControlsVisible = true
             fadeVisibility(findViewById(R.id.topBar), true)
             fadeVisibility(findViewById(R.id.bottomBar), true)
             fadeVisibility(skipBackIcon, true)
             fadeVisibility(skipForwardIcon, true)
+            fadeVisibility(playPauseOverlay, true)
         }
         scheduleAutoHide()
     }
@@ -339,11 +348,13 @@ class VideoPlayerActivity : AppCompatActivity() {
                 findViewById<View>(R.id.bottomBar).apply { alpha = 0f; visibility = View.GONE }
                 skipBackIcon.apply { alpha = 0f; visibility = View.GONE }
                 skipForwardIcon.apply { alpha = 0f; visibility = View.GONE }
+                playPauseOverlay.apply { alpha = 0f; visibility = View.GONE }
             } else {
                 fadeVisibility(findViewById(R.id.topBar), false)
                 fadeVisibility(findViewById(R.id.bottomBar), false)
                 fadeVisibility(skipBackIcon, false)
                 fadeVisibility(skipForwardIcon, false)
+                fadeVisibility(playPauseOverlay, false)
             }
         }
     }
@@ -411,19 +422,19 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun seekBy(deltaMs: Int) {
-    val duration = if (videoView.duration > 0) videoView.duration else seekBar.max
-    val newPos = (videoView.currentPosition + deltaMs).coerceIn(0, duration)
+        val duration = if (videoView.duration > 0) videoView.duration else seekBar.max
+        val newPos = (videoView.currentPosition + deltaMs).coerceIn(0, duration)
         videoView.seekTo(newPos)
         currentTime.text = formatTime(newPos)
-        showCenterOverlay(if (videoView.isPlaying) R.drawable.ic_pause_overlay else R.drawable.ic_play_overlay)
-    showControls()
+        showControls()
     }
 
-    private fun showCenterOverlay(icon: Int) {
-        playPauseOverlay.setImageResource(icon)
-        playPauseOverlay.visibility = View.VISIBLE
-        playPauseOverlay.alpha = 0.95f
-        uiHandler.postDelayed({ playPauseOverlay.visibility = View.GONE }, 1000)
+    private fun updatePlayPauseIcon() {
+        if (videoView.isPlaying) {
+            playPauseOverlay.setImageResource(R.drawable.ic_pause_overlay)
+        } else {
+            playPauseOverlay.setImageResource(R.drawable.ic_play_overlay)
+        }
     }
 
     private fun formatTime(ms: Int): String {
