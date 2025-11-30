@@ -35,7 +35,7 @@ import android.util.Log
 class ProfileFragment : Fragment() {
     private lateinit var usernameTextView: TextView
     private lateinit var statusTextView: TextView
-    private lateinit var followersTextView: TextView
+    private lateinit var subscribersTextView: TextView
     private lateinit var profileImage: CircleImageView
     private lateinit var editProfileButton: Button
     private lateinit var avatarContainer: FrameLayout
@@ -53,7 +53,7 @@ class ProfileFragment : Fragment() {
         // Initialize views
         usernameTextView = view.findViewById(R.id.usernameTextView)
         statusTextView = view.findViewById(R.id.statusTextView)
-        followersTextView = view.findViewById(R.id.followersTextView)
+        subscribersTextView = view.findViewById(R.id.subscribersTextView)
         profileImage = view.findViewById(R.id.profileImage)
         editProfileButton = view.findViewById(R.id.editProfileButton)
         avatarContainer = view.findViewById(R.id.avatarContainer)
@@ -116,7 +116,7 @@ class ProfileFragment : Fragment() {
             .start()
 
         // Animate Text Fade In
-        val texts = listOf(usernameTextView, statusTextView, followersTextView)
+        val texts = listOf(usernameTextView, statusTextView, subscribersTextView)
         texts.forEachIndexed { index, view ->
             view.translationY = 50f
             view.alpha = 0f
@@ -188,6 +188,7 @@ class ProfileFragment : Fragment() {
                 // Prefer SessionManager for active user identification
                 val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
                 val activeUsername = session.getUsername()
+                var subscriberCount = 0L
 
                 // If we have a username from the active session, try Supabase first
                 if (!activeUsername.isNullOrEmpty() && com.example.tareamov.service.SupabaseClient.isConfigured()) {
@@ -207,7 +208,17 @@ class ProfileFragment : Fragment() {
                                     null
                                 }
                             }
-                            updateUI(remoteUsuario, remotePersona)
+                            
+                            // Fetch subscriber count
+                            try {
+                                subscriberCount = withContext(Dispatchers.IO) {
+                                    com.example.tareamov.service.SupabaseClient.fetchSubscriberCount(remoteUsuario.id)
+                                }
+                            } catch (e: Exception) {
+                                Log.w("ProfileFragment", "Failed to fetch subscriber count", e)
+                            }
+
+                            updateUI(remoteUsuario, remotePersona, subscriberCount)
                             return@launch
                         }
                     } catch (e: Exception) {
@@ -230,29 +241,46 @@ class ProfileFragment : Fragment() {
                         val persona = withContext(Dispatchers.IO) {
                             usuario.persona_id?.let { id -> db.personaDao().getPersonaById(id) }
                         }
-                        updateUI(usuario, persona)
+                        
+                        // Try to fetch subscriber count if online
+                        if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                             try {
+                                 subscriberCount = withContext(Dispatchers.IO) {
+                                     com.example.tareamov.service.SupabaseClient.fetchSubscriberCount(usuario.id)
+                                 }
+                             } catch (e: Exception) {
+                                 Log.w("ProfileFragment", "Failed to fetch subscriber count locally", e)
+                             }
+                        }
+                        
+                        updateUI(usuario, persona, subscriberCount)
                     } else {
-                        updateUI(null, null)
+                        updateUI(null, null, 0)
                     }
                 } else {
-                    updateUI(null, null)
+                    updateUI(null, null, 0)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                updateUI(null, null)
+                updateUI(null, null, 0)
             }
         }
     }
 
-    private fun updateUI(usuario: Usuario?, persona: Persona?) {
+    private fun updateUI(usuario: Usuario?, persona: Persona?, subscriberCount: Long) {
         // Use usuario?.usuario for username if that's the correct field
         usernameTextView.text = usuario?.usuario ?: getString(R.string.default_username)
 
         // Update status
         statusTextView.text = getString(R.string.status_offline)
 
-        // Update followers count
-        followersTextView.text = getString(R.string.followers_count, 0)
+        // Update subscribers count
+        // Use string resource with placeholder if available, otherwise manual concatenation
+        try {
+            subscribersTextView.text = getString(R.string.followers_count, subscriberCount)
+        } catch (e: Exception) {
+            subscribersTextView.text = "$subscriberCount suscriptores"
+        }
 
         // Update profile image with persona's avatar
         if (persona != null && !persona.avatar.isNullOrEmpty()) {

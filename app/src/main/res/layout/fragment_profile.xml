@@ -118,10 +118,10 @@
                         android:layout_marginHorizontal="8dp" />
 
                     <TextView
-                        android:id="@+id/followersTextView"
+                        android:id="@+id/subscribersTextView"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="0 seguidores"
+                        android:text="0 suscriptores"
                         android:textColor="#AAAAAA"
                         android:textSize="14sp"
                         android:fontFamily="sans-serif" />

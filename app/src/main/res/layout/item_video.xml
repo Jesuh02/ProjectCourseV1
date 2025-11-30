@@ -87,7 +87,7 @@
         android:id="@+id/rightActionButtons"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="12dp"
+        android:layout_marginEnd="8dp"
         android:layout_marginBottom="120dp"
         android:orientation="vertical"
         android:gravity="center_horizontal"
@@ -98,22 +98,22 @@
         <FrameLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="24dp">
+            android:layout_marginBottom="20dp">
 
             <de.hdodenhof.circleimageview.CircleImageView
                 android:id="@+id/profileButton"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
                 app:civ_border_color="#9C27B0"
-                app:civ_border_width="2dp" />
+                app:civ_border_width="1.5dp" />
 
             <!-- Subscribe/Follow Badge (+ icon) -->
             <ImageView
                 android:id="@+id/subscribeButton"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
                 android:layout_gravity="bottom|center_horizontal"
-                android:layout_marginBottom="-6dp"
+                android:layout_marginBottom="-5dp"
                 android:src="@drawable/ic_add_circle"
                 android:elevation="4dp" />
         </FrameLayout>
@@ -124,14 +124,14 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:gravity="center_horizontal"
-            android:layout_marginBottom="20dp">
+            android:layout_marginBottom="16dp">
 
             <ImageView
                 android:id="@+id/likeButton"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
                 android:src="@drawable/ic_heart_minimal"
-                android:padding="4dp"
+                android:padding="2dp"
                 android:scaleType="fitCenter" />
 
             <TextView
@@ -140,9 +140,9 @@
                 android:layout_height="wrap_content"
                 android:text="0"
                 android:textColor="#FFFFFF"
-                android:textSize="12sp"
+                android:textSize="11sp"
                 android:fontFamily="sans-serif-medium"
-                android:layout_marginTop="2dp" />
+                android:layout_marginTop="1dp" />
         </LinearLayout>
 
         <!-- Comments Button with Counter -->
@@ -151,14 +151,14 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:gravity="center_horizontal"
-            android:layout_marginBottom="20dp">
+            android:layout_marginBottom="16dp">
 
             <ImageView
                 android:id="@+id/commentButton"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
                 android:src="@drawable/ic_comment_bubble"
-                android:padding="4dp"
+                android:padding="2dp"
                 android:scaleType="fitCenter" />
 
             <TextView
@@ -167,9 +167,9 @@
                 android:layout_height="wrap_content"
                 android:text="0"
                 android:textColor="#FFFFFF"
-                android:textSize="12sp"
+                android:textSize="11sp"
                 android:fontFamily="sans-serif-medium"
-                android:layout_marginTop="2dp" />
+                android:layout_marginTop="1dp" />
         </LinearLayout>
 
         <!-- Share Button with Label -->
@@ -178,14 +178,14 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:gravity="center_horizontal"
-            android:layout_marginBottom="20dp">
+            android:layout_marginBottom="16dp">
 
             <ImageView
                 android:id="@+id/shareButton"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
                 android:src="@drawable/ic_share_arrow"
-                android:padding="4dp"
+                android:padding="2dp"
                 android:scaleType="fitCenter" />
 
             <TextView
@@ -194,8 +194,8 @@
                 android:layout_height="wrap_content"
                 android:text="Compartir"
                 android:textColor="#FFFFFF"
-                android:textSize="11sp"
-                android:layout_marginTop="2dp" />
+                android:textSize="10sp"
+                android:layout_marginTop="1dp" />
         </LinearLayout>
 
         <!-- Sound Toggle Button -->
@@ -207,10 +207,10 @@
 
             <ImageView
                 android:id="@+id/soundButton"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
                 android:src="@drawable/ic_sound_minimal"
-                android:padding="4dp"
+                android:padding="2dp"
                 android:scaleType="fitCenter" />
         </LinearLayout>
     </LinearLayout>
