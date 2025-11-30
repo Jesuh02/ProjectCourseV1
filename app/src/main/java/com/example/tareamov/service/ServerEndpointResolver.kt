@@ -275,6 +275,9 @@ object ServerEndpointResolver {
         loadPersistedHost(MCP_PORT)?.let { candidates.add(it) }
         loadPersistedHost(OLLAMA_PORT)?.let { candidates.add(it) }
 
+        // Explicitly add the user's PC IP
+        candidates.add("192.168.1.90")
+
         if (isEmulator()) {
             candidates.add("10.0.2.2")
         }

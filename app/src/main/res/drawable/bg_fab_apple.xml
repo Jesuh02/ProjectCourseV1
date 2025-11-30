@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#40FFFFFF">
+    
+    <item>
+        <shape android:shape="rectangle">
+            <!-- Apple purple gradient -->
+            <gradient
+                android:startColor="#BF5AF2"
+                android:endColor="#A259FF"
+                android:angle="135"
+                android:type="linear" />
+            
+            <!-- Pill shape -->
+            <corners android:radius="28dp" />
+        </shape>
+    </item>
+</ripple>
+

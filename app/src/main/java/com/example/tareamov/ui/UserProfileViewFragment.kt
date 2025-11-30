@@ -43,6 +43,7 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.service.SupabaseClient
 import de.hdodenhof.circleimageview.CircleImageView
+import android.view.ViewOutlineProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -64,6 +65,16 @@ class UserProfileViewFragment : Fragment() {
     private lateinit var videosCountBadge: TextView
     private lateinit var searchEditText: EditText
     private lateinit var clearSearchButton: ImageView
+    
+    // FrameLayout references (replaced BlurView to fix white-out on scroll)
+    private var searchBarBlurView: View? = null
+    private var filterBlurView: View? = null
+    
+    // Filter button elements for glass effect styling
+    private var coursesFilterIcon: ImageView? = null
+    private var coursesFilterText: TextView? = null
+    private var videosFilterIcon: ImageView? = null
+    private var videosFilterText: TextView? = null
     private lateinit var contentRecyclerView: RecyclerView
     private lateinit var emptyStateTextView: TextView
     private lateinit var contentAdapter: CreatedCourseAdapter
@@ -150,6 +161,14 @@ class UserProfileViewFragment : Fragment() {
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
         bottomNavBinding = ComponentBottomNavigationBinding.bind(bottomNavView)
 
+        // Ensure bottom navigation is always visible and static
+        bottomNavView.visibility = View.VISIBLE
+        bottomNavView.translationY = 0f
+        bottomNavView.alpha = 1f
+        
+        // Disable any layout animations to keep it static
+        (bottomNavView as? android.view.ViewGroup)?.layoutTransition = null
+
         // Home Button - Navigate to VideoHome
         bottomNavBinding.homeNavLayout.setOnClickListener {
             findNavController().navigate(R.id.action_userProfileViewFragment_to_videoHomeFragment)
@@ -197,6 +216,19 @@ class UserProfileViewFragment : Fragment() {
             contentRecyclerView = view.findViewById(R.id.contentRecyclerView) ?: throw NullPointerException("contentRecyclerView not found")
             emptyStateTextView = view.findViewById(R.id.emptyStateTextView) ?: throw NullPointerException("emptyStateTextView not found")
 
+            // Initialize BlurViews for glass effect
+            searchBarBlurView = view.findViewById(R.id.searchBarBlurView)
+            filterBlurView = view.findViewById(R.id.filterBlurView)
+            
+            // Initialize filter button elements
+            coursesFilterIcon = view.findViewById(R.id.coursesFilterIcon)
+            coursesFilterText = view.findViewById(R.id.coursesFilterText)
+            videosFilterIcon = view.findViewById(R.id.videosFilterIcon)
+            videosFilterText = view.findViewById(R.id.videosFilterText)
+            
+            // Setup BlurViews
+            setupBlurViews(view)
+
             // Setup search functionality
             setupSearchFunctionality()
 
@@ -207,6 +239,17 @@ class UserProfileViewFragment : Fragment() {
             // If in a critical error state, navigate back
             findNavController().navigateUp()
         }
+    }
+    
+    /**
+     * Setup views for search bar and filters
+     * NOTE: BlurView was removed and replaced with FrameLayout to fix white-out issue on scroll.
+     * The blur effect caused white backgrounds when RecyclerView content scrolled behind.
+     */
+    private fun setupBlurViews(view: View) {
+        // BlurView setup removed - now using simple FrameLayout with solid dark background
+        // This prevents the white-out issue that occurred when content scrolled behind the blur
+        Log.d("UserProfileView", "Using solid dark backgrounds instead of BlurView to prevent white-out on scroll")
     }
 
     private fun setupSearchFunctionality() {
@@ -411,6 +454,9 @@ class UserProfileViewFragment : Fragment() {
         }
     }
 
+    
+
+
     private fun setupFilterButtons() {
         coursesFilterButton.setOnClickListener {
             setFilter(ContentType.COURSE)
@@ -429,39 +475,38 @@ class UserProfileViewFragment : Fragment() {
         Log.d("UserProfileView", "Filter changed to: $filterType")
         updateFilterButtonsUI()
         filterContent()
-    }private fun updateFilterButtonsUI() {
+    }
+    
+    private fun updateFilterButtonsUI() {
+        val darkColor = android.graphics.Color.parseColor("#1A1A1A")
+        val whiteColor = android.graphics.Color.WHITE
+        
         when (currentFilter) {
             ContentType.COURSE -> {
-                coursesFilterButton.setBackgroundResource(R.drawable.filter_button_selected)
-                videosFilterButton.setBackgroundResource(R.drawable.filter_button_unselected)
+                // Courses selected - glass selected style
+                coursesFilterButton.setBackgroundResource(R.drawable.bg_glass_filter_button_selected)
+                videosFilterButton.setBackgroundResource(R.drawable.bg_glass_filter_button_unselected)
                 
-                // Update text colors and icon tints for courses filter
-                val coursesTextView = coursesFilterButton.getChildAt(1) as? TextView
-                val coursesIcon = coursesFilterButton.getChildAt(0) as? ImageView
-                coursesTextView?.setTextColor(requireContext().getColor(android.R.color.black))
-                coursesIcon?.setColorFilter(requireContext().getColor(android.R.color.black))
+                // Update courses filter to dark text (selected)
+                coursesFilterIcon?.setColorFilter(darkColor)
+                coursesFilterText?.setTextColor(darkColor)
                 
-                // Update text colors and icon tints for videos filter
-                val videosTextView = videosFilterButton.getChildAt(1) as? TextView
-                val videosIcon = videosFilterButton.getChildAt(0) as? ImageView
-                videosTextView?.setTextColor(requireContext().getColor(R.color.light_purple))
-                videosIcon?.setColorFilter(requireContext().getColor(R.color.light_purple))
+                // Update videos filter to white text (unselected)
+                videosFilterIcon?.setColorFilter(whiteColor)
+                videosFilterText?.setTextColor(whiteColor)
             }
             ContentType.VIDEO -> {
-                videosFilterButton.setBackgroundResource(R.drawable.filter_button_selected)
-                coursesFilterButton.setBackgroundResource(R.drawable.filter_button_unselected)
+                // Videos selected - glass selected style
+                videosFilterButton.setBackgroundResource(R.drawable.bg_glass_filter_button_selected)
+                coursesFilterButton.setBackgroundResource(R.drawable.bg_glass_filter_button_unselected)
                 
-                // Update text colors and icon tints for videos filter
-                val videosTextView = videosFilterButton.getChildAt(1) as? TextView
-                val videosIcon = videosFilterButton.getChildAt(0) as? ImageView
-                videosTextView?.setTextColor(requireContext().getColor(android.R.color.black))
-                videosIcon?.setColorFilter(requireContext().getColor(android.R.color.black))
+                // Update videos filter to dark text (selected)
+                videosFilterIcon?.setColorFilter(darkColor)
+                videosFilterText?.setTextColor(darkColor)
                 
-                // Update text colors and icon tints for courses filter
-                val coursesTextView = coursesFilterButton.getChildAt(1) as? TextView
-                val coursesIcon = coursesFilterButton.getChildAt(0) as? ImageView
-                coursesTextView?.setTextColor(requireContext().getColor(R.color.light_purple))
-                coursesIcon?.setColorFilter(requireContext().getColor(R.color.light_purple))
+                // Update courses filter to white text (unselected)
+                coursesFilterIcon?.setColorFilter(whiteColor)
+                coursesFilterText?.setTextColor(whiteColor)
             }
         }
         
@@ -1228,6 +1273,13 @@ class UserProfileViewFragment : Fragment() {
         super.onResume()
         // Cargar datos del usuario
         username?.let { loadUserData(it) }
+        
+        // Ensure bottom navigation remains visible and static
+        if (::bottomNavBinding.isInitialized) {
+            bottomNavBinding.root.visibility = View.VISIBLE
+            bottomNavBinding.root.translationY = 0f
+            bottomNavBinding.root.alpha = 1f
+        }
     }    override fun onPause() {
         super.onPause()
         // Stop any video playback when fragment is paused

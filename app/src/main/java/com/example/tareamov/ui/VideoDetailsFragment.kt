@@ -13,6 +13,7 @@ import android.widget.RadioGroup
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import eightbitlab.com.blurview.BlurView
 import eightbitlab.com.blurview.RenderScriptBlur
@@ -22,7 +23,6 @@ import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -161,19 +161,19 @@ class VideoDetailsFragment : Fragment() {
         // isPaidCourse is already updated by click listeners
 
         if (title.isBlank()) {
-            Toast.makeText(context, "Por favor ingresa un título", Toast.LENGTH_SHORT).show()
+            context?.let { Toast.makeText(it, "Por favor ingresa un título", Toast.LENGTH_SHORT).show() }
             return
         }
 
         // Get current username from SessionManager
         val currentUsername = sessionManager.getUsername()
         if (currentUsername == null) {
-            Toast.makeText(context, "Error: Usuario no autenticado", Toast.LENGTH_LONG).show()
+            context?.let { Toast.makeText(it, "Error: Usuario no autenticado", Toast.LENGTH_LONG).show() }
             return
         }
 
         // Update the existing video record instead of creating a new one
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 // Get user ID for foreign key
                 val userId = withContext(Dispatchers.IO) {
@@ -181,13 +181,13 @@ class VideoDetailsFragment : Fragment() {
                 }
 
                 if (userId == null || userId <= 0) {
-                    Toast.makeText(context, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show()
+                    if (isAdded) context?.let { Toast.makeText(it, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show() }
                     return@launch
                 }
 
-                val activity = requireActivity()
-                if (activity !is com.example.tareamov.MainActivity) {
-                    Toast.makeText(context, "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
+                val activity = activity as? com.example.tareamov.MainActivity
+                if (activity == null) {
+                    if (isAdded) context?.let { Toast.makeText(it, "Error: Contexto inválido", Toast.LENGTH_SHORT).show() }
                     return@launch
                 }
                 
@@ -198,7 +198,7 @@ class VideoDetailsFragment : Fragment() {
                 }
 
                 if (duplicateNew) {
-                    Toast.makeText(context, "Ya existe un video/curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
+                    if (isAdded) context?.let { Toast.makeText(it, "Ya existe un video/curso con este título. Elige otro título.", Toast.LENGTH_LONG).show() }
                     return@launch
                 }
 
@@ -229,7 +229,7 @@ class VideoDetailsFragment : Fragment() {
                 }
                 
                 if (courseRemoteId == null || courseRemoteId <= 0) {
-                    Toast.makeText(context, "Error creando el curso asociado", Toast.LENGTH_SHORT).show()
+                    if (isAdded) context?.let { Toast.makeText(it, "Error creando el curso asociado", Toast.LENGTH_SHORT).show() }
                     Log.e("VideoDetailsFragment", "Failed to create course - courseRemoteId: $courseRemoteId")
                     return@launch
                 }
@@ -257,19 +257,25 @@ class VideoDetailsFragment : Fragment() {
                 }
                 
                 if (remoteId != null && remoteId > 0) {
-                    Toast.makeText(context, "✅ Video guardado con ID $remoteId, Curso ID $courseRemoteId", Toast.LENGTH_LONG).show()
-                    Log.d("VideoDetailsFragment", "Video saved successfully with ID: $remoteId, linked to course: $courseRemoteId")
-                    
-                    // Navigate to VideoHomeFragment after creating video
-                    findNavController().navigate(R.id.action_videoDetailsFragment_to_videoHomeFragment)
+                    if (isAdded) {
+                        context?.let { Toast.makeText(it, "✅ Video guardado con ID $remoteId, Curso ID $courseRemoteId", Toast.LENGTH_LONG).show() }
+                        Log.d("VideoDetailsFragment", "Video saved successfully with ID: $remoteId, linked to course: $courseRemoteId")
+                        
+                        // Navigate to VideoHomeFragment after creating video
+                        try {
+                            findNavController().navigate(R.id.action_videoDetailsFragment_to_videoHomeFragment)
+                        } catch (navException: Exception) {
+                            Log.e("VideoDetailsFragment", "Navigation failed: ${navException.message}")
+                        }
+                    }
                 } else {
-                    Toast.makeText(context, "Error guardando video en Supabase", Toast.LENGTH_SHORT).show()
+                    if (isAdded) context?.let { Toast.makeText(it, "Error guardando video en Supabase", Toast.LENGTH_SHORT).show() }
                     Log.e("VideoDetailsFragment", "Failed to insert video - remoteId: $remoteId")
                     return@launch
                 }
             } catch (e: Exception) {
                 Log.e("VideoDetailsFragment", "Error saving video details", e)
-                Toast.makeText(context, "Error guardando video: ${e.message}", Toast.LENGTH_SHORT).show()
+                if (isAdded) context?.let { Toast.makeText(it, "Error guardando video: ${e.message}", Toast.LENGTH_SHORT).show() }
             }
         }
     }

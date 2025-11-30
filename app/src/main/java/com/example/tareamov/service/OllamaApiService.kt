@@ -23,9 +23,9 @@ interface OllamaApiService {
         
         fun create(): OllamaApiService {
             val client = OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(300, TimeUnit.SECONDS)  // Increased for RAG queries
-                .writeTimeout(120, TimeUnit.SECONDS)  // Increased for large RAG contexts
+                .connectTimeout(60, TimeUnit.SECONDS)
+                .readTimeout(600, TimeUnit.SECONDS)  // Increased for RAG queries with large context
+                .writeTimeout(300, TimeUnit.SECONDS)  // Increased for large RAG contexts
                 .build()
             
             val retrofit = Retrofit.Builder()

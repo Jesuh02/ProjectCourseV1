@@ -205,15 +205,16 @@ class ChatBotFragment : Fragment() {
     // Aumentar los timeouts para evitar que el chat cierre la espera antes de que el modelo responda
     private val microservicioApi: MicroservicioApi by lazy {
         val okHttpClient = okhttp3.OkHttpClient.Builder()
-            .connectTimeout(20, java.util.concurrent.TimeUnit.MINUTES)  // Aumentado a 20 minutos
-            .readTimeout(20, java.util.concurrent.TimeUnit.MINUTES)     // Aumentado a 20 minutos
-            .writeTimeout(20, java.util.concurrent.TimeUnit.MINUTES)    // Aumentado a 20 minutos
+            .connectTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 // Agregar el header X-API-Key a todas las peticiones al microservicio
                 val originalRequest = chain.request()
                 val requestWithApiKey = originalRequest.newBuilder()
                     .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
                     .header("Content-Type", "application/json")
+                    .header("Connection", "close") // Forzar cierre de conexión para evitar hangs
                     .build()
                 chain.proceed(requestWithApiKey)
             }

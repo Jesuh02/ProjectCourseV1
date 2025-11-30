@@ -252,7 +252,7 @@ class CourseAdapter(
         // Apply dark mode colors to text views
         applyDarkModeTextColors(holder)
 
-        // Set click listener with auto-enrollment for free courses
+        // Set click listener - OPTIMIZED: Navigate immediately, enroll in background
         holder.itemView.setOnClickListener {
             // Check if user is logged in
             if (currentUsername == null) {
@@ -269,12 +269,72 @@ class CourseAdapter(
                 return@setOnClickListener
             }
             
-            // If it's a free course and user is NOT the creator, auto-enroll before navigating
+            // OPTIMIZED: Navigate IMMEDIATELY, enroll in background if needed
+            onCourseClickListener(course)
+            
+            // If it's a free course and user is NOT the creator, auto-enroll in background
             if (!course.isPremium && course.price == 0.0 && !isCreator) {
-                autoEnrollAndNavigate(course)
-            } else {
-                // Premium course or user is creator, just navigate
-                onCourseClickListener(course)
+                backgroundEnroll(course)
+            }
+        }
+    }
+    
+    /**
+     * Enroll user in background without blocking navigation
+     */
+    private fun backgroundEnroll(course: Course) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                
+                // Get user ID from username (cached if possible)
+                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                if (userId == null) {
+                    Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
+                    return@launch
+                }
+                
+                // Check if already enrolled
+                val existingProgreso = db.progresoEstudianteDao().getProgreso(userId, course.id)
+                if (existingProgreso != null) {
+                    Log.d("CourseAdapter", "Already enrolled in course ${course.id}")
+                    return@launch
+                }
+                
+                // Ensure course exists in local DB
+                val existingCourse = db.courseDao().getCourseById(course.id)
+                if (existingCourse == null) {
+                    db.courseDao().insertCourse(course)
+                }
+                
+                // Get total tasks
+                val topics = db.topicDao().getTopicsByCourse(course.id)
+                val topicIds = topics.map { it.id }
+                val totalTasks = if (topicIds.isNotEmpty()) {
+                    db.taskDao().getTasksByTopicIds(topicIds).size
+                } else 0
+                
+                // Create progress record
+                val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
+                    usuarioEstudiante = userId,
+                    cursoId = course.id,
+                    tareasCompletadas = 0,
+                    tareasTotales = totalTasks,
+                    porcentajeProgreso = 0f,
+                    calificacionPonderada = null,
+                    promedio = null,
+                    estado = "Perdido",
+                    ultimaCalculadaEn = System.currentTimeMillis()
+                )
+                
+                db.progresoEstudianteDao().insertProgreso(progreso)
+                Log.d("CourseAdapter", "✅ Background enrolled in course ${course.id}")
+                
+                // Sync to Supabase in background
+                val syncRepo = createSyncRepository(db)
+                syncRepo.syncProgresoToSupabase(progreso)
+            } catch (e: Exception) {
+                Log.e("CourseAdapter", "Background enrollment failed", e)
             }
         }
     }
@@ -283,85 +343,9 @@ class CourseAdapter(
      * Auto-enroll user in a free course and navigate to course detail
      */
     private fun autoEnrollAndNavigate(course: Course) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val db = AppDatabase.getDatabase(context)
-                
-                // Get user ID from username
-                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
-                if (userId == null) {
-                    Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
-                    withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(context, "Error: Usuario no encontrado", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-                
-                // Check if already enrolled
-                val existingProgreso = db.progresoEstudianteDao().getProgreso(userId, course.id)
-                
-                if (existingProgreso == null) {
-                    // Ensure course exists in local DB
-                    val existingCourse = db.courseDao().getCourseById(course.id)
-                    if (existingCourse == null) {
-                        Log.d("CourseAdapter", "Course not in local DB, inserting: ${course.title}")
-                        db.courseDao().insertCourse(course)
-                    }
-                    
-                    // Get total tasks for this course
-                    val topics = db.topicDao().getTopicsByCourse(course.id)
-                    val topicIds = topics.map { it.id }
-                    val totalTasks = if (topicIds.isNotEmpty()) {
-                        db.taskDao().getTasksByTopicIds(topicIds).size
-                    } else {
-                        0
-                    }
-                    
-                    // Create initial progress record
-                    val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                        usuarioEstudiante = userId,
-                        cursoId = course.id,
-                        tareasCompletadas = 0,
-                        tareasTotales = totalTasks,
-                        porcentajeProgreso = 0f,
-                        calificacionPonderada = null,
-                        promedio = null,
-                        estado = "Perdido",
-                        ultimaCalculadaEn = System.currentTimeMillis()
-                    )
-                    
-                    // Save locally
-                    db.progresoEstudianteDao().insertProgreso(progreso)
-                    Log.d("CourseAdapter", "✅ Auto-enrolled $currentUsername in free course ${course.id}")
-                    
-                    // Sync to Supabase
-                    val syncRepo = createSyncRepository(db)
-                    val syncSuccess = syncRepo.syncProgresoToSupabase(progreso)
-                    
-                    withContext(Dispatchers.Main) {
-                        if (syncSuccess) {
-                            Log.d("CourseAdapter", "✅ Enrollment synced to Supabase")
-                            android.widget.Toast.makeText(context, "✅ ¡Inscrito automáticamente en ${course.title}!", android.widget.Toast.LENGTH_SHORT).show()
-                        } else {
-                            Log.w("CourseAdapter", "⚠️ Failed to sync enrollment to Supabase")
-                        }
-                        
-                        // Navigate after enrollment
-                        onCourseClickListener(course)
-                    }
-                } else {
-                    // Already enrolled, just navigate
-                    withContext(Dispatchers.Main) {
-                        onCourseClickListener(course)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("CourseAdapter", "❌ Error auto-enrolling in free course", e)
-                withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(context, "❌ Error al inscribirse: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
+        // DEPRECATED: Now using backgroundEnroll + immediate navigation
+        onCourseClickListener(course)
+        backgroundEnroll(course)
     }
     
     /**

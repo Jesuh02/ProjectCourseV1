@@ -906,38 +906,56 @@ class DatabaseQueryService(private val context: Context) {
     suspend fun generateDatabaseJson(): String = withContext(Dispatchers.IO) {
         try {
             val gson = Gson()
-            // Obtener datos de TODAS las 15 tablas
-            val usuarios = database.usuarioDao().getAllUsuarios()
-            val videos = database.videoDao().getAllVideos()
-            val topics = database.topicDao().getAllTopics()
-            val contentItems = database.contentItemDao().getAllContentItems()
-            val personas = database.personaDao().getAllPersonasList()
-            val tasks = database.taskDao().getAllTasks()
-            val subscriptions = database.subscriptionDao().getAllSubscriptions()
-            val taskSubmissions = database.taskSubmissionDao().getAllTaskSubmissions()
-            val chatMessages = database.chatMessageDao().getAllMessages().first()
-            val fileContexts = database.fileContextDao().getAllFileContexts().first()
-            val courses = database.courseDao().getAllCourses()
-            val roles = database.rolDao().getAllRoles()
-            val recursos = database.recursoDao().getAllRecursos()
-            val rolRecursos = database.rolRecursoDao().getAllRolRecursos()
-
             val json = JSONObject()
-            // Agregar TODAS las tablas al JSON
-            json.put("usuarios", JSONArray(gson.toJsonTree(usuarios).asJsonArray.toString()))
-            json.put("videos", JSONArray(gson.toJsonTree(videos).asJsonArray.toString()))
-            json.put("topics", JSONArray(gson.toJsonTree(topics).asJsonArray.toString()))
-            json.put("contentItems", JSONArray(gson.toJsonTree(contentItems).asJsonArray.toString()))
-            json.put("personas", JSONArray(gson.toJsonTree(personas).asJsonArray.toString()))
-            json.put("tasks", JSONArray(gson.toJsonTree(tasks).asJsonArray.toString()))
-            json.put("subscriptions", JSONArray(gson.toJsonTree(subscriptions).asJsonArray.toString()))
-            json.put("taskSubmissions", JSONArray(gson.toJsonTree(taskSubmissions).asJsonArray.toString()))
-            json.put("chatMessages", JSONArray(gson.toJsonTree(chatMessages).asJsonArray.toString()))
-            json.put("fileContexts", JSONArray(gson.toJsonTree(fileContexts).asJsonArray.toString()))
-            json.put("courses", JSONArray(gson.toJsonTree(courses).asJsonArray.toString()))
-            json.put("roles", JSONArray(gson.toJsonTree(roles).asJsonArray.toString()))
-            json.put("recursos", JSONArray(gson.toJsonTree(recursos).asJsonArray.toString()))
-            json.put("rolRecursos", JSONArray(gson.toJsonTree(rolRecursos).asJsonArray.toString()))
+            
+            // OPTIMIZATION: Do NOT load all data into memory. 
+            // Just provide schema and counts. The LLM should use tools to query data.
+            
+            // Statistics (Counts) - This is much lighter if DAOs support count, 
+            // but even getAll().size is better than serializing everything if we discard the list immediately.
+            // Ideally we should add count() methods to DAOs.
+            // For now, we assume we have to load lists to count, but we won't put them in JSON.
+            
+            val stats = JSONObject()
+            
+            // Helper to get count safely - suspend version
+            suspend fun getCount(loader: suspend () -> List<Any>): Int {
+                return try { loader().size } catch (e: Exception) { 0 }
+            }
+
+            stats.put("total_usuarios", getCount { database.usuarioDao().getAllUsuarios() })
+            stats.put("total_videos", getCount { database.videoDao().getAllVideos() })
+            stats.put("total_topics", getCount { database.topicDao().getAllTopics() })
+            stats.put("total_content_items", getCount { database.contentItemDao().getAllContentItems() })
+            stats.put("total_personas", getCount { database.personaDao().getAllPersonasList() })
+            stats.put("total_tasks", getCount { database.taskDao().getAllTasks() })
+            stats.put("total_subscriptions", getCount { database.subscriptionDao().getAllSubscriptions() })
+            stats.put("total_task_submissions", getCount { database.taskSubmissionDao().getAllTaskSubmissions() })
+            stats.put("total_chat_messages", getCount { database.chatMessageDao().getAllMessages().first() })
+            stats.put("total_file_contexts", getCount { database.fileContextDao().getAllFileContexts().first() })
+            stats.put("total_courses", getCount { database.courseDao().getAllCourses() })
+            stats.put("total_roles", getCount { database.rolDao().getAllRoles() })
+            stats.put("total_recursos", getCount { database.recursoDao().getAllRecursos() })
+            stats.put("total_rol_recursos", getCount { database.rolRecursoDao().getAllRolRecursos() })
+            
+            json.put("statistics", stats)
+
+            // Empty data lists to save memory/bandwidth
+            // The LLM must use tools to fetch actual data
+            json.put("usuarios", JSONArray())
+            json.put("videos", JSONArray())
+            json.put("topics", JSONArray())
+            json.put("contentItems", JSONArray())
+            json.put("personas", JSONArray())
+            json.put("tasks", JSONArray())
+            json.put("subscriptions", JSONArray())
+            json.put("taskSubmissions", JSONArray())
+            json.put("chatMessages", JSONArray())
+            json.put("fileContexts", JSONArray())
+            json.put("courses", JSONArray())
+            json.put("roles", JSONArray())
+            json.put("recursos", JSONArray())
+            json.put("rolRecursos", JSONArray())
 
             // Esquema completo de TODAS las tablas
             val schema = JSONObject()
@@ -956,24 +974,6 @@ class DatabaseQueryService(private val context: Context) {
             schema.put("recursos", "id, nombre, descripcion, tipo, url")
             schema.put("rolRecursos", "id, rol_id, recurso_id, puede_leer, puede_escribir, puede_eliminar")
             json.put("schema", schema)
-
-            // Agregar estadísticas de conteo
-            val stats = JSONObject()
-            stats.put("total_usuarios", usuarios.size)
-            stats.put("total_videos", videos.size)
-            stats.put("total_topics", topics.size)
-            stats.put("total_content_items", contentItems.size)
-            stats.put("total_personas", personas.size)
-            stats.put("total_tasks", tasks.size)
-            stats.put("total_subscriptions", subscriptions.size)
-            stats.put("total_task_submissions", taskSubmissions.size)
-            stats.put("total_chat_messages", chatMessages.size)
-            stats.put("total_file_contexts", fileContexts.size)
-            stats.put("total_courses", courses.size)
-            stats.put("total_roles", roles.size)
-            stats.put("total_recursos", recursos.size)
-            stats.put("total_rol_recursos", rolRecursos.size)
-            json.put("statistics", stats)
 
             return@withContext json.toString()
         } catch (e: Exception) {

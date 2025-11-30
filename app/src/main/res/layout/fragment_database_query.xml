@@ -42,32 +42,7 @@
             android:background="?android:attr/selectableItemBackgroundBorderless"
             app:tint="#FFFFFF"
             android:padding="8dp"
-            android:layout_marginEnd="8dp" />
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:background="@drawable/bg_user_indicator"
-            android:paddingHorizontal="8dp"
-            android:paddingVertical="4dp">
-            
-            <View
-                android:id="@+id/connectionIndicator"
-                android:layout_width="8dp"
-                android:layout_height="8dp"
-                android:background="@drawable/circle_shape"
-                android:backgroundTint="#4CAF50" />
-                
-            <TextView
-                android:id="@+id/connectionStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:text="Online"
-                android:textColor="#FFFFFF"
-                android:textSize="12sp" />
-        </LinearLayout>
+            android:layout_marginEnd="0dp" />
     </LinearLayout>
 
     <!-- Chat Area -->
@@ -271,16 +246,6 @@
                     android:indeterminateTint="#10A37F" />
             </FrameLayout>
         </LinearLayout>
-        
-        <TextView
-            android:id="@+id/modelInfo"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Llama 3.3 70B  RAG Enabled"
-            android:textColor="#444444"
-            android:textSize="10sp"
-            android:gravity="center"
-            android:paddingTop="4dp" />
     </LinearLayout>
 
     <!-- Hidden Views for Compatibility -->

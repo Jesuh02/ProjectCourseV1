@@ -3,5 +3,9 @@
     <style name="Base.Theme.CourseV" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- Customize your dark theme here. -->
         <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+        
+        <!-- Force dark colors for AppBarLayout to prevent white-out on scroll -->
+        <item name="appBarLayoutStyle">@style/Widget.App.AppBarLayout</item>
+        <item name="collapsingToolbarLayoutStyle">@style/Widget.App.CollapsingToolbar</item>
     </style>
 </resources>

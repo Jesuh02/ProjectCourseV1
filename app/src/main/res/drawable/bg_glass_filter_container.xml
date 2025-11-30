@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    
+    <!-- Dark glass background - prevents white-out on scroll -->
+    <solid android:color="#CC1A1A1A" />
+    
+    <!-- Smooth rounded corners like iOS -->
+    <corners android:radius="16dp" />
+    
+    <!-- Subtle border for glass edge effect -->
+    <stroke
+        android:width="0.5dp"
+        android:color="#40FFFFFF" />
+</shape>

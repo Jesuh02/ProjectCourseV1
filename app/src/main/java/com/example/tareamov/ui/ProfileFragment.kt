@@ -1,16 +1,22 @@
 package com.example.tareamov.ui 
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding 
 
+import android.animation.ObjectAnimator
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.cardview.widget.CardView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
@@ -32,6 +38,7 @@ class ProfileFragment : Fragment() {
     private lateinit var followersTextView: TextView
     private lateinit var profileImage: CircleImageView
     private lateinit var editProfileButton: Button
+    private lateinit var avatarContainer: FrameLayout
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -49,6 +56,7 @@ class ProfileFragment : Fragment() {
         followersTextView = view.findViewById(R.id.followersTextView)
         profileImage = view.findViewById(R.id.profileImage)
         editProfileButton = view.findViewById(R.id.editProfileButton)
+        avatarContainer = view.findViewById(R.id.avatarContainer)
 
         // Set up navigation for bottom buttons usando ComponentBottomNavigationBinding 
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
@@ -60,8 +68,7 @@ class ProfileFragment : Fragment() {
         // Resaltar solo el icono de perfil en morado
         bottomNavBinding.profileIconImageView.setColorFilter(
             androidx.core.content.ContextCompat.getColor(requireContext(), R.color.purple_500)
-        )        // Ocultar botón Admin si el usuario no es admin
-        // (Este código se mueve al método setupAdminButton)
+        )
 
         bottomNavBinding.homeNavLayout.setOnClickListener {
             findNavController().navigate(R.id.action_profileFragment_to_videoHomeFragment)
@@ -85,49 +92,93 @@ class ProfileFragment : Fragment() {
         // Load user data
         loadUserData()
 
-        // Set up edit profile button
-        // Update the editProfileButton click listener in onViewCreated method
+        // Set up edit profile button with animation
         editProfileButton.setOnClickListener {
+            animateButtonPress(it)
             findNavController().navigate(R.id.action_profileFragment_to_editProfileFragment)
         }
+
+        // Initial entrance animation
+        animateEntrance()
+    }
+
+    private fun animateEntrance() {
+        // Animate Avatar Pop
+        avatarContainer.alpha = 0f
+        avatarContainer.scaleX = 0.5f
+        avatarContainer.scaleY = 0.5f
+        avatarContainer.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(600)
+            .setInterpolator(OvershootInterpolator())
+            .start()
+
+        // Animate Text Fade In
+        val texts = listOf(usernameTextView, statusTextView, followersTextView)
+        texts.forEachIndexed { index, view ->
+            view.translationY = 50f
+            view.alpha = 0f
+            view.animate()
+                .translationY(0f)
+                .alpha(1f)
+                .setDuration(500)
+                .setStartDelay(200L + (index * 100))
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        }
+
+        // Animate Menu Groups Slide Up
+        view?.findViewById<LinearLayout>(R.id.menuContainer)?.let { container ->
+            for (i in 0 until container.childCount) {
+                val child = container.getChildAt(i)
+                child.translationY = 100f
+                child.alpha = 0f
+                child.animate()
+                    .translationY(0f)
+                    .alpha(1f)
+                    .setDuration(500)
+                    .setStartDelay(400L + (i * 100))
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+            }
+        }
+    }
+
+    private fun animateButtonPress(view: View) {
+        view.animate()
+            .scaleX(0.95f)
+            .scaleY(0.95f)
+            .setDuration(100)
+            .withEndAction {
+                view.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(100)
+                    .start()
+            }
+            .start()
     }
 
     // Eliminado: setupBottomNavigation(view) porque ahora se usa BottomNavigationBinding
 
     private fun setupMenuItems(view: View) {
-        // My Courses
-        view.findViewById<LinearLayout>(R.id.myChannelItem).setOnClickListener {
-            Toast.makeText(requireContext(), "Mis cursos", Toast.LENGTH_SHORT).show()
-        }
+        val menuItems = mapOf(
+            R.id.myChannelItem to "Mis cursos",
+            R.id.creatorDashboardItem to "Panel de control del creador",
+            R.id.analyticsItem to "Analíticas",
+            R.id.subscriptionsItem to "Suscripciones",
+            R.id.dropsItem to "Cursos gratuitos",
+            R.id.turboItem to "Premium",
+            R.id.accountSettingsItem to "Configuración de la cuenta"
+        )
 
-        // Creator Dashboard
-        view.findViewById<LinearLayout>(R.id.creatorDashboardItem).setOnClickListener {
-            Toast.makeText(requireContext(), "Panel de control del creador", Toast.LENGTH_SHORT).show()
-        }
-
-        // Analytics
-        view.findViewById<LinearLayout>(R.id.analyticsItem).setOnClickListener {
-            Toast.makeText(requireContext(), "Analíticas", Toast.LENGTH_SHORT).show()
-        }
-
-        // Subscriptions
-        view.findViewById<LinearLayout>(R.id.subscriptionsItem).setOnClickListener {
-            Toast.makeText(requireContext(), "Suscripciones", Toast.LENGTH_SHORT).show()
-        }
-
-        // Free Courses
-        view.findViewById<LinearLayout>(R.id.dropsItem).setOnClickListener {
-            Toast.makeText(requireContext(), "Cursos gratuitos", Toast.LENGTH_SHORT).show()
-        }
-
-        // Premium
-        view.findViewById<LinearLayout>(R.id.turboItem).setOnClickListener {
-            Toast.makeText(requireContext(), "Premium", Toast.LENGTH_SHORT).show()
-        }
-
-        // Account Settings
-        view.findViewById<LinearLayout>(R.id.accountSettingsItem).setOnClickListener {
-            Toast.makeText(requireContext(), "Configuración de la cuenta", Toast.LENGTH_SHORT).show()
+        menuItems.forEach { (id, message) ->
+            view.findViewById<LinearLayout>(id)?.setOnClickListener {
+                animateButtonPress(it)
+                Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+            }
         }
     }
 

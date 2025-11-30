@@ -1,91 +1,124 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="8dp"
-    app:cardCornerRadius="8dp"
-    app:cardElevation="4dp">
+    android:orientation="horizontal"
+    android:background="?attr/selectableItemBackground"
+    android:paddingHorizontal="20dp"
+    android:paddingVertical="14dp"
+    android:gravity="center_vertical">
 
-    <androidx.constraintlayout.widget.ConstraintLayout
-        android:layout_width="match_parent"
+    <!-- Avatar -->
+    <de.hdodenhof.circleimageview.CircleImageView
+        android:id="@+id/avatarImageView"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:src="@drawable/default_avatar"
+        app:civ_border_color="#3A3A3C"
+        app:civ_border_width="1dp" />
+
+    <!-- User Info -->
+    <LinearLayout
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:padding="16dp">
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="12dp">
 
-        <!-- Add avatar image view -->
-        <de.hdodenhof.circleimageview.CircleImageView
-            android:id="@+id/avatarImageView"
-            android:layout_width="60dp"
-            android:layout_height="60dp"
-            android:src="@drawable/default_avatar"
-            app:civ_border_color="#6200EE"
-            app:civ_border_width="1dp"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent" />
-
-        <TextView
-            android:id="@+id/nombreTextView"
-            android:layout_width="0dp"
+        <!-- Name -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            app:layout_constraintEnd_toStartOf="@+id/editButton"
-            app:layout_constraintStart_toEndOf="@+id/avatarImageView"
-            app:layout_constraintTop_toTopOf="parent" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
 
-        <TextView
-            android:id="@+id/apellidoTextView"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            app:layout_constraintEnd_toStartOf="@+id/editButton"
-            app:layout_constraintStart_toEndOf="@+id/avatarImageView"
-            app:layout_constraintTop_toBottomOf="@+id/nombreTextView" />
+            <TextView
+                android:id="@+id/nombreTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="17sp"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-medium"
+                android:maxLines="1"
+                android:ellipsize="end"
+                tools:text="Juan" />
 
+            <TextView
+                android:id="@+id/apellidoTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:textColor="#FFFFFF"
+                android:textSize="17sp"
+                android:fontFamily="sans-serif"
+                android:maxLines="1"
+                android:ellipsize="end"
+                tools:text="Pérez" />
+        </LinearLayout>
+
+        <!-- Email -->
         <TextView
             android:id="@+id/emailTextView"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="4dp"
-            app:layout_constraintEnd_toStartOf="@+id/editButton"
-            app:layout_constraintStart_toEndOf="@+id/avatarImageView"
-            app:layout_constraintTop_toBottomOf="@+id/apellidoTextView" />
+            android:textColor="#8E8E93"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif"
+            android:layout_marginTop="2dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            tools:text="juan.perez@email.com" />
 
+        <!-- Phone (optional subtitle) -->
         <TextView
             android:id="@+id/telefonoTextView"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="4dp"
-            app:layout_constraintEnd_toStartOf="@+id/editButton"
-            app:layout_constraintStart_toEndOf="@+id/avatarImageView"
-            app:layout_constraintTop_toBottomOf="@+id/emailTextView" />
+            android:textColor="#636366"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif"
+            android:layout_marginTop="2dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:visibility="gone"
+            tools:text="+1 234 567 8900" />
+    </LinearLayout>
 
+    <!-- Action Buttons -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <!-- Edit Button -->
         <ImageButton
             android:id="@+id/editButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Edit"
-            android:padding="8dp"
-            android:src="@android:drawable/ic_menu_edit"
-            app:layout_constraintEnd_toStartOf="@+id/deleteButton"
-            app:layout_constraintTop_toTopOf="parent" />
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_icon_button_apple"
+            android:contentDescription="Editar"
+            android:padding="10dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_edit"
+            app:tint="#8E8E93" />
 
+        <!-- Delete Button -->
         <ImageButton
             android:id="@+id/deleteButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Delete"
-            android:padding="8dp"
-            android:src="@android:drawable/ic_menu_delete"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent" />
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_icon_button_apple"
+            android:contentDescription="Eliminar"
+            android:padding="10dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_delete"
+            app:tint="#FF453A" />
+    </LinearLayout>
 
-    </androidx.constraintlayout.widget.ConstraintLayout>
-</androidx.cardview.widget.CardView>
+</LinearLayout>

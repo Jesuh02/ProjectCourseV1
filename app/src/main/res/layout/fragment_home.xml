@@ -1,160 +1,144 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#1A1A1A"
+    android:background="#000000"
+    android:fitsSystemWindows="true"
     tools:context=".ui.HomeFragment">
 
-    <!-- Header section with gradient background -->
-    <androidx.cardview.widget.CardView
-        android:id="@+id/headerCard"
+    <!-- Scrollable Content -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/scrollView"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        app:layout_constraintHeight_percent="0.20"
-        app:layout_constraintTop_toTopOf="parent"
-        app:cardCornerRadius="0dp"
-        app:cardElevation="8dp"
-        android:layout_marginBottom="8dp">
-        
-        <LinearLayout
-            android:id="@+id/headerBackground"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="@drawable/gradient_header_background"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:padding="24dp">
-
-            <ImageView
-                android:id="@+id/logoImageView"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:src="@drawable/ic_person_outline"
-                android:tint="#FFFFFF"
-                android:layout_marginBottom="8dp"
-                android:contentDescription="Logo" />
-
-            <TextView
-                android:id="@+id/welcomeTextView"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="GESTIÓN DE USUARIOS"
-                android:textColor="#FFFFFF"
-                android:textSize="22sp"
-                android:textStyle="bold"
-                android:letterSpacing="0.05"
-                android:layout_marginBottom="4dp" />
-
-            <TextView
-                android:id="@+id/instructionsTextView"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Sistema de administración"
-                android:textColor="#E1D5E7"
-                android:textSize="14sp"
-                android:alpha="0.9" />
-        </LinearLayout>
-    </androidx.cardview.widget.CardView>
-
-    <!-- Enhanced Search Section -->
-    <androidx.cardview.widget.CardView
-        android:id="@+id/searchCardView"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="20dp"
-        android:layout_marginTop="20dp"
-        android:layout_marginEnd="20dp"
-        app:cardCornerRadius="16dp"
-        app:cardElevation="12dp"
-        app:cardBackgroundColor="#2A2A2A"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/headerCard">
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:overScrollMode="never">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="24dp">
+            android:paddingBottom="100dp">
 
+            <!-- Hero Header Section -->
             <LinearLayout
+                android:id="@+id/headerSection"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="16dp"
-                android:background="@drawable/gradient_header_background"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp">
+                android:orientation="vertical"
+                android:background="@drawable/bg_home_header_apple"
+                android:paddingTop="60dp"
+                android:paddingBottom="32dp"
+                android:paddingHorizontal="24dp"
+                android:animateLayoutChanges="true">
 
-                <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:src="@drawable/ic_search"
-                    android:tint="#9C27B0"
-                    android:layout_marginEnd="12dp" />
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Buscar Usuarios"
-                    android:textColor="#FFFFFF"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="🔍"
-                    android:textSize="16sp" />
-            </LinearLayout>
-
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/searchLayout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Buscar por cédula, nombre o usuario..."
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                app:hintTextColor="#FFFFFF"
-                app:boxStrokeColor="#9C27B0"
-                app:boxStrokeWidth="2dp"
-                app:boxCornerRadiusTopStart="12dp"
-                app:boxCornerRadiusTopEnd="12dp"
-                app:boxCornerRadiusBottomStart="12dp"
-                app:boxCornerRadiusBottomEnd="12dp"
-                app:startIconDrawable="@drawable/ic_person_search"
-                app:startIconTint="#9C27B0"
-                app:endIconMode="clear_text"
-                app:endIconTint="#9C27B0">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/searchEditText"
+                <!-- Title Row -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textColor="#FFFFFF"
-                    android:textColorHint="#FFFFFF"
-                    android:textSize="16sp"
-                    android:inputType="text"
-                    android:imeOptions="actionSearch"
-                    android:maxLines="1" />
-            </com.google.android.material.textfield.TextInputLayout>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
 
-            <!-- Statistics Row -->
+                    <TextView
+                        android:id="@+id/welcomeTextView"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Usuarios"
+                        android:textColor="#FFFFFF"
+                        android:textSize="34sp"
+                        android:textStyle="bold"
+                        android:fontFamily="sans-serif-medium"
+                        android:letterSpacing="-0.02" />
+
+                    <!-- Profile Avatar -->
+                    <de.hdodenhof.circleimageview.CircleImageView
+                        android:id="@+id/adminAvatar"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:src="@drawable/ic_person"
+                        app:civ_border_color="#BF5AF2"
+                        app:civ_border_width="2dp" />
+                </LinearLayout>
+
+                <!-- Subtitle -->
+                <TextView
+                    android:id="@+id/instructionsTextView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Gestión del sistema"
+                    android:textColor="#8E8E93"
+                    android:textSize="17sp"
+                    android:fontFamily="sans-serif"
+                    android:layout_marginBottom="24dp" />
+
+                <!-- Search Bar - Apple Style -->
+                <LinearLayout
+                    android:id="@+id/searchContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:background="@drawable/bg_search_field_apple"
+                    android:paddingHorizontal="16dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_search"
+                        app:tint="#8E8E93"
+                        android:layout_marginEnd="12dp"
+                        android:contentDescription="Buscar" />
+
+                    <EditText
+                        android:id="@+id/searchEditText"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@android:color/transparent"
+                        android:hint="Buscar usuarios..."
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#8E8E93"
+                        android:textSize="17sp"
+                        android:fontFamily="sans-serif"
+                        android:inputType="text"
+                        android:imeOptions="actionSearch"
+                        android:maxLines="1"
+                        android:importantForAutofill="no" />
+
+                    <ImageView
+                        android:id="@+id/clearSearchButton"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_close"
+                        app:tint="#8E8E93"
+                        android:visibility="gone"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Limpiar búsqueda" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Stats Section -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginTop="16dp"
-                android:gravity="center">
+                android:paddingHorizontal="20dp"
+                android:paddingTop="20dp"
+                android:paddingBottom="8dp">
 
+                <!-- Total Users Card -->
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
                     android:orientation="vertical"
+                    android:background="@drawable/bg_stat_card_apple"
+                    android:padding="20dp"
                     android:gravity="center">
 
                     <TextView
@@ -162,28 +146,36 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="0"
-                        android:textColor="#BB86FC"
-                        android:textSize="20sp"
-                        android:textStyle="bold" />
+                        android:textColor="#FFFFFF"
+                        android:textSize="32sp"
+                        android:textStyle="bold"
+                        android:fontFamily="sans-serif-medium" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Total"
-                        android:textColor="#B19CD9"
-                        android:textSize="12sp" />
+                        android:textColor="#8E8E93"
+                        android:textSize="13sp"
+                        android:fontFamily="sans-serif"
+                        android:layout_marginTop="4dp" />
+
+                    <View
+                        android:layout_width="40dp"
+                        android:layout_height="3dp"
+                        android:layout_marginTop="12dp"
+                        android:background="#BF5AF2" />
                 </LinearLayout>
 
-                <View
-                    android:layout_width="1dp"
-                    android:layout_height="40dp"
-                    android:background="#444444" />
-
+                <!-- Active Users Card -->
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:layout_marginStart="8dp"
                     android:orientation="vertical"
+                    android:background="@drawable/bg_stat_card_apple"
+                    android:padding="20dp"
                     android:gravity="center">
 
                     <TextView
@@ -191,145 +183,179 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="0"
-                        android:textColor="#4CAF50"
-                        android:textSize="20sp"
-                        android:textStyle="bold" />
+                        android:textColor="#FFFFFF"
+                        android:textSize="32sp"
+                        android:textStyle="bold"
+                        android:fontFamily="sans-serif-medium" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Activos"
-                        android:textColor="#B19CD9"
-                        android:textSize="12sp" />
+                        android:textColor="#8E8E93"
+                        android:textSize="13sp"
+                        android:fontFamily="sans-serif"
+                        android:layout_marginTop="4dp" />
+
+                    <View
+                        android:layout_width="40dp"
+                        android:layout_height="3dp"
+                        android:layout_marginTop="12dp"
+                        android:background="#30D158" />
                 </LinearLayout>
             </LinearLayout>
+
+            <!-- Users List Section -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="16dp"
+                android:paddingHorizontal="20dp">
+
+                <!-- Section Header -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:background="@drawable/bg_list_header_apple"
+                    android:paddingHorizontal="20dp"
+                    android:paddingVertical="16dp">
+
+                    <ImageView
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:src="@drawable/ic_users_apple"
+                        app:tint="#BF5AF2"
+                        android:layout_marginEnd="12dp"
+                        android:contentDescription="Usuarios" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Lista de Usuarios"
+                        android:textColor="#FFFFFF"
+                        android:textSize="17sp"
+                        android:textStyle="bold"
+                        android:fontFamily="sans-serif-medium" />
+
+                    <TextView
+                        android:id="@+id/resultsCountText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0"
+                        android:textColor="#8E8E93"
+                        android:textSize="15sp"
+                        android:fontFamily="sans-serif"
+                        android:background="@drawable/bg_stat_card_apple"
+                        android:paddingHorizontal="12dp"
+                        android:paddingVertical="6dp" />
+                </LinearLayout>
+
+                <!-- RecyclerView Container -->
+                <androidx.cardview.widget.CardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:cardBackgroundColor="#1C1C1E"
+                    app:cardCornerRadius="0dp"
+                    app:cardElevation="0dp">
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/recyclerView"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="300dp"
+                        android:nestedScrollingEnabled="false"
+                        android:clipToPadding="false"
+                        android:paddingVertical="8dp"
+                        android:overScrollMode="never"
+                        tools:listitem="@layout/item_persona" />
+                </androidx.cardview.widget.CardView>
+
+                <!-- Bottom rounded corners -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="16dp"
+                    android:background="@drawable/bg_list_bottom_corners" />
+            </LinearLayout>
+
+            <!-- Empty State -->
+            <LinearLayout
+                android:id="@+id/emptyStateLayout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone"
+                android:paddingHorizontal="40dp"
+                android:paddingVertical="60dp"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/bg_card_apple_glass">
+
+                <!-- Icon Container -->
+                <FrameLayout
+                    android:layout_width="100dp"
+                    android:layout_height="100dp"
+                    android:background="@drawable/bg_empty_state_icon"
+                    android:layout_marginBottom="24dp">
+
+                    <ImageView
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_person_off"
+                        app:tint="#48484A"
+                        android:contentDescription="Sin usuarios" />
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Sin usuarios"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Agrega el primer usuario\npara comenzar"
+                    android:textColor="#8E8E93"
+                    android:textSize="15sp"
+                    android:fontFamily="sans-serif"
+                    android:gravity="center"
+                    android:lineSpacingExtra="4dp" />
+            </LinearLayout>
+
         </LinearLayout>
-    </androidx.cardview.widget.CardView>
+    </androidx.core.widget.NestedScrollView>
 
-    <!-- Enhanced RecyclerView with header -->
-    <LinearLayout
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_marginTop="20dp"
-        android:layout_marginStart="20dp"
-        android:layout_marginEnd="20dp"
-        android:layout_marginBottom="20dp"
-        android:orientation="vertical"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/searchCardView">
-
-        <!-- List Header -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="16dp"
-            android:gravity="center_vertical"
-            android:background="#333333"
-            android:layout_marginBottom="8dp">
-
-            <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_list"
-                android:tint="#BB86FC"
-                android:layout_marginEnd="8dp" />
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Lista de Usuarios"
-                android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/resultsCountText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="0 usuarios"
-                android:textColor="#B19CD9"
-                android:textSize="12sp"
-                android:background="#444444"
-                android:padding="4dp"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp" />
-        </LinearLayout>
-
-        <!-- RecyclerView with enhanced styling -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/recyclerView"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:background="#1E1E1E"
-            android:clipToPadding="false"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp"
-            android:scrollbars="vertical"
-            android:scrollbarStyle="outsideOverlay"
-            android:scrollbarThumbVertical="@drawable/scrollbar_thumb"
-            android:fadeScrollbars="false"
-            tools:listitem="@layout/item_persona" />
-
-        <!-- Empty State -->
-        <LinearLayout
-            android:id="@+id/emptyStateLayout"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:visibility="gone"
-            android:padding="32dp">
-
-            <ImageView
-                android:layout_width="80dp"
-                android:layout_height="80dp"
-                android:src="@drawable/ic_person_off"
-                android:tint="#555555"
-                android:alpha="0.6"
-                android:layout_marginBottom="16dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="No hay usuarios para mostrar"
-                android:textColor="#777777"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="8dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Agrega el primer usuario usando el botón +"
-                android:textColor="#555555"
-                android:textSize="14sp"
-                android:textAlignment="center" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <!-- Enhanced FAB with better positioning -->
-    <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+    <!-- Floating Action Button - Apple Style -->
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/addPersonFab"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_height="56dp"
+        android:layout_gravity="bottom|end"
         android:layout_margin="24dp"
-        android:backgroundTint="#9C27B0"
-        android:text="Agregar Usuario"
+        android:background="@drawable/bg_fab_apple"
+        app:backgroundTint="@null"
+        android:text="Agregar"
         android:textColor="#FFFFFF"
+        android:textSize="17sp"
         android:textStyle="bold"
-        app:icon="@drawable/ic_person_add"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0"
+        android:stateListAnimator="@null"
+        app:icon="@drawable/ic_add"
         app:iconTint="#FFFFFF"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
+        app:iconSize="24dp"
+        app:iconPadding="8dp"
         app:elevation="8dp"
-        app:hoveredFocusedTranslationZ="12dp"
-        app:pressedTranslationZ="16dp"
         android:contentDescription="Agregar nuevo usuario" />
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

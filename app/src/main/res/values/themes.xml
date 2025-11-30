@@ -3,7 +3,25 @@
     <style name="Base.Theme.CourseV" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- Customize your light theme here. -->
         <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+        
+        <!-- Force dark colors for AppBarLayout to prevent white-out on scroll -->
+        <item name="appBarLayoutStyle">@style/Widget.App.AppBarLayout</item>
+        <item name="collapsingToolbarLayoutStyle">@style/Widget.App.CollapsingToolbar</item>
     </style>
 
     <style name="Theme.CourseV" parent="Base.Theme.CourseV" />
+    
+    <!-- Custom AppBarLayout style to prevent white background on scroll -->
+    <style name="Widget.App.AppBarLayout" parent="Widget.Material3.AppBarLayout">
+        <item name="android:background">#000000</item>
+        <item name="liftOnScroll">false</item>
+        <item name="elevation">0dp</item>
+    </style>
+    
+    <!-- Custom CollapsingToolbar style -->
+    <style name="Widget.App.CollapsingToolbar" parent="Widget.Material3.CollapsingToolbar">
+        <item name="android:background">#000000</item>
+        <item name="contentScrim">#000000</item>
+        <item name="statusBarScrim">#000000</item>
+    </style>
 </resources>

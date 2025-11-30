@@ -54,7 +54,7 @@
 
     <string name="default_username">Usuario</string>
     <string name="status_offline">Desconectado</string>
-    <string name="followers_count">%d seguidores</string>
+    <string name="followers_count">%d suscriptores</string>
 
     <!-- Course Topic Fragment -->
     <string name="add_video_button_desc">Botón para agregar un video desde la galería</string>

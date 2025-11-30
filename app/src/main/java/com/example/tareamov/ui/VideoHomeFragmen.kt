@@ -851,7 +851,7 @@ class VideoHomeFragment : Fragment() {
     
     private fun setupSearchBar(view: View) {
         val toggleSearchButton = view.findViewById<ImageButton>(R.id.toggleSearchButton)
-        val topNavTabs = view.findViewById<LinearLayout>(R.id.topNavTabs)
+        val topNavTabs = view.findViewById<ViewGroup>(R.id.topNavTabs)
         val searchBarContainer = view.findViewById<BlurView>(R.id.searchBarContainer)
         val searchEditText = view.findViewById<EditText>(R.id.searchEditText)
         // searchButton removed as per design
@@ -873,7 +873,7 @@ class VideoHomeFragment : Fragment() {
         
         searchBarContainer.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: android.graphics.Outline) {
-                val cornerRadius = view.context.resources.displayMetrics.density * 24 // 24dp
+                val cornerRadius = view.context.resources.displayMetrics.density * 16 // 16dp
                 outline.setRoundRect(0, 0, view.width, view.height, cornerRadius)
             }
         }

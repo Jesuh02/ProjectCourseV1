@@ -73,6 +73,12 @@ class AIAnalysisService(private val context: Context) {
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .readTimeout(60, TimeUnit.SECONDS)
                     .writeTimeout(60, TimeUnit.SECONDS)
+                    .addInterceptor { chain ->
+                        val request = chain.request().newBuilder()
+                            .header("Connection", "close")
+                            .build()
+                        chain.proceed(request)
+                    }
                     .addInterceptor(HttpLoggingInterceptor().apply {
                         level = HttpLoggingInterceptor.Level.HEADERS // Reducir logging para mejor rendimiento
                     })
@@ -574,6 +580,12 @@ class AIAnalysisService(private val context: Context) {
                         .connectTimeout(15, TimeUnit.SECONDS)
                         .readTimeout(15, TimeUnit.SECONDS)
                         .writeTimeout(15, TimeUnit.SECONDS)
+                        .addInterceptor { chain ->
+                            val request = chain.request().newBuilder()
+                                .header("Connection", "close")
+                                .build()
+                            chain.proceed(request)
+                        }
                         .build())
                     .addConverterFactory(GsonConverterFactory.create())
                     .build()
@@ -626,6 +638,12 @@ class AIAnalysisService(private val context: Context) {
                                 .connectTimeout(10, TimeUnit.SECONDS)
                                 .readTimeout(10, TimeUnit.SECONDS)
                                 .writeTimeout(10, TimeUnit.SECONDS)
+                                .addInterceptor { chain ->
+                                    val request = chain.request().newBuilder()
+                                        .header("Connection", "close")
+                                        .build()
+                                    chain.proceed(request)
+                                }
                                 .build())
                             .addConverterFactory(GsonConverterFactory.create())
                             .build()
@@ -688,6 +706,12 @@ class AIAnalysisService(private val context: Context) {
                     .connectTimeout(10, TimeUnit.SECONDS) // Aumentado a 10 segundos
                     .readTimeout(15, TimeUnit.SECONDS)    // Aumentado a 15 segundos
                     .writeTimeout(15, TimeUnit.SECONDS)   // Aumentado a 15 segundos
+                    .addInterceptor { chain ->
+                        val request = chain.request().newBuilder()
+                            .header("Connection", "close")
+                            .build()
+                        chain.proceed(request)
+                    }
                     .build()
 
                 val testApi = Retrofit.Builder()

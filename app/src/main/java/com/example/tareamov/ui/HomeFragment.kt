@@ -26,10 +26,10 @@ import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.viewmodel.AuthViewModel
 import com.example.tareamov.viewmodel.PersonaViewModel
+import android.widget.EditText
+import android.widget.ImageView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
-import com.google.android.material.textfield.TextInputEditText
-import com.google.android.material.textfield.TextInputLayout
+import com.google.android.material.button.MaterialButton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -39,12 +39,14 @@ class HomeFragment : Fragment(), PersonaAdapter.OnItemClickListener {
     private lateinit var welcomeTextView: TextView
     private lateinit var instructionsTextView: TextView
     private lateinit var recyclerView: RecyclerView
-    private lateinit var addPersonFab: ExtendedFloatingActionButton
-    private lateinit var searchEditText: TextInputEditText
+    private lateinit var addPersonFab: MaterialButton
+    private lateinit var searchEditText: EditText
+    private lateinit var clearSearchButton: ImageView
     private lateinit var totalUsersCount: TextView
     private lateinit var activeUsersCount: TextView
     private lateinit var resultsCountText: TextView
     private lateinit var emptyStateLayout: LinearLayout
+    private var headerSection: View? = null
 
     // Add animation properties
     private lateinit var fabOpen: Animation
@@ -71,10 +73,12 @@ class HomeFragment : Fragment(), PersonaAdapter.OnItemClickListener {
         recyclerView = view.findViewById(R.id.recyclerView)
         addPersonFab = view.findViewById(R.id.addPersonFab)
         searchEditText = view.findViewById(R.id.searchEditText)
+        clearSearchButton = view.findViewById(R.id.clearSearchButton)
         totalUsersCount = view.findViewById(R.id.totalUsersCount)
         activeUsersCount = view.findViewById(R.id.activeUsersCount)
         resultsCountText = view.findViewById(R.id.resultsCountText)
         emptyStateLayout = view.findViewById(R.id.emptyStateLayout)
+        headerSection = view.findViewById(R.id.headerSection)
 
         return view
     }
@@ -120,36 +124,43 @@ class HomeFragment : Fragment(), PersonaAdapter.OnItemClickListener {
             updateEmptyState(personas)
         }
 
-        // Set default welcome messages
-        welcomeTextView.text = "GESTIÓN DE USUARIOS"
-        instructionsTextView.text = "Sistema de administración"
+        // Set default welcome messages (Apple style - large title)
+        welcomeTextView.text = "Usuarios"
+        instructionsTextView.text = "Gestión del sistema"
+
+        // Apply entrance animations
+        applyEntranceAnimations()
 
         // Update welcome message with user's name if available
         // Observe currentUserId LiveData from AuthViewModel
-        authViewModel.currentUserId.observe(viewLifecycleOwner) { userId -> // This is line 144
-            if (userId != null && userId > 0) { // Check for null and ensure userId is valid
-                // Use a coroutine to fetch the persona by ID
-                lifecycleScope.launch { // Use lifecycleScope for Fragment coroutines
+        authViewModel.currentUserId.observe(viewLifecycleOwner) { userId ->
+            if (userId != null && userId > 0) {
+                lifecycleScope.launch {
                     try {
-                        val persona = withContext(Dispatchers.IO) { // Switch to IO dispatcher for DB call
+                        val persona = withContext(Dispatchers.IO) {
                             personaViewModel.getPersonaByIdSync(userId)
                         }
-                        // Switch back to Main dispatcher is implicit with lifecycleScope.launch for UI updates
                         if (persona != null) {
-                            welcomeTextView.text = "Bienvenido, ${persona.nombres}"
-                            instructionsTextView.text = "Panel de administración de usuarios"
+                            // Animate text change
+                            welcomeTextView.animate()
+                                .alpha(0f)
+                                .setDuration(150)
+                                .withEndAction {
+                                    welcomeTextView.text = "Hola, ${persona.nombres}"
+                                    welcomeTextView.animate().alpha(1f).setDuration(200).start()
+                                }
+                                .start()
+                            instructionsTextView.text = "Panel de administración"
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
-                        // Optionally, show a default message or handle the error in UI
-                        welcomeTextView.text = "GESTIÓN DE USUARIOS"
-                        instructionsTextView.text = "Sistema de administración"
+                        welcomeTextView.text = "Usuarios"
+                        instructionsTextView.text = "Gestión del sistema"
                     }
                 }
             } else {
-                // Handle case where userId is null or not valid (e.g., show default messages)
-                welcomeTextView.text = "GESTIÓN DE USUARIOS"
-                instructionsTextView.text = "Sistema de administración"
+                welcomeTextView.text = "Usuarios"
+                instructionsTextView.text = "Gestión del sistema"
             }
         }
 
@@ -162,13 +173,36 @@ class HomeFragment : Fragment(), PersonaAdapter.OnItemClickListener {
         searchEditText.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
 
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                // Show/hide clear button with animation
+                val hasText = !s.isNullOrEmpty()
+                if (hasText && clearSearchButton.visibility != View.VISIBLE) {
+                    clearSearchButton.visibility = View.VISIBLE
+                    clearSearchButton.alpha = 0f
+                    clearSearchButton.animate()
+                        .alpha(1f)
+                        .setDuration(200)
+                        .start()
+                } else if (!hasText && clearSearchButton.visibility == View.VISIBLE) {
+                    clearSearchButton.animate()
+                        .alpha(0f)
+                        .setDuration(150)
+                        .withEndAction { clearSearchButton.visibility = View.GONE }
+                        .start()
+                }
+            }
 
             override fun afterTextChanged(s: Editable?) {
                 // Filter when text changes
                 filterPersonas(s.toString())
             }
         })
+        
+        // Clear search button click
+        clearSearchButton.setOnClickListener {
+            searchEditText.text.clear()
+            searchEditText.clearFocus()
+        }
     }
 
     private fun filterPersonas(query: String) {
@@ -220,22 +254,61 @@ class HomeFragment : Fragment(), PersonaAdapter.OnItemClickListener {
         val totalCount = personas.size
         val activeCount = personas.count { it.esUsuario }
         
-        totalUsersCount.text = totalCount.toString()
-        activeUsersCount.text = activeCount.toString()
-        resultsCountText.text = "$totalCount usuarios"
+        // Animate count changes
+        animateCountChange(totalUsersCount, totalCount)
+        animateCountChange(activeUsersCount, activeCount)
+        resultsCountText.text = totalCount.toString()
+    }
+    
+    private fun animateCountChange(textView: TextView, newValue: Int) {
+        val currentValue = textView.text.toString().toIntOrNull() ?: 0
+        if (currentValue != newValue) {
+            textView.animate()
+                .scaleX(1.1f)
+                .scaleY(1.1f)
+                .setDuration(100)
+                .withEndAction {
+                    textView.text = newValue.toString()
+                    textView.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(100)
+                        .start()
+                }
+                .start()
+        } else {
+            textView.text = newValue.toString()
+        }
     }
 
     private fun updateResultsCount(count: Int) {
-        resultsCountText.text = "$count usuarios"
+        resultsCountText.text = count.toString()
     }
 
     private fun updateEmptyState(personas: List<Persona>) {
         if (personas.isEmpty()) {
             recyclerView.visibility = View.GONE
-            emptyStateLayout.visibility = View.VISIBLE
+            if (emptyStateLayout.visibility != View.VISIBLE) {
+                emptyStateLayout.visibility = View.VISIBLE
+                emptyStateLayout.alpha = 0f
+                emptyStateLayout.translationY = 20f
+                emptyStateLayout.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(300)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .start()
+            }
         } else {
+            if (emptyStateLayout.visibility == View.VISIBLE) {
+                emptyStateLayout.animate()
+                    .alpha(0f)
+                    .translationY(20f)
+                    .setDuration(200)
+                    .withEndAction { emptyStateLayout.visibility = View.GONE }
+                    .start()
+            }
             recyclerView.visibility = View.VISIBLE
-            emptyStateLayout.visibility = View.GONE
         }
     }
 
@@ -347,5 +420,73 @@ class HomeFragment : Fragment(), PersonaAdapter.OnItemClickListener {
             addPersonFab.startAnimation(rotateForward)
             isFabOpen = true
         }
+    }
+    
+    /**
+     * Apply elegant entrance animations (Apple-style staggered reveal)
+     */
+    private fun applyEntranceAnimations() {
+        // Header slide down
+        headerSection?.let { header ->
+            header.alpha = 0f
+            header.translationY = -30f
+            header.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(400)
+                .setInterpolator(android.view.animation.DecelerateInterpolator(1.5f))
+                .start()
+        }
+        
+        // Stats cards fade in with stagger
+        totalUsersCount.parent?.parent?.let { statCard ->
+            if (statCard is View) {
+                statCard.alpha = 0f
+                statCard.translationY = 20f
+                statCard.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(350)
+                    .setStartDelay(150)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .start()
+            }
+        }
+        
+        activeUsersCount.parent?.parent?.let { statCard ->
+            if (statCard is View) {
+                statCard.alpha = 0f
+                statCard.translationY = 20f
+                statCard.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(350)
+                    .setStartDelay(200)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .start()
+            }
+        }
+        
+        // RecyclerView fade in
+        recyclerView.alpha = 0f
+        recyclerView.translationY = 30f
+        recyclerView.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(400)
+            .setStartDelay(300)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .start()
+        
+        // FAB spring animation
+        addPersonFab.scaleX = 0f
+        addPersonFab.scaleY = 0f
+        addPersonFab.animate()
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(400)
+            .setStartDelay(400)
+            .setInterpolator(android.view.animation.OvershootInterpolator(1.2f))
+            .start()
     }
 }

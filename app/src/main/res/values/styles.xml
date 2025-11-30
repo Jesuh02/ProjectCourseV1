@@ -77,4 +77,10 @@
     <style name="CustomBottomSheet" parent="Widget.Design.BottomSheet.Modal">
         <item name="android:background">@android:color/transparent</item>
     </style>
+
+    <!-- Apple-style FAB shape -->
+    <style name="ShapeAppearance_App_Fab_Apple" parent="ShapeAppearance.MaterialComponents.SmallComponent">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">28dp</item>
+    </style>
 </resources>

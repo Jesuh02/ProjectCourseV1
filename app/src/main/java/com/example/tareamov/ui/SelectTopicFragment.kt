@@ -1,17 +1,23 @@
 package com.example.tareamov.ui
 
+import android.animation.ObjectAnimator
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.Toast
-import android.widget.TextView // ++ Add this import ++
+import android.widget.TextView
+import androidx.cardview.widget.CardView
+import androidx.core.view.ViewCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.ViewModelProvider
-import com.example.tareamov.viewmodel.SelectTopicViewModel // Import ViewModel
+import com.example.tareamov.viewmodel.SelectTopicViewModel
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -57,34 +63,44 @@ class SelectTopicFragment : Fragment() {
     ): View? {
         val view = inflater.inflate(R.layout.fragment_select_topic, container, false)
 
-        topicsRecyclerView = view.findViewById(R.id.topicsRecyclerView) // Ensure this ID exists in XML
-        val backButton = view.findViewById<ImageButton>(R.id.backButton) // Ensure this ID exists in XML
-        // !! Ensure these IDs exist in fragment_select_topic.xml !!
+        topicsRecyclerView = view.findViewById(R.id.topicsRecyclerView)
+        val backButton = view.findViewById<ImageButton>(R.id.backButton)
         val courseTitleTextView = view.findViewById<TextView>(R.id.selectTopicCourseTitle)
         val noTopicsTextView = view.findViewById<TextView>(R.id.noTopicsSelectionTextView)
+        val emptyStateLayout = view.findViewById<LinearLayout>(R.id.emptyStateLayout)
+        val topBarCard = view.findViewById<CardView>(R.id.topBarCard)
+        val courseTitleCard = view.findViewById<CardView>(R.id.courseTitleCard)
+        val sectionHeader = view.findViewById<TextView>(R.id.sectionHeader)
 
-        courseTitleTextView.text = "Seleccionar Tema para Tarea en: ${courseName ?: "Curso"}" // This should work now
+        // Set course title
+        courseTitleTextView.text = courseName ?: "Curso"
 
+        // Back button with haptic feedback
         backButton.setOnClickListener {
+            it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+            animateButtonPress(it)
             findNavController().navigateUp()
         }
 
-        setupRecyclerView() // Call setup function
+        // Apply entrance animations
+        applyEntranceAnimations(topBarCard, courseTitleCard, sectionHeader, topicsRecyclerView)
+
+        setupRecyclerView()
 
         // Observe the topics LiveData from the ViewModel
         viewModel.topics.observe(viewLifecycleOwner) { topics ->
             // Update the adapter with the new list of topics
-            topicSelectionAdapter.submitList(topics ?: emptyList()) // Use submitList (requires ListAdapter change below)
+            topicSelectionAdapter.submitList(topics ?: emptyList())
 
-            // Show/hide 'no topics' message
+            // Show/hide 'no topics' message with animation
             if (topics.isNullOrEmpty()) {
                 Log.d("SelectTopicFragment", "No topics found for course $courseId")
-                topicsRecyclerView.visibility = View.GONE // This should work now
-                noTopicsTextView.visibility = View.VISIBLE
+                animateFadeOut(topicsRecyclerView)
+                animateFadeIn(emptyStateLayout)
             } else {
                 Log.d("SelectTopicFragment", "Displaying ${topics.size} topics")
-                topicsRecyclerView.visibility = View.VISIBLE // This should work now
-                noTopicsTextView.visibility = View.GONE
+                animateFadeOut(emptyStateLayout)
+                animateFadeIn(topicsRecyclerView)
             }
         }
 
@@ -104,8 +120,8 @@ class SelectTopicFragment : Fragment() {
                     if (!remoteTopics.isNullOrEmpty()) {
                         Log.d("SelectTopicFragment", "Loaded ${remoteTopics.size} remote topics for course $courseId")
                         topicSelectionAdapter.submitList(remoteTopics)
-                        topicsRecyclerView.visibility = View.VISIBLE
-                        noTopicsTextView.visibility = View.GONE
+                        animateFadeIn(topicsRecyclerView)
+                        emptyStateLayout.visibility = View.GONE
                     } else {
                         // Fallback to local DB via ViewModel
                         Log.d("SelectTopicFragment", "No remote topics for course $courseId, falling back to local DB")
@@ -126,56 +142,92 @@ class SelectTopicFragment : Fragment() {
     }
 
     private fun setupRecyclerView() {
-        // ++ Initialize adapter passing only the click listener ++
         topicSelectionAdapter = TopicSelectionAdapter { selectedTopic ->
-            // This lambda is executed when a topic is clicked in the adapter
             Log.d("SelectTopicFragment", "Topic selected: ID=${selectedTopic.id}, Name=${selectedTopic.name}")
             val bundle = Bundle().apply {
                 putLong("courseId", courseId)
-                putLong("topicId", selectedTopic.id) // Pass the selected topic's ID
-                putLong("taskId", -1L) // Indicate creating a new task
+                putLong("topicId", selectedTopic.id)
+                putLong("taskId", -1L)
             }
             findNavController().navigate(R.id.action_selectTopicFragment_to_courseTaskFragment, bundle)
         }
 
-        // Configure the RecyclerView
         topicsRecyclerView.apply {
             layoutManager = LinearLayoutManager(context)
-            adapter = topicSelectionAdapter // Assign the adapter instance
+            adapter = topicSelectionAdapter
+            // Smooth scrolling
+            isNestedScrollingEnabled = true
+            overScrollMode = View.OVER_SCROLL_NEVER
         }
     }
-    // *** REMOVE the old loadTopics function ***
-    /*
-    private fun loadTopics() {
-        if (courseId == -1L) return // Avoid loading if courseId is invalid
 
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val topics = db.topicDao().getTopicsForCourse(courseId)
-                withContext(Dispatchers.Main) {
-                    if (topics.isNotEmpty()) {
-                        Log.d("SelectTopicFragment", "Loaded ${topics.size} topics for course $courseId")
-                        topicsList.clear()
-                        topicsList.addAll(topics)
-                        topicSelectionAdapter.updateTopics(topicsList)
-                    } else {
-                        Log.d("SelectTopicFragment", "No topics found for course $courseId")
-                        Toast.makeText(context, "No hay temas en este curso. Crea un tema primero.", Toast.LENGTH_LONG).show()
-                        // Optionally navigate back or show a message
-                         findNavController().navigateUp() // Go back if no topics exist
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("SelectTopicFragment", "Error loading topics", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Error al cargar los temas", Toast.LENGTH_SHORT).show()
-                }
+    // ============ ANIMATION FUNCTIONS - Apple Style ============
+
+    private fun applyEntranceAnimations(vararg views: View?) {
+        views.forEachIndexed { index, view ->
+            view?.let {
+                it.alpha = 0f
+                it.translationY = 40f
+                
+                it.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(600)
+                    .setStartDelay((index * 80).toLong())
+                    .setInterpolator(DecelerateInterpolator(1.5f))
+                    .start()
             }
         }
     }
-    */
 
-    // Make sure any old function like loadTopics() or getTopicsForCourse()
-    // defined directly within this Fragment is removed.
+    private fun animateFadeIn(view: View?) {
+        view?.let {
+            if (it.visibility == View.VISIBLE) return
+            
+            it.visibility = View.VISIBLE
+            it.alpha = 0f
+            it.scaleX = 0.95f
+            it.scaleY = 0.95f
+            
+            it.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(400)
+                .setInterpolator(OvershootInterpolator(0.5f))
+                .start()
+        }
+    }
+
+    private fun animateFadeOut(view: View?) {
+        view?.let {
+            if (it.visibility == View.GONE) return
+            
+            it.animate()
+                .alpha(0f)
+                .scaleX(0.95f)
+                .scaleY(0.95f)
+                .setDuration(300)
+                .setInterpolator(DecelerateInterpolator())
+                .withEndAction {
+                    it.visibility = View.GONE
+                }
+                .start()
+        }
+    }
+
+    private fun animateButtonPress(view: View) {
+        view.animate()
+            .scaleX(0.92f)
+            .scaleY(0.92f)
+            .setDuration(100)
+            .withEndAction {
+                view.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(100)
+                    .start()
+            }
+            .start()
+    }
 }

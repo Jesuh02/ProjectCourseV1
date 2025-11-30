@@ -92,6 +92,9 @@ object NetworkUtils {
     fun buildServerUrls(context: Context, port: Int): List<String> {
         val urls = mutableListOf<String>()
         
+        // Explicitly add the user's PC IP
+        urls.add("http://192.168.1.90:$port")
+        
         // Agregar emulador primero (si aplica)
         urls.add("http://10.0.2.2:$port")
         

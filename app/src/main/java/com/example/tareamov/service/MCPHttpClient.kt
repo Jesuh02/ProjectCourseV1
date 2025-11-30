@@ -88,6 +88,7 @@ class MCPHttpClient(private val context: Context) {
         return withMcpBase { base ->
             val request = Request.Builder()
                 .url(buildUrl(base, path))
+                .header("Connection", "close") // Forzar cierre de conexión
                 .post(payload.toString().toRequestBody(jsonMediaType))
                 .build()
 
@@ -130,6 +131,7 @@ class MCPHttpClient(private val context: Context) {
 
             val healthRequest = Request.Builder()
                 .url(buildUrl(base, "/health"))
+                .header("Connection", "close") // Forzar cierre de conexión
                 .get()
                 .build()
 
@@ -144,6 +146,7 @@ class MCPHttpClient(private val context: Context) {
             val initPayload = buildJsonRpcRequest("initialize", JSONObject())
             val initRequest = Request.Builder()
                 .url(buildUrl(base, "/initialize"))
+                .header("Connection", "close") // Forzar cierre de conexión
                 .post(initPayload.toString().toRequestBody(jsonMediaType))
                 .build()
 

@@ -76,7 +76,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         private const val CHAT_HISTORY_KEY = "saved_chat_messages"
         private const val SESSION_ID_KEY = "current_session_id"
         private const val MESSAGE_COUNT_KEY = "total_message_count"
-        private const val MAX_CONTEXT_MESSAGES = 10 // Keep last 10 messages for context
+        private const val MAX_CONTEXT_MESSAGES = 50 // Increased context history
         private const val SCROLL_THRESHOLD = 5 // Show scroll to bottom after 5+ messages
     }
 
@@ -273,12 +273,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             showClearHistoryDialog()
         }
         
-        // Connection status - make it clickable to test connection
-        binding.connectionStatus.setOnClickListener {
+        // Connection test can be triggered via history button long press
+        binding.historyButton.setOnLongClickListener {
             testLLMConnection()
-        }
-        binding.connectionIndicator.setOnClickListener {
-            testLLMConnection()
+            true
         }
     }
     
@@ -509,13 +507,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     }
 
     private fun updateConnectionStatus(isConnected: Boolean, statusText: String? = null) {
-        if (isConnected) {
-            binding.connectionIndicator.backgroundTintList = resources.getColorStateList(android.R.color.holo_green_light, null)
-            binding.connectionStatus.text = statusText ?: "Conectado" // Using hardcoded string instead of R.string.status_connected
-        } else {
-            binding.connectionIndicator.backgroundTintList = resources.getColorStateList(android.R.color.holo_red_light, null)
-            binding.connectionStatus.text = statusText ?: "Desconectado" // Using hardcoded string instead of R.string.status_disconnected
-        }
+        // Connection status UI removed for minimalist design
+        // Status is shown via Toast or chat messages instead
+        Log.d("DatabaseQueryFragment", "Connection status: ${if (isConnected) statusText ?: "Conectado" else statusText ?: "Desconectado"}")
     }
 
     private fun processQuery(query: String) {
@@ -738,12 +732,12 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
         
         Log.d("DatabaseQueryFragment", "Sending BI prompt to LLM with MCP enabled")
         
-        // Allow EXTENDED tool use (max 15) for specific data queries
+        // CRITICAL: Reduced to 5 iterations to prevent 16-minute hangs
         // Schema is already provided, so LLM shouldn't need get_database_schema again
         val response = localLlamaService.generateResponse(
             prompt = vsCodePrompt,
             mcpHttpClient = mcpHttpClient, // ✅ ENABLE MCP tools
-            maxToolIterations = 15 // Increased to 15 to prevent loops
+            maxToolIterations = 5 // Reduced to 5 to prevent infinite loops
         )
         
         Log.d("DatabaseQueryFragment", "BI response received (${response.length} chars)")
@@ -776,10 +770,11 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
             }
 
             // Route through LocalLlama so it forces execution of get_database_schema + query_database before answering
+            // CRITICAL: Reduced to 5 iterations to prevent 16-minute hangs
             return@withContext localLlamaService.generateResponse(
                 prompt = query,
                 mcpHttpClient = mcpHttpClient,
-                maxToolIterations = 15
+                maxToolIterations = 5
             )
             
         } catch (e: Exception) {

@@ -16,20 +16,20 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Play/Pause Overlay -->
+    <!-- Play/Pause Overlay - Minimalist center icon -->
     <ImageView
         android:id="@+id/playPauseOverlay"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
         android:src="@drawable/ic_pause_overlay"
         android:visibility="gone"
-        android:alpha="0.8"
+        android:alpha="0.7"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Fullscreen Button Container - Centrado horizontalmente -->
+    <!-- Fullscreen Button Container - Pill style -->
     <LinearLayout
         android:id="@+id/fullscreenButtonContainer"
         android:layout_width="wrap_content"
@@ -37,10 +37,10 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:background="@drawable/rounded_button_background"
-        android:paddingStart="12dp"
-        android:paddingEnd="16dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
         android:alpha="0.0"
         android:visibility="gone"
         app:layout_constraintStart_toStartOf="parent"
@@ -50,11 +50,11 @@
 
         <ImageView
             android:id="@+id/fullscreenButton"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
             android:src="@drawable/ic_fullscreen_minimal"
             android:scaleType="centerInside"
-            android:layout_marginEnd="8dp" />
+            android:layout_marginEnd="10dp" />
 
         <TextView
             android:id="@+id/fullscreenText"
@@ -62,112 +62,259 @@
             android:layout_height="wrap_content"
             android:text="Pantalla completa"
             android:textColor="#FFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold" />
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-medium" />
     </LinearLayout>
 
-    <!-- Error Placeholder (initially invisible) -->
+    <!-- Error Placeholder -->
     <TextView
         android:id="@+id/errorPlaceholder"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="No se pudo cargar el video"
-        android:textColor="#FFFFFF"
-        android:textSize="18sp"
+        android:textColor="#AAAAAA"
+        android:textSize="16sp"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Rest of the layout remains unchanged -->
-    <!-- Right Side Action Buttons -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- RIGHT SIDE ACTION BUTTONS - Professional Instagram/TikTok Style -->
+    <!-- ═══════════════════════════════════════════════════════ -->
     <LinearLayout
         android:id="@+id/rightActionButtons"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="100dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="120dp"
         android:orientation="vertical"
+        android:gravity="center_horizontal"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <de.hdodenhof.circleimageview.CircleImageView
-            android:id="@+id/profileButton"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_marginBottom="20dp"
-            app:civ_border_color="#FFFFFF"
-            app:civ_border_width="1dp" />
-
-        <ImageView
-            android:id="@+id/likeButton"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_marginBottom="20dp"
-            android:src="@drawable/ic_heart_minimal"
-            android:background="@drawable/rounded_button_background"
-            android:padding="6dp" />
-
-        <ImageView
-            android:id="@+id/shareButton"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_marginBottom="20dp"
-            android:src="@drawable/ic_share_minimal"
-            android:background="@drawable/rounded_button_background"
-            android:padding="6dp" />
-
-        <ImageView
-            android:id="@+id/soundButton"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:src="@drawable/ic_sound_minimal"
-            android:background="@drawable/rounded_button_background"
-            android:padding="6dp" />
-    </LinearLayout>
-
-    <!-- Bottom Info Section -->
-    <LinearLayout
-        android:id="@+id/bottomInfoSection"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="80dp"
-        android:orientation="vertical"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
-
-        <TextView
-            android:id="@+id/usernameText"
+        <!-- Profile Button with Subscribe Badge -->
+        <FrameLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:padding="8dp"
-            android:drawablePadding="8dp"
-            android:drawableTint="#CCCCCC" />
+            android:layout_marginBottom="24dp">
 
+            <de.hdodenhof.circleimageview.CircleImageView
+                android:id="@+id/profileButton"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                app:civ_border_color="#9C27B0"
+                app:civ_border_width="2dp" />
+
+            <!-- Subscribe/Follow Badge (+ icon) -->
+            <ImageView
+                android:id="@+id/subscribeButton"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="bottom|center_horizontal"
+                android:layout_marginBottom="-6dp"
+                android:src="@drawable/ic_add_circle"
+                android:elevation="4dp" />
+        </FrameLayout>
+
+        <!-- Like/Heart Button with Counter -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:layout_marginBottom="20dp">
+
+            <ImageView
+                android:id="@+id/likeButton"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:src="@drawable/ic_heart_minimal"
+                android:padding="4dp"
+                android:scaleType="fitCenter" />
+
+            <TextView
+                android:id="@+id/likeCountText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+        <!-- Comments Button with Counter -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:layout_marginBottom="20dp">
+
+            <ImageView
+                android:id="@+id/commentButton"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:src="@drawable/ic_comment_bubble"
+                android:padding="4dp"
+                android:scaleType="fitCenter" />
+
+            <TextView
+                android:id="@+id/commentCountText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+        <!-- Share Button with Label -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:layout_marginBottom="20dp">
+
+            <ImageView
+                android:id="@+id/shareButton"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:src="@drawable/ic_share_arrow"
+                android:padding="4dp"
+                android:scaleType="fitCenter" />
+
+            <TextView
+                android:id="@+id/shareText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Compartir"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+        <!-- Sound Toggle Button -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal">
+
+            <ImageView
+                android:id="@+id/soundButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_sound_minimal"
+                android:padding="4dp"
+                android:scaleType="fitCenter" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- BOTTOM INFO SECTION - Professional Typography -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <LinearLayout
+        android:id="@+id/bottomInfoSection"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="80dp"
+        android:layout_marginBottom="100dp"
+        android:orientation="vertical"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/rightActionButtons">
+
+        <!-- Username with Follow Button -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/usernameText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-medium"
+                android:clickable="true"
+                android:focusable="true"
+                tools:text="jesusdev" />
+
+            <TextView
+                android:id="@+id/followLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=" • Suscribirse"
+                android:textColor="#AAAAAA"
+                android:textSize="14sp"
+                android:layout_marginStart="4dp"
+                android:clickable="true"
+                android:focusable="true" />
+        </LinearLayout>
+
+        <!-- Description/Caption -->
         <TextView
             android:id="@+id/videoDescription"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="8dp"
             android:textColor="#FFFFFF"
-            android:textSize="14sp" />
+            android:textSize="14sp"
+            android:lineSpacingExtra="2dp"
+            android:maxLines="3"
+            android:ellipsize="end"
+            tools:text="Aprendiendo Next.js 15 y Server Actions en 60 segundos 🚀" />
 
+        <!-- Hashtags -->
         <TextView
             android:id="@+id/gameTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp" />
+            android:textColor="#64B5F6"
+            android:textSize="14sp"
+            tools:text="#coding #webdev #react" />
+
+        <!-- Original Audio Indicator -->
+        <LinearLayout
+            android:id="@+id/audioIndicator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_audio_indicator"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="6dp">
+
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_music_note"
+                android:layout_marginEnd="6dp" />
+
+            <TextView
+                android:id="@+id/audioText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Original Audio"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:singleLine="true"
+                android:ellipsize="marquee"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:focusable="true"
+                android:focusableInTouchMode="true" />
+        </LinearLayout>
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

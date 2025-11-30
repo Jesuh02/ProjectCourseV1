@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.TextView // Import added
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
@@ -37,9 +38,9 @@ class EditProfileFragment : Fragment() {
     private lateinit var usernameEditText: EditText
     private lateinit var displayNameEditText: EditText
     private lateinit var bioEditText: EditText
-    private lateinit var saveButton: Button
-    private lateinit var changePhotoButton: Button
-    private lateinit var backButton: ImageButton
+    private lateinit var saveButton: TextView // Changed from Button
+    private lateinit var changePhotoButton: TextView // Changed from Button
+    private lateinit var backButton: TextView // Changed from ImageButton
 
     private var selectedImageUri: Uri? = null
     private var currentUser: Usuario? = null
@@ -69,14 +70,16 @@ class EditProfileFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Initialize views
+        // Initialize views matching the new XML layout
         profileImageEdit = view.findViewById(R.id.profileImageEdit)
         usernameEditText = view.findViewById(R.id.usernameEditText)
         displayNameEditText = view.findViewById(R.id.displayNameEditText)
         bioEditText = view.findViewById(R.id.bioEditText)
-        saveButton = view.findViewById(R.id.saveButton)
+        
+        // Mapping to new IDs in fragment_edit_profile.xml
+        saveButton = view.findViewById(R.id.doneButton) // Was saveButton
         changePhotoButton = view.findViewById(R.id.changePhotoButton)
-        backButton = view.findViewById(R.id.backButton)
+        backButton = view.findViewById(R.id.cancelButton) // Was backButton
 
         // Load current user data
         loadUserData()

@@ -60,36 +60,302 @@ export class SupabaseService {
     }
 
     /**
-     * Get database schema information
+     * Get database schema information dynamically
      */
     async getDatabaseSchema() {
         try {
-            const tables = [
-                'personas', 'usuarios', 'videos', 'topics', 'content_items',
-                'tasks', 'subscriptions', 'task_submissions', 'chat_messages',
-                'file_contexts', 'courses', 'roles', 'recursos', 'rol_recursos'
-            ];
+            logger.info('Fetching dynamic database schema...');
 
-            const schema = {};
+            // 1. Fetch Tables and Columns
+            const columnsQuery = `
+                SELECT 
+                    table_name, 
+                    column_name, 
+                    data_type, 
+                    is_nullable
+                FROM 
+                    information_schema.columns
+                WHERE 
+                    table_schema = 'public'
+                ORDER BY 
+                    table_name, ordinal_position
+            `;
 
-            for (const table of tables) {
-                const { data, error, count } = await this.client
-                    .from(table)
-                    .select('*', { count: 'exact', head: true });
+            const columnsData = await this.executeRawSQL(columnsQuery);
 
-                if (!error) {
-                    schema[table] = {
-                        count: count || 0,
-                        exists: true
-                    };
-                }
+            if (!columnsData || !Array.isArray(columnsData) || columnsData.length === 0) {
+                throw new Error("Could not retrieve columns metadata");
             }
 
-            return schema;
+            // 2. Fetch Foreign Keys
+            const fkQuery = `
+                SELECT
+                    tc.table_name, 
+                    kcu.column_name, 
+                    ccu.table_name AS foreign_table_name,
+                    ccu.column_name AS foreign_column_name 
+                FROM 
+                    information_schema.table_constraints AS tc 
+                JOIN 
+                    information_schema.key_column_usage AS kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                      AND tc.table_schema = kcu.table_schema
+                JOIN 
+                    information_schema.constraint_column_usage AS ccu
+                      ON ccu.constraint_name = tc.constraint_name
+                      AND ccu.table_schema = tc.table_schema
+                WHERE 
+                    tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema='public'
+            `;
+
+            let fkData = [];
+            try {
+                fkData = await this.executeRawSQL(fkQuery);
+            } catch (e) {
+                logger.warn('Could not fetch foreign keys dynamically:', e.message);
+            }
+
+            // 3. Format as DDL-like string
+            const tables = {};
+            columnsData.forEach(row => {
+                if (!tables[row.table_name]) tables[row.table_name] = [];
+                tables[row.table_name].push(row);
+            });
+
+            let schemaString = "-- DYNAMICALLY GENERATED SCHEMA (Real-time) --\n";
+            schemaString += "-- This schema is fetched directly from Supabase information_schema\n\n";
+
+            for (const [tableName, cols] of Object.entries(tables)) {
+                schemaString += `CREATE TABLE public.${tableName} (\n`;
+                const colDefs = cols.map(col => {
+                    let def = `  ${col.column_name} ${col.data_type}`;
+                    if (col.is_nullable === 'NO') def += ' NOT NULL';
+                    return def;
+                });
+
+                if (fkData && Array.isArray(fkData)) {
+                    const tableFks = fkData.filter(fk => fk.table_name === tableName);
+                    tableFks.forEach(fk => {
+                        colDefs.push(`  CONSTRAINT fk_${tableName}_${fk.column_name} FOREIGN KEY (${fk.column_name}) REFERENCES public.${fk.foreign_table_name}(${fk.foreign_column_name})`);
+                    });
+                }
+
+                schemaString += colDefs.join(',\n');
+                schemaString += "\n);\n\n";
+            }
+
+            return schemaString;
+
         } catch (error) {
-            logger.error('Error fetching database schema:', error);
-            throw error;
+            logger.error('Error fetching dynamic schema:', error);
+            return this.getStaticFallbackSchema();
         }
+    }
+
+    getStaticFallbackSchema() {
+        return `
+-- WARNING: This is a FALLBACK schema. Dynamic fetch failed.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.chat_messages (
+  id bigint NOT NULL DEFAULT nextval('chat_messages_id_seq'::regclass),
+  message text NOT NULL,
+  is_from_user boolean DEFAULT false,
+  timestamp bigint,
+  session_id text,
+  has_calification boolean DEFAULT false,
+  calification_value text,
+  calification_added boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  usuario_id bigint,
+  username text,
+  is_typing boolean DEFAULT false,
+  is_error boolean DEFAULT false,
+  is_graph_response boolean DEFAULT false,
+  CONSTRAINT chat_messages_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_chat_messages_usuario FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id)
+);
+CREATE TABLE public.content_items (
+  id bigint NOT NULL DEFAULT nextval('content_items_id_seq'::regclass),
+  topic_id bigint,
+  title text NOT NULL,
+  body text,
+  content_type text,
+  created_at timestamp with time zone DEFAULT now(),
+  creator_usuario_id bigint,
+  creator_username text,
+  order_index integer DEFAULT 0,
+  task_id bigint,
+  CONSTRAINT content_items_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_content_items_task FOREIGN KEY (task_id) REFERENCES public.tasks(id)
+);
+CREATE TABLE public.courses (
+  id bigint NOT NULL DEFAULT nextval('courses_id_seq'::regclass),
+  title text NOT NULL,
+  description text,
+  thumbnail_uri text,
+  video_uri text,
+  local_file_path text,
+  duration text,
+  category text,
+  price numeric DEFAULT 0,
+  is_premium boolean DEFAULT false,
+  is_published boolean DEFAULT true,
+  creation_date text,
+  last_modified_date text,
+  enrollment_count integer DEFAULT 0,
+  rating real DEFAULT 0,
+  tags text,
+  timestamp bigint DEFAULT (EXTRACT(epoch FROM now()))::bigint,
+  created_at timestamp with time zone DEFAULT now(),
+  creator_user_id bigint NOT NULL,
+  CONSTRAINT courses_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_courses_creator_user FOREIGN KEY (creator_user_id) REFERENCES public.usuarios(id)
+);
+CREATE TABLE public.file_contexts (
+  id bigint NOT NULL DEFAULT nextval('file_contexts_id_seq'::regclass),
+  submission_id bigint,
+  file_name text,
+  file_type text,
+  file_content text,
+  extracted_text text,
+  metadata text,
+  content_summary text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT file_contexts_pkey PRIMARY KEY (id),
+  CONSTRAINT file_contexts_submission_id_fkey FOREIGN KEY (submission_id) REFERENCES public.task_submissions(id)
+);
+CREATE TABLE public.personas (
+  id bigint NOT NULL DEFAULT nextval('personas_id_seq'::regclass),
+  identificacion text NOT NULL,
+  nombres text NOT NULL,
+  apellidos text NOT NULL,
+  email text NOT NULL,
+  telefono text NOT NULL,
+  direccion text,
+  fechaNacimiento text,
+  avatar text,
+  esUsuario boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT personas_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.progreso_estudiante (
+  curso_id bigint NOT NULL,
+  tareas_completadas integer DEFAULT 0,
+  tareas_totales integer DEFAULT 0,
+  porcentaje_progreso real DEFAULT 0,
+  calificacion_ponderada real,
+  estado text DEFAULT 
+CASE
+    WHEN (COALESCE(calificacion_ponderada, (0)::real) >= (6)::double precision) THEN 'Ganado'::text
+    ELSE 'Perdido'::text
+END,
+  ultima_calculada_en timestamp with time zone DEFAULT now(),
+  certificado_emitido_en timestamp with time zone,
+  creado_en timestamp with time zone DEFAULT now(),
+  promedio real,
+  usuario_estudiante bigint NOT NULL,
+  CONSTRAINT progreso_estudiante_pkey PRIMARY KEY (usuario_estudiante, curso_id),
+  CONSTRAINT progreso_estudiante_curso_id_fkey FOREIGN KEY (curso_id) REFERENCES public.courses(id)
+);
+CREATE TABLE public.recursos (
+  id bigint NOT NULL DEFAULT nextval('recursos_id_seq'::regclass),
+  nombre text NOT NULL,
+  icono text NOT NULL,
+  orden integer NOT NULL,
+  padre_id bigint,
+  interfaz text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT recursos_pkey PRIMARY KEY (id),
+  CONSTRAINT recursos_padre_id_fkey FOREIGN KEY (padre_id) REFERENCES public.recursos(id)
+);
+CREATE TABLE public.rol_recursos (
+  rol_id bigint NOT NULL,
+  recurso_id bigint NOT NULL,
+  CONSTRAINT rol_recursos_pkey PRIMARY KEY (rol_id, recurso_id),
+  CONSTRAINT rol_recursos_rol_id_fkey FOREIGN KEY (rol_id) REFERENCES public.roles(id),
+  CONSTRAINT rol_recursos_recurso_id_fkey FOREIGN KEY (recurso_id) REFERENCES public.recursos(id)
+);
+CREATE TABLE public.roles (
+  id bigint NOT NULL DEFAULT nextval('roles_id_seq'::regclass),
+  nombre text NOT NULL UNIQUE,
+  nivel real NOT NULL,
+  default boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT roles_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.subscriptions (
+  subscription_date bigint,
+  created_at timestamp with time zone DEFAULT now(),
+  subscriber_id bigint NOT NULL,
+  creator_id bigint NOT NULL,
+  CONSTRAINT subscriptions_pkey PRIMARY KEY (subscriber_id, creator_id),
+  CONSTRAINT subscriptions_subscriber_id_fkey FOREIGN KEY (subscriber_id) REFERENCES public.usuarios(id),
+  CONSTRAINT subscriptions_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.usuarios(id)
+);
+CREATE TABLE public.task_submissions (
+  id bigint NOT NULL DEFAULT nextval('task_submissions_id_seq'::regclass),
+  task_id bigint,
+  file_uri text,
+  file_name text,
+  submission_date bigint,
+  grade real,
+  feedback text,
+  created_at timestamp with time zone DEFAULT now(),
+  student_id integer,
+  CONSTRAINT task_submissions_pkey PRIMARY KEY (id),
+  CONSTRAINT task_submissions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id),
+  CONSTRAINT fk_task_submissions_student_id FOREIGN KEY (student_id) REFERENCES public.usuarios(id)
+);
+CREATE TABLE public.tasks (
+  id bigint NOT NULL DEFAULT nextval('tasks_id_seq'::regclass),
+  topic_id bigint,
+  title text NOT NULL,
+  description text,
+  due_date timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT tasks_pkey PRIMARY KEY (id),
+  CONSTRAINT tasks_topic_id_fkey FOREIGN KEY (topic_id) REFERENCES public.topics(id)
+);
+CREATE TABLE public.topics (
+  id bigint NOT NULL DEFAULT nextval('topics_id_seq'::regclass),
+  course_id bigint,
+  name text NOT NULL,
+  description text,
+  order_index integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT topics_pkey PRIMARY KEY (id),
+  CONSTRAINT topics_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id)
+);
+CREATE TABLE public.usuarios (
+  id bigint NOT NULL DEFAULT nextval('usuarios_id_seq'::regclass),
+  usuario text NOT NULL UNIQUE,
+  contrasena text NOT NULL,
+  persona_id bigint,
+  rol_id integer DEFAULT 1,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT usuarios_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_usuarios_rol FOREIGN KEY (rol_id) REFERENCES public.roles(id),
+  CONSTRAINT fk_usuarios_persona FOREIGN KEY (persona_id) REFERENCES public.personas(id),
+  CONSTRAINT usuarios_persona_id_fkey FOREIGN KEY (persona_id) REFERENCES public.personas(id)
+);
+CREATE TABLE public.videos (
+  id bigint NOT NULL DEFAULT nextval('videos_id_seq'::regclass),
+  description text,
+  title text NOT NULL,
+  video_uri_string text,
+  local_file_path text,
+  timestamp bigint,
+  is_paid boolean DEFAULT false,
+  thumbnail_uri text,
+  price numeric,
+  created_at timestamp with time zone DEFAULT now(),
+  remote_id bigint,
+  course_id bigint,
+  CONSTRAINT videos_pkey PRIMARY KEY (id),
+  CONSTRAINT videos_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id)
+);
+`;
     }
 
     /**
@@ -211,8 +477,7 @@ export class SupabaseService {
             }
 
             context += '\n## Critical Information:\n';
-            context += '- **Valid Roles**: usuario, admin (ONLY these two roles exist)\n';
-            context += '- **Total Tables**: 14\n';
+            context += '- **Valid Roles**: usuario, admin\n';
             context += '- **Primary Features**: Educational platform with courses, videos, tasks\n\n';
 
             // Add RAG results if query provided
@@ -267,6 +532,11 @@ export class SupabaseService {
         try {
             logger.info(`Executing raw SQL: ${sqlQuery.substring(0, 100)}...`);
 
+            // Remove trailing semicolon if present (common issue with RPC)
+            if (sqlQuery.trim().endsWith(';')) {
+                sqlQuery = sqlQuery.trim().slice(0, -1);
+            }
+
             // 1. Try to execute via RPC 'execute_sql' (Preferred for complex queries)
             try {
                 const { data, error } = await this.client.rpc('execute_sql', { query: sqlQuery });
@@ -274,13 +544,20 @@ export class SupabaseService {
                     logger.info('✅ Executed via RPC execute_sql');
                     return data;
                 }
-                // If error is "function not found", fall back to parser. Otherwise throw.
+
+                // If error is a SQL syntax error (e.g. column missing), throw it immediately
+                // so the LLM can self-correct. Only fallback if RPC itself is missing.
                 if (error.code !== 'PGRST202' && !error.message.includes('function') && !error.message.includes('not found')) {
-                    logger.warn(`RPC execute_sql failed with specific error: ${error.message}. Falling back to client-side parsing.`);
+                    logger.warn(`RPC execute_sql failed with specific SQL error: ${error.message}`);
+                    throw new Error(`SQL Error: ${error.message}`);
                 }
             } catch (rpcError) {
-                // Fallback to parser
-                logger.warn('RPC execute_sql not available or failed, falling back to limited client-side parsing');
+                // If it was the specific SQL error we threw above, rethrow it
+                if (rpcError.message.startsWith('SQL Error:')) {
+                    throw rpcError;
+                }
+                // Fallback to parser only if RPC is missing
+                logger.warn('RPC execute_sql not available, falling back to limited client-side parsing');
             }
 
             // 2. Fallback: Parse simple SELECT queries client-side
@@ -307,7 +584,8 @@ export class SupabaseService {
 
                 // Check for unsupported complex clauses in fallback mode
                 if (rest.includes('join') || rest.includes('group by') || rest.includes('select') || rest.includes('(')) {
-                    throw new Error("⛔ STRICT MODE ERROR: Complex queries (JOIN, GROUP BY, SUBQUERIES) are FORBIDDEN. STOP RETRYING THIS QUERY. You MUST use the 'RAW DATA' strategy: 1. Select raw IDs (e.g. 'SELECT student_id FROM task_submissions'). 2. Count/Filter in your head. 3. Select details for specific IDs.");
+                    // Instead of blocking, we try to execute it anyway via RPC (which already failed) or throw a helpful error
+                    throw new Error("Complex query failed via RPC and is not supported by client-side parser. Please simplify your query or check table/column names.");
                 }
 
                 // Build query using Supabase client

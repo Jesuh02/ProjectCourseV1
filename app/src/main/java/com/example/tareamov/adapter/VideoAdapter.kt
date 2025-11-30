@@ -65,12 +65,22 @@ class VideoAdapter(
         private val likeButton: android.widget.ImageView? = itemView.findViewById(R.id.likeButton)
         private val shareButton: android.widget.ImageView? = itemView.findViewById(R.id.shareButton)
         private val soundButton: android.widget.ImageView? = itemView.findViewById(R.id.soundButton)
+        
+        // New UI elements for professional design
+        private val subscribeButton: android.widget.ImageView? = itemView.findViewById(R.id.subscribeButton)
+        private val commentButton: android.widget.ImageView? = itemView.findViewById(R.id.commentButton)
+        private val likeCountText: TextView? = itemView.findViewById(R.id.likeCountText)
+        private val commentCountText: TextView? = itemView.findViewById(R.id.commentCountText)
+        private val followLabel: TextView? = itemView.findViewById(R.id.followLabel)
+        private val audioText: TextView? = itemView.findViewById(R.id.audioText)
+        
         private var currentJob: Job? = null
         private var mediaPlayer: MediaPlayer? = null
     private var mediaPlayerPrepared: Boolean = false
         private var isVideoPaused = false
         private var isLiked = false
         private var isMuted = false
+        private var isSubscribed = false
         private var overlayHandler = android.os.Handler(android.os.Looper.getMainLooper())
         private var overlayRunnable: Runnable? = null
 
@@ -89,10 +99,16 @@ class VideoAdapter(
             isVideoPaused = false
             isLiked = false
             isMuted = false
+            isSubscribed = false
             
             // Reset button states
             updateLikeButton()
             updateSoundButton()
+            updateSubscribeButton()
+            
+            // Set random counts for demo (in production, fetch from server)
+            likeCountText?.text = "0"
+            commentCountText?.text = "0"
 
             // Setup button listeners
             setupButtonListeners()
@@ -113,8 +129,11 @@ class VideoAdapter(
                         videoData.username // Fallback para compatibilidad
                     }
 
-                    // Actualizar UI con el username obtenido
-                    usernameText.text = username ?: "Usuario desconocido"
+                    // Actualizar UI con el username obtenido - format like username
+                    usernameText.text = "${username ?: "usuario"}"
+                    
+                    // Update audio text with username
+                    audioText?.text = "Original Audio - ${username ?: "usuario"}"
 
                     // Setup profile button click con el username correcto
                     profileButton.setOnClickListener {
@@ -322,6 +341,19 @@ class VideoAdapter(
             likeButton?.setOnClickListener {
                 isLiked = !isLiked
                 updateLikeButton()
+                // Animate the like button
+                likeButton.animate()
+                    .scaleX(1.3f)
+                    .scaleY(1.3f)
+                    .setDuration(100)
+                    .withEndAction {
+                        likeButton.animate()
+                            .scaleX(1f)
+                            .scaleY(1f)
+                            .setDuration(100)
+                            .start()
+                    }
+                    .start()
             }
 
             // Share button
@@ -335,6 +367,37 @@ class VideoAdapter(
                 updateSoundButton()
                 setMuteState(isMuted)
             }
+            
+            // Subscribe button
+            subscribeButton?.setOnClickListener {
+                isSubscribed = !isSubscribed
+                updateSubscribeButton()
+                // Animate the subscribe button
+                subscribeButton.animate()
+                    .scaleX(1.2f)
+                    .scaleY(1.2f)
+                    .setDuration(100)
+                    .withEndAction {
+                        subscribeButton.animate()
+                            .scaleX(1f)
+                            .scaleY(1f)
+                            .setDuration(100)
+                            .start()
+                    }
+                    .start()
+            }
+            
+            // Comment button
+            commentButton?.setOnClickListener {
+                android.widget.Toast.makeText(itemView.context, "Comentarios próximamente", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            
+            // Follow label click
+            followLabel?.setOnClickListener {
+                isSubscribed = !isSubscribed
+                updateSubscribeButton()
+                followLabel.text = if (isSubscribed) " • Suscrito" else " • Suscribirse"
+            }
 
             // Fullscreen button container
             fullscreenButtonContainer?.setOnClickListener {
@@ -344,6 +407,28 @@ class VideoAdapter(
 
             // Setup gesture detector for swipe left to navigate to course
             setupVideoGestureDetector()
+        }
+        
+        private fun updateSubscribeButton() {
+            subscribeButton?.let { button ->
+                if (isSubscribed) {
+                    button.visibility = View.GONE
+                    followLabel?.text = " • Suscrito"
+                    followLabel?.setTextColor(android.graphics.Color.parseColor("#9C27B0"))
+                } else {
+                    button.visibility = View.VISIBLE
+                    followLabel?.text = " • Suscribirse"
+                    followLabel?.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                }
+            }
+        }
+        
+        private fun formatCount(count: Int): String {
+            return when {
+                count >= 1000000 -> String.format("%.1fM", count / 1000000.0)
+                count >= 1000 -> String.format("%.1fK", count / 1000.0).replace(".0K", "K")
+                else -> count.toString()
+            }
         }
 
         private fun setupVideoGestureDetector() {
