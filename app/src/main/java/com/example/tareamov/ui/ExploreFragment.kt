@@ -488,7 +488,7 @@ class ExploreFragment : Fragment() {
         // Setup for "My Courses" RecyclerView
         val coursesRecyclerView = view.findViewById<RecyclerView>(R.id.coursesRecyclerView)
         coursesRecyclerView.layoutManager = LinearLayoutManager(requireContext(), RecyclerView.VERTICAL, false)
-        coursesRecyclerView.setHasFixedSize(true)
+        // coursesRecyclerView.setHasFixedSize(true) // Removed to fix lint error: InvalidSetHasFixedSize
         coursesRecyclerView.setItemViewCacheSize(100)
 
         Log.d("ExploreFragment", "Setting up adapter with currentUsername: $currentUsername")
