@@ -32,6 +32,7 @@ import android.widget.Toast
 import java.io.File
 // Add this import if it's missing, for Usuario.ROL_ADMIN
 import com.example.tareamov.data.entity.Usuario
+import com.example.tareamov.data.entity.Subscription
 // Import SessionManager
 import com.example.tareamov.util.SessionManager
 import android.graphics.Color
@@ -331,6 +332,76 @@ class VideoHomeFragment : Fragment() {
     // REMOVE the checkCurrentUserAdminStatus() function as it's no longer needed
     // private suspend fun checkCurrentUserAdminStatus(): Boolean { ... }
 
+    private suspend fun getCurrentUserId(): Long {
+        var userId = sessionManager.getUserId()
+        if (userId == -1L) {
+            val username = getCurrentUsername()
+            if (username != null) {
+                val user = syncRepository.getUsuarioByUsernameLocal(username)
+                if (user != null) {
+                    userId = user.id
+                }
+            }
+        }
+        return userId
+    }
+
+    private suspend fun checkIfSubscribed(creatorId: Long): Boolean {
+        val currentUserId = getCurrentUserId()
+        if (currentUserId == -1L) return false
+        
+        return try {
+            // Use SupabaseClient for validation as requested
+            withContext(Dispatchers.IO) {
+                com.example.tareamov.service.SupabaseClient.isSubscribedRemote(currentUserId, creatorId)
+            }
+        } catch (e: Exception) {
+            Log.e("VideoHomeFragment", "Error checking remote subscription", e)
+            // Fallback to local if remote fails
+            syncRepository.isSubscribedLocal(currentUserId, creatorId)
+        }
+    }
+
+    private suspend fun handleSubscriptionToggle(creatorId: Long, isSubscribing: Boolean) {
+        val currentUserId = getCurrentUserId()
+        if (currentUserId == -1L) {
+             withContext(Dispatchers.Main) {
+                 Toast.makeText(context, "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
+             }
+             return
+        }
+        
+        try {
+            if (isSubscribing) {
+                val subscription = Subscription(
+                    subscriberId = currentUserId,
+                    creatorId = creatorId,
+                    subscriptionDate = System.currentTimeMillis()
+                )
+                // Update local immediately for UI responsiveness
+                syncRepository.insertSubscriptionLocal(subscription)
+                
+                // Update Supabase
+                withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.insertSubscriptionToSupabase(subscription)
+                }
+            } else {
+                // Update local immediately
+                syncRepository.deleteSubscriptionLocal(currentUserId, creatorId)
+                
+                // Update Supabase
+                withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.deleteSubscriptionFromSupabase(currentUserId, creatorId)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("VideoHomeFragment", "Error toggling subscription", e)
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Error al actualizar suscripción en Supabase", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun setupBottomNavigationIconColors() {
         // Active color (Purple)
         val activeColor = Color.parseColor("#9C27B0")
@@ -411,12 +482,26 @@ class VideoHomeFragment : Fragment() {
                         Toast.makeText(context, "No se pudo abrir el curso", Toast.LENGTH_SHORT).show()
                     }
                 }
+            },
+            onSubscribeToggle = { creatorId, isSubscribed ->
+                lifecycleScope.launch(Dispatchers.IO) {
+                    handleSubscriptionToggle(creatorId, isSubscribed)
+                }
+            },
+            checkSubscriptionStatus = { creatorId ->
+                checkIfSubscribed(creatorId)
             }
         )
 
         // Configurar el ViewPager2
         val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
         viewPager.adapter = videoAdapter
+
+        // Load current user ID and pass to adapter
+        lifecycleScope.launch {
+            val userId = getCurrentUserId()
+            videoAdapter.setCurrentUserId(userId)
+        }
 
         // Configurar orientación vertical para deslizar como TikTok
         viewPager.orientation = androidx.viewpager2.widget.ViewPager2.ORIENTATION_VERTICAL

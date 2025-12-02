@@ -2307,4 +2307,34 @@ class SyncRepository(
         }
     }
 
+    // --- Local Database Access Wrappers ---
+
+    suspend fun getUsuarioByUsernameLocal(username: String): Usuario? {
+        return withContext(Dispatchers.IO) {
+            usuarioDao.getUsuarioByUsername(username)
+        }
+    }
+
+    suspend fun isSubscribedLocal(subscriberId: Long, creatorId: Long): Boolean {
+        return withContext(Dispatchers.IO) {
+            subscriptionDao.isSubscribed(subscriberId, creatorId)
+        }
+    }
+
+    suspend fun insertSubscriptionLocal(subscription: Subscription) {
+        withContext(Dispatchers.IO) {
+            subscriptionDao.insertSubscription(subscription)
+            // Also try to sync to remote
+            insertSubscriptionRemote(subscription)
+        }
+    }
+
+    suspend fun deleteSubscriptionLocal(subscriberId: Long, creatorId: Long) {
+        withContext(Dispatchers.IO) {
+            subscriptionDao.deleteSubscription(subscriberId, creatorId)
+            // Also try to sync to remote
+            deleteSubscriptionRemote(subscriberId, creatorId)
+        }
+    }
+
 }

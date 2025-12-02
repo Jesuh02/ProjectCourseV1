@@ -27,8 +27,17 @@ import kotlin.math.abs // Use kotlin.math.abs to avoid ambiguity
 class VideoAdapter(
     private var videos: List<VideoData>,
     private val onProfileClick: ((String) -> Unit)? = null,
-    private val onUsernameClick: ((VideoData) -> Unit)? = null
+    private val onUsernameClick: ((VideoData) -> Unit)? = null,
+    private val onSubscribeToggle: ((Long, Boolean) -> Unit)? = null,
+    private val checkSubscriptionStatus: (suspend (Long) -> Boolean)? = null
 ) : RecyclerView.Adapter<VideoAdapter.VideoViewHolder>() {
+
+    private var currentUserId: Long = -1L
+
+    fun setCurrentUserId(userId: Long) {
+        this.currentUserId = userId
+        notifyDataSetChanged()
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoViewHolder {
         val view = LayoutInflater.from(parent.context)
@@ -83,6 +92,7 @@ class VideoAdapter(
         private var isSubscribed = false
         private var overlayHandler = android.os.Handler(android.os.Looper.getMainLooper())
         private var overlayRunnable: Runnable? = null
+        private var currentCreatorId: Long = -1L
 
         private fun showErrorPlaceholder() {
             videoView.visibility = View.GONE
@@ -117,16 +127,51 @@ class VideoAdapter(
             currentJob?.cancel()
             profileButton.setImageResource(R.drawable.ic_profile)
             usernameText.text = "Cargando..." // Placeholder mientras se carga
+            currentCreatorId = -1L // Reset creator ID
 
             currentJob = CoroutineScope(Dispatchers.Main).launch {
                 try {
                     // Obtener username desde course_id
                     val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
                         withContext(Dispatchers.IO) {
+                            // Try to get creator ID from Supabase directly for validation
+                            try {
+                                val course = com.example.tareamov.service.SupabaseClient.fetchCourseById(videoData.courseId!!)
+                                if (course != null) {
+                                    currentCreatorId = course.creatorUserId
+                                }
+                            } catch (e: Exception) {
+                                Log.e("VideoAdapter", "Error fetching course from Supabase", e)
+                                // Fallback to local
+                                val context = itemView.context.applicationContext
+                                val db = AppDatabase.getDatabase(context)
+                                val course = db.courseDao().getCourseById(videoData.courseId!!)
+                                if (course != null) {
+                                    currentCreatorId = course.creatorUserId
+                                }
+                            }
                             com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
                         }
                     } else {
                         videoData.username // Fallback para compatibilidad
+                    }
+
+                    // If creatorId is still not set but we have a username, try to find the user
+                    if (currentCreatorId == -1L && !username.isNullOrEmpty()) {
+                        withContext(Dispatchers.IO) {
+                            val context = itemView.context.applicationContext
+                            val db = AppDatabase.getDatabase(context)
+                            val user = db.usuarioDao().getUsuarioByUsername(username)
+                            if (user != null) {
+                                currentCreatorId = user.id
+                            }
+                        }
+                    }
+                    
+                    // Check subscription status if we have a valid creatorId
+                    if (currentCreatorId != -1L && checkSubscriptionStatus != null) {
+                        isSubscribed = checkSubscriptionStatus.invoke(currentCreatorId)
+                        updateSubscribeButton()
                     }
 
                     // Actualizar UI con el username obtenido - format like username
@@ -370,21 +415,27 @@ class VideoAdapter(
             
             // Subscribe button
             subscribeButton?.setOnClickListener {
-                isSubscribed = !isSubscribed
-                updateSubscribeButton()
-                // Animate the subscribe button
-                subscribeButton.animate()
-                    .scaleX(1.2f)
-                    .scaleY(1.2f)
-                    .setDuration(100)
-                    .withEndAction {
-                        subscribeButton.animate()
-                            .scaleX(1f)
-                            .scaleY(1f)
-                            .setDuration(100)
-                            .start()
-                    }
-                    .start()
+                if (currentCreatorId != -1L) {
+                    isSubscribed = !isSubscribed
+                    updateSubscribeButton()
+                    // Animate the subscribe button
+                    subscribeButton.animate()
+                        .scaleX(1.2f)
+                        .scaleY(1.2f)
+                        .setDuration(100)
+                        .withEndAction {
+                            subscribeButton.animate()
+                                .scaleX(1f)
+                                .scaleY(1f)
+                                .setDuration(100)
+                                .start()
+                        }
+                        .start()
+                    
+                    onSubscribeToggle?.invoke(currentCreatorId, isSubscribed)
+                } else {
+                    android.widget.Toast.makeText(itemView.context, "No se puede suscribir", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
             
             // Comment button
@@ -394,9 +445,12 @@ class VideoAdapter(
             
             // Follow label click
             followLabel?.setOnClickListener {
-                isSubscribed = !isSubscribed
-                updateSubscribeButton()
-                followLabel.text = if (isSubscribed) " • Suscrito" else " • Suscribirse"
+                if (currentCreatorId != -1L) {
+                    isSubscribed = !isSubscribed
+                    updateSubscribeButton()
+                    followLabel.text = if (isSubscribed) " • Suscrito" else " • Suscribirse"
+                    onSubscribeToggle?.invoke(currentCreatorId, isSubscribed)
+                }
             }
 
             // Fullscreen button container
@@ -410,13 +464,22 @@ class VideoAdapter(
         }
         
         private fun updateSubscribeButton() {
+            // If it's the current user's own video, hide subscription controls
+            if (currentCreatorId != -1L && currentUserId != -1L && currentCreatorId == currentUserId) {
+                subscribeButton?.visibility = View.GONE
+                followLabel?.visibility = View.GONE
+                return
+            }
+
             subscribeButton?.let { button ->
                 if (isSubscribed) {
                     button.visibility = View.GONE
+                    followLabel?.visibility = View.VISIBLE
                     followLabel?.text = " • Suscrito"
                     followLabel?.setTextColor(android.graphics.Color.parseColor("#9C27B0"))
                 } else {
                     button.visibility = View.VISIBLE
+                    followLabel?.visibility = View.VISIBLE
                     followLabel?.text = " • Suscribirse"
                     followLabel?.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
                 }
