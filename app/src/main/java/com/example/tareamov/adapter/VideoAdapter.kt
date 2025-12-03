@@ -67,6 +67,7 @@ class VideoAdapter(
         private val descriptionText: TextView = itemView.findViewById(R.id.videoDescription)
         private val titleText: TextView = itemView.findViewById(R.id.gameTitle)
         private val errorPlaceholder: TextView = itemView.findViewById(R.id.errorPlaceholder)
+        private val loadingProgressBar: android.widget.ProgressBar? = itemView.findViewById(R.id.loadingProgressBar)
         private val profileButton: de.hdodenhof.circleimageview.CircleImageView = itemView.findViewById(R.id.profileButton)
         private val playPauseOverlay: android.widget.ImageView? = itemView.findViewById(R.id.playPauseOverlay)
         private val fullscreenButtonContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.fullscreenButtonContainer)
@@ -96,6 +97,7 @@ class VideoAdapter(
 
         private fun showErrorPlaceholder() {
             videoView.visibility = View.GONE
+            loadingProgressBar?.visibility = View.GONE
             errorPlaceholder.visibility = View.VISIBLE
             Log.e("VideoAdapter", "Showing error placeholder")
         }        fun bind(videoData: VideoData) {
@@ -105,6 +107,7 @@ class VideoAdapter(
             // Reset views and states
             videoView.visibility = View.VISIBLE
             errorPlaceholder.visibility = View.GONE
+            loadingProgressBar?.visibility = View.VISIBLE
             playPauseOverlay?.visibility = View.GONE
             isVideoPaused = false
             isLiked = false
@@ -235,6 +238,7 @@ class VideoAdapter(
                     videoView.setVideoURI(bestUri)
 
                     videoView.setOnPreparedListener { mp ->
+                        loadingProgressBar?.visibility = View.GONE
                         this.mediaPlayer = mp
                         mediaPlayerPrepared = true
                         val videoWidth = mp.videoWidth

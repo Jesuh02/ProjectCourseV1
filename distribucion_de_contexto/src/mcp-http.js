@@ -247,13 +247,17 @@ app.post('/tools/call', async(req, res) => {
         }
     } catch (error) {
         console.error('❌ Tool call error:', error);
-        res.status(500).json({
+        // Devolvemos un JSON válido con el error para que el cliente Android lo procese
+        // en lugar de un 500 genérico que rompe el flujo JSON-RPC
+        res.json({
             jsonrpc: '2.0',
             id: req.body.id,
-            error: {
-                code: -32603,
-                message: 'Tool execution failed',
-                data: error.message
+            result: {
+                content: [{
+                    type: 'text',
+                    // Incluimos "SQL Error" para que el regex de Android lo detecte
+                    text: `❌ Error executing tool: ${error.message}\nHint: Check table names and SQL syntax.`
+                }]
             }
         });
     }

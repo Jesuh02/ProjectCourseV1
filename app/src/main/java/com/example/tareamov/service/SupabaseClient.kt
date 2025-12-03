@@ -14,6 +14,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.lang.Exception
+import java.util.concurrent.TimeUnit
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Topic
 import com.example.tareamov.data.entity.ContentItem
@@ -28,7 +29,11 @@ import com.example.tareamov.data.entity.Recurso
 import com.example.tareamov.data.entity.RolRecurso
 
 object SupabaseClient {
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .build()
     private val gson = Gson()
     // Gson configured to map snake_case JSON (typical Postgres/Supabase) to camelCase Kotlin fields
     private val underscoredGson = GsonBuilder().setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create()
@@ -1186,6 +1191,25 @@ object SupabaseClient {
         return builder.build()
     }
 
+    private suspend fun <T> fetchListOrThrow(path: String, clazz: Class<Array<T>>): List<T> = withContext(Dispatchers.IO) {
+        val request = buildGetRequest(path)
+        client.newCall(request).execute().use { resp ->
+            val body = resp.body?.string()
+            if (!resp.isSuccessful) {
+                throw Exception("GET $path failed: ${resp.code} body=$body")
+            }
+            if (body.isNullOrEmpty()) return@withContext emptyList()
+            // Use underscoredGson for parsing so snake_case keys (Postgres) map to camelCase Kotlin fields
+            val parser = underscoredGson
+            val arr = parser.fromJson(body, clazz)
+            val list = arr?.toList() ?: emptyList()
+            try {
+                android.util.Log.d("SupabaseClient", "GET $path parsed ${list.size} items")
+            } catch (_: Exception) {}
+            return@withContext list
+        }
+    }
+
     private suspend fun <T> fetchList(path: String, clazz: Class<Array<T>>): List<T> = withContext(Dispatchers.IO) {
         try {
             val request = buildGetRequest(path)
@@ -1446,6 +1470,81 @@ object SupabaseClient {
             }
         }
     }
+    suspend fun fetchVideosOrThrow(): List<VideoData> = withContext(Dispatchers.IO) {
+        // Try typed mapping first
+        try {
+            val videos = fetchListOrThrow("videos", Array<VideoData>::class.java)
+            if (videos.isNotEmpty()) return@withContext videos
+        } catch (e: Exception) {
+            // If typed fetch fails, try defensive fallback but rethrow if that also fails
+            Log.w("SupabaseClient", "Typed fetchVideosOrThrow failed, trying fallback", e)
+        }
+
+        // Defensive fallback: raw JSON mapping to remain resilient to schema changes
+        val req = buildGetRequest("videos")
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string()
+            if (!resp.isSuccessful) throw Exception("fetchVideosOrThrow fallback failed: ${resp.code}")
+            if (body.isNullOrEmpty()) return@withContext emptyList<VideoData>()
+            
+            val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
+            val repaired = mutableListOf<VideoData>()
+            for (elem in arr) {
+                try {
+                    val obj = elem.asJsonObject
+                    val id = obj.get("id")?.takeIf { !it.isJsonNull }?.asLong ?: 0L
+                    val username = when {
+                        obj.has("username") && !obj.get("username").isJsonNull -> obj.get("username").asString
+                        obj.has("creator_username") && !obj.get("creator_username").isJsonNull -> obj.get("creator_username").asString
+                        obj.has("user") && !obj.get("user").isJsonNull -> obj.get("user").asString
+                        else -> "unknown"
+                    }
+                    val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                    val videoUriString = when {
+                        obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
+                        obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
+                        obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
+                        else -> null
+                    }
+                    val localFilePath = obj.get("local_file_path")?.takeIf { !it.isJsonNull }?.asString
+                    val thumbnailUri = when {
+                        obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull -> obj.get("thumbnail_uri").asString
+                        obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull -> obj.get("thumbnail").asString
+                        else -> null
+                    }
+                    val timestamp = try {
+                        obj.get("timestamp")?.takeIf { !it.isJsonNull }?.asLong
+                            ?: obj.get("created_at")?.takeIf { !it.isJsonNull }?.asString?.let { java.time.Instant.parse(it).toEpochMilli() }
+                            ?: System.currentTimeMillis()
+                    } catch (_: Exception) { System.currentTimeMillis() }
+                    val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                    val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
+
+                    repaired.add(
+                        VideoData(
+                            id = id,
+                            username = username,
+                            description = description,
+                            title = title,
+                            videoUriString = videoUriString,
+                            localFilePath = localFilePath,
+                            timestamp = timestamp,
+                            isPaid = isPaid,
+                            thumbnailUri = thumbnailUri,
+                            price = price,
+                            courseId = courseId
+                        )
+                    )
+                } catch (t: Exception) {
+                    Log.w("SupabaseClient", "Failed to parse video element", t)
+                }
+            }
+            repaired
+        }
+    }
+
     suspend fun fetchVideos(): List<VideoData> = withContext(Dispatchers.IO) {
         try {
             // Try typed mapping first
@@ -2628,6 +2727,32 @@ object SupabaseClient {
             Log.e("SupabaseClient", "Exception in searchVideos", e)
             return@withContext emptyList()
         }
+    }
+
+    suspend fun fetchVideosPaginatedOrThrow(offset: Int, limit: Int): Pair<List<VideoData>, Int> = withContext(Dispatchers.IO) {
+        val path = "videos?offset=$offset&limit=$limit&order=timestamp.desc"
+        var videos = fetchListOrThrow(path, Array<VideoData>::class.java).toList()
+        
+        // Get total count
+        val countPath = "videos?select=count"
+        val countRequest = buildGetRequest(countPath)
+        var totalCount = videos.size
+
+        try {
+            client.newCall(countRequest).execute().use { response ->
+                val body = response.body?.string()
+                if (response.isSuccessful && !body.isNullOrEmpty()) {
+                    val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        totalCount = jsonArray[0].asJsonObject.get("count")?.asInt ?: videos.size
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "Could not get total count", e)
+        }
+
+        return@withContext Pair(videos, totalCount)
     }
 
     /**

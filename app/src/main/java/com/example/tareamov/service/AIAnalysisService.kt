@@ -57,7 +57,7 @@ class AIAnalysisService(private val context: Context) {
 
     // Lista de modelos para solo verificar conectividad con el servidor
     private val CONNECTIVITY_TEST_MODELS = listOf(
-        "llama3",
+        "llama3:8b",
         "llama3:latest",
         "gemma:7b",
         "mistral"
@@ -723,7 +723,7 @@ class AIAnalysisService(private val context: Context) {
 
                 // Usando un modelo más simple para la prueba
                 val testRequest = OllamaRequest(
-                    model = "llama3", // Modelo más básico para prueba, luego usaremos el correcto
+                    model = "llama3:8b", // Modelo más básico para prueba, luego usaremos el correcto
                     prompt = "test",
                     stream = false,
                     options = OllamaOptions(temperature = 0.1f, num_predict = 1)

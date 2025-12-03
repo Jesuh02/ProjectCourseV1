@@ -1,4 +1,4 @@
-package com.example.tareamov.service
+﻿package com.example.tareamov.service
 
 import android.content.Context
 import android.util.Log
@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import com.example.tareamov.util.NetworkUtils
 
 /**
- * Servicio para ejecutar Llama 3 localmente en el dispositivo Android
+ * Servicio para ejecutar Llama 3:8b localmente en el dispositivo Android
  */
 class LocalLlamaService(private val context: Context) {
     private val TAG = "LocalLlamaService"
@@ -31,7 +31,7 @@ class LocalLlamaService(private val context: Context) {
     }
 
     /**
-     * Inicializa el modelo Llama 3
+     * Inicializa el modelo Llama 3:8b
      */
     suspend fun initializeModel(): Boolean = withContext(Dispatchers.IO) {
         if (isModelLoaded.get()) return@withContext true
@@ -47,13 +47,13 @@ class LocalLlamaService(private val context: Context) {
 
             // Aqu� ir�a la inicializaci�n real del modelo con llama.cpp
             // Por ahora, simulamos que el modelo se carg� correctamente
-            Log.d(TAG, "Simulando inicializaci�n del modelo Llama 3")
+            Log.d(TAG, "Simulando inicializaci�n del modelo Llama 3:8b")
             isModelLoaded.set(true)
 
             return@withContext true
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error al inicializar el modelo Llama 3", e)
+            Log.e(TAG, "Error al inicializar el modelo Llama 3:8b", e)
             return@withContext false
         }
     }
@@ -177,29 +177,7 @@ class LocalLlamaService(private val context: Context) {
             }
             
             // Add SQL generation guidance for data queries - ALWAYS include if MCP is available
-            if (mcpHttpClient != null && !schemaProvided) {
-                enrichedPrompt = """
-                    |$enrichedPrompt
-                    |
-                    |**IMPORTANTE - GENERACIÓN DE SQL DINÁMICA:**
-                    |Tienes capacidad TOTAL para escribir y ejecutar scripts SQL de PostgreSQL.
-                    |El sistema ejecutará tu SQL en Supabase y te devolverá los resultados JSON.
-                    |
-                    |**SINTAXIS OBLIGATORIA:**
-                    |TOOL_CALL: query_database(query="SELECT ... FROM ...")
-                    |
-                    |**ESTRATEGIA DE RESPUESTA:**
-                    |1. Si necesitas explorar tablas -> TOOL_CALL: get_database_schema()
-                    |2. Si necesitas datos -> Escribe tu propio SQL (JOINs, GROUP BY, WHERE) y ejecútalo con query_database()
-                    |3. Analiza el JSON resultante y responde al usuario.
-                    |
-                    |**EJEMPLOS DE SQL VÁLIDO:**
-                    |1. Conteo: SELECT COUNT(*) as total FROM usuarios
-                    |2. JOIN: SELECT u.usuario, COUNT(c.id) as cursos FROM usuarios u LEFT JOIN courses c ON u.usuario = c.creator_username GROUP BY u.usuario
-                    |3. Filtrado: SELECT * FROM courses WHERE is_premium = true AND price > 0 ORDER BY created_at DESC LIMIT 10
-                    |4. Agregación: SELECT category, AVG(rating) as avg_rating FROM courses GROUP BY category HAVING AVG(rating) > 4.0
-                """.trimMargin()
-            }
+            // Block removed to reduce noise and rely on createDynamicPromptWithMCPCapability
             val toolExecutionHistory = StringBuilder()
 
             Log.d(TAG, "Attempting to generate response with LocalLlama")
@@ -282,6 +260,29 @@ INTENTA DE NUEVO AHORA:
                     // Execute the tool via MCP
                     val toolResult = executeToolViaMCP(toolCall, mcpHttpClient)
                     toolExecutionHistory.append("\n**Resultado:**\n$toolResult\n")
+                    
+                    // --- NUEVA LÓGICA DE AUTOCORRECCIÓN ---
+                    if (toolResult.contains("❌ Error") || toolResult.contains("SQL Error")) {
+                        Log.w(TAG, "⚠️ Tool execution failed. Feeding error back to LLM for correction.")
+                        
+                        enrichedPrompt = """
+$enrichedPrompt
+
+❌ ERROR AL EJECUTAR LA HERRAMIENTA ANTERIOR:
+$toolResult
+
+⚠️ INSTRUCCIONES DE CORRECCIÓN:
+1. Analiza el mensaje de error SQL de arriba.
+2. Corrige tu consulta SQL basándote en el error (ej: si falta una tabla, revisa el esquema; si falta un alias, agrégalo).
+3. Vuelve a ejecutar la herramienta query_database con la consulta CORREGIDA.
+4. NO te disculpes, solo ejecuta la herramienta corregida.
+                        """.trimIndent()
+                        
+                        // Forzamos otra iteración para que intente de nuevo
+                        iteration++
+                        continue 
+                    }
+                    // ---------------------------------------
                     
                     // Update prompt with tool result
                     enrichedPrompt = """
@@ -386,7 +387,8 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
             // We use greedy matching (.*) for arguments to handle nested parentheses in SQL like COUNT(*)
             // We assume the tool call is on a single line or the main part of the response
             val patterns = listOf(
-                Regex("""TOOL_CALL:\s*(\w+)\((.*)\)""", RegexOption.IGNORE_CASE),
+                // Use [\s\S] to match newlines in arguments (critical for SQL queries)
+                Regex("""TOOL_CALL:\s*(\w+)\(([\s\S]*)\)""", RegexOption.IGNORE_CASE),
                 Regex("""usar.*?herramienta.*?(\w+)\(\)""", RegexOption.IGNORE_CASE),
                 Regex("""ejecutar.*?(\w+)\(""", RegexOption.IGNORE_CASE),
                 Regex("""necesito.*?(\w+)\(""", RegexOption.IGNORE_CASE)
@@ -407,8 +409,8 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
                     if (argsString.isNotBlank()) {
                         // Match key="value" or key='value'
                         // This regex captures the key and the value inside quotes
-                        // It handles escaped quotes if necessary, but for now simple greedy match until next quote is fine
-                        val argPattern = Regex("""(\w+)\s*=\s*(["'])(.*?)\2""")
+                        // We use [\s\S]*? to match content across lines (non-greedy)
+                        val argPattern = Regex("""(\w+)\s*=\s*(["'])([\s\S]*?)\2""")
                         
                         var foundArgs = false
                         argPattern.findAll(argsString).forEach { argMatch ->
@@ -423,7 +425,7 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
                         // Fallback: if no named arguments found, check if it's a single quoted string
                         // This handles cases where LLM outputs: TOOL_CALL: query_database("SELECT ...")
                         if (!foundArgs) {
-                            val fallbackMatch = Regex("""^["'](.*)["']$""").find(argsString.trim())
+                            val fallbackMatch = Regex("""^["']([\s\S]*)["']$""").find(argsString.trim())
                             if (fallbackMatch != null) {
                                 val value = fallbackMatch.groupValues[1].trim()
                                 // Default to "query" if tool is query_database, otherwise "default"
@@ -915,7 +917,7 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
             append("Actualmente el servidor LLM (Ollama) no está disponible. ")
             append("Para obtener respuestas completas y análisis detallados, por favor:\n\n")
             append("1. Verifica que el servidor Ollama esté ejecutándose\n")
-            append("2. Asegúrate de que el modelo llama3 esté disponible\n")
+            append("2. Asegúrate de que el modelo llama3:8b esté disponible\n")
             append("3. Comprueba la conexión de red entre el emulador/dispositivo y el servidor\n\n")
             append("**Direcciones probadas:**\n")
             getFallbackLlamaUrls(context).forEach { url ->
@@ -946,7 +948,7 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
                 connection.doOutput = true
                 
                 val requestBody = org.json.JSONObject().apply {
-                    put("model", "llama3")
+                    put("model", "llama3:8b")
                     put("prompt", prompt)
                     put("stream", false)
                     put("options", org.json.JSONObject().apply {
@@ -1059,67 +1061,40 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
     private fun createDynamicPromptWithMCPCapability(optimizedPrompt: String, hasToolAccess: Boolean, requiresData: Boolean = false): String {
         return if (hasToolAccess) {
             """
-Eres un Asistente de Base de Datos experto con acceso a herramientas MCP para Supabase (TareaMov).
-Estás ejecutándote en los servidores seguros de TareaMov usando Llama 3.
+Eres un experto en SQL y Bases de Datos (PostgreSQL) para la app TareaMov.
+Tu objetivo es generar y EJECUTAR la consulta SQL exacta para responder al usuario.
 
 🔧 HERRAMIENTAS DISPONIBLES:
 1. get_database_schema() - Obtiene el esquema completo de la base de datos. ÚSALO SIEMPRE al inicio si no conoces la estructura o nombres de tablas.
 2. query_database(query="SQL") - Ejecuta consultas SQL en Supabase.
 
-📋 TABLAS Y COLUMNAS CLAVE (Resumen):
-- usuarios: id, usuario (NO username), rol_id, persona_id (NO tiene creator_user_id)
+📋 ESQUEMA DE BASE DE DATOS (Resumen):
+- usuarios: id, usuario, rol_id, persona_id
 - courses: id, title, creator_user_id (FK a usuarios.id)
-- task_submissions: id, student_id (FK a usuarios.id), task_id
+- task_submissions: id, student_id (FK a usuarios.id), task_id, submission_date
 - subscriptions: subscriber_id, creator_id
 - videos: id, title, course_id
+- progreso_estudiante: usuario_estudiante (FK a usuarios.id), curso_id (FK a courses.id), certificado_emitido_en (TIMESTAMP), porcentaje_progreso
 
-⚠️ INSTRUCCIONES DE PENSAMIENTO (OBLIGATORIO):
-1. **ANÁLISIS**: ¿Qué datos necesito?
-2. **ESTRATEGIA**: ¿Qué tablas contienen esos datos?
-3. **ACCIÓN**: Genera la llamada a la herramienta `query_database` o `get_database_schema`.
+💡 REGLAS SQL:
+1. ✅ USA JOINs para cruzar tablas (ej: progreso_estudiante JOIN courses).
+2. ✅ USA WHERE para filtrar (ej: certificado_emitido_en IS NOT NULL).
+3. ⛔ NO inventes columnas. Usa solo las del esquema.
+4. ⛔ NO expliques el SQL antes de ejecutarlo. Primero EJECUTA la herramienta.
 
-💡 REGLAS PARA SQL:
-1. ✅ Puedes usar JOIN, GROUP BY, HAVING, UNION, SUBQUERIES si es necesario.
-   La base de datos intentará ejecutar consultas complejas.
-   
-   ESTRATEGIA "RAW DATA" (SI FALLA LA CONSULTA COMPLEJA):
-   Si una consulta compleja falla, usa esta estrategia:
-   1. EJECUTA: `SELECT student_id FROM task_submissions LIMIT 1000`
-   2. ANALIZA (Mentalmente): Cuenta las repeticiones de cada ID en la lista devuelta.
-   3. EJECUTA: `SELECT usuario FROM usuarios WHERE id = 6`
-   4. RESPONDE: "El usuario X (ID 6) envió 15 tareas."
-
-2. ✅ Consultas permitidas:
-   - `SELECT * FROM tabla`
-   - `SELECT * FROM tabla WHERE col = val`
-   - `SELECT * FROM tabla ORDER BY col LIMIT n`
-   - Consultas complejas con JOIN/GROUP BY (Soportadas experimentalmente)
-
-3. ⛔ SI UNA CONSULTA FALLA:
-   - ¡DETENTE! NO la repitas exactamente igual.
-   - CAMBIA a la estrategia "RAW DATA" (Paso 1).
-   - CAMBIA INMEDIATAMENTE a la estrategia "RAW DATA" (Paso 1).
-
-4. ✅ USA SIEMPRE 'id', 'usuario' al consultar usuarios.
-5. ⛔ ERROR COMÚN: La tabla 'usuarios' NO tiene columna 'creator_user_id'. Esa columna está en 'courses'.
-
-📝 EJEMPLO DE USO DE HERRAMIENTA:
-TOOL_CALL: query_database(query="SELECT * FROM usuarios LIMIT 5")
+📝 EJEMPLO:
+Usuario: "¿Quién completó el curso?"
+Tu respuesta: TOOL_CALL: query_database(query="SELECT usuario_estudiante FROM progreso_estudiante WHERE porcentaje_progreso = 100")
 
 🎯 CONSULTA DEL USUARIO:
 $optimizedPrompt
 
-${if (requiresData) "⚡ ACCIÓN REQUERIDA: El usuario pide datos. EJECUTA UNA HERRAMIENTA AHORA." else "💭 Si necesitas datos, usa una herramienta."}
-
-⚠️ IMPORTANTE:
-- SOLO responde con TOOL_CALL si necesitas datos.
-- NO expliques tu plan, solo ejecuta la herramienta.
-- Si te preguntan qué modelo eres, di que eres Llama 3 ejecutándose en los servidores de TareaMov.
+${if (requiresData) "⚡ EJECUTA LA CONSULTA SQL AHORA MISMO USANDO TOOL_CALL." else "💭 Si necesitas datos, usa query_database."}
             """.trimIndent()
         } else {
             """
 Asistente TareaMov (sin herramientas MCP disponibles).
-Estás ejecutándote en los servidores seguros de TareaMov usando Llama 3.
+Estás ejecutándote en los servidores seguros de TareaMov usando Llama 3:8b.
 
 CONSULTA: $optimizedPrompt
 
@@ -1150,9 +1125,9 @@ CONSULTA: $optimizedPrompt
             try {
                 // Aqu� ir�a la liberaci�n real de recursos
                 isModelLoaded.set(false)
-                Log.d(TAG, "Modelo Llama 3 liberado correctamente")
+                Log.d(TAG, "Modelo Llama 3:8b liberado correctamente")
             } catch (e: Exception) {
-                Log.e(TAG, "Error al liberar el modelo Llama 3", e)
+                Log.e(TAG, "Error al liberar el modelo Llama 3:8b", e)
             }
         }
     }

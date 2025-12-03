@@ -31,7 +31,7 @@ class MSPClient(private val context: Context) {
     // Dynamic context cache for better performance
     private val contextCache = mutableMapOf<String, Pair<String, Long>>()
     private val cacheTimeoutMs = 5 * 60 * 1000L // 5 minutes
-    private val modelName = "llama3"
+    private val modelName = "llama3:8b"
 
     init {
         ServerEndpointResolver.initialize(context.applicationContext)

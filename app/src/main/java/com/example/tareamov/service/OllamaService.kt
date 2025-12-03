@@ -103,7 +103,7 @@ class OllamaService : Service() {
                     Log.d(TAG, "Sending test prompt to initialize model...")
 
                     // Simple test prompt to minimize potential issues
-                    val testPrompt = "Responde con 'Modelo llama3 inicializado correctamente'"
+                    val testPrompt = "Responde con 'Modelo llama3:8b inicializado correctamente'"
                     
                     val testResponse = mspClient.sendPrompt(
                         testPrompt,
@@ -115,7 +115,7 @@ class OllamaService : Service() {
                     // Broadcast that the model is ready
                     val broadcastIntent = Intent("com.example.tareamov.OLLAMA_READY")
                     broadcastIntent.putExtra("status", "ready")
-                    broadcastIntent.putExtra("message", "Modelo Llama3 inicializado correctamente")
+                    broadcastIntent.putExtra("message", "Modelo Llama 3:8b inicializado correctamente")
                     sendBroadcast(broadcastIntent)
                     
                     // REMOVED: No longer building database context in background

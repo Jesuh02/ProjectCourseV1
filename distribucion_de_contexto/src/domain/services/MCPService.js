@@ -393,7 +393,7 @@ export class MCPService {
             },
             {
                 name: "query_database",
-                description: "Execute a SQL query. RULES: 1. 'subscriptions' table uses 'subscriber_id' and 'creator_id' (NOT user_id/course_id). WARNING: 'subscriptions' does NOT have 'course_id'. 2. 'courses' table uses 'creator_user_id'. 3. 'progreso_estudiante' uses 'usuario_estudiante' and 'curso_id'. 4. NO placeholders. 5. Check schema first.",
+                description: "Execute a SQL query. RULES: 1. 'subscriptions' table uses 'subscriber_id' and 'creator_id'. 2. 'courses' table uses 'creator_user_id'. 3. 'progreso_estudiante' uses 'usuario_estudiante', 'curso_id', 'certificado_emitido_en'. 4. ALWAYS define aliases (e.g. 'FROM table t') if using them. 5. Check schema first.",
                 parameters: {
                     type: "object",
                     properties: {

@@ -348,74 +348,70 @@ class SyncRepository(
 
     // Fetch videos directly from Supabase and return ordered by newest first.
     suspend fun fetchVideosFromSupabase(): List<com.example.tareamov.data.entity.VideoData> {
-        return try {
-            if (!supabaseClient.isConfigured()) return emptyList()
-            // Try the typed fetch first
-            var list = supabaseClient.fetchVideos()
-            // If the typed fetch yielded items but their videoUriString fields are null/empty,
-            // try a defensive JSON mapping to populate fields coming from different column names.
-            val needsDefensiveRepair = list.any { it.videoUriString.isNullOrEmpty() && it.localFilePath.isNullOrEmpty() }
-            if (list.isEmpty() || needsDefensiveRepair) {
-                val jsonArr = supabaseClient.fetchTableJson("videos")
-                if (jsonArr.size() > 0) {
-                    val repaired = mutableListOf<com.example.tareamov.data.entity.VideoData>()
-                    for (elem in jsonArr) {
-                        try {
-                            val obj = elem.asJsonObject
-                            val id = if (obj.has("id") && !obj.get("id").isJsonNull) obj.get("id").asLong else 0L
-                            val username = when {
-                                obj.has("username") && !obj.get("username").isJsonNull -> obj.get("username").asString
-                                obj.has("creator_username") && !obj.get("creator_username").isJsonNull -> obj.get("creator_username").asString
-                                obj.has("user") && !obj.get("user").isJsonNull -> obj.get("user").asString
-                                else -> "unknown"
-                            }
-                            val description = if (obj.has("description") && !obj.get("description").isJsonNull) obj.get("description").asString else ""
-                            val title = if (obj.has("title") && !obj.get("title").isJsonNull) obj.get("title").asString else ""
-                            // Prefer server `course_id` so UI can resolve creator username via Supabase
-                            val courseId = if (obj.has("course_id") && !obj.get("course_id").isJsonNull) obj.get("course_id").asLong else null
-                            val videoUriString = when {
-                                obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
-                                obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
-                                obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
-                                else -> null
-                            }
-                            val localFilePath = if (obj.has("local_file_path") && !obj.get("local_file_path").isJsonNull) obj.get("local_file_path").asString else null
-                            val thumbnailUri = if (obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull) obj.get("thumbnail_uri").asString else if (obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull) obj.get("thumbnail").asString else null
-                            val timestamp = try { if (obj.has("timestamp") && !obj.get("timestamp").isJsonNull) obj.get("timestamp").asLong else if (obj.has("created_at") && !obj.get("created_at").isJsonNull) java.time.Instant.parse(obj.get("created_at").asString).toEpochMilli() else System.currentTimeMillis() } catch (t: Exception) { System.currentTimeMillis() }
-                            val isPaid = if (obj.has("is_paid") && !obj.get("is_paid").isJsonNull) obj.get("is_paid").asBoolean else false
-                            val price = if (obj.has("price") && !obj.get("price").isJsonNull) try { obj.get("price").asDouble } catch (t: Exception) { null } else null
-
-                            val v = com.example.tareamov.data.entity.VideoData(
-                                id = id,
-                                username = username,
-                                description = description,
-                                title = title,
-                                videoUriString = videoUriString,
-                                localFilePath = localFilePath,
-                                timestamp = timestamp,
-                                isPaid = isPaid,
-                                thumbnailUri = thumbnailUri,
-                                price = price,
-                                courseId = courseId
-                            )
-                            repaired.add(v)
-                        } catch (t: Exception) {
-                            Log.w("SyncRepository", "Failed to parse video json element", t)
+        // Removed try-catch to allow UI to detect connection errors
+        if (!supabaseClient.isConfigured()) return emptyList()
+        // Try the typed fetch first
+        var list = supabaseClient.fetchVideosOrThrow()
+        // If the typed fetch yielded items but their videoUriString fields are null/empty,
+        // try a defensive JSON mapping to populate fields coming from different column names.
+        val needsDefensiveRepair = list.any { it.videoUriString.isNullOrEmpty() && it.localFilePath.isNullOrEmpty() }
+        if (list.isEmpty() || needsDefensiveRepair) {
+            val jsonArr = supabaseClient.fetchTableJson("videos")
+            if (jsonArr.size() > 0) {
+                val repaired = mutableListOf<com.example.tareamov.data.entity.VideoData>()
+                for (elem in jsonArr) {
+                    try {
+                        val obj = elem.asJsonObject
+                        val id = if (obj.has("id") && !obj.get("id").isJsonNull) obj.get("id").asLong else 0L
+                        val username = when {
+                            obj.has("username") && !obj.get("username").isJsonNull -> obj.get("username").asString
+                            obj.has("creator_username") && !obj.get("creator_username").isJsonNull -> obj.get("creator_username").asString
+                            obj.has("user") && !obj.get("user").isJsonNull -> obj.get("user").asString
+                            else -> "unknown"
                         }
+                        val description = if (obj.has("description") && !obj.get("description").isJsonNull) obj.get("description").asString else ""
+                        val title = if (obj.has("title") && !obj.get("title").isJsonNull) obj.get("title").asString else ""
+                        // Prefer server `course_id` so UI can resolve creator username via Supabase
+                        val courseId = if (obj.has("course_id") && !obj.get("course_id").isJsonNull) obj.get("course_id").asLong else null
+                        val videoUriString = when {
+                            obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
+                            obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
+                            obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
+                            else -> null
+                        }
+                        val localFilePath = if (obj.has("local_file_path") && !obj.get("local_file_path").isJsonNull) obj.get("local_file_path").asString else null
+                        val thumbnailUri = if (obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull) obj.get("thumbnail_uri").asString else if (obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull) obj.get("thumbnail").asString else null
+                        val timestamp = try { if (obj.has("timestamp") && !obj.get("timestamp").isJsonNull) obj.get("timestamp").asLong else if (obj.has("created_at") && !obj.get("created_at").isJsonNull) java.time.Instant.parse(obj.get("created_at").asString).toEpochMilli() else System.currentTimeMillis() } catch (t: Exception) { System.currentTimeMillis() }
+                        val isPaid = if (obj.has("is_paid") && !obj.get("is_paid").isJsonNull) obj.get("is_paid").asBoolean else false
+                        val price = if (obj.has("price") && !obj.get("price").isJsonNull) try { obj.get("price").asDouble } catch (t: Exception) { null } else null
+
+                        val v = com.example.tareamov.data.entity.VideoData(
+                            id = id,
+                            username = username,
+                            description = description,
+                            title = title,
+                            videoUriString = videoUriString,
+                            localFilePath = localFilePath,
+                            timestamp = timestamp,
+                            isPaid = isPaid,
+                            thumbnailUri = thumbnailUri,
+                            price = price,
+                            courseId = courseId
+                        )
+                        repaired.add(v)
+                    } catch (t: Exception) {
+                        Log.w("SyncRepository", "Failed to parse video json element", t)
                     }
-                    if (repaired.isNotEmpty()) list = repaired
                 }
+                if (repaired.isNotEmpty()) list = repaired
             }
-            // Sort by timestamp string descending where possible; fallback to id desc
-            val sorted = list.sortedWith(compareByDescending<com.example.tareamov.data.entity.VideoData> { v ->
-                // timestamp is a Long in our model; use it directly
-                v.timestamp
-            }.thenByDescending { v -> v.id })
-            sorted
-        } catch (e: Exception) {
-            Log.e("SyncRepository", "fetchVideosFromSupabase failed", e)
-            emptyList()
         }
+        // Sort by timestamp string descending where possible; fallback to id desc
+        val sorted = list.sortedWith(compareByDescending<com.example.tareamov.data.entity.VideoData> { v ->
+            // timestamp is a Long in our model; use it directly
+            v.timestamp
+        }.thenByDescending { v -> v.id })
+        return sorted
     }
 
     // Fetch courses from Supabase (all users). Returns empty list on failure or if not configured.
@@ -478,17 +474,13 @@ class SyncRepository(
         limit: Int = 10,
         offset: Int = 0
     ): Pair<List<com.example.tareamov.data.entity.VideoData>, Int> {
-        return try {
-            if (!supabaseClient.isConfigured()) {
-                Log.d("SyncRepository", "Supabase not configured - returning empty")
-                return Pair(emptyList(), 0)
-            }
-            withContext(Dispatchers.IO) {
-                supabaseClient.fetchVideosPaginated(offset = offset, limit = limit)
-            }
-        } catch (e: Exception) {
-            Log.w("SyncRepository", "fetchVideosPaginated failed", e)
-            Pair(emptyList(), 0)
+        // Removed try-catch to allow UI to detect connection errors
+        if (!supabaseClient.isConfigured()) {
+            Log.d("SyncRepository", "Supabase not configured - returning empty")
+            return Pair(emptyList(), 0)
+        }
+        return withContext(Dispatchers.IO) {
+            supabaseClient.fetchVideosPaginatedOrThrow(offset = offset, limit = limit)
         }
     }
 

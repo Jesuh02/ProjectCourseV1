@@ -1,6 +1,10 @@
 package com.example.tareamov.ui
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.content.Intent // Add this import for Intent
 import android.net.Uri
 import android.os.Bundle
@@ -49,11 +53,16 @@ import android.text.TextWatcher
 import eightbitlab.com.blurview.BlurView
 import eightbitlab.com.blurview.RenderScriptBlur
 import android.view.ViewOutlineProvider
+import android.animation.ObjectAnimator
+import android.view.animation.AccelerateDecelerateInterpolator
 
 class VideoHomeFragment : Fragment() {
     private lateinit var profileAvatars: CircleImageView
     private lateinit var videoManager: VideoManager
     private lateinit var sessionManager: SessionManager // Add SessionManager instance
+    private lateinit var skeletonContainer: View // Skeleton container
+    private var skeletonAnimator: ObjectAnimator? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     private lateinit var homeIconImageView: ImageView
     private lateinit var exploreIconImageView: ImageView
@@ -137,8 +146,10 @@ class VideoHomeFragment : Fragment() {
 
         // Initialize views
         profileAvatars = view.findViewById(R.id.profileAvatars)
+        skeletonContainer = view.findViewById(R.id.skeletonContainer)
 
         // Initialize bottom navigation icons
+        homeIconImageView = view.findViewById(R.id.homeIconImageView)
         homeIconImageView = view.findViewById(R.id.homeIconImageView)
         exploreIconImageView = view.findViewById(R.id.exploreIconImageView)
         activityIconImageView = view.findViewById(R.id.activityIconImageView)
@@ -295,6 +306,11 @@ class VideoHomeFragment : Fragment() {
         // This will show videos from all users and bypass Room for this fragment's feed
         setupVideoViewPager(view)
         lifecycleScope.launch {
+            // Show skeleton only on initial load (empty list)
+            if (videoList.isEmpty()) {
+                startSkeletonAnimation()
+            }
+            
             try {
                 val act = requireActivity()
                 if (act is com.example.tareamov.MainActivity) {
@@ -310,6 +326,8 @@ class VideoHomeFragment : Fragment() {
                                 val idx = videoList.indexOfFirst { it.id == videoId }
                                 if (idx >= 0) navigateToVideoIndex(idx)
                             }
+                            // Hide skeleton after successful load
+                            stopSkeletonAnimation()
                         }
                     } catch (e: Exception) {
                         Log.w("VideoHomeFragment", "Error fetching videos from Supabase", e)
@@ -649,15 +667,52 @@ class VideoHomeFragment : Fragment() {
                     
                     Log.d("VideoHomeFragment", "Loaded ${videoList.size} videos (total: $totalVideos)")
                     isVideosLoaded = true
+                    
+                    // Stop skeleton animation with fade out
+                    stopSkeletonAnimation()
                 }
 
             } catch (e: Exception) {
                 Log.e("VideoHomeFragment", "Error loading videos", e)
-                Toast.makeText(context, "Error cargando videos: ${e.message}", Toast.LENGTH_SHORT).show()
+                // On error (e.g. no connection), keep skeleton visible if we have no content
+                withContext(Dispatchers.Main) {
+                    if (videoList.isEmpty()) {
+                        startSkeletonAnimation()
+                    } else {
+                        stopSkeletonAnimation()
+                    }
+                }
             } finally {
                 isLoadingVideos = false
             }
         }
+    }
+
+    private fun startSkeletonAnimation() {
+        skeletonContainer.visibility = View.VISIBLE
+        skeletonContainer.alpha = 1f
+        
+        skeletonAnimator?.cancel()
+        skeletonAnimator = ObjectAnimator.ofFloat(skeletonContainer, "alpha", 0.4f, 1.0f).apply {
+            duration = 800
+            repeatCount = ObjectAnimator.INFINITE
+            repeatMode = ObjectAnimator.REVERSE
+            interpolator = AccelerateDecelerateInterpolator()
+            start()
+        }
+    }
+
+    private fun stopSkeletonAnimation() {
+        skeletonAnimator?.cancel()
+        skeletonAnimator = null
+        
+        skeletonContainer.animate()
+            .alpha(0f)
+            .setDuration(500)
+            .withEndAction {
+                skeletonContainer.visibility = View.GONE
+            }
+            .start()
     }
     
     /**
@@ -713,6 +768,7 @@ class VideoHomeFragment : Fragment() {
         }
     }    override fun onResume() {
         super.onResume()
+        registerNetworkCallback()
         // Recargar videos desde Supabase al volver al fragmento
         if (isVideosLoaded) {
             Log.d("VideoHomeFragment", "onResume: Reloading videos from Supabase")
@@ -720,9 +776,54 @@ class VideoHomeFragment : Fragment() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        unregisterNetworkCallback()
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         isVideosLoaded = false
+    }
+
+    private fun registerNetworkCallback() {
+        try {
+            val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val networkRequest = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+
+            networkCallback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    super.onAvailable(network)
+                    Log.d("VideoHomeFragment", "Network available detected")
+                    // If we have no videos or we are in a state where we want to retry
+                    if (videoList.isEmpty() && !isLoadingVideos) {
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            // Add delay to ensure network is stable
+                            kotlinx.coroutines.delay(1500)
+                            Log.d("VideoHomeFragment", "Auto-reloading videos on network available")
+                            loadVideos()
+                        }
+                    }
+                }
+            }
+            connectivityManager.registerNetworkCallback(networkRequest, networkCallback!!)
+        } catch (e: Exception) {
+            Log.e("VideoHomeFragment", "Error registering network callback", e)
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        networkCallback?.let {
+            try {
+                val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                connectivityManager.unregisterNetworkCallback(it)
+            } catch (e: Exception) {
+                Log.e("VideoHomeFragment", "Error unregistering network callback", e)
+            }
+            networkCallback = null
+        }
     }
 
     // Método para forzar la recarga de videos desde Supabase
@@ -730,6 +831,10 @@ class VideoHomeFragment : Fragment() {
         isVideosLoaded = false
         currentPage = 0
         totalVideos = 0
+        // Show skeleton only if list is cleared (full reload)
+        if (videoList.isEmpty()) {
+            startSkeletonAnimation()
+        }
         loadVideos()
     }
 
