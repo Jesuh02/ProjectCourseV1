@@ -114,7 +114,7 @@ class LocalLlamaService(private val context: Context) {
     suspend fun generateResponse(
         prompt: String,
         mcpHttpClient: MCPHttpClient? = null,
-        maxToolIterations: Int = 15  // Increased to 15 to avoid iteration limits on complex queries
+        maxToolIterations: Int = 5  // Reduced to 5 to prevent infinite loops/long waits
     ): String = withContext(Dispatchers.IO) {
         if (!isModelLoaded.get()) {
             val initialized = initializeModel()
@@ -130,11 +130,11 @@ class LocalLlamaService(private val context: Context) {
                 val maxPromptSize = 2 * 1024
                 val optimizedPrompt = optimizePromptForLocalModel(prompt, maxPromptSize)
                 
-                // Try Ollama first, fallback to intelligent response
-                val ollamaResponse = tryLocalOllamaConnection(optimizedPrompt)
-                return@withContext if (ollamaResponse != null && ollamaResponse.isNotBlank() && !ollamaResponse.startsWith("Error:")) {
-                    Log.d(TAG, "✓ Got direct response from Ollama (${ollamaResponse.length} chars)")
-                    ollamaResponse
+                // Try LLM (DeepSeek/Ollama) first, fallback to intelligent response
+                val llmResponse = sendPromptToLLM(optimizedPrompt)
+                return@withContext if (llmResponse != null && llmResponse.isNotBlank() && !llmResponse.startsWith("Error:")) {
+                    Log.d(TAG, "✓ Got direct response from LLM (${llmResponse.length} chars)")
+                    llmResponse
                 } else {
                     Log.d(TAG, "⚡ Using intelligent fallback for direct response")
                     generateIntelligentResponse(optimizedPrompt)
@@ -193,14 +193,14 @@ class LocalLlamaService(private val context: Context) {
             while (iteration < effectiveMaxToolIterations && finalResponse == null) {
                 Log.d(TAG, "?? Tool calling iteration ${iteration + 1}/$effectiveMaxToolIterations")
                 
-                // Try to connect to local Ollama instance first using enriched prompt
-                val ollamaResponse = tryLocalOllamaConnection(enrichedPrompt)
-                val response = if (ollamaResponse != null && ollamaResponse.isNotBlank() && !ollamaResponse.startsWith("Error:")) {
-                    Log.d(TAG, "✓ Got response from local Ollama instance (${ollamaResponse.length} chars)")
-                    Log.d(TAG, "Response preview (first 300 chars): ${ollamaResponse.take(300)}")
-                    ollamaResponse
+                // Try to connect to LLM (DeepSeek/Ollama) using enriched prompt
+                val llmResponse = sendPromptToLLM(enrichedPrompt)
+                val response = if (llmResponse != null && llmResponse.isNotBlank() && !llmResponse.startsWith("Error:")) {
+                    Log.d(TAG, "✓ Got response from LLM (${llmResponse.length} chars)")
+                    Log.d(TAG, "Response preview (first 300 chars): ${llmResponse.take(300)}")
+                    llmResponse
                 } else {
-                    Log.w(TAG, "Local Ollama not available; using intelligent fallback")
+                    Log.w(TAG, "LLM not available; using intelligent fallback")
                     // Generate intelligent response when Ollama is not available
                     generateIntelligentResponse(enrichedPrompt)
                 }
@@ -930,6 +930,99 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
     }
 
     /**
+     * Try to connect to DeepSeek API
+     */
+    private suspend fun tryDeepSeekConnection(prompt: String): String? = withContext(Dispatchers.IO) {
+        try {
+            // Access BuildConfig via fully qualified name to avoid import issues
+            val apiKey = com.example.tareamov.BuildConfig.DEEPSEEK_API_KEY
+            if (apiKey.isBlank()) return@withContext null
+            
+            Log.d(TAG, "Trying DeepSeek API...")
+            val url = java.net.URL("https://api.deepseek.com/chat/completions")
+            val connection = url.openConnection() as java.net.HttpURLConnection
+            connection.requestMethod = "POST"
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("Authorization", "Bearer $apiKey")
+            connection.connectTimeout = 30000
+            connection.readTimeout = 60000
+            connection.doOutput = true
+            
+            val requestBody = org.json.JSONObject().apply {
+                put("model", "deepseek-chat")
+                
+                // Split prompt into system and user for better adherence to instructions
+                val messagesArray = org.json.JSONArray()
+                val splitMarker = "🎯 CONSULTA DEL USUARIO:"
+                
+                if (prompt.contains(splitMarker)) {
+                    val parts = prompt.split(splitMarker, limit = 2)
+                    // System message (Instructions)
+                    messagesArray.put(org.json.JSONObject().apply {
+                        put("role", "system")
+                        put("content", parts[0].trim())
+                    })
+                    // User message (The actual query)
+                    messagesArray.put(org.json.JSONObject().apply {
+                        put("role", "user")
+                        put("content", parts[1].trim())
+                    })
+                } else {
+                    // Fallback to single user message
+                    messagesArray.put(org.json.JSONObject().apply {
+                        put("role", "user")
+                        put("content", prompt)
+                    })
+                }
+                
+                put("messages", messagesArray)
+                put("temperature", 0.7)
+                put("stream", false)
+            }
+            
+            val writer = java.io.OutputStreamWriter(connection.outputStream)
+            writer.write(requestBody.toString())
+            writer.flush()
+            writer.close()
+            
+            if (connection.responseCode == 200) {
+                val reader = java.io.BufferedReader(java.io.InputStreamReader(connection.inputStream))
+                val responseJson = org.json.JSONObject(reader.readText())
+                val choices = responseJson.optJSONArray("choices")
+                if (choices != null && choices.length() > 0) {
+                    val content = choices.getJSONObject(0).optJSONObject("message")?.optString("content")
+                    if (!content.isNullOrBlank()) {
+                        Log.d(TAG, "✓ Got response from DeepSeek")
+                        return@withContext content
+                    }
+                }
+            } else {
+                 Log.e(TAG, "DeepSeek error: ${connection.responseCode} ${connection.responseMessage}")
+                 // Try to read error body
+                 try {
+                     val errorReader = java.io.BufferedReader(java.io.InputStreamReader(connection.errorStream))
+                     Log.e(TAG, "DeepSeek error body: ${errorReader.readText()}")
+                 } catch (e: Exception) {}
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "DeepSeek connection failed", e)
+        }
+        return@withContext null
+    }
+
+    /**
+     * Send prompt to available LLM (DeepSeek -> Ollama)
+     */
+    private suspend fun sendPromptToLLM(prompt: String): String? {
+        // 1. Try DeepSeek API first (Fastest & Smartest)
+        val deepSeekResponse = tryDeepSeekConnection(prompt)
+        if (deepSeekResponse != null) return deepSeekResponse
+        
+        // 2. Fallback to local Ollama
+        return tryLocalOllamaConnection(prompt)
+    }
+
+    /**
      * Try to connect to a local Ollama instance
      */
     private suspend fun tryLocalOllamaConnection(prompt: String): String? = withContext(Dispatchers.IO) {
@@ -943,8 +1036,8 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
                 
                 connection.requestMethod = "POST"
                 connection.setRequestProperty("Content-Type", "application/json")
-                connection.connectTimeout = 60000   // 60 seconds for connection
-                connection.readTimeout = 300000     // 300 seconds (5 minutes) for reading response
+                connection.connectTimeout = 30000   // 30 seconds for connection
+                connection.readTimeout = 60000      // 60 seconds for reading response
                 connection.doOutput = true
                 
                 val requestBody = org.json.JSONObject().apply {

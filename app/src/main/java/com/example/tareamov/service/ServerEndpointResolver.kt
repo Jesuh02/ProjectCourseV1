@@ -33,10 +33,10 @@ object ServerEndpointResolver {
     private const val TAG = "ServerEndpointResolver"
     private const val MCP_PORT = 3000
     private const val OLLAMA_PORT = 11435
-    private const val DEFAULT_TIMEOUT_MS = 1500
+    private const val DEFAULT_TIMEOUT_MS = 500 // Reduced from 1500ms to speed up scanning
     private const val PREFS_NAME = "server_endpoint_resolver"
     private const val PREF_KEY_PREFIX = "last_host_"
-    private const val MAX_SCAN_HOSTS = 128
+    private const val MAX_SCAN_HOSTS = 32 // Reduced from 128 to scan fewer hosts
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()

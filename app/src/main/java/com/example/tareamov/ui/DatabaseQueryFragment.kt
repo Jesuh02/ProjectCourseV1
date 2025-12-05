@@ -559,13 +559,13 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             return
         }
 
-        // ALWAYS use LLM with MCP tool calling for ANY query (including "hola", "qué es", etc.)
+        // ALWAYS use MCP Server (DeepSeek) for ALL queries
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                Log.d("DatabaseQueryFragment", "Delegating ALL queries to Local LLM with MCP Tools")
+                Log.d("DatabaseQueryFragment", "Delegating query to MCP Server (DeepSeek)...")
                 
-                // Use LocalLlamaService which calls MCP tools
-                val result = processQueryWithLLMToolCalling(query)
+                // Use MCP Server directly (Server-side Agent)
+                val result = processQueryWithMCPServer(query)
 
                 Log.d("DatabaseQueryFragment", "=== FINAL RESULT LOG ===")
                 Log.d("DatabaseQueryFragment", "Result Length: ${result.length} characters")
@@ -642,114 +642,51 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     
     /**
      * Handle Business Intelligence queries with VS Code style responses
+     * OPTIMIZED: Delegates to MCP Server (Node.js) to avoid slow on-device inference
      */
     private suspend fun handleBIQuery(query: String): String = withContext(Dispatchers.IO) {
-        Log.d("DatabaseQueryFragment", "handleBIQuery: initializing MCP client")
+        Log.d("DatabaseQueryFragment", "handleBIQuery: Delegating to MCP Server for speed")
         
-        // Get database schema first using getDatabaseSchema() method
-        val schemaResult = mcpHttpClient.getDatabaseSchema()
-        val schema = if (schemaResult.success && schemaResult.schema != null) {
-            schemaResult.schema
-        } else {
-            Log.w("DatabaseQueryFragment", "Could not get schema from MCP: ${schemaResult.error}")
-            getLocalSchemaSummary() // Fallback to local schema
-        }
-        
-        Log.d("DatabaseQueryFragment", "Schema obtained (${schema.length} chars)")
-        
-        // Inject schema into LLM context
-        localLlamaService.setDatabaseContext(schema)
-        
-        // Build VS Code style prompt that EXPLICITLY provides schema upfront
+        // Build a prompt that instructs the Server Agent to generate the report
+        // We do NOT fetch schema here to save bandwidth/time; the server has the schema.
         val vsCodePrompt = """
 CONSULTA DE BUSINESS INTELLIGENCE: $query
 
-=== ESQUEMA DE BASE DE DATOS (YA EJECUTADO: get_database_schema) ===
-$schema
-=== FIN DEL ESQUEMA ===
+INSTRUCCIONES:
+Eres un experto en Business Intelligence y Marketing.
+Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.
 
-IMPORTANTE: El esquema arriba YA fue obtenido ejecutando get_database_schema.
-NO necesitas ejecutar get_database_schema de nuevo.
+1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema'.
+2. Usa 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.).
+3. Genera un reporte con el siguiente formato EXACTO (Markdown):
 
-Si necesitas DATOS ESPECÍFICOS (conteos, ejemplos), puedes ejecutar:
-TOOL_CALL: query_database(query="SELECT ...")
+## Resumen ejecutivo
+[Objetivo y hallazgos principales]
 
-PERO para responder la pregunta de BI, usa PRIMERO el esquema proporcionado arriba.
-
-INSTRUCCIONES - Responde EXACTAMENTE como Visual Studio Code Copilot con estas secciones:
-
-## Resumen ejecutivo — Objetivo
-[Objetivo y resultado esperado en 2-3 líneas]
-
-## Decisiones críticas a tomar ahora
+## Decisiones críticas
 1. [Decisión 1]
-   - [Subtarea/detalle]
 2. [Decisión 2]
-   - [Subtarea/detalle]
-[... hasta 6 decisiones]
 
-## Mapeo tablas → métricas
-[Explicar qué tablas se usan para qué métricas]
-
-## KPIs priorizados (top 6)
-1. [KPI 1 con fórmula y target]
-2. [KPI 2 con fórmula y target]
-[... hasta 6 KPIs]
-
-## Arquitectura BI sugerida (MVP)
-- Ingest: [descripción]
-- Storage/Layer: [descripción]
-- Orchestration: [descripción]
-- Visualization: [descripción]
-- Access: [descripción]
+## KPIs priorizados
+1. [KPI 1]
+2. [KPI 2]
 
 ## Ejemplos de SQL
 ```sql
--- [Descripción query 1]
-SELECT * FROM tabla WHERE ...;
-
--- [Descripción query 2]
-SELECT id, campo FROM tabla WHERE ...;
+-- Ejemplo relevante
+SELECT ...
 ```
-[5 ejemplos SQL basados en el esquema real. Puedes usar JOIN y GROUP BY si es necesario para métricas avanzadas.]
 
-## Plan corto de implementación (2–4 semanas)
-1. Semana 0–1: [tareas]
-2. Semana 1–2: [tareas]
-3. Semana 2–3: [tareas]
-4. Semana 3–4: [tareas]
+## Acción inmediata
+[Acción concreta]
 
-## Riesgos y mitigaciones
-- [Riesgo 1]: [Mitigación 1]
-- [Riesgo 2]: [Mitigación 2]
-[... 3-4 riesgos]
-
-## Acción inmediata sugerida
-[1-2 acciones concretas que el usuario puede ejecutar ahora]
-
-USA el esquema real proporcionado para generar SQL específico y nombres de tablas exactos.
+IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         """.trimIndent()
         
-        Log.d("DatabaseQueryFragment", "Sending BI prompt to LLM with MCP enabled")
+        Log.d("DatabaseQueryFragment", "Sending BI prompt to MCP Server...")
         
-        // CRITICAL: Reduced to 5 iterations to prevent 16-minute hangs
-        // Schema is already provided, so LLM shouldn't need get_database_schema again
-        val response = localLlamaService.generateResponse(
-            prompt = vsCodePrompt,
-            mcpHttpClient = mcpHttpClient, // ✅ ENABLE MCP tools
-            maxToolIterations = 5 // Reduced to 5 to prevent infinite loops
-        )
-        
-        Log.d("DatabaseQueryFragment", "BI response received (${response.length} chars)")
-        
-        // Build final response with a todo list header
-        val finalResponse = buildString {
-            append("## Análisis de Business Intelligence\n\n")
-            append("**Completed (1/1)** *Análisis de decisiones críticas y estrategia empresarial*\n\n")
-            append(response)
-        }
-        
-        return@withContext finalResponse
+        // Use the server-side agent which is much faster than on-device LLM
+        return@withContext processQueryWithMCPServer(vsCodePrompt)
     }
     
     /**
@@ -812,16 +749,41 @@ USA el esquema real proporcionado para generar SQL específico y nombres de tabl
         try {
             Log.d(TAG, "🔧 Using MCP tareamov-mcp-server HTTP for query: $query")
             
-            // Use enhanced multi-step reasoning from DatabaseQueryService
-            val result = databaseQueryService.processQueryWithMCP(query)
+            // Create arguments for the tool
+            val args = JSONObject().put("query", query)
             
-            return@withContext result
+            // Call the tool 'query_database' on the MCP server
+            // This triggers the backend agent (DeepSeek) if the query is natural language
+            val result = mcpHttpClient.executeTool("query_database", args)
+            
+            if (result.success && result.data != null) {
+                val data = result.data
+                
+                // If data is a JSONObject, check if it has a "data" field (common pattern in this app)
+                if (data is JSONObject) {
+                    if (data.has("data")) {
+                        val innerData = data.get("data")
+                        if (innerData is String) return@withContext innerData
+                        return@withContext innerData.toString()
+                    }
+                    // If no "data" field, return the whole object as string
+                    return@withContext formatMCPJsonObjectResult(data)
+                }
+                
+                // If data is a JSONArray, format it
+                if (data is JSONArray) {
+                    return@withContext formatMCPJsonArrayResults(data)
+                }
+                
+                // If it's a string or anything else
+                return@withContext data.toString()
+            }
+            
+            return@withContext result.error ?: "Respuesta vacía del servidor."
             
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Exception using MCP STDIO server: ${e.message}", e)
-            // Fallback to RAG service
-            Log.d(TAG, "⚠️ Falling back to RAG service due to exception")
-            return@withContext processRAGEnhancedQuery(query)
+            Log.e(TAG, "❌ Exception using MCP HTTP server: ${e.message}", e)
+            return@withContext "Error al conectar con el servidor MCP: ${e.message}"
         }
     }
     
