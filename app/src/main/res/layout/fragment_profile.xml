@@ -471,6 +471,20 @@
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 
+    <!-- Skeleton Loading Container -->
+    <FrameLayout
+        android:id="@+id/skeletonLayout"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="@drawable/bg_app_gradient"
+        android:visibility="gone"
+        android:stateListAnimator="@animator/skeleton_shimmer"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/bottomNavigation">
+
+        <include layout="@layout/layout_profile_skeleton" />
+    </FrameLayout>
+
     <!-- Bottom Navigation reutilizable -->
     <include 
         layout="@layout/component_bottom_navigation" 

@@ -39,6 +39,7 @@ class ProfileFragment : Fragment() {
     private lateinit var profileImage: CircleImageView
     private lateinit var editProfileButton: Button
     private lateinit var avatarContainer: FrameLayout
+    private lateinit var skeletonLayout: FrameLayout
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -57,6 +58,7 @@ class ProfileFragment : Fragment() {
         profileImage = view.findViewById(R.id.profileImage)
         editProfileButton = view.findViewById(R.id.editProfileButton)
         avatarContainer = view.findViewById(R.id.avatarContainer)
+        skeletonLayout = view.findViewById(R.id.skeletonLayout)
 
         // Set up navigation for bottom buttons usando ComponentBottomNavigationBinding 
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
@@ -183,6 +185,7 @@ class ProfileFragment : Fragment() {
     }
 
     private fun loadUserData() {
+        startSkeletonAnimation()
         lifecycleScope.launch {
             try {
                 // Prefer SessionManager for active user identification
@@ -268,6 +271,11 @@ class ProfileFragment : Fragment() {
     }
 
     private fun updateUI(usuario: Usuario?, persona: Persona?, subscriberCount: Long) {
+        if (usuario == null && !isNetworkAvailable(requireContext())) {
+            return
+        }
+        stopSkeletonAnimation()
+
         // Use usuario?.usuario for username if that's the correct field
         usernameTextView.text = usuario?.usuario ?: getString(R.string.default_username)
 
@@ -399,6 +407,33 @@ class ProfileFragment : Fragment() {
 
             // Reload user data
             loadUserData()
+        }
+    }
+
+    private fun startSkeletonAnimation() {
+        skeletonLayout.visibility = View.VISIBLE
+        skeletonLayout.alpha = 1f
+    }
+
+    private fun stopSkeletonAnimation() {
+        skeletonLayout.animate()
+            .alpha(0f)
+            .setDuration(300)
+            .withEndAction {
+                skeletonLayout.visibility = View.GONE
+            }
+            .start()
+    }
+
+    private fun isNetworkAvailable(context: Context): Boolean {
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val network = connectivityManager.activeNetwork ?: return false
+        val activeNetwork = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return when {
+            activeNetwork.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> true
+            activeNetwork.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> true
+            activeNetwork.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> true
+            else -> false
         }
     }
 }
