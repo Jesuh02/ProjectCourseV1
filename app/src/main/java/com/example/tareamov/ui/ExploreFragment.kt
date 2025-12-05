@@ -3,8 +3,15 @@ import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import eightbitlab.com.blurview.BlurView
 import eightbitlab.com.blurview.RenderScriptBlur
 import android.view.ViewOutlineProvider
+import android.animation.ObjectAnimator
+import android.view.animation.AccelerateDecelerateInterpolator
 
 import android.app.Activity
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -49,6 +56,9 @@ class ExploreFragment : Fragment() {
     private lateinit var searchEditText: EditText
     private lateinit var courseRepository: com.example.tareamov.repository.CourseRepository
 
+    private lateinit var skeletonContainer: View
+    private var skeletonAnimator: ObjectAnimator? = null
+
     // Store all courses for filtering and search
     private var allCoursesList = mutableListOf<Course>()
     
@@ -65,6 +75,9 @@ class ExploreFragment : Fragment() {
     
     // Current filter index (0=All, 1=My Created, 2=Other, 3=Premium, 4=Free, 5=Enrolled)
     private var currentFilterIndex = 0
+
+    // Network monitoring
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -97,6 +110,9 @@ class ExploreFragment : Fragment() {
 
         // Initialize searchEditText
         searchEditText = view.findViewById(R.id.searchEditText)
+        
+        // Initialize skeleton container
+        skeletonContainer = view.findViewById(R.id.skeletonContainer)
 
         // Setup BlurView for header section
         val headerSection = view.findViewById<BlurView>(R.id.headerSection)
@@ -138,6 +154,9 @@ class ExploreFragment : Fragment() {
 
         // Setup course observation
         setupCourseObservation()
+
+        // Setup network monitoring to retry loading when internet returns
+        setupNetworkMonitoring()
 
     // Cargar los cursos (forzar fetch remoto al entrar en el fragment)
     loadCourses(forceRemote = true)
@@ -203,6 +222,82 @@ class ExploreFragment : Fragment() {
         }
         bottomNavBinding.profileNavButton.setOnClickListener {
             findNavController().navigate(R.id.action_exploreFragment_to_profileFragment)
+        }
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val activeNetwork = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun setupNetworkMonitoring() {
+        val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        
+        networkCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                Log.d("ExploreFragment", "Network available, retrying loadCourses if empty")
+                // Use lifecycleScope to ensure we're on main thread and fragment is active
+                lifecycleScope.launch(Dispatchers.Main) {
+                    if (coursesList.isEmpty()) {
+                        loadCourses(forceRemote = true)
+                    }
+                }
+            }
+        }
+        
+        val networkRequest = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+            
+        try {
+            connectivityManager.registerNetworkCallback(networkRequest, networkCallback!!)
+        } catch (e: Exception) {
+            Log.e("ExploreFragment", "Error registering network callback", e)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-register network callback if it was unregistered or null
+        if (networkCallback == null) {
+            setupNetworkMonitoring()
+        }
+        
+        // If list is empty, ensure skeleton is visible immediately and try to load
+        if (coursesList.isEmpty()) {
+            startSkeletonAnimation()
+            // Try to load regardless of connection state check - let the loader handle the error/skeleton persistence
+            loadCourses(forceRemote = true)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Unregister network callback to avoid leaks
+        networkCallback?.let {
+            val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            try {
+                connectivityManager.unregisterNetworkCallback(it)
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error unregistering network callback", e)
+            }
+            networkCallback = null
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        // Ensure callback is unregistered
+        networkCallback?.let {
+            val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            try {
+                connectivityManager.unregisterNetworkCallback(it)
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error unregistering network callback", e)
+            }
+            networkCallback = null
         }
     }
 
@@ -1112,7 +1207,35 @@ class ExploreFragment : Fragment() {
                 currentCourseForThumbnailChange = null
             }
         }
-    }    /**
+    }
+
+    private fun startSkeletonAnimation() {
+        skeletonContainer.animate().cancel()
+        skeletonContainer.visibility = View.VISIBLE
+        skeletonContainer.alpha = 1f
+        
+        skeletonAnimator?.cancel()
+        skeletonAnimator = ObjectAnimator.ofFloat(skeletonContainer, "alpha", 0.4f, 1.0f).apply {
+            duration = 800
+            repeatCount = ObjectAnimator.INFINITE
+            repeatMode = ObjectAnimator.REVERSE
+            interpolator = AccelerateDecelerateInterpolator()
+            start()
+        }
+    }
+
+    private fun stopSkeletonAnimation() {
+        skeletonAnimator?.cancel()
+        skeletonAnimator = null
+        
+        skeletonContainer.animate()
+            .alpha(0f)
+            .setDuration(500)
+            .withEndAction { skeletonContainer.visibility = View.GONE }
+            .start()
+    }
+
+    /**
      * Load courses with pagination (10 at a time)
      * Uses Supabase pagination for better performance
      */
@@ -1123,7 +1246,13 @@ class ExploreFragment : Fragment() {
         }
 
         isLoadingCourses = true
-        CoroutineScope(Dispatchers.Main).launch {
+        
+        // Show skeleton only if list is empty (initial load or full refresh)
+        if (coursesList.isEmpty()) {
+            startSkeletonAnimation()
+        }
+        
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 Log.d("ExploreFragment", "loadCourses: Starting to load courses from Supabase (forceRemote=$forceRemote)")
                 
@@ -1132,18 +1261,6 @@ class ExploreFragment : Fragment() {
                     Log.d("ExploreFragment", "loadCourses: Calling SupabaseClient.fetchCourses()")
                     val courses = com.example.tareamov.service.SupabaseClient.fetchCourses()
                     Log.d("ExploreFragment", "loadCourses: Received ${courses.size} courses from Supabase")
-                    
-                    // Log unique course titles to verify diversity
-                    val uniqueTitles = courses.map { it.title }.distinct()
-                    Log.d("ExploreFragment", "loadCourses: Unique course titles: ${uniqueTitles.size}")
-                    uniqueTitles.take(10).forEachIndexed { index, title ->
-                        Log.d("ExploreFragment", "  #$index: $title")
-                    }
-                    
-                    // Log creator IDs to check diversity
-                    val uniqueCreators = courses.map { it.creatorUserId }.distinct()
-                    Log.d("ExploreFragment", "loadCourses: Unique creator IDs: ${uniqueCreators.joinToString(", ")}")
-                    
                     courses
                 }
                 
@@ -1181,11 +1298,29 @@ class ExploreFragment : Fragment() {
                     
                     updateCourseStats()
                     Log.d("ExploreFragment", "Loaded and displaying all ${allCourses.size} courses")
+                    
+                    // Stop skeleton animation ONLY if we have data OR if we have network (meaning it's a genuine empty list)
+                    if (allCourses.isNotEmpty() || isNetworkAvailable()) {
+                        stopSkeletonAnimation()
+                    } else {
+                        // List is empty AND no network -> likely a fetch error masked by SupabaseClient
+                        Log.w("ExploreFragment", "Empty list returned while offline. Keeping skeleton.")
+                        startSkeletonAnimation()
+                    }
                 }
 
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error loading courses", e)
-                Toast.makeText(context, "Error cargando cursos: ${e.message}", Toast.LENGTH_SHORT).show()
+                // Only stop skeleton if we have data to show
+                if (coursesList.isNotEmpty()) {
+                    stopSkeletonAnimation()
+                    Toast.makeText(context, "Error cargando cursos: ${e.message}", Toast.LENGTH_SHORT).show()
+                } else {
+                    // List is empty. Keep skeleton visible regardless of error type or network status.
+                    // This ensures the skeleton persists until we successfully load data.
+                    Log.d("ExploreFragment", "Load failed and list empty. Keeping skeleton animation.")
+                    startSkeletonAnimation()
+                }
             } finally {
                 isLoadingCourses = false
             }

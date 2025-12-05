@@ -23,6 +23,19 @@
         app:layout_constraintEnd_toEndOf="parent"
         tools:listitem="@layout/item_created_course" />
 
+    <!-- Skeleton Loading View -->
+    <FrameLayout
+        android:id="@+id/skeletonContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone"
+        android:stateListAnimator="@animator/skeleton_shimmer"
+        tools:visibility="visible">
+
+        <include layout="@layout/layout_explore_skeleton" />
+    </FrameLayout>
+
     <!-- Header Section (Translucent Overlay) -->
     <eightbitlab.com.blurview.BlurView
         android:id="@+id/headerSection"

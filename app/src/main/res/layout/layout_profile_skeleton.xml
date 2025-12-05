@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/bg_app_gradient"
+    android:paddingBottom="80dp">
+
+    <!-- Header Section Skeleton -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="40dp"
+        android:paddingBottom="30dp">
+
+        <!-- Edit Button Skeleton -->
+        <View
+            android:layout_width="80dp"
+            android:layout_height="36dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_skeleton_shape"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- Avatar Skeleton -->
+        <View
+            android:id="@+id/avatarSkeleton"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_marginTop="60dp"
+            android:background="@drawable/bg_skeleton_circle"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+        <!-- Username Skeleton -->
+        <View
+            android:id="@+id/usernameSkeleton"
+            android:layout_width="150dp"
+            android:layout_height="30dp"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_skeleton_shape"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/avatarSkeleton" />
+
+        <!-- Status/Followers Skeleton -->
+        <View
+            android:layout_width="200dp"
+            android:layout_height="20dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_skeleton_shape"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/usernameSkeleton" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- Menu Items Skeleton -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="10dp">
+
+        <!-- Item 1 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="10dp"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_skeleton_shape">
+            
+            <View
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:background="@drawable/bg_skeleton_circle" />
+            
+            <View
+                android:layout_width="150dp"
+                android:layout_height="16dp"
+                android:layout_marginStart="16dp"
+                android:background="@drawable/bg_skeleton_shape" />
+        </LinearLayout>
+
+        <!-- Item 2 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="10dp"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_skeleton_shape">
+            
+            <View
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:background="@drawable/bg_skeleton_circle" />
+            
+            <View
+                android:layout_width="200dp"
+                android:layout_height="16dp"
+                android:layout_marginStart="16dp"
+                android:background="@drawable/bg_skeleton_shape" />
+        </LinearLayout>
+
+        <!-- Item 3 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="10dp"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_skeleton_shape">
+            
+            <View
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:background="@drawable/bg_skeleton_circle" />
+            
+            <View
+                android:layout_width="120dp"
+                android:layout_height="16dp"
+                android:layout_marginStart="16dp"
+                android:background="@drawable/bg_skeleton_shape" />
+        </LinearLayout>
+
+        <!-- Item 4 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="10dp"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_skeleton_shape">
+            
+            <View
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:background="@drawable/bg_skeleton_circle" />
+            
+            <View
+                android:layout_width="180dp"
+                android:layout_height="16dp"
+                android:layout_marginStart="16dp"
+                android:background="@drawable/bg_skeleton_shape" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+</LinearLayout>
