@@ -239,22 +239,22 @@ object SupabaseClient {
             "identificacion" to persona.identificacion,
             "nombres" to persona.nombres,
             "apellidos" to persona.apellidos,
-            "email" to persona.email,
             "telefono" to persona.telefono,
             "direccion" to persona.direccion,
-            "fechaNacimiento" to persona.fechaNacimiento,
-            "avatar" to persona.avatar,
-            "esUsuario" to persona.esUsuario
+            "fecha_nacimiento" to persona.fechaNacimiento
         )
         return insertRecord("personas", payload)
     }
 
     suspend fun insertUsuario(usuario: Usuario): Long? {
         val payload = mapOf(
-            "usuario" to usuario.usuario,
+            "username" to usuario.usuario,
             "contrasena" to usuario.contrasena,
             "persona_id" to usuario.persona_id,
-            "rol_id" to usuario.rol_id
+            "rol_id" to usuario.rol_id,
+            "email" to usuario.email,
+            "avatar" to usuario.avatar,
+            "is_active" to usuario.isActive
         )
         return insertRecord("usuarios", payload)
     }
@@ -737,12 +737,9 @@ object SupabaseClient {
             map["identificacion"] = persona.identificacion
             map["nombres"] = persona.nombres
             map["apellidos"] = persona.apellidos
-            map["email"] = persona.email
             map["telefono"] = persona.telefono
             map["direccion"] = persona.direccion
-            map["fechaNacimiento"] = persona.fechaNacimiento
-            map["avatar"] = persona.avatar
-            map["esUsuario"] = persona.esUsuario
+            map["fecha_nacimiento"] = persona.fechaNacimiento
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
             val url = "$baseUrl/rest/v1/personas?id=eq.${persona.id}"
@@ -774,10 +771,13 @@ object SupabaseClient {
     suspend fun updateUsuario(usuario: Usuario): Boolean = withContext(Dispatchers.IO) {
         try {
             val map = mutableMapOf<String, Any?>()
-            map["usuario"] = usuario.usuario
+            map["username"] = usuario.usuario
             map["contrasena"] = usuario.contrasena
             map["persona_id"] = usuario.persona_id
             map["rol_id"] = usuario.rol_id
+            map["email"] = usuario.email
+            map["avatar"] = usuario.avatar
+            map["is_active"] = usuario.isActive
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
             val url = "$baseUrl/rest/v1/usuarios?id=eq.${usuario.id}"
@@ -1272,7 +1272,7 @@ object SupabaseClient {
             val escaped = username.replace("'", "''")
 
             // Try a case-insensitive server-side match first (ilike)
-            val pathIlike = "usuarios?usuario=ilike.'${escaped}'"
+            val pathIlike = "usuarios?username=ilike.'${escaped}'"
             client.newCall(buildGetRequest(pathIlike)).execute().use { resp ->
                 val body = resp.body?.string()
                 android.util.Log.d("SupabaseClient", "GET $pathIlike code=${resp.code} body_len=${body?.length ?: 0}")
@@ -1296,7 +1296,7 @@ object SupabaseClient {
 
             // If not found yet, try exact eq filter
             if (result == null) {
-                val pathEq = "usuarios?usuario=eq.'${escaped}'"
+                val pathEq = "usuarios?username=eq.'${escaped}'"
                 client.newCall(buildGetRequest(pathEq)).execute().use { resp2 ->
                     val body2 = resp2.body?.string()
                     android.util.Log.d("SupabaseClient", "GET $pathEq code=${resp2.code} body_len=${body2?.length ?: 0}")

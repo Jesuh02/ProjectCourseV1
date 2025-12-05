@@ -15,6 +15,7 @@ const PORT = process.env.MCP_HTTP_PORT || 3000;
 // Middleware
 app.use(express.json());
 app.use((req, res, next) => {
+    console.log(`📨 ${req.method} ${req.path}`);
     // Enable CORS for Android emulator
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -203,8 +204,10 @@ app.post('/tools/call', async(req, res) => {
             const isSQL = /^\s*(select|insert|update|delete|with)\s/i.test(args.query);
 
             if (isSQL) {
+                console.log('📊 Executing raw SQL query...');
                 result = await mcpService.processQuery(args.query, { includeSchema: true });
             } else {
+                console.log('🤖 Processing Natural Language Query via Agent...');
                 // Use Agent for Natural Language
                 const agentResponse = await mcpService.processQueryWithAgent(args.query);
                 result = {

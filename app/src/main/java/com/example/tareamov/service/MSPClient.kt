@@ -38,13 +38,13 @@ class MSPClient(private val context: Context) {
     }
 
     // Enhanced OkHttpClient with better timeout handling for large payloads
-    // Increased timeouts to handle Ollama's model loading time (7+ seconds)
+    // Reduced timeouts to prevent long hangs (user reported 10+ mins)
     private val client by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(60, TimeUnit.SECONDS)      // Increased for initial connection
-            .readTimeout(300, TimeUnit.SECONDS)        // 5 minutes for model loading + response generation
-            .writeTimeout(120, TimeUnit.SECONDS)       // 2 minutes for large requests
-            .callTimeout(360, TimeUnit.SECONDS)        // 6 minutes total call timeout
+            .connectTimeout(30, TimeUnit.SECONDS)      // 30s for connection
+            .readTimeout(60, TimeUnit.SECONDS)         // 60s for response (DeepSeek timeout is 60s)
+            .writeTimeout(60, TimeUnit.SECONDS)        // 60s for write
+            .callTimeout(90, TimeUnit.SECONDS)         // 90s total call timeout
             .build()
     }
 
@@ -72,8 +72,8 @@ class MSPClient(private val context: Context) {
             requestMethod = "POST"
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "application/json")
-            connectTimeout = 60000  // 60 seconds for connection
-            readTimeout = 300000    // 300 seconds (5 minutes) for reading response
+            connectTimeout = 30000  // 30 seconds for connection
+            readTimeout = 60000     // 60 seconds for reading response
             doOutput = true
         }
 

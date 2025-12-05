@@ -66,7 +66,7 @@ import com.example.tareamov.service.DatabaseContextHttpServer
         RolRecurso::class,
         ProgresoEstudiante::class
     ],
-    version = 29, // <-- Update version to add ProgresoEstudiante table
+    version = 30, // <-- Update version to add email and avatar columns to usuarios
     exportSchema = false
 )
 @TypeConverters(VideoDataConverters::class)
@@ -158,7 +158,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17,
                         MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
                         MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                        MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28
+                        MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
+                        MIGRATION_29_30
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -1005,6 +1006,46 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.i(TAG, "Migration 27 to 28 completed: Updated role name from 'estudiante' to 'usuario'")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 27 to 28", e)
+                }
+            }
+        }
+
+        // Migration 28 to 29: Add ProgresoEstudiante table
+        private val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("""
+                        CREATE TABLE IF NOT EXISTS progreso_estudiante (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            usuario_id INTEGER NOT NULL,
+                            video_id INTEGER NOT NULL,
+                            visto INTEGER NOT NULL DEFAULT 0,
+                            fecha_visto INTEGER,
+                            FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+                            FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+                        )
+                    """)
+                    db.execSQL("CREATE INDEX IF NOT EXISTS index_progreso_estudiante_usuario_id ON progreso_estudiante(usuario_id)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS index_progreso_estudiante_video_id ON progreso_estudiante(video_id)")
+                    Log.i(TAG, "Migration 28 to 29 completed: Added progreso_estudiante table")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 28 to 29", e)
+                }
+            }
+        }
+
+        // Migration 29 to 30: Add email and avatar columns to usuarios table for Google Sign-In
+        private val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    // Add email column
+                    db.execSQL("ALTER TABLE usuarios ADD COLUMN email TEXT")
+                    // Add avatar column
+                    db.execSQL("ALTER TABLE usuarios ADD COLUMN avatar TEXT")
+                    
+                    Log.i(TAG, "Migration 29 to 30 completed: Added email and avatar columns to usuarios table")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 29 to 30", e)
                 }
             }
         }

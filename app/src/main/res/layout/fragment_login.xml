@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#0A0A0F"
+    android:fillViewport="true"
     tools:context=".ui.LoginFragment">
+
+<androidx.constraintlayout.widget.ConstraintLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingBottom="24dp">
 
     <!-- Partículas de fondo animadas -->
     <View
@@ -256,6 +262,56 @@
                 android:textStyle="bold"
                 android:elevation="4dp" />
 
+            <!-- Separador "O" -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="16dp"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1"
+                    android:background="#33FFFFFF" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="12dp"
+                    android:text="O"
+                    android:textColor="#80FFFFFF"
+                    android:textSize="12sp" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1"
+                    android:background="#33FFFFFF" />
+            </LinearLayout>
+
+            <!-- Botón de Google -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/googleLoginButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:backgroundTint="#FFFFFF"
+                android:padding="12dp"
+                android:text="Continuar con Google"
+                android:textAllCaps="false"
+                android:textColor="#000000"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                app:icon="@drawable/ic_google"
+                app:iconGravity="textStart"
+                app:iconPadding="8dp"
+                app:iconTint="@null"
+                app:strokeColor="#DDDDDD"
+                app:strokeWidth="1dp"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
             <!-- Texto de olvidaste contraseña -->
             <TextView
                 android:id="@+id/forgotPasswordTextView"
@@ -286,32 +342,6 @@
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 
-    <!-- Nuevo botón para redirigir a registro de persona con tema oscuro -->
-    <LinearLayout
-        android:id="@+id/registerPersonaContainer"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginTop="16dp"
-        android:gravity="center"
-        app:layout_constraintTop_toBottomOf="@+id/loginCard"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="¿Nunca te has registrado? "
-            android:textColor="#CCCCCC" />
-
-        <TextView
-            android:id="@+id/goToRegisterPersonaTextView"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Crear perfil"
-            android:textColor="#8B5CF6"
-            android:textStyle="bold"
-            android:padding="8dp" />
-    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
+</ScrollView>

@@ -40,6 +40,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import at.favre.lib.crypto.bcrypt.BCrypt
 import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.util.SessionManager
+import com.example.tareamov.data.AppDatabase
+import android.content.Context
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -98,6 +101,9 @@ class RegisterFragment : Fragment() {
     private var isEditMode = false
     private var personaToEdit: Persona? = null
     private var usuarioToEdit: Usuario? = null
+    
+    // Google Sign-In mode
+    private var isGoogleSignIn = false
 
     // Activity result launchers
     private val takePictureLauncher = registerForActivityResult(
@@ -197,6 +203,13 @@ class RegisterFragment : Fragment() {
         // Check if we're in edit mode
         isEditMode = arguments?.getBoolean("isEditMode", false) ?: false
         val personaId = arguments?.getLong("personaId", -1L) ?: -1L
+        
+        // Check for Google Sign-In data
+        val googleEmail = arguments?.getString("googleEmail", "") ?: ""
+        val googleNombres = arguments?.getString("googleNombres", "") ?: ""
+        val googleApellidos = arguments?.getString("googleApellidos", "") ?: ""
+        val googleAvatar = arguments?.getString("googleAvatar")
+        isGoogleSignIn = arguments?.getBoolean("isGoogleSignIn", false) ?: false
 
         // Configurar el selector de fecha
         setupDatePicker()
@@ -217,6 +230,11 @@ class RegisterFragment : Fragment() {
             loadExistingData(personaId)
             updateUIForEditMode()
         }
+        
+        // Pre-fill Google Sign-In data if available
+        if (googleEmail.isNotEmpty()) {
+            prefillGoogleData(googleEmail, googleNombres, googleApellidos, googleAvatar)
+        }
 
         // Set up register button click listener
         registerButton.setOnClickListener {
@@ -227,7 +245,39 @@ class RegisterFragment : Fragment() {
             }
         }
     }
-
+    
+    private fun prefillGoogleData(email: String, nombres: String, apellidos: String, avatarUrl: String?) {
+        // Pre-fill email field (read-only since it comes from Google)
+        emailEditText.setText(email)
+        emailEditText.isEnabled = false
+        emailLayout.helperText = "Correo de Google (no editable)"
+        
+        // Pre-fill names if available
+        if (nombres.isNotEmpty()) {
+            nombresEditText.setText(nombres)
+        }
+        
+        if (apellidos.isNotEmpty()) {
+            apellidosEditText.setText(apellidos)
+        }
+        
+        // Pre-fill avatar if available
+        if (!avatarUrl.isNullOrEmpty()) {
+            selectedAvatarUri = Uri.parse(avatarUrl)
+            loadImageIntoAvatar(selectedAvatarUri)
+        }
+        
+        // Update welcome text for Google users
+        welcomeText.text = "¡Casi listo!"
+        subtitleText.text = "Completa tu perfil para continuar"
+        
+        // Hacer los campos de contraseña opcionales visualmente
+        passwordLayout.helperText = "Opcional - puedes iniciar sesión con Google"
+        confirmPasswordLayout.helperText = "Opcional"
+        
+        // Cambiar el texto del botón
+        registerButton.text = "Completar registro"
+    }
     private fun startAnimations() {
         // Animación del ícono de curso con efecto de entrada espectacular
         val courseIconAnimator1 = ObjectAnimator.ofFloat(courseIcon, "alpha", 0f, 1f).apply {
@@ -714,7 +764,8 @@ class RegisterFragment : Fragment() {
         }
 
         // En modo edición, la contraseña es opcional
-        if (!isEditMode) {
+        // En modo Google Sign-In, la contraseña también es opcional
+        if (!isEditMode && !isGoogleSignIn) {
             if (password.isEmpty()) {
                 passwordLayout.error = "Campo requerido"
                 hasError = true
@@ -729,6 +780,22 @@ class RegisterFragment : Fragment() {
             } else if (password != confirmPassword) {
                 confirmPasswordLayout.error = "Las contraseñas no coinciden"
                 hasError = true
+            }
+        } else if (isGoogleSignIn) {
+            // En modo Google, validar solo si se proporciona una contraseña opcional
+            if (password.isNotEmpty()) {
+                if (password.length < 6) {
+                    passwordLayout.error = "Mínimo 6 caracteres"
+                    hasError = true
+                }
+                
+                if (confirmPassword.isEmpty()) {
+                    confirmPasswordLayout.error = "Confirma la contraseña"
+                    hasError = true
+                } else if (password != confirmPassword) {
+                    confirmPasswordLayout.error = "Las contraseñas no coinciden"
+                    hasError = true
+                }
             }
         } else {
             // En modo edición, validar solo si se proporciona una nueva contraseña
@@ -782,12 +849,12 @@ class RegisterFragment : Fragment() {
                     identificacion = username, // Usar username como identificacion
                     nombres = nombres,
                     apellidos = apellidos,
-                    email = email,
+                    // email removed from Persona
                     telefono = telefono,
                     direccion = "", // Campo no requerido
-                    fechaNacimiento = fechaNacimiento, // Ya es String, no necesita parsear
-                    avatar = avatarUri,
-                    esUsuario = true  // This person is a user
+                    fechaNacimiento = fechaNacimiento // Ya es String, no necesita parsear
+                    // avatar removed from Persona
+                    // esUsuario removed from Persona
                 )
 
                 // Insert the persona first (local DB)
@@ -800,7 +867,9 @@ class RegisterFragment : Fragment() {
                 val usuario = Usuario(
                     usuario = username,
                     contrasena = password,
-                    persona_id = personaId
+                    persona_id = personaId,
+                    email = email, // Moved to Usuario
+                    avatar = avatarUri // Moved to Usuario
                 )
 
                 withContext(Dispatchers.IO) {
@@ -832,13 +901,40 @@ class RegisterFragment : Fragment() {
                     }
                 }
 
-                // Navegar a la pantalla de inicio de sesión
+                // Navegar según el modo de registro
                 withContext(Dispatchers.Main) {
                     // Show success message
                     Toast.makeText(requireContext(), "¡Cuenta creada exitosamente!", Toast.LENGTH_SHORT).show()
 
-                    // Always navigate to login screen after registration
-                    findNavController().navigate(R.id.action_registerFragment_to_loginFragment)
+                    if (isGoogleSignIn) {
+                        // Si es Google Sign-In, obtener el usuario creado y crear sesión
+                        val db = AppDatabase.getDatabase(requireContext())
+                        val createdUser = withContext(Dispatchers.IO) {
+                            db.usuarioDao().getUsuarioByUsername(username)
+                        }
+                        
+                        createdUser?.let { user ->
+                            // Crear sesión
+                            val sessionManager = SessionManager.getInstance(requireContext())
+                            sessionManager.createLoginSession(
+                                username = user.usuario,
+                                userId = user.id,
+                                personaId = user.persona_id,
+                                roleName = "user",
+                                avatarUri = user.avatar
+                            )
+                            
+                            // Guardar userId en SharedPreferences
+                            val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                            sharedPrefs.edit().putLong("current_user_id", user.id).apply()
+                        }
+                        
+                        // Navegar directamente a videoHomeFragment
+                        findNavController().navigate(R.id.action_registerFragment_to_videoHomeFragment)
+                    } else {
+                        // Registro normal - navegar a login
+                        findNavController().navigate(R.id.action_registerFragment_to_loginFragment)
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -887,16 +983,21 @@ class RegisterFragment : Fragment() {
         personaToEdit?.let { persona ->
             nombresEditText.setText(persona.nombres)
             apellidosEditText.setText(persona.apellidos)
-            emailEditText.setText(persona.email)
+            // email moved to Usuario
             telefonoEditText.setText(persona.telefono)
             
             // Set birth date (already a String in dd/MM/yyyy format)
-            if (persona.fechaNacimiento.isNotEmpty()) {
+            if (!persona.fechaNacimiento.isNullOrEmpty()) {
                 fechaNacimientoEditText.setText(persona.fechaNacimiento)
             }
+        }
 
-            // Load avatar if exists
-            persona.avatar?.let { avatarUri ->
+        usuarioToEdit?.let { usuario ->
+            usernameEditText.setText(usuario.usuario)
+            emailEditText.setText(usuario.email) // Email is now in Usuario
+            
+            // Load avatar if exists (now in Usuario)
+            usuario.avatar?.let { avatarUri ->
                 try {
                     Glide.with(this)
                         .load(avatarUri)
@@ -908,10 +1009,6 @@ class RegisterFragment : Fragment() {
                     // Use default avatar if loading fails
                 }
             }
-        }
-
-        usuarioToEdit?.let { usuario ->
-            usernameEditText.setText(usuario.usuario)
             // Don't populate password fields for security reasons
         }
     }
@@ -947,17 +1044,17 @@ class RegisterFragment : Fragment() {
                 val email = emailEditText.text.toString().trim()
                 val telefono = telefonoEditText.text.toString().trim()
                 val fechaNacimiento = fechaNacimientoEditText.text.toString() // Keep as String
-                val avatarUri = selectedAvatarUri?.toString() ?: personaToEdit?.avatar
+                val avatarUri = selectedAvatarUri?.toString() ?: usuarioToEdit?.avatar // Avatar from Usuario
 
                 // Update persona
                 personaToEdit?.let { currentPersona ->
                     val updatedPersona = currentPersona.copy(
                         nombres = nombres,
                         apellidos = apellidos,
-                        email = email,
+                        // email removed
                         telefono = telefono,
-                        fechaNacimiento = fechaNacimiento,
-                        avatar = avatarUri
+                        fechaNacimiento = fechaNacimiento
+                        // avatar removed
                     )
 
                     withContext(Dispatchers.IO) {
@@ -965,12 +1062,17 @@ class RegisterFragment : Fragment() {
                     }
                 }
 
-                // Update usuario if password is provided
-                val newPassword = passwordEditText.text.toString().trim()
-                if (newPassword.isNotEmpty() && usuarioToEdit != null) {
-                    val updatedUsuario = usuarioToEdit!!.copy(
-                        contrasena = newPassword
+                // Update usuario
+                if (usuarioToEdit != null) {
+                    val newPassword = passwordEditText.text.toString().trim()
+                    var updatedUsuario = usuarioToEdit!!.copy(
+                        email = email,
+                        avatar = avatarUri
                     )
+                    
+                    if (newPassword.isNotEmpty()) {
+                        updatedUsuario = updatedUsuario.copy(contrasena = newPassword)
+                    }
                     
                     withContext(Dispatchers.IO) {
                         viewModel.updateUsuario(updatedUsuario)

@@ -137,8 +137,8 @@ class EditProfileFragment : Fragment() {
                     displayNameEditText.setText(currentPersona?.nombres ?: currentUser?.usuario)
 
                     // Load avatar if available
-                    if (currentPersona != null && !currentPersona?.avatar.isNullOrEmpty()) {
-                        loadAvatar(currentPersona?.avatar)
+                    if (currentUser != null && !currentUser?.avatar.isNullOrEmpty()) {
+                        loadAvatar(currentUser?.avatar)
                     }
                 }
             } catch (e: Exception) {
@@ -231,7 +231,7 @@ class EditProfileFragment : Fragment() {
                 }
 
                 // Save new avatar if selected
-                var avatarPath = currentPersona?.avatar
+                var avatarPath: String? = null // currentPersona?.avatar // TODO: Fetch from Usuario
                 if (selectedImageUri != null) {
                     avatarPath = saveImageToInternalStorage(selectedImageUri!!)
                 }
@@ -242,8 +242,7 @@ class EditProfileFragment : Fragment() {
                         personaRepository.updateProfile(
                             currentPersona!!.id,
                             displayName, // Use display name for nombres
-                            currentPersona!!.apellidos, // Keep existing apellidos
-                            avatarPath
+                            currentPersona!!.apellidos // Keep existing apellidos
                         )
                         // Also try to update remote Persona in Supabase
                         try {
@@ -253,12 +252,12 @@ class EditProfileFragment : Fragment() {
                                     identificacion = currentPersona!!.identificacion,
                                     nombres = displayName,
                                     apellidos = currentPersona!!.apellidos,
-                                    email = currentPersona!!.email,
+                                    // email = currentPersona!!.email, // Removed
                                     telefono = currentPersona!!.telefono,
                                     direccion = currentPersona!!.direccion,
-                                    fechaNacimiento = currentPersona!!.fechaNacimiento,
-                                    avatar = avatarPath,
-                                    esUsuario = currentPersona!!.esUsuario
+                                    fechaNacimiento = currentPersona!!.fechaNacimiento
+                                    // avatar = avatarPath, // Removed
+                                    // esUsuario = currentPersona!!.esUsuario // Removed
                                 )
                                 val updated = com.example.tareamov.service.SupabaseClient.updatePersona(remotePersona)
                                 android.util.Log.d("EditProfileFragment", "Supabase updatePersona result: $updated")

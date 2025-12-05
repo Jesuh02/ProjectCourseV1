@@ -587,7 +587,21 @@ class UserProfileViewFragment : Fragment() {
 
                 // Use async to load user data and subscribers count in parallel
                 val userDeferred = async(Dispatchers.IO) {
-                    database.usuarioDao().getUsuarioByUsername(username)
+                    // Try Supabase first for fresh data (avatar, etc.)
+                    var user: Usuario? = null
+                    try {
+                        if (SupabaseClient.isConfigured()) {
+                            user = SupabaseClient.fetchUsuarioByUsername(username)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("UserProfileView", "Error fetching user from Supabase", e)
+                    }
+                    
+                    // Fallback to local if Supabase failed or returned null
+                    if (user == null) {
+                        user = database.usuarioDao().getUsuarioByUsername(username)
+                    }
+                    user
                 }
                 
                 val subscribersDeferred = async(Dispatchers.IO) {
@@ -614,17 +628,11 @@ class UserProfileViewFragment : Fragment() {
                 Log.d("UserProfileView", "User found: ${user != null}")
                 Log.d("UserProfileView", "Subscribers count from Supabase: $subscribersCount")
 
-                val persona = if (user != null) {
-                    withContext(Dispatchers.IO) {
-                        database.personaDao().getPersonaById(user.personaId)
-                    }
-                } else null
-
                 // Actualizar UI con información del usuario
                 withContext(Dispatchers.Main) {
-                    // Mostrar el nombre completo de la persona si existe, sino el username
-                    if (persona != null && persona.nombres.isNotEmpty()) {
-                        usernameTextView.text = "${persona.nombres} ${persona.apellidos}".trim()
+                    // Mostrar el nombre de usuario (username) como solicitado
+                    if (user != null && user.usuario.isNotEmpty()) {
+                        usernameTextView.text = user.usuario
                     } else {
                         usernameTextView.text = username
                     }
@@ -633,7 +641,7 @@ class UserProfileViewFragment : Fragment() {
                     Log.d("UserProfileView", "UI updated - Displaying subscribers count: $subscribersCount")
 
                     // Cargar avatar del usuario
-                    loadUserAvatar(persona)
+                    loadUserAvatar(user)
                 }
 
                 // Cargar contenido del usuario (this is already optimized with async internally)
@@ -652,11 +660,24 @@ class UserProfileViewFragment : Fragment() {
         }
     }
 
-    private fun loadUserAvatar(persona: Persona?) {
+    private fun loadUserAvatar(usuario: Usuario?) {
+        // Safety checks like in VideoHomeFragment
+        if (!isAdded || context == null) {
+            Log.w("UserProfileView", "Fragment not added or context null, skipping avatar load")
+            return
+        }
+        
+        if (!::userAvatarImageView.isInitialized) {
+            Log.w("UserProfileView", "userAvatarImageView not initialized, skipping avatar load")
+            return
+        }
+
         try {
-            if (persona?.avatar != null && persona.avatar.isNotEmpty()) {
-                val avatarPath = persona.avatar
-                // Verificar si es una ruta de archivo válida
+            val avatarPath = usuario?.avatar
+            if (!avatarPath.isNullOrEmpty()) {
+                Log.d("UserProfileView", "Loading avatar: $avatarPath")
+                
+                // Verificar si es una ruta de archivo válida (local)
                 if (avatarPath.startsWith("/") || avatarPath.startsWith("file://")) {
                     val file: File = if (avatarPath.startsWith("file://")) {
                         File(avatarPath.removePrefix("file://"))
@@ -672,11 +693,11 @@ class UserProfileViewFragment : Fragment() {
                             .circleCrop()
                             .into(userAvatarImageView)
                     } else {
-                        // Si el archivo no existe, usar imagen por defecto
+                        Log.w("UserProfileView", "Local avatar file not found: $avatarPath")
                         userAvatarImageView.setImageResource(R.drawable.ic_profile)
                     }
                 } else {
-                    // Si es una URI o URL, cargar directamente
+                    // Si es una URI o URL (Supabase), cargar directamente
                     Glide.with(this@UserProfileViewFragment)
                         .load(avatarPath)
                         .placeholder(R.drawable.ic_profile)
@@ -685,12 +706,11 @@ class UserProfileViewFragment : Fragment() {
                         .into(userAvatarImageView)
                 }
             } else {
-                // Si no hay avatar, usar imagen por defecto
+                Log.d("UserProfileView", "No avatar path, using default")
                 userAvatarImageView.setImageResource(R.drawable.ic_profile)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
-            // En caso de error, usar imagen por defecto
+            Log.e("UserProfileView", "Error loading avatar", e)
             userAvatarImageView.setImageResource(R.drawable.ic_profile)
         }
     }    private suspend fun loadUserContent(username: String) {

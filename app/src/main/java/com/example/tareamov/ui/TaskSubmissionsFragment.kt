@@ -1768,12 +1768,7 @@ class TaskSubmissionsFragment : Fragment() {
                                 // Try find usuario -> persona -> avatar
                                 val usuarios = SupabaseClient.fetchUsuarios()
                                 val usuario = usuarios.firstOrNull { it.usuario?.equals(username, ignoreCase = true) == true }
-                                val personaId = usuario?.persona_id
-                                if (personaId != null) {
-                                    val personas = SupabaseClient.fetchPersonas()
-                                    val persona = personas.firstOrNull { it.id == personaId }
-                                    persona?.avatar
-                                } else null
+                                usuario?.avatar
                             } catch (e: Exception) {
                                 Log.e("TaskSubmissionsFragment", "Error fetching avatar from Supabase", e)
                                 null

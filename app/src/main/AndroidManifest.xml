@@ -62,6 +62,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Intent filter for Google OAuth callback -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="tareamov"
+                    android:host="auth"
+                    android:path="/callback" />
+            </intent-filter>
+
             <!-- Intent filter for handling media content -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -108,5 +119,10 @@
         <activity
             android:name=".CursoActivity"
             android:exported="false" />
+
+        <!-- Google Sign-In Client ID -->
+        <meta-data
+            android:name="com.google.android.gms.client_id"
+            android:value="350567399298-nm30ojtig7u0n6t223vhvq8hpovag2jt.apps.googleusercontent.com" />
     </application>
 </manifest>

@@ -34,7 +34,7 @@ class MCPHttpClient(private val context: Context) {
     
     companion object {
         private const val CONNECT_TIMEOUT = 10L // seconds
-        private const val READ_TIMEOUT = 60L // seconds
+        private const val READ_TIMEOUT = 60L // seconds (reduced from 300s to fail faster)
         private const val WRITE_TIMEOUT = 30L // seconds
     }
     
@@ -46,37 +46,47 @@ class MCPHttpClient(private val context: Context) {
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    private suspend fun obtainActiveBase(forceDiscovery: Boolean = false): String? {
-        if (!forceDiscovery) {
-            activeBaseUrl?.let { return it }
-        }
-        val resolved = ServerEndpointResolver.getMcpBaseUrl(forceDiscovery)
-        if (resolved != null) {
-            activeBaseUrl = resolved
-        }
-        return resolved
-    }
-
     private suspend fun <T> withMcpBase(action: suspend (String) -> T): T? {
-        val attempted = LinkedHashSet<String>()
-        val discoverySteps = listOf(false, true)
-        for (force in discoverySteps) {
-            val base = obtainActiveBase(force) ?: continue
-            if (!attempted.add(base)) {
-                continue
-            }
-
+        val candidates = LinkedHashSet<String>()
+        
+        // Priority 1: Active base URL
+        activeBaseUrl?.let { candidates.add(it) }
+        
+        // Priority 2: Emulator fallback (Always try this for reliability in dev)
+        candidates.add("http://10.0.2.2:3000")
+        
+        // Priority 3: Discovery (if not already covered)
+        val discovered = ServerEndpointResolver.getMcpBaseUrl(false)
+        if (discovered != null) candidates.add(discovered)
+        
+        for (base in candidates) {
             try {
+                Log.d(tag, "Trying MCP connection to: $base")
                 val result = action(base)
-                activeBaseUrl = base
+                if (activeBaseUrl != base) {
+                    Log.i(tag, "MCP connection established with: $base")
+                    activeBaseUrl = base
+                }
                 return result
             } catch (e: Exception) {
-                Log.w(tag, "MCP request failed on $base", e)
-                if (!force) {
-                    activeBaseUrl = null
-                }
+                Log.w(tag, "MCP request failed on $base: ${e.message}")
+                if (base == activeBaseUrl) activeBaseUrl = null
             }
         }
+        
+        // If all else fails, try forced discovery
+        val forced = ServerEndpointResolver.getMcpBaseUrl(true)
+        if (forced != null && !candidates.contains(forced)) {
+            try {
+                Log.d(tag, "Trying forced discovery: $forced")
+                val result = action(forced)
+                activeBaseUrl = forced
+                return result
+            } catch (e: Exception) {
+                Log.w(tag, "MCP request failed on forced $forced: ${e.message}")
+            }
+        }
+
         return null
     }
 
@@ -424,13 +434,15 @@ class MCPHttpClient(private val context: Context) {
     suspend fun executeTool(toolName: String, arguments: JSONObject): MCPQueryResult = withContext(Dispatchers.IO) {
         try {
             if (!isInitialized) {
-                Log.w(tag, "MCP client not initialized")
-                return@withContext MCPQueryResult(
-                    success = false,
-                    data = null,
-                    sqlScript = null,
-                    error = "MCP server not available"
-                )
+                Log.w(tag, "MCP client not initialized, attempting to initialize...")
+                if (!initialize()) {
+                    return@withContext MCPQueryResult(
+                        success = false,
+                        data = null,
+                        sqlScript = null,
+                        error = "MCP server not available"
+                    )
+                }
             }
             
             Log.d(tag, "🔧 Executing tool: $toolName")

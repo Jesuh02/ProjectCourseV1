@@ -53,7 +53,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 
 
                 if (usuarioWithRole != null) {
-                    Log.d("AuthViewModel", "User found in database: ${usuarioWithRole.usuario}")
+                    Log.d("AuthViewModel", "User found in database: ${usuarioWithRole.username}")
 
                     fun maskSecret(s: String?): String {
                         if (s.isNullOrEmpty()) return "<empty>"
@@ -85,17 +85,17 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("AuthViewModel", "Password match: $passwordMatches")
 
                     if (passwordMatches) {
-                        // Fetch Persona to get avatar
-                        val persona = withContext(Dispatchers.IO) {
-                            personaRepository.getPersonaById(usuarioWithRole.persona_id)
+                        // Fetch full user to get avatar (now in Usuario table)
+                        val fullUser = withContext(Dispatchers.IO) {
+                            usuarioRepository.getUsuarioById(usuarioWithRole.id)
                         }
-                        val avatarUri = persona?.avatar
+                        val avatarUri = fullUser?.avatar
 
                         Log.d("AuthViewModel", "Password match successful. Persona ID: ${usuarioWithRole.persona_id}, Avatar URI: $avatarUri, Role: ${usuarioWithRole.rolNombre}")
                         
                         // Save session with user details, including persona_id, avatarUri and role name
                         sessionManager.createLoginSession(
-                            usuarioWithRole.usuario, 
+                            usuarioWithRole.username, 
                             usuarioWithRole.id, 
                             usuarioWithRole.persona_id, 
                             usuarioWithRole.rolNombre, 
@@ -153,12 +153,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                                 }
 
                                 if (passwordMatches) {
-                                    val persona = withContext(Dispatchers.IO) {
-                                        try {
-                                            supabaseClient.fetchPersonas().firstOrNull { p -> p.id == remoteUsuario.persona_id }
-                                        } catch (e: Exception) { null }
-                                    }
-                                    val avatarUri = persona?.avatar
+                                    val avatarUri = remoteUsuario.avatar
                                     val roleName = withContext(Dispatchers.IO) {
                                         try {
                                             supabaseClient.fetchRoles().firstOrNull { r -> r.id == remoteUsuario.rol_id }?.nombre ?: ""

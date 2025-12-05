@@ -97,10 +97,11 @@ class PersonaAdapter : ListAdapter<Persona, PersonaAdapter.PersonaViewHolder>(Pe
             val context = itemView.context
             nombreTextView.text = persona.nombres
             apellidoTextView.text = persona.apellidos
-            emailTextView.text = persona.email
+            // emailTextView.text = persona.email // TODO: Fetch email from Usuario
             telefonoTextView.text = persona.telefono
 
             // Load avatar image
+            /* TODO: Fetch avatar from Usuario
             if (!persona.avatar.isNullOrEmpty()) {
                 try {
                     Glide.with(context)
@@ -113,9 +114,8 @@ class PersonaAdapter : ListAdapter<Persona, PersonaAdapter.PersonaViewHolder>(Pe
                     avatarImageView.setImageResource(R.drawable.default_avatar)
                 }
             } else {
-                // If no avatar is set, use the default avatar
-                avatarImageView.setImageResource(R.drawable.default_avatar)
-            }
+            */
+            avatarImageView.setImageResource(R.drawable.default_avatar)
         }
     }
 

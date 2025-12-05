@@ -70,7 +70,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.tareamov.service"
+        applicationId = "com.tareamov.app"
         minSdk = 27
         targetSdk = 35
         versionCode = 1
@@ -89,6 +89,10 @@ android {
     buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
     buildConfigField("String", "SUPABASE_KEY", "\"$supabaseKey\"")
     buildConfigField("String", "HOST_IP", "\"$hostIp\"")
+    
+    // DeepSeek API Key para LLM
+    val deepseekApiKey = (project.findProperty("DEEPSEEK_API_KEY") as? String) ?: localPropsMap["DEEPSEEK_API_KEY"] ?: ""
+    buildConfigField("String", "DEEPSEEK_API_KEY", "\"$deepseekApiKey\"")
 
         // Add Room schema location
         ksp {
@@ -207,6 +211,14 @@ dependencies {
 
     // BlurView for real-time blur effect (glassmorphism)
     implementation("com.github.Dimezis:BlurView:version-2.0.5")
+
+    // Google Sign-In
+    implementation("com.google.android.gms:play-services-auth:21.0.0")
+    
+    // Credential Manager for modern Google Sign-In
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 }
 
 // Apply Google Services plugin only when google-services.json exists in the app module.

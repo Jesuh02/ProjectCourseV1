@@ -44,22 +44,14 @@ class MCPService(private val context: Context) {
         private const val MCP_SERVER_URL = "http://127.0.0.1:3000/convert"
         
         // Tiempo máximo de espera para la conversión de archivos grandes y carga de modelos
-        // Aumentado para permitir que Ollama cargue el modelo (7+ segundos) + generar respuesta
-        private const val TIMEOUT_SECONDS = 300L  // 5 minutos
+        // Reduced to 60s to prevent long hangs
+        private const val TIMEOUT_SECONDS = 60L
         
         // URLs alternativos en caso de que el principal falle - EMULADOR PRIMERO
         private val FALLBACK_URLS = listOf(
             "http://10.0.2.2:3000/convert",       // 🎯 EMULADOR -> HOST (MÁXIMA PRIORIDAD)
-            "http://192.168.1.16:3000/convert",   // IP Wi-Fi ACTUAL (ipconfig - Oct 10, 2025)
-            "http://192.168.1.1:3000/convert",    // Gateway predeterminado (Oct 10, 2025)
             "http://127.0.0.1:3000/convert",      // Localhost
-            "http://localhost:3000/convert",      // Localhost alternative
-            "http://10.218.57.181:3000/convert",  // IP Wi-Fi anterior
-            "http://10.218.57.109:3000/convert",  // Gateway anterior
-            "http://172.17.112.1:3000/convert",   // WSL IP
-            "http://10.0.2.2:5000/convert",       // Emulator alternate port
-            "http://10.0.2.2:8000/convert",       // Emulator alternate port
-            "http://127.0.0.1:5000/convert"
+            "http://localhost:3000/convert"       // Localhost alternative
         )
     }
 
@@ -1665,7 +1657,7 @@ $tableList
             if (personas.isNotEmpty()) {
                 contextBuilder.append("Ejemplos de personas:\n")
                 personas.take(5).forEach { persona ->
-                    contextBuilder.append("- ID: ${persona.id}, Nombre: ${persona.nombres} ${persona.apellidos}, Email: ${persona.email}\n")
+                    contextBuilder.append("- ID: ${persona.id}, Nombre: ${persona.nombres} ${persona.apellidos}\n")
                 }
                 contextBuilder.append("\n")
             }

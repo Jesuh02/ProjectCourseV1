@@ -252,7 +252,7 @@ class HomeFragment : Fragment(), PersonaAdapter.OnItemClickListener {
 
     private fun updateUserCounts(personas: List<Persona>) {
         val totalCount = personas.size
-        val activeCount = personas.count { it.esUsuario }
+        val activeCount = personas.size // personas.count { it.esUsuario }
         
         // Animate count changes
         animateCountChange(totalUsersCount, totalCount)

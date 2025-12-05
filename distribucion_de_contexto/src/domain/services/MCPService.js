@@ -7,7 +7,7 @@ import { RAGService } from './RAGService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { logger } from '../../infrastructure/logging/Logger.js';
 import { LLMService } from '../../infrastructure/ai/LLMService.js';
-import { HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
+import { HumanMessage, SystemMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 
 export class MCPService {
     constructor() {
@@ -350,25 +350,86 @@ export class MCPService {
                 }
             }
 
-            // Format the response with RAW DATA ONLY - let the LLM do the analysis
-            const response = {
+            return {
                 data,
-                sql_script: sqlScript,
-                query,
-                timestamp: new Date().toISOString(),
-                schema: schemaDetails,
-                metadata: {
-                    ragEnabled: includeRAG,
-                    success: data !== null,
-                    isBusinessQuestion: (data && data.isBusinessQuestion) || false
-                }
-            }; // REMOVED: Automatic formatted_summary generation
-            // The LLM will now analyze raw data and generate its own narrative
-            // Old behavior: response.formatted_summary = this.buildMarketingSummary(data);
+                sqlScript,
+                schema: schemaDetails
+            };
+        } catch (error) {
+            logger.error('Error processing query:', error);
+            return {
+                error: true,
+                message: error.message,
+                hint: "An unexpected error occurred while processing your request."
+            };
+        }
+    }
 
-            logger.info(`Query processed successfully. Returned RAW DATA for LLM analysis - ${data ? (Array.isArray(data) ? data.length : 1) : 0} records`);
+    /**
+     * Process a query using the Agent (LLM)
+     * @param {string} query Natural language query
+     * @returns {Promise<any>} Agent response
+     */
+    async processQueryWithAgent(query) {
+        try {
+            // 1. Get schema context
+            const schema = await this.getDatabaseSchema();
 
-            return response;
+            // 2. Construct prompt for the Agent
+            const prompt = `
+You are a SQL expert for a Supabase database.
+Your goal is to answer the user's question by generating and executing a valid PostgreSQL query.
+
+DATABASE SCHEMA:
+${JSON.stringify(schema, null, 2)}
+
+USER QUESTION: "${query}"
+
+INSTRUCTIONS:
+1. Analyze the schema to understand table relationships.
+2. Generate a SINGLE valid PostgreSQL query to answer the question.
+3. Use only SELECT statements. No INSERT, UPDATE, DELETE.
+4. Always limit results to 20 rows unless asked otherwise.
+5. If the question is about "users without content", check BOTH 'courses' (creator_user_id) and 'task_submissions' (student_username/student_id).
+6. Return ONLY the SQL query, nothing else. No markdown, no explanations.
+`;
+
+            // 3. Call LLM to get SQL
+            const sqlResponse = await this.llmService.generateResponse([{
+                role: 'user',
+                content: prompt
+            }]);
+
+            let sql = sqlResponse.content.trim();
+            // Clean up markdown if present
+            sql = sql.replace(/```sql/g, '').replace(/```/g, '').trim();
+
+            console.log('🤖 Agent generated SQL:', sql);
+
+            // 4. Execute the generated SQL
+            const result = await this.processQuery(sql, { includeSchema: false });
+
+            return {
+                originalQuery: query,
+                generatedSql: sql,
+                result: result.data
+            };
+
+        } catch (error) {
+            console.error('❌ Agent processing error:', error);
+            return {
+                error: true,
+                message: "Agent failed to process query: " + error.message
+            };
+        }
+    }
+
+    /**
+     * Get complete database schema
+     */
+    async getDatabaseSchema() {
+        try {
+            return await this.supabaseService.getSchema();
         } catch (error) {
             logger.error('Error processing query:', error);
             throw error;
@@ -388,7 +449,7 @@ export class MCPService {
 
         const tools = [{
                 name: "get_database_schema",
-                description: "CRITICAL: ALWAYS EXECUTE THIS FIRST. Returns the exact table names and columns. You MUST use this before writing any SQL to avoid 'cursos'/'suscripciones' errors.",
+                description: "Returns the exact table names and columns. Use this ONLY if you need to refresh the schema or if the provided schema is insufficient.",
                 parameters: { type: "object", properties: {} }
             },
             {
@@ -404,52 +465,184 @@ export class MCPService {
             }
         ];
 
+        // Get schema locally to inject into context
+        let schemaDescription = "";
+        try {
+            // OPTIMIZATION: Use static fallback schema first to avoid DB latency
+            // The LLM can refresh it if needed via tools
+            const schema = this.supabase.getStaticFallbackSchema();
+            schemaDescription = JSON.stringify(schema, null, 2);
+        } catch (e) {
+            logger.error("Failed to pre-fetch schema", e);
+        }
+
+        // Simplified message chain - avoid complex tool call chains that can cause DeepSeek errors
         const messages = [
-            new SystemMessage("You are a helpful database assistant. You have access to a Supabase database. Always check the schema first before querying. Use SQL to query data. Return the data found."),
+            new SystemMessage(`You are a helpful database assistant for TareaMov education platform.
+            
+DATABASE SCHEMA:
+${schemaDescription}
+
+IMPORTANT: When asked a question, respond directly with the answer. 
+If you need to query the database, use the query_database tool with valid PostgreSQL syntax.
+Do not use tool calls for simple questions that can be answered from the schema above.`),
             new HumanMessage(query)
         ];
 
-        let response = await this.llmService.generateResponse(messages, tools);
-        // If the user's query requires data, ensure the agent called at least one tool.
-        const requiresData = this.detectIfQueryRequiresData(query);
-        if (requiresData && (!response || !response.tool_calls || response.tool_calls.length === 0)) {
-            throw new Error('La consulta requiere datos de Supabase pero el agente no invocó ninguna herramienta MCP. Se requiere ejecutar "get_database_schema" o "query_database" antes de generar explicaciones.');
-        }
+        try {
+            // First, try to get a direct response without tools for simple queries
+            const requiresData = this.detectIfQueryRequiresData(query);
 
-        let steps = 0;
-        const maxSteps = 5;
-
-        while (response.tool_calls && response.tool_calls.length > 0 && steps < maxSteps) {
-            messages.push(response);
-            steps++;
-
-            for (const toolCall of response.tool_calls) {
-                const toolName = toolCall.function.name;
-                const toolArgs = JSON.parse(toolCall.function.arguments);
-
-                logger.info(`🛠️ Agent calling tool: ${toolName}`);
-
-                let toolResult;
-                try {
-                    if (toolName === 'get_database_schema') {
-                        toolResult = await this.getDatabaseSchema();
-                    } else if (toolName === 'query_database') {
-                        toolResult = await this.supabase.executeRawSQL(toolArgs.query);
-                    }
-                } catch (e) {
-                    toolResult = { error: e.message };
-                }
-
-                messages.push(new ToolMessage({
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify(toolResult)
-                }));
+            if (!requiresData) {
+                // Simple question - no tools needed
+                const directResponse = await this.llmService.generateResponse(messages, []);
+                return directResponse.content || "No se pudo generar una respuesta.";
             }
 
-            response = await this.llmService.generateResponse(messages, tools);
+            // Data query - use tools but with safeguards
+            let response = await this.llmService.generateResponse(messages, tools);
+
+            // If no tool calls but data is needed, try direct SQL generation
+            if (!response.tool_calls || response.tool_calls.length === 0) {
+                // Check if response contains SQL we can execute
+                const sqlMatch = response.content ? response.content.match(/```sql\s*([\s\S]*?)\s*```/) : null;
+                if (sqlMatch) {
+                    logger.info("⚠️ Agent returned SQL in text. Executing directly.");
+                    try {
+                        const result = await this.supabase.executeRawSQL(sqlMatch[1]);
+                        return `Resultado de la consulta:\n${JSON.stringify(result, null, 2)}`;
+                    } catch (sqlError) {
+                        return `Error ejecutando SQL: ${sqlError.message}`;
+                    }
+                }
+
+                // No SQL found, return the text response
+                return response.content || "No se encontraron datos para esta consulta.";
+            }
+
+            // Process tool calls (max 3 iterations to prevent infinite loops)
+            let iterations = 0;
+            const maxIterations = 3;
+
+            while (response.tool_calls && response.tool_calls.length > 0 && iterations < maxIterations) {
+                iterations++;
+
+                // Build fresh messages for tool responses to avoid DeepSeek format errors
+                const toolResults = [];
+
+                for (const toolCall of response.tool_calls) {
+                    const toolName = toolCall.name || toolCall.function ? .name;
+                    let toolArgs = toolCall.args || {};
+
+                    if (!toolArgs && toolCall.function ? .arguments) {
+                        try {
+                            toolArgs = typeof toolCall.function.arguments === 'string' ?
+                                JSON.parse(toolCall.function.arguments) :
+                                toolCall.function.arguments;
+                        } catch (e) {
+                            toolArgs = {};
+                        }
+                    }
+
+                    logger.info(`🛠️ Executing tool: ${toolName}`);
+
+                    let toolResult;
+                    try {
+                        if (toolName === 'get_database_schema') {
+                            toolResult = await this.getDatabaseSchema();
+                        } else if (toolName === 'query_database') {
+                            toolResult = await this.supabase.executeRawSQL(toolArgs.query);
+                        } else {
+                            toolResult = { error: `Unknown tool: ${toolName}` };
+                        }
+                    } catch (e) {
+                        toolResult = { error: e.message };
+                    }
+
+                    toolResults.push({
+                        callId: toolCall.id,
+                        name: toolName,
+                        result: toolResult
+                    });
+                }
+
+                // Build a simple follow-up message with tool results instead of complex message chain
+                const resultsText = toolResults.map(tr =>
+                    `Tool ${tr.name} result:\n${JSON.stringify(tr.result, null, 2)}`
+                ).join('\n\n');
+
+                // Use a fresh message chain to avoid tool_calls format issues
+                const followUpMessages = [
+                    new SystemMessage(`You are a helpful assistant. Answer based on the tool results provided.`),
+                    new HumanMessage(`Original question: ${query}\n\n${resultsText}\n\nPlease provide a clear answer based on these results.`)
+                ];
+
+                // Get final response WITHOUT tools to avoid more tool_calls
+                response = await this.llmService.generateResponse(followUpMessages, []);
+
+                // If we got a content response, we're done
+                if (response.content && !response.tool_calls) {
+                    break;
+                }
+            }
+
+            return response.content || "No se pudo procesar la consulta.";
+
+        } catch (error) {
+            logger.error(`❌ Agent error: ${error.message}`);
+
+            // On error, try a direct SQL approach as fallback
+            try {
+                const simpleSql = this.generateSimpleSqlForQuery(query);
+                if (simpleSql) {
+                    const result = await this.supabase.executeRawSQL(simpleSql);
+                    return `Resultado:\n${JSON.stringify(result, null, 2)}`;
+                }
+            } catch (fallbackError) {
+                logger.error(`Fallback SQL also failed: ${fallbackError.message}`);
+            }
+
+            return `Error procesando la consulta: ${error.message}`;
+        }
+    }
+
+    /**
+     * Generate a simple SQL query for common query patterns
+     */
+    generateSimpleSqlForQuery(query) {
+        const lower = query.toLowerCase();
+
+        if (lower.includes('usuario') || lower.includes('user')) {
+            return 'SELECT id, usuario, email FROM usuarios LIMIT 20';
+        }
+        if (lower.includes('curso') || lower.includes('course')) {
+            return 'SELECT id, title, creator_user_id FROM courses LIMIT 20';
+        }
+        if (lower.includes('video')) {
+            return 'SELECT id, title, course_id FROM videos LIMIT 20';
+        }
+        if (lower.includes('tarea') || lower.includes('task')) {
+            return 'SELECT id, title, topic_id FROM tasks LIMIT 20';
         }
 
-        return response.content;
+        return null;
+    }
+
+    /**
+     * Detect if the query likely requires fetching data from the database.
+     */
+    detectIfQueryRequiresData(query) {
+        if (!query) return false;
+        const lower = query.toLowerCase();
+        // Keywords that imply data retrieval
+        const dataKeywords = [
+            'dame', 'muestrame', 'listar', 'buscar', 'encontrar', 'ver',
+            'quien', 'cual', 'cuales', 'cuantos', 'cuando', 'donde',
+            'curso', 'estudiante', 'certificado', 'usuario', 'video', 'tarea',
+            'suscripcion', 'progreso', 'nota', 'calificacion', 'examen',
+            'show', 'list', 'find', 'get', 'who', 'what', 'how many', 'when'
+        ];
+        return dataKeywords.some(k => lower.includes(k));
     }
 
     /**
