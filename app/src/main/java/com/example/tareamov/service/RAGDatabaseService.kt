@@ -2504,7 +2504,7 @@ RESPONDE AHORA CON ESTE FORMATO EXACTO Y DIRECTO.
         if (personas.isEmpty()) return "No se encontraron personas."
         
         return personas.joinToString("\n") { persona ->
-            "ID: ${persona.id}, Nombre: ${persona.nombres} ${persona.apellidos}, Email: ${persona.email}"
+            "ID: ${persona.id}, Nombre: ${persona.nombres} ${persona.apellidos}"
         }
     }
 

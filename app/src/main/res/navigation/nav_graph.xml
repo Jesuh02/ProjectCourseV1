@@ -120,6 +120,28 @@
         android:name="com.example.tareamov.ui.RegisterFragment"
         android:label="Register"
         tools:layout="@layout/fragment_register">
+        <!-- Arguments for Google Sign-In data -->
+        <argument
+            android:name="googleEmail"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="googleNombres"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="googleApellidos"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="googleAvatar"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
+        <argument
+            android:name="isGoogleSignIn"
+            app:argType="boolean"
+            android:defaultValue="false" />
         <action
             android:id="@+id/action_registerFragment_to_loginFragment"
             app:destination="@id/loginFragment"

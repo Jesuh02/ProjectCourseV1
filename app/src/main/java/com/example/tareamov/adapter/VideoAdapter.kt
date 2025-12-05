@@ -199,18 +199,62 @@ class VideoAdapter(
                     }
 
                     // --- AVATAR LOADING LOGIC ---
-                    val context = itemView.context.applicationContext
-                    val db = AppDatabase.getDatabase(context)
-                    val persona = withContext(Dispatchers.IO) {
-                        db.personaDao().getPersonaByUsername(username ?: "")
+                    val usuario = withContext(Dispatchers.IO) {
+                        try {
+                            var user: com.example.tareamov.data.entity.Usuario? = null
+                            val client = com.example.tareamov.service.SupabaseClient
+                            
+                            // 1. Try Supabase first (Priority)
+                            if (client.isConfigured()) {
+                                // Try by ID first if available (most reliable)
+                                if (currentCreatorId != -1L) {
+                                    user = client.fetchUsuarioById(currentCreatorId)
+                                }
+                                // Fallback to username if ID didn't work
+                                if (user == null && !username.isNullOrEmpty()) {
+                                    user = client.fetchUsuarioByUsername(username)
+                                }
+                            }
+                            
+                            // 2. Fallback to local DB if Supabase failed or not configured
+                            if (user == null) {
+                                val context = itemView.context.applicationContext
+                                val db = AppDatabase.getDatabase(context)
+                                if (currentCreatorId != -1L) {
+                                    user = db.usuarioDao().getUsuarioById(currentCreatorId)
+                                }
+                                if (user == null && !username.isNullOrEmpty()) {
+                                    user = db.usuarioDao().getUsuarioByUsername(username)
+                                }
+                            }
+                            
+                            // 3. Update local cache if found in Supabase
+                            if (user != null && client.isConfigured()) {
+                                try {
+                                    val context = itemView.context.applicationContext
+                                    val db = AppDatabase.getDatabase(context)
+                                    db.usuarioDao().insertUsuario(user)
+                                } catch (e: Exception) {
+                                    Log.w("VideoAdapter", "Failed to cache user", e)
+                                }
+                            }
+                            
+                            user
+                        } catch (e: Exception) {
+                            Log.e("VideoAdapter", "Error fetching avatar user", e)
+                            null
+                        }
                     }
-                    if (persona != null && !persona.avatar.isNullOrEmpty()) {
+
+                    if (usuario != null && !usuario.avatar.isNullOrEmpty()) {
+                        Log.d("VideoAdapter", "Loading avatar for ${usuario.usuario}: ${usuario.avatar}")
                         Glide.with(itemView)
-                            .load(persona.avatar)
+                            .load(usuario.avatar)
                             .placeholder(R.drawable.ic_profile)
                             .error(R.drawable.ic_profile)
                             .into(profileButton)
                     } else {
+                        Log.d("VideoAdapter", "No avatar found for username=$username, id=$currentCreatorId")
                         profileButton.setImageResource(R.drawable.ic_profile)
                     }
                 } catch (e: Exception) {

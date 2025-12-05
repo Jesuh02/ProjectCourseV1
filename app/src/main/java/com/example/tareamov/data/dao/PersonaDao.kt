@@ -44,7 +44,7 @@ interface PersonaDao {
     @Query("""
         SELECT p.* FROM personas p
         INNER JOIN usuarios u ON p.id = u.persona_id
-        WHERE LOWER(u.usuario) LIKE '%' || LOWER(:query) || '%'
+        WHERE LOWER(u.username) LIKE '%' || LOWER(:query) || '%'
     """)
     suspend fun searchPersonasByUsername(query: String): List<Persona>
 
@@ -53,11 +53,19 @@ interface PersonaDao {
     @Query("""
         SELECT p.* FROM personas p
         INNER JOIN usuarios u ON p.id = u.persona_id
-        WHERE u.usuario = :username LIMIT 1
+        WHERE u.username = :username LIMIT 1
     """)
     suspend fun getPersonaByUsername(username: String): Persona?
 
     // Add method to get total persona count
     @Query("SELECT COUNT(*) FROM personas")
     suspend fun getPersonaCount(): Int
+    
+    // Get persona by email
+    @Query("""
+        SELECT p.* FROM personas p
+        INNER JOIN usuarios u ON p.id = u.persona_id
+        WHERE LOWER(u.email) = LOWER(:email) LIMIT 1
+    """)
+    suspend fun getPersonaByEmail(email: String): Persona?
 }

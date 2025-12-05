@@ -1665,7 +1665,7 @@ $tableList
             if (personas.isNotEmpty()) {
                 contextBuilder.append("Ejemplos de personas:\n")
                 personas.take(5).forEach { persona ->
-                    contextBuilder.append("- ID: ${persona.id}, Nombre: ${persona.nombres} ${persona.apellidos}, Email: ${persona.email}\n")
+                    contextBuilder.append("- ID: ${persona.id}, Nombre: ${persona.nombres} ${persona.apellidos}\n")
                 }
                 contextBuilder.append("\n")
             }

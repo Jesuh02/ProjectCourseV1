@@ -6,7 +6,7 @@ import com.example.tareamov.data.entity.Usuario
 @Dao
 interface UsuarioDao {
     // Cambia este método para recibir la contraseña ya encriptada
-    @Query("SELECT * FROM usuarios WHERE usuario = :username AND contrasena = :passwordHash")
+    @Query("SELECT * FROM usuarios WHERE username = :username AND contrasena = :passwordHash")
     suspend fun login(username: String, passwordHash: String): Usuario?
 
     @Query("SELECT * FROM usuarios")
@@ -47,7 +47,7 @@ interface UsuarioDao {
     @Query("SELECT COUNT(*) FROM usuarios WHERE rol_id = :rolId")
     suspend fun getUserCountByRolId(rolId: Long): Int
 
-    @Query("SELECT * FROM usuarios WHERE usuario = :username LIMIT 1")
+    @Query("SELECT * FROM usuarios WHERE username = :username LIMIT 1")
     suspend fun getUsuarioByUsername(username: String): Usuario?
 
     @Query("SELECT persona_id FROM usuarios")
@@ -67,7 +67,7 @@ interface UsuarioDao {
         SELECT u.*, r.nombre as rolNombre, r.nivel as rolNivel 
         FROM usuarios u 
         INNER JOIN roles r ON u.rol_id = r.id 
-        WHERE u.usuario = :username 
+        WHERE u.username = :username 
         LIMIT 1
     """)
     suspend fun getUsuarioWithRoleByUsername(username: String): UsuarioWithRole?

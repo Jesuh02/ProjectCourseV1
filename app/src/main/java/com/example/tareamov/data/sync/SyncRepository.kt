@@ -90,10 +90,16 @@ class SyncRepository(
             val rolNivel = r?.nivel ?: 0.0f
             com.example.tareamov.data.dao.UsuarioWithRole(
                 id = u.id,
-                usuario = u.usuario,
+                username = u.usuario,
                 contrasena = u.contrasena,
                 persona_id = u.persona_id,
                 rol_id = u.rol_id,
+                email = u.email,
+                avatar = u.avatar,
+                isActive = u.isActive,
+                emailVerified = u.emailVerified,
+                lastLogin = u.lastLogin,
+                createdAt = u.createdAt,
                 rolNombre = rolNombre,
                 rolNivel = rolNivel
             )
