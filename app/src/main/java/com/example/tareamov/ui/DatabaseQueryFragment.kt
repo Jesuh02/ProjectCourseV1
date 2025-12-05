@@ -35,6 +35,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
+import android.graphics.Rect
+import android.view.ViewTreeObserver
 
 class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeListener {
 
@@ -70,6 +72,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     // Session management per user
     private var currentSessionId: String = ""
     private val maxMessagesPerSession = 1000 // Prevent memory issues
+    
+    // Keyboard visibility listener
+    private var keyboardLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
     companion object {
         private const val TAG = "DatabaseQueryFragment"
@@ -164,6 +169,34 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         if (chatAdapter.getMessages().isEmpty()) {
             addWelcomeMessage()
         }
+        
+        // Setup keyboard visibility listener to scroll chat when keyboard appears
+        setupKeyboardListener()
+    }
+    
+    private fun setupKeyboardListener() {
+        keyboardLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+            _binding?.let { binding ->
+                val rootView = binding.root
+                val rect = Rect()
+                rootView.getWindowVisibleDisplayFrame(rect)
+                
+                val screenHeight = rootView.rootView.height
+                val keypadHeight = screenHeight - rect.bottom
+                
+                // If keyboard is showing (more than 15% of screen height)
+                if (keypadHeight > screenHeight * 0.15) {
+                    // Keyboard is visible - scroll to bottom
+                    if (chatAdapter.itemCount > 0) {
+                        binding.chatRecyclerView.post {
+                            binding.chatRecyclerView.scrollToPosition(chatAdapter.itemCount - 1)
+                        }
+                    }
+                }
+            }
+        }
+        
+        binding.root.viewTreeObserver.addOnGlobalLayoutListener(keyboardLayoutListener)
     }
 
     private fun setupUIComponents() {
@@ -1878,6 +1911,12 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo Llama 3 ejecután
         
         // Remove any pending callbacks
         view?.removeCallbacks(autoSaveRunnable)
+        
+        // Remove keyboard listener to avoid memory leaks
+        keyboardLayoutListener?.let { listener ->
+            binding.root.viewTreeObserver.removeOnGlobalLayoutListener(listener)
+        }
+        keyboardLayoutListener = null
         
         // Unregister from user change notifications
         SessionManager.removeUserChangeListener(this)

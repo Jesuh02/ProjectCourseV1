@@ -156,7 +156,7 @@ class ChatMessageAdapter(
         
         private fun buildEnhancedTaskMessage(message: ChatMessage): String {
             return buildString {
-                appendLine("📚 **ANÁLISIS DE TAREA COMPLETADO**")
+                appendLine("� **ANÁLISIS DE TAREA COMPLETADO**")
                 appendLine()
                 appendLine("**${taskInfo!!.taskName}**")
                 appendLine("📚 Tema: ${taskInfo!!.topicName}")

@@ -13,7 +13,7 @@ export class MCPService {
     constructor() {
         this.ragService = new RAGService();
         this.supabase = SupabaseService.getInstance();
-        this.llmService = new LLMService();
+        this.llmService = LLMService.getInstance();
     }
 
     /**
@@ -369,239 +369,193 @@ export class MCPService {
      * Process a query using the Agent (LLM)
      * @param {string} query Natural language query
      * @returns {Promise<any>} Agent response
+     * DEPRECATED: Use the main processQueryWithAgent below with tool calling
      */
-    async processQueryWithAgent(query) {
-        try {
-            // 1. Get schema context
-            const schema = await this.getDatabaseSchema();
-
-            // 2. Construct prompt for the Agent
-            const prompt = `
-You are a SQL expert for a Supabase database.
-Your goal is to answer the user's question by generating and executing a valid PostgreSQL query.
-
-DATABASE SCHEMA:
-${JSON.stringify(schema, null, 2)}
-
-USER QUESTION: "${query}"
-
-INSTRUCTIONS:
-1. Analyze the schema to understand table relationships.
-2. Generate a SINGLE valid PostgreSQL query to answer the question.
-3. Use only SELECT statements. No INSERT, UPDATE, DELETE.
-4. Always limit results to 20 rows unless asked otherwise.
-5. If the question is about "users without content", check BOTH 'courses' (creator_user_id) and 'task_submissions' (student_username/student_id).
-6. Return ONLY the SQL query, nothing else. No markdown, no explanations.
-`;
-
-            // 3. Call LLM to get SQL
-            const sqlResponse = await this.llmService.generateResponse([{
-                role: 'user',
-                content: prompt
-            }]);
-
-            let sql = sqlResponse.content.trim();
-            // Clean up markdown if present
-            sql = sql.replace(/```sql/g, '').replace(/```/g, '').trim();
-
-            console.log('🤖 Agent generated SQL:', sql);
-
-            // 4. Execute the generated SQL
-            const result = await this.processQuery(sql, { includeSchema: false });
-
-            return {
-                originalQuery: query,
-                generatedSql: sql,
-                result: result.data
-            };
-
-        } catch (error) {
-            console.error('❌ Agent processing error:', error);
-            return {
-                error: true,
-                message: "Agent failed to process query: " + error.message
-            };
-        }
-    }
-
-    /**
-     * Get complete database schema
-     */
-    async getDatabaseSchema() {
-        try {
-            return await this.supabaseService.getSchema();
-        } catch (error) {
-            logger.error('Error processing query:', error);
-            throw error;
-        }
-    }
 
     /**
      * Process a query using an LLM Agent that can call tools.
      */
     async processQueryWithAgent(query) {
-        logger.info(`🤖 Processing query with Agent: "${query}"`);
+            logger.info(`🤖 Processing query with Agent: "${query}"`);
 
-        if (!this.llmService || !this.llmService.model) {
-            logger.warn("⚠️ LLM Service not available. Returning fallback message.");
-            return "Lo siento, el servicio de IA no está disponible en este momento (Falta configuración de API Key). Por favor, intenta consultas SQL directas o verifica la configuración del servidor.";
-        }
+            if (!this.llmService || !this.llmService.model) {
+                logger.warn("⚠️ LLM Service not available. Returning fallback message.");
+                return "Lo siento, el servicio de IA no está disponible en este momento (Falta configuración de API Key). Por favor, intenta consultas SQL directas o verifica la configuración del servidor.";
+            }
 
-        const tools = [{
-                name: "get_database_schema",
-                description: "Returns the exact table names and columns. Use this ONLY if you need to refresh the schema or if the provided schema is insufficient.",
-                parameters: { type: "object", properties: {} }
-            },
-            {
-                name: "query_database",
-                description: "Execute a SQL query. RULES: 1. 'subscriptions' table uses 'subscriber_id' and 'creator_id'. 2. 'courses' table uses 'creator_user_id'. 3. 'progreso_estudiante' uses 'usuario_estudiante', 'curso_id', 'certificado_emitido_en'. 4. ALWAYS define aliases (e.g. 'FROM table t') if using them. 5. Check schema first.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        query: { type: "string", description: "The SQL query to execute" }
-                    },
-                    required: ["query"]
+            try {
+                // Check if query requires data
+                const requiresData = this.detectIfQueryRequiresData(query);
+
+                if (!requiresData) {
+                    // Simple conversational query - no SQL needed
+                    const messages = [
+                        new SystemMessage(`You are a helpful assistant for TareaMov platform. Answer in Spanish.`),
+                        new HumanMessage(query)
+                    ];
+                    const response = await this.llmService.generateResponse(messages, []);
+                    return response.content || "Lo siento, no pude generar una respuesta.";
                 }
-            }
-        ];
 
-        // Get schema locally to inject into context
-        let schemaDescription = "";
-        try {
-            // OPTIMIZATION: Use static fallback schema first to avoid DB latency
-            // The LLM can refresh it if needed via tools
-            const schema = this.supabase.getStaticFallbackSchema();
-            schemaDescription = JSON.stringify(schema, null, 2);
-        } catch (e) {
-            logger.error("Failed to pre-fetch schema", e);
-        }
+                // STEP 1: Get fresh schema FIRST
+                logger.info("📋 Step 1: Fetching database schema...");
+                const freshSchema = await this.getDatabaseSchema();
+                const schemaText = JSON.stringify(freshSchema.schema, null, 2);
+                logger.info("✅ Schema fetched");
 
-        // Simplified message chain - avoid complex tool call chains that can cause DeepSeek errors
-        const messages = [
-            new SystemMessage(`You are a helpful database assistant for TareaMov education platform.
-            
-DATABASE SCHEMA:
-${schemaDescription}
+                // STEP 2: Generate SQL (with retry logic for errors)
+                const maxRetries = 2;
+                let attempt = 0;
+                let lastError = null;
+                let result = null;
+                let finalSQL = null;
 
-IMPORTANT: When asked a question, respond directly with the answer. 
-If you need to query the database, use the query_database tool with valid PostgreSQL syntax.
-Do not use tool calls for simple questions that can be answered from the schema above.`),
-            new HumanMessage(query)
-        ];
+                while (attempt < maxRetries) {
+                    attempt++;
+                    logger.info(`🔄 Attempt ${attempt}/${maxRetries} to generate and execute SQL`);
 
-        try {
-            // First, try to get a direct response without tools for simple queries
-            const requiresData = this.detectIfQueryRequiresData(query);
+                    // Build prompt based on whether this is a retry
+                    let sqlGenMessages;
+                    if (attempt === 1) {
+                        // First attempt - clean prompt
+                        sqlGenMessages = [
+                            new SystemMessage(`Generate PostgreSQL query using this schema:
 
-            if (!requiresData) {
-                // Simple question - no tools needed
-                const directResponse = await this.llmService.generateResponse(messages, []);
-                return directResponse.content || "No se pudo generar una respuesta.";
-            }
+${schemaText}
 
-            // Data query - use tools but with safeguards
-            let response = await this.llmService.generateResponse(messages, tools);
+RULES:
+- Use ONLY columns from schema above
+- ALWAYS use table aliases (e.g., FROM usuarios u)
+- If using alias, reference it in SELECT (e.g., u.username NOT t.username)
+- For JOINs, verify foreign keys exist
+- For LIST queries (dame usuarios, lista de cursos, etc.), select ALL relevant columns
 
-            // If no tool calls but data is needed, try direct SQL generation
-            if (!response.tool_calls || response.tool_calls.length === 0) {
-                // Check if response contains SQL we can execute
-                const sqlMatch = response.content ? response.content.match(/```sql\s*([\s\S]*?)\s*```/) : null;
-                if (sqlMatch) {
-                    logger.info("⚠️ Agent returned SQL in text. Executing directly.");
+Output ONLY SQL in code block:
+\`\`\`sql
+SELECT ...
+\`\`\``),
+                            new HumanMessage(`SQL for: ${query}`)
+                        ];
+                    } else {
+                        // Retry - include error feedback
+                        sqlGenMessages = [
+                            new SystemMessage(`Previous SQL FAILED with error:
+${lastError}
+
+Database schema:
+${schemaText}
+
+ANALYZE THE ERROR:
+- Missing column? Check schema for correct name
+- Missing table alias? Add it to FROM clause
+- Wrong alias reference? Use alias defined in FROM
+- Missing FROM clause? Define table alias first
+
+Generate CORRECTED SQL:
+\`\`\`sql
+SELECT ...
+\`\`\``),
+                            new HumanMessage(`Fix SQL for: ${query}`)
+                        ];
+                    }
+
+                    // Generate SQL
+                    logger.info(`📊 Requesting SQL from LLM...`);
+                    const sqlResponse = await this.llmService.generateResponse(sqlGenMessages, []);
+                    const sqlText = sqlResponse.content || "";
+
+                    // Parse SQL from response
+                    let sqlMatch = sqlText.match(/```sql\s*\n([\s\S]+?)\n```/) ||
+                        sqlText.match(/(SELECT[\s\S]+?(?:;|\n\n|$))/i);
+
+                    if (!sqlMatch) {
+                        logger.error("❌ Could not extract SQL from LLM response");
+                        if (attempt === maxRetries) {
+                            return `No pude generar SQL válido para tu consulta. Intenta reformular la pregunta.\n\nRespuesta del LLM:\n${sqlText}`;
+                        }
+                        lastError = "No SQL code block found in response";
+                        continue;
+                    }
+
+                    finalSQL = sqlMatch[1].trim().replace(/;$/, '');
+                    logger.info(`✅ SQL extracted (attempt ${attempt}):`, finalSQL.substring(0, 150));
+
+                    // Execute SQL
                     try {
-                        const result = await this.supabase.executeRawSQL(sqlMatch[1]);
-                        return `Resultado de la consulta:\n${JSON.stringify(result, null, 2)}`;
+                        result = await this.supabase.executeRawSQL(finalSQL);
+                        logger.info(`✅ SQL executed successfully! Returned ${result?.length || 0} rows`);
+                        break; // Success - exit retry loop
                     } catch (sqlError) {
-                        return `Error ejecutando SQL: ${sqlError.message}`;
+                        logger.error(`❌ SQL execution failed (attempt ${attempt}):`, sqlError.message);
+                        lastError = sqlError.message;
+
+                        if (attempt === maxRetries) {
+                            // Final attempt failed - return error
+                            return `Error ejecutando la consulta después de ${maxRetries} intentos:\n\n**Error:**\n\`\`\`\n${lastError}\n\`\`\`\n\n**SQL generado:**\n\`\`\`sql\n${finalSQL}\n\`\`\`\n\n**Sugerencia:** Verifica la sintaxis SQL o reformula tu pregunta.`;
+                        }
+
+                        // Continue to retry
+                        logger.warn(`🔄 Will retry with error feedback...`);
                     }
                 }
 
-                // No SQL found, return the text response
-                return response.content || "No se encontraron datos para esta consulta.";
-            }
+                // If we have results, ask LLM to analyze them
+                if (result !== null) {
+                    logger.info("📈 Step 3: Requesting analysis from LLM...");
 
-            // Process tool calls (max 3 iterations to prevent infinite loops)
-            let iterations = 0;
-            const maxIterations = 3;
+                    // Detect if this is a LIST query (usuarios, cursos, tareas, etc.)
+                    const isListQuery = /dame|lista|listar|muestra|mostrar|todos|todas/i.test(query) &&
+                        /usuarios?|cursos?|tareas?|videos?|subscri|estudiantes?/i.test(query);
 
-            while (response.tool_calls && response.tool_calls.length > 0 && iterations < maxIterations) {
-                iterations++;
+                    const analysisMessages = [
+                            new SystemMessage(`Analyze SQL results in Spanish. Be conversational and insightful.
 
-                // Build fresh messages for tool responses to avoid DeepSeek format errors
-                const toolResults = [];
+GUIDELINES:
+1. Start with summary (e.g., "Encontré X resultados...")
+2. ${isListQuery ? '**PRESENT DATA AS AESTHETIC TABLE**' : 'Explain key findings'}
+3. Provide context and insights
+4. Add recommendations if relevant
+5. NEVER return raw JSON
 
-                for (const toolCall of response.tool_calls) {
-                    const toolName = toolCall.name || toolCall.function ? .name;
-                    let toolArgs = toolCall.args || {};
+${isListQuery ? `**FORMATO DE TABLA ESTÉTICA (OBLIGATORIO):**
+Presenta los datos en una tabla con el siguiente estilo EXACTO:
 
-                    if (!toolArgs && toolCall.function ? .arguments) {
-                        try {
-                            toolArgs = typeof toolCall.function.arguments === 'string' ?
-                                JSON.parse(toolCall.function.arguments) :
-                                toolCall.function.arguments;
-                        } catch (e) {
-                            toolArgs = {};
-                        }
-                    }
+| **Columna 1** | **Columna 2** | **Columna 3** | **Columna 4** |
+| :--- | :--- | :--- | :--- |
+| valor1 | valor2 | valor3 | valor4 |
 
-                    logger.info(`🛠️ Executing tool: ${toolName}`);
+REGLAS DE FORMATO:
+1. Headers en **negrita** entre asteriscos dobles
+2. Usar nombres de columna DESCRIPTIVOS en español (ej: "Nombre Usuario" en lugar de "usuario")
+3. Alineación a la izquierda con :---
+4. Sin espacios extra dentro de las celdas
+5. Incluir TODAS las columnas relevantes de los datos
+6. Máximo 20 filas, si hay más indicar "... y X más"
 
-                    let toolResult;
-                    try {
-                        if (toolName === 'get_database_schema') {
-                            toolResult = await this.getDatabaseSchema();
-                        } else if (toolName === 'query_database') {
-                            toolResult = await this.supabase.executeRawSQL(toolArgs.query);
-                        } else {
-                            toolResult = { error: `Unknown tool: ${toolName}` };
-                        }
-                    } catch (e) {
-                        toolResult = { error: e.message };
-                    }
+EJEMPLO PARA USUARIOS:
+| **ID** | **Nombre Usuario** | **Email** | **Rol** |
+| :--- | :--- | :--- | :--- |
+| 1 | admin | admin@example.com | Administrador |
+| 2 | prueba | test@test.com | Usuario |
 
-                    toolResults.push({
-                        callId: toolCall.id,
-                        name: toolName,
-                        result: toolResult
-                    });
-                }
-
-                // Build a simple follow-up message with tool results instead of complex message chain
-                const resultsText = toolResults.map(tr =>
-                    `Tool ${tr.name} result:\n${JSON.stringify(tr.result, null, 2)}`
-                ).join('\n\n');
-
-                // Use a fresh message chain to avoid tool_calls format issues
-                const followUpMessages = [
-                    new SystemMessage(`You are a helpful assistant. Answer based on the tool results provided.`),
-                    new HumanMessage(`Original question: ${query}\n\n${resultsText}\n\nPlease provide a clear answer based on these results.`)
+Después de la tabla, añade un breve análisis.
+` : `**ANALYSIS EXAMPLE:**
+"Encontré 11 usuarios registrados. De estos, 9 (82%) usan emails temporales, indicando cuentas de prueba. Solo 2 tienen emails reales. **Recomendación**: Implementar verificación de email obligatoria."`}
+`),
+                    new HumanMessage(`Pregunta: "${query}"\n\nSQL:\n\`\`\`sql\n${finalSQL}\n\`\`\`\n\nResultados (${result?.length || 0} filas):\n${JSON.stringify(result, null, 2)}\n\n${isListQuery ? 'OBLIGATORIO: Presenta los datos en TABLA MARKDOWN con headers en **negrita**, alineación izquierda (:---), y nombres de columna descriptivos en español. Luego añade análisis breve.' : 'Analiza estos resultados de forma argumentada.'}`)
                 ];
 
-                // Get final response WITHOUT tools to avoid more tool_calls
-                response = await this.llmService.generateResponse(followUpMessages, []);
-
-                // If we got a content response, we're done
-                if (response.content && !response.tool_calls) {
-                    break;
-                }
+                const analysisResponse = await this.llmService.generateResponse(analysisMessages, []);
+                const analysis = analysisResponse.content || "Análisis no disponible";
+                logger.info("✅ Analysis complete");
+                return analysis;
             }
 
-            return response.content || "No se pudo procesar la consulta.";
+            // Should never reach here, but just in case
+            return `No se pudieron obtener resultados después de ${maxRetries} intentos.`;
 
         } catch (error) {
             logger.error(`❌ Agent error: ${error.message}`);
-
-            // On error, try a direct SQL approach as fallback
-            try {
-                const simpleSql = this.generateSimpleSqlForQuery(query);
-                if (simpleSql) {
-                    const result = await this.supabase.executeRawSQL(simpleSql);
-                    return `Resultado:\n${JSON.stringify(result, null, 2)}`;
-                }
-            } catch (fallbackError) {
-                logger.error(`Fallback SQL also failed: ${fallbackError.message}`);
-            }
-
             return `Error procesando la consulta: ${error.message}`;
         }
     }
@@ -610,10 +564,28 @@ Do not use tool calls for simple questions that can be answered from the schema 
      * Generate a simple SQL query for common query patterns
      */
     generateSimpleSqlForQuery(query) {
-        const lower = query.toLowerCase();
+        const lower = query.toLowerCase().trim();
 
+        // COUNT queries (cuantos, how many)
+        if (lower.match(/cuántos?|cuantos?\s+(usuarios?|users?)/)) {
+            return 'SELECT COUNT(*) as total FROM usuarios';
+        }
+        if (lower.match(/cuántos?|cuantos?\s+(cursos?|courses?)/)) {
+            return 'SELECT COUNT(*) as total FROM courses';
+        }
+        if (lower.match(/cuántos?|cuantos?\s+(videos?)/)) {
+            return 'SELECT COUNT(*) as total FROM videos';
+        }
+        if (lower.match(/cuántos?|cuantos?\s+(tareas?|tasks?)/)) {
+            return 'SELECT COUNT(*) as total FROM tasks';
+        }
+        if (lower.match(/cuántos?|cuantos?\s+(subscri|suscri)/)) {
+            return 'SELECT COUNT(*) as total FROM subscriptions';
+        }
+
+        // LIST queries
         if (lower.includes('usuario') || lower.includes('user')) {
-            return 'SELECT id, usuario, email FROM usuarios LIMIT 20';
+            return 'SELECT id, username as usuario, email FROM usuarios LIMIT 20';
         }
         if (lower.includes('curso') || lower.includes('course')) {
             return 'SELECT id, title, creator_user_id FROM courses LIMIT 20';

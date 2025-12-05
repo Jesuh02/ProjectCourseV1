@@ -1746,6 +1746,40 @@ object SupabaseClient {
             null
         }
     }
+    
+    /**
+     * Fetch a task by its name (title) using case-insensitive search.
+     * Returns the first matching task or null if not found.
+     */
+    suspend fun fetchTaskByName(taskName: String): Task? = withContext(Dispatchers.IO) {
+        try {
+            val encodedName = java.net.URLEncoder.encode(taskName, "UTF-8")
+            // Use ilike for case-insensitive match
+            val path = "tasks?title=ilike.$encodedName&limit=1"
+            Log.d("SupabaseClient", "🔍 Fetching task by name: $taskName")
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchTaskByName failed status=${resp.code}")
+                    return@withContext null
+                }
+                val body = resp.body?.string() ?: return@withContext null
+                Log.d("SupabaseClient", "📊 fetchTaskByName response: $body")
+                val arr = underscoredGson.fromJson(body, Array<Task>::class.java)
+                val task = arr.firstOrNull()
+                if (task != null) {
+                    Log.d("SupabaseClient", "✅ Task found: id=${task.id}, name=${task.name}")
+                } else {
+                    Log.d("SupabaseClient", "⚠️ No task found with name: $taskName")
+                }
+                return@withContext task
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchTaskByName exception", e)
+            null
+        }
+    }
+    
     suspend fun fetchSubscriptions(): List<Subscription> = fetchList("subscriptions", Array<Subscription>::class.java)
 
     // Insert a subscription record into Supabase
@@ -1923,17 +1957,63 @@ object SupabaseClient {
         }
     }
 
-    // Fetch FileContext by submissionId
-    suspend fun fetchFileContextBySubmissionId(submissionId: Long): FileContext? = withContext(Dispatchers.IO) {
+    /**
+     * Fetch submissions by taskId and studentId (using student_id integer column)
+     * Returns all submissions for the given task and student, ordered by submission_date desc
+     */
+    suspend fun fetchTaskSubmissionsByTaskAndStudentId(taskId: Long, studentId: Long): List<TaskSubmission> = withContext(Dispatchers.IO) {
         try {
-            val url = "$baseUrl/rest/v1/file_contexts?submission_id=eq.$submissionId&select=*"
+            val url = "$baseUrl/rest/v1/task_submissions?task_id=eq.$taskId&student_id=eq.$studentId&select=*&order=submission_date.desc"
+            Log.d("SupabaseClient", "🔍 Fetching submissions by student_id: $url")
             val request = buildGetRequest(url)
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
                 val json = response.body?.string()
-                val list = underscoredGson.fromJson(json, Array<FileContext>::class.java)
-                list.firstOrNull()
+                Log.d("SupabaseClient", "📊 Response: $json")
+                val list = underscoredGson.fromJson(json, Array<TaskSubmission>::class.java)
+                list?.toList() ?: emptyList()
             } else {
+                Log.w("SupabaseClient", "⚠️ Failed to fetch submissions: ${response.code} ${response.message}")
+                emptyList()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching submissions by student_id: ${e.message}")
+            emptyList()
+        }
+    }
+
+    // Fetch FileContext by submissionId - returns the one with actual file_content if multiple exist
+    suspend fun fetchFileContextBySubmissionId(submissionId: Long): FileContext? = withContext(Dispatchers.IO) {
+        try {
+            // Order by id DESC to get the most recent first, and filter for non-empty file_content
+            val url = "$baseUrl/rest/v1/file_contexts?submission_id=eq.$submissionId&select=*&order=id.desc"
+            Log.d("SupabaseClient", "🔍 Fetching FileContext for submissionId=$submissionId: $url")
+            val request = buildGetRequest(url)
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val json = response.body?.string()
+                Log.d("SupabaseClient", "📄 FileContext response: ${json?.take(500)}")
+                val list = underscoredGson.fromJson(json, Array<FileContext>::class.java)
+                
+                if (list.isNullOrEmpty()) {
+                    Log.d("SupabaseClient", "⚠️ No FileContext found for submissionId=$submissionId")
+                    return@withContext null
+                }
+                
+                // Prioritize FileContext with non-empty file_content
+                val withContent = list.filter { it.fileContent.isNotBlank() }
+                val result = if (withContent.isNotEmpty()) {
+                    Log.d("SupabaseClient", "✅ Found ${withContent.size} FileContext(s) with content, using first")
+                    withContent.first()
+                } else {
+                    Log.d("SupabaseClient", "⚠️ No FileContext with content, using first available")
+                    list.first()
+                }
+                
+                Log.d("SupabaseClient", "📄 Selected FileContext: id=${result.id}, fileName=${result.fileName}, contentLength=${result.fileContent.length}")
+                result
+            } else {
+                Log.w("SupabaseClient", "⚠️ Failed to fetch FileContext: ${response.code} ${response.message}")
                 null
             }
         } catch (e: Exception) {
@@ -2565,8 +2645,8 @@ object SupabaseClient {
             // Special handling for username search since 'videos' table lacks username column
             if (searchType == "username") {
                 try {
-                    // 1. Find users matching the query (partial match)
-                    val users = fetchList<Usuario>("usuarios?usuario=ilike.*${searchQuery}*", Array<Usuario>::class.java)
+                    // 1. Find users matching the query (partial match) using 'username' column
+                    val users = fetchList<Usuario>("usuarios?username=ilike.*${searchQuery}*", Array<Usuario>::class.java)
                     if (users.isNotEmpty()) {
                         val userIds = users.map { it.id }
                         val userIdToNameMap = users.associate { it.id to it.usuario }

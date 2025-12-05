@@ -290,6 +290,24 @@ class SupabaseRepository(
                             m["created_at"] = java.time.OffsetDateTime.now().toString()
                             m
                         }
+                        "task_submissions" -> {
+                            val m = mutableMapOf<String, Any?>()
+                            // Map camelCase from Room entity to snake_case for Supabase
+                            coerceToLong(asMap["id"] ?: asMap["Id"])?.let { if (it > 0) m["id"] = it }
+                            coerceToLong(asMap["taskId"] ?: asMap["task_id"])?.let { m["task_id"] = it }
+                            coerceToLong(asMap["studentId"] ?: asMap["student_id"])?.let { m["student_id"] = it }
+                            coerceToLong(asMap["submissionDate"] ?: asMap["submission_date"])?.let { m["submission_date"] = it }
+                            (asMap["fileUri"] ?: asMap["file_uri"])?.let { m["file_uri"] = it.toString() }
+                            (asMap["fileName"] ?: asMap["file_name"])?.let { m["file_name"] = it.toString() }
+                            // grade can be Float or Number
+                            when (val g = asMap["grade"]) {
+                                is Number -> m["grade"] = g.toFloat()
+                                is String -> g.toFloatOrNull()?.let { m["grade"] = it }
+                            }
+                            (asMap["feedback"])?.let { m["feedback"] = it.toString() }
+                            m["created_at"] = java.time.OffsetDateTime.now().toString()
+                            m
+                        }
                         else -> asMap
                     }
 
@@ -616,85 +634,149 @@ class SupabaseRepository(
         return try {
             Log.d("SupabaseRepository", "Recalculating progress for all students in course $courseId")
             
-            val sql = """
-                DO $$
-                DECLARE
-                    enrolled_student RECORD;
-                    total_tasks INTEGER;
-                    completed_tasks INTEGER;
-                    progress_pct REAL;
-                    total_grade NUMERIC;
-                    task_count INTEGER;
-                    avg_grade NUMERIC;
-                BEGIN
-                    -- Calcular total de tareas en el curso
-                    SELECT COUNT(*) INTO total_tasks
-                    FROM tasks tk
-                    JOIN topics t ON tk.topic_id = t.id
-                    WHERE t.course_id = $courseId;
-                    
-                    -- Para cada estudiante inscrito
-                    FOR enrolled_student IN 
-                        SELECT usuario_estudiante 
-                        FROM progreso_estudiante 
-                        WHERE curso_id = $courseId
-                    LOOP
-                        -- Calcular tareas completadas (grade > 0)
-                        SELECT COUNT(*) INTO completed_tasks
-                        FROM task_submissions ts
-                        JOIN tasks tk ON ts.task_id = tk.id
-                        JOIN topics t ON tk.topic_id = t.id
-                        WHERE ts.student_username = enrolled_student.usuario_estudiante
-                        AND t.course_id = $courseId
-                        AND ts.grade > 0;
-                        
-                        -- Calcular porcentaje de progreso
-                        IF total_tasks > 0 THEN
-                            progress_pct := (completed_tasks::REAL / total_tasks::REAL) * 100;
-                        ELSE
-                            progress_pct := 0;
-                        END IF;
-                        
-                        -- Calcular promedio
-                        SELECT 
-                            COALESCE(SUM(ts.grade), 0),
-                            COUNT(*)
-                        INTO total_grade, task_count
-                        FROM task_submissions ts
-                        JOIN tasks tk ON ts.task_id = tk.id
-                        JOIN topics t ON tk.topic_id = t.id
-                        WHERE ts.student_username = enrolled_student.usuario_estudiante
-                        AND t.course_id = $courseId;
-                        
-                        IF task_count > 0 THEN
-                            avg_grade := total_grade / task_count;
-                        ELSE
-                            avg_grade := 0;
-                        END IF;
-                        
-                        -- Actualizar progreso
-                        UPDATE progreso_estudiante
-                        SET 
-                            tareas_totales = total_tasks,
-                            tareas_completadas = completed_tasks,
-                            porcentaje_progreso = progress_pct,
-                            promedio = avg_grade,
-                            calificacion_ponderada = avg_grade,
-                            ultima_calculada_en = NOW()
-                        WHERE usuario_estudiante = enrolled_student.usuario_estudiante
-                        AND curso_id = $courseId;
-                        
-                        RAISE NOTICE 'Updated % - Tasks: %/%, Progress: %%, Avg: %',
-                            enrolled_student.usuario_estudiante, completed_tasks, total_tasks, progress_pct, avg_grade;
-                    END LOOP;
-                END $$;
+            // 1. Obtener total de tareas en el curso
+            val totalTasksSql = """
+                SELECT COUNT(*) as total
+                FROM tasks tk
+                JOIN topics t ON tk.topic_id = t.id
+                WHERE t.course_id = $courseId
             """.trimIndent()
             
-            executeRawQuery(sql)
-            Log.i("SupabaseRepository", "Successfully recalculated progress for course $courseId")
+            val totalTasksResult = executeRawQuery(totalTasksSql)
+            val totalTasks = (totalTasksResult.firstOrNull()?.get("total") as? Number)?.toInt() ?: 0
+            Log.d("SupabaseRepository", "Total tasks in course $courseId: $totalTasks")
+            
+            // 2. Obtener todos los estudiantes inscritos
+            val enrolledStudentsSql = """
+                SELECT usuario_estudiante 
+                FROM progreso_estudiante 
+                WHERE curso_id = $courseId
+            """.trimIndent()
+            
+            val enrolledStudents = executeRawQuery(enrolledStudentsSql)
+            Log.d("SupabaseRepository", "Found ${enrolledStudents.size} enrolled students")
+            
+            if (enrolledStudents.isEmpty()) {
+                Log.w("SupabaseRepository", "No enrolled students found for course $courseId")
+                return true
+            }
+            
+            // 3. Para cada estudiante, calcular y actualizar su progreso
+            var updatedCount = 0
+            for (student in enrolledStudents) {
+                val studentId = (student["usuario_estudiante"] as? Number)?.toLong() ?: continue
+                
+                try {
+                    // Calcular tareas completadas (grade > 0)
+                    val completedSql = """
+                        SELECT COUNT(*) as completed
+                        FROM task_submissions ts
+                        JOIN tasks tk ON ts.task_id = tk.id
+                        JOIN topics t ON tk.topic_id = t.id
+                        WHERE ts.student_id = $studentId
+                        AND t.course_id = $courseId
+                        AND ts.grade > 0
+                    """.trimIndent()
+                    
+                    val completedResult = executeRawQuery(completedSql)
+                    val completedTasks = (completedResult.firstOrNull()?.get("completed") as? Number)?.toInt() ?: 0
+                    
+                    // Calcular promedio de calificaciones
+                    val avgSql = """
+                        SELECT 
+                            COALESCE(SUM(ts.grade), 0) as total_grade,
+                            COUNT(*) as task_count
+                        FROM task_submissions ts
+                        JOIN tasks tk ON ts.task_id = tk.id
+                        JOIN topics t ON tk.topic_id = t.id
+                        WHERE ts.student_id = $studentId
+                        AND t.course_id = $courseId
+                    """.trimIndent()
+                    
+                    val avgResult = executeRawQuery(avgSql)
+                    val totalGrade = (avgResult.firstOrNull()?.get("total_grade") as? Number)?.toFloat() ?: 0f
+                    val taskCount = (avgResult.firstOrNull()?.get("task_count") as? Number)?.toInt() ?: 0
+                    
+                    // Calcular porcentaje y promedio
+                    val progressPct = if (totalTasks > 0) (completedTasks.toFloat() / totalTasks.toFloat()) * 100 else 0f
+                    val avgGrade = if (taskCount > 0) totalGrade / taskCount else 0f
+                    
+                    // Format floats with dot separator to avoid SQL syntax errors in locales using comma
+                    val progressPctStr = String.format(java.util.Locale.US, "%.2f", progressPct)
+                    val avgGradeStr = String.format(java.util.Locale.US, "%.2f", avgGrade)
+                    
+                    // Actualizar progreso del estudiante usando API REST PATCH (no SQL UPDATE)
+                    updateProgresoEstudiante(
+                        studentId = studentId,
+                        courseId = courseId,
+                        totalTasks = totalTasks,
+                        completedTasks = completedTasks,
+                        progressPct = progressPct,
+                        avgGrade = avgGrade
+                    )
+                    updatedCount++
+                    Log.d("SupabaseRepository", "Updated student $studentId: $completedTasks/$totalTasks tasks, $progressPct%, avg=$avgGrade")
+                    
+                } catch (e: Exception) {
+                    Log.w("SupabaseRepository", "Error updating progress for student $studentId", e)
+                }
+            }
+            
+            Log.i("SupabaseRepository", "Successfully recalculated progress for $updatedCount students in course $courseId")
             true
         } catch (e: Exception) {
             Log.e("SupabaseRepository", "Error recalculating student progress", e)
+            false
+        }
+    }
+
+    /**
+     * Actualiza el progreso de un estudiante en un curso usando la API REST PATCH de Supabase
+     * Esto evita usar SQL UPDATE que no funciona bien con el endpoint execute_sql
+     */
+    private suspend fun updateProgresoEstudiante(
+        studentId: Long,
+        courseId: Long,
+        totalTasks: Int,
+        completedTasks: Int,
+        progressPct: Float,
+        avgGrade: Float
+    ): Boolean {
+        return try {
+            // Use REST API PATCH to update the record
+            val url = "${supabaseUrl.trimEnd('/')}/rest/v1/progreso_estudiante?usuario_estudiante=eq.$studentId&curso_id=eq.$courseId"
+            
+            val payload = mapOf(
+                "tareas_totales" to totalTasks,
+                "tareas_completadas" to completedTasks,
+                "porcentaje_progreso" to progressPct,
+                "promedio" to avgGrade,
+                "calificacion_ponderada" to avgGrade,
+                "ultima_calculada_en" to java.time.OffsetDateTime.now().toString()
+            )
+            
+            val bodyJson = gson.toJson(payload)
+            
+            val request = Request.Builder()
+                .url(url)
+                .patch(bodyJson.toRequestBody(jsonMediaType))
+                .addHeader("apikey", supabaseKey)
+                .addHeader("Authorization", "Bearer $supabaseKey")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=minimal")
+                .build()
+            
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val respBody = resp.body?.string()
+                    Log.e("SupabaseRepository", "Failed to update progreso_estudiante: code=${resp.code} body=$respBody")
+                    return false
+                }
+                Log.d("SupabaseRepository", "Successfully updated progreso_estudiante for student $studentId in course $courseId")
+                true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error updating progreso_estudiante", e)
             false
         }
     }

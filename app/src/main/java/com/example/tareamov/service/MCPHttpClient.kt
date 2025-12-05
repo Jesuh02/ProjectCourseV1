@@ -33,8 +33,8 @@ class MCPHttpClient(private val context: Context) {
     }
     
     companion object {
-        private const val CONNECT_TIMEOUT = 10L // seconds
-        private const val READ_TIMEOUT = 60L // seconds (reduced from 300s to fail faster)
+        private const val CONNECT_TIMEOUT = 15L // seconds
+        private const val READ_TIMEOUT = 120L // seconds (increased for complex LLM queries with retries)
         private const val WRITE_TIMEOUT = 30L // seconds
     }
     

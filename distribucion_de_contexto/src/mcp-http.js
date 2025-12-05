@@ -6,6 +6,7 @@
 
 import './config/env.js';
 import express from 'express';
+import os from 'os';
 import { MCPService } from './domain/services/MCPService.js';
 import { SupabaseService } from './infrastructure/database/SupabaseService.js';
 
@@ -208,12 +209,26 @@ app.post('/tools/call', async(req, res) => {
                 result = await mcpService.processQuery(args.query, { includeSchema: true });
             } else {
                 console.log('🤖 Processing Natural Language Query via Agent...');
-                // Use Agent for Natural Language
-                const agentResponse = await mcpService.processQueryWithAgent(args.query);
-                result = {
-                    data: agentResponse,
-                    sqlScript: "-- Executed via Agent"
-                };
+                // Use Agent DIRECTLY for Natural Language (bypasses processQuery snapshot logic)
+                try {
+                    const agentResponse = await mcpService.processQueryWithAgent(args.query);
+
+                    // Agent should return a natural language response string
+                    console.log('✅ Agent response type:', typeof agentResponse);
+                    console.log('✅ Agent response preview:', JSON.stringify(agentResponse).substring(0, 200));
+
+                    // Return the agent's response as-is (should be argumentative text)
+                    result = {
+                        data: agentResponse,
+                        sqlScript: "-- Executed via LLM Agent with tool calling"
+                    };
+                } catch (agentError) {
+                    console.error('❌ Agent error:', agentError);
+                    result = {
+                        error: true,
+                        message: `Error del agente LLM: ${agentError.message}`
+                    };
+                }
             }
 
             res.json({
@@ -277,10 +292,25 @@ async function main() {
         await supabase.testConnection();
         console.log('✅ Supabase connected');
 
+        // Helper to get local IP
+        const getLocalIp = () => {
+            const interfaces = os.networkInterfaces();
+            for (const name of Object.keys(interfaces)) {
+                for (const iface of interfaces[name]) {
+                    if (iface.family === 'IPv4' && !iface.internal) {
+                        return iface.address;
+                    }
+                }
+            }
+            return 'localhost';
+        };
+
         app.listen(PORT, '0.0.0.0', () => {
+            const localIp = getLocalIp();
             console.log(`✅ MCP HTTP Server listening on http://0.0.0.0:${PORT}`);
             console.log(`📱 Android Emulator URL: http://10.0.2.2:${PORT}`);
             console.log(`💻 Local URL: http://localhost:${PORT}`);
+            console.log(`🔌 Physical Device URL: http://${localIp}:${PORT} (Use this for physical devices)`);
         });
     } catch (error) {
         console.error('❌ Failed to connect to Supabase:', error);

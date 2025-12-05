@@ -284,20 +284,30 @@ $toolResult
                     }
                     // ---------------------------------------
                     
-                    // Update prompt with tool result
+                    // Update prompt with tool result and REQUEST ANALYSIS
                     enrichedPrompt = """
 $enrichedPrompt
 
 HERRAMIENTA EJECUTADA: ${toolCall.toolName}
 ARGUMENTOS: ${toolCall.arguments}
-RESULTADO:
+RESULTADO DE LA BASE DE DATOS:
 $toolResult
 
-INSTRUCCIONES FINALES:
-Usa la información de arriba para responder la pregunta original del usuario.
-Responde en lenguaje natural, claro y conciso.
-NO inventes datos. Usa solo lo que ves en RESULTADO.
-Si el resultado es una lista de IDs, di que encontraste esos registros.
+🎯 INSTRUCCIONES FINALES - MUY IMPORTANTE:
+Ahora que tienes los datos REALES de la base de datos, proporciona una respuesta ARGUMENTADA Y NATURAL:
+
+1. **Resumen Ejecutivo**: ¿Qué encontraste? (números clave)
+2. **Análisis Detallado**: Explica qué significan estos datos
+3. **Contexto**: ¿Por qué es importante? ¿Qué patrones observas?
+4. **Insights**: Comparaciones, tendencias, observaciones relevantes
+5. **Recomendaciones**: Acciones sugeridas basadas en los datos
+
+⛔ NO DEVUELVAS JSON CRUDO
+✅ USA LENGUAJE NATURAL Y CONVERSACIONAL
+✅ EXPLICA, NO SOLO MUESTRES DATOS
+✅ PROPORCIONA VALOR AGREGADO CON TU ANÁLISIS
+
+Responde en español de forma clara y profesional.
                     """.trimIndent()
                     
                     iteration++
@@ -333,21 +343,9 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
             }
             
             return@withContext if (toolExecutionHistory.isNotEmpty()) {
-                // Format response VS Code style with data validation badge
-                val enhancedResult = buildString {
-                    // Show tool execution history first
-                    append(toolExecutionHistory.toString().trim())
-                    append("\n\n")
-                    // Then show the final LLM analysis/response
-                    append(result)
-                    // Add data validation footer
-                    if (requiresData) {
-                        append("\n\n---\n")
-                        append("? **Datos validados:** Esta respuesta est� sustentada por consultas reales a Supabase")
-                    }
-                }
-                
-                enhancedResult
+                // Return only the LLM's argumentative response
+                // The response should already be natural and explanatory
+                result
             } else {
                 // No tools were used
                 if (requiresData) {
@@ -644,18 +642,38 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
                 if (data.length() == 0) {
                     "[]  (sin registros)"
                 } else {
-                    val items = mutableListOf<String>()
-                    for (i in 0 until minOf(data.length(), 50)) {  // Limit to 50 records
-                        val obj = data.getJSONObject(i)
-                        items.add("  - ${obj.toString()}")
+                    val sb = StringBuilder()
+                    sb.append("${data.length()} registro(s) encontrado(s):\n\n")
+                    
+                    val firstItem = data.optJSONObject(0)
+                    if (firstItem != null) {
+                        // Table Header
+                        val keys = firstItem.keys().asSequence().take(6).toList()
+                        sb.append("| ")
+                        keys.forEach { sb.append("**${it.uppercase()}** | ") }
+                        sb.appendLine()
+                        
+                        // Separator
+                        sb.append("| ")
+                        keys.forEach { sb.append(":--- | ") }
+                        sb.appendLine()
+                        
+                        // Rows
+                        for (i in 0 until minOf(data.length(), 50)) {
+                            val item = data.getJSONObject(i)
+                            sb.append("| ")
+                            keys.forEach { key ->
+                                val valStr = item.optString(key, "").replace("\n", " ").take(50)
+                                sb.append("$valStr | ")
+                            }
+                            sb.appendLine()
+                        }
                     }
-                    val result = StringBuilder()
-                    result.append("${data.length()} registro(s) encontrado(s):\n")
-                    result.append(items.joinToString("\n"))
+                    
                     if (data.length() > 50) {
-                        result.append("\n  ... (${data.length() - 50} registros adicionales omitidos)")
+                        sb.append("\n  ... (${data.length() - 50} registros adicionales omitidos)")
                     }
-                    result.toString()
+                    sb.toString()
                 }
             }
             is org.json.JSONObject -> {
@@ -669,21 +687,71 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
                         }
                     }
                 } else {
-                    "Objeto JSON:\n${data.toString(2)}"
+                    // Format single object as a vertical table or list
+                    val sb = StringBuilder()
+                    sb.append("| Campo | Valor |\n")
+                    sb.append("| :--- | :--- |\n")
+                    val keys = data.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        val value = data.optString(key, "").replace("\n", " ").take(100)
+                        sb.append("| **${key.uppercase()}** | $value |\n")
+                    }
+                    sb.toString()
                 }
             }
             is List<*> -> {
                 if (data.isEmpty()) {
                     "[]  (sin registros)"
                 } else {
-                    "${data.size} registro(s):\n" + data.take(50).joinToString("\n") { "  - $it" }
+                    val sb = StringBuilder()
+                    sb.append("${data.size} registro(s):\n\n")
+                    
+                    val firstItem = data.firstOrNull()
+                    if (firstItem is Map<*, *>) {
+                        // Table Header
+                        val keys = firstItem.keys.map { it.toString() }.take(6)
+                        sb.append("| ")
+                        keys.forEach { sb.append("**${it.uppercase()}** | ") }
+                        sb.appendLine()
+                        
+                        // Separator
+                        sb.append("| ")
+                        keys.forEach { sb.append(":--- | ") }
+                        sb.appendLine()
+                        
+                        // Rows
+                        data.take(50).forEach { item ->
+                            if (item is Map<*, *>) {
+                                sb.append("| ")
+                                keys.forEach { key ->
+                                    val valStr = item[key]?.toString()?.replace("\n", " ")?.take(50) ?: ""
+                                    sb.append("$valStr | ")
+                                }
+                                sb.appendLine()
+                            }
+                        }
+                    } else {
+                        // Simple list
+                        data.take(50).forEach { item ->
+                            sb.append("- $item\n")
+                        }
+                    }
+                    sb.toString()
                 }
             }
             is Map<*, *> -> {
                 if (data.isEmpty()) {
                     "{} (sin datos)"
                 } else {
-                    data.entries.joinToString("\n") { "  ${it.key}: ${it.value}" }
+                    val sb = StringBuilder()
+                    sb.append("| Campo | Valor |\n")
+                    sb.append("| :--- | :--- |\n")
+                    data.entries.forEach { (key, value) ->
+                        val valStr = value?.toString()?.replace("\n", " ")?.take(100) ?: ""
+                        sb.append("| **${key.toString().uppercase()}** | $valStr |\n")
+                    }
+                    sb.toString()
                 }
             }
             null -> "null (sin datos)"
@@ -1154,35 +1222,79 @@ Si el resultado es una lista de IDs, di que encontraste esos registros.
     private fun createDynamicPromptWithMCPCapability(optimizedPrompt: String, hasToolAccess: Boolean, requiresData: Boolean = false): String {
         return if (hasToolAccess) {
             """
-Eres un experto en SQL y Bases de Datos (PostgreSQL) para la app TareaMov.
-Tu objetivo es generar y EJECUTAR la consulta SQL exacta para responder al usuario.
+Eres un analista de datos experto en SQL y PostgreSQL para la app TareaMov.
+Tu objetivo es NO SOLO ejecutar consultas, sino ANALIZAR y EXPLICAR los resultados.
 
 🔧 HERRAMIENTAS DISPONIBLES:
 1. get_database_schema() - Obtiene el esquema completo de la base de datos. ÚSALO SIEMPRE al inicio si no conoces la estructura o nombres de tablas.
 2. query_database(query="SQL") - Ejecuta consultas SQL en Supabase.
 
 📋 ESQUEMA DE BASE DE DATOS (Resumen):
-- usuarios: id, usuario, rol_id, persona_id
-- courses: id, title, creator_user_id (FK a usuarios.id)
-- task_submissions: id, student_id (FK a usuarios.id), task_id, submission_date
-- subscriptions: subscriber_id, creator_id
-- videos: id, title, course_id
+- usuarios: id, usuario, rol_id, persona_id, email, avatar
+- personas: id, identificacion, nombres, apellidos, telefono
+- courses: id, title, creator_user_id (FK a usuarios.id), description, price
+- task_submissions: id, student_id (FK a usuarios.id), task_id, submission_date, grade
+- subscriptions: subscriber_id, creator_id (sin columna id)
+- videos: id, title, course_id, duration
 - progreso_estudiante: usuario_estudiante (FK a usuarios.id), curso_id (FK a courses.id), certificado_emitido_en (TIMESTAMP), porcentaje_progreso
 
 💡 REGLAS SQL:
-1. ✅ USA JOINs para cruzar tablas (ej: progreso_estudiante JOIN courses).
+1. ✅ USA JOINs para cruzar tablas (ej: usuarios JOIN personas ON usuarios.persona_id = personas.id).
 2. ✅ USA WHERE para filtrar (ej: certificado_emitido_en IS NOT NULL).
-3. ⛔ NO inventes columnas. Usa solo las del esquema.
-4. ⛔ NO expliques el SQL antes de ejecutarlo. Primero EJECUTA la herramienta.
+3. ✅ USA agregaciones (COUNT, SUM, AVG) para análisis.
+4. ⛔ NO inventes columnas. Usa solo las del esquema.
+5. ⛔ NO devuelvas JSON crudo. SIEMPRE explica los resultados.
+6. ✅ Para LISTAS (dame usuarios, lista de tareas, etc.), selecciona TODAS las columnas relevantes.
 
-📝 EJEMPLO:
-Usuario: "¿Quién completó el curso?"
-Tu respuesta: TOOL_CALL: query_database(query="SELECT usuario_estudiante FROM progreso_estudiante WHERE porcentaje_progreso = 100")
+📝 FORMATO DE RESPUESTA:
+Después de ejecutar la consulta, proporciona una respuesta ARGUMENTADA:
+
+            **Para LISTAS de datos (usuarios, cursos, tareas, etc.):**
+            OBLIGATORIO: Presenta los datos en TABLA MARKDOWN ESTÉTICA con este formato EXACTO:
+
+            | **Columna 1** | **Columna 2** | **Columna 3** | **Columna 4** |
+            | :--- | :--- | :--- | :--- |
+            | valor1 | valor2 | valor3 | valor4 |
+
+            REGLAS DE FORMATO:
+            1. Headers en **negrita** (entre asteriscos dobles)
+            2. Nombres de columna DESCRIPTIVOS en español (ej: "Nombre Usuario" no "usuario")
+            3. Alineación izquierda con :---
+            4. Sin espacios extra en celdas
+            5. Máximo 20 filas, indicar "... y X más" si hay más
+
+EJEMPLO:
+| **ID** | **Nombre Usuario** | **Email** | **Rol** |
+| :--- | :--- | :--- | :--- |
+| 1 | admin | admin@example.com | Administrador |
+| 2 | prueba | test@test.com | Usuario |
+
+**Para ANÁLISIS:**
+1. **Resumen**: ¿Qué encontraste? (en números)
+2. **Análisis**: ¿Qué significa esto?
+3. **Contexto**: ¿Por qué es importante?
+4. **Insights**: Patrones, tendencias, comparaciones
+5. **Recomendaciones**: Acciones sugeridas (si aplica)
+
+EJEMPLO MALO:
+[{"id":2,"usuario":"prueba"},{"id":3,"usuario":"prueba1"}]
+
+EJEMPLO BUENO:
+"Encontré 11 usuarios registrados en la plataforma TareaMov. De estos:
+- 9 usuarios (82%) utilizan emails temporales, lo que indica cuentas de prueba o registros incompletos
+- 2 usuarios (18%) tienen emails reales verificados: 'ambiental' y 'argelio'
+
+**Análisis**: La mayoría de las cuentas son de prueba, lo que sugiere una fase de testing activa.
+
+**Recomendación**: 
+1. Implementar verificación de email obligatoria para cuentas productivas
+2. Diferenciar claramente entre usuarios de prueba y usuarios reales en la base de datos
+3. Considerar una campaña de onboarding para los 2 usuarios con emails reales"
 
 🎯 CONSULTA DEL USUARIO:
 $optimizedPrompt
 
-${if (requiresData) "⚡ EJECUTA LA CONSULTA SQL AHORA MISMO USANDO TOOL_CALL." else "💭 Si necesitas datos, usa query_database."}
+${if (requiresData) "⚡ PRIMERO ejecuta query_database, LUEGO analiza y explica los resultados detalladamente." else "💭 Si necesitas datos, usa query_database y proporciona análisis completo."}
             """.trimIndent()
         } else {
             """

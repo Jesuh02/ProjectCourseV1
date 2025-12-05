@@ -3,7 +3,21 @@ import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 
 export class LLMService {
+    static instance = null;
+
+    static getInstance() {
+        if (!LLMService.instance) {
+            LLMService.instance = new LLMService();
+        }
+        return LLMService.instance;
+    }
+
     constructor() {
+        // Prevent multiple instances
+        if (LLMService.instance) {
+            return LLMService.instance;
+        }
+
         // Check if DeepSeek is configured
         const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
         const useDeepSeek = process.env.USE_LLM === 'true' && deepSeekApiKey;
@@ -17,9 +31,9 @@ export class LLMService {
                     baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
                 },
                 modelName: process.env.DEEPSEEK_MODEL || "deepseek-chat",
-                temperature: 0.3, // Lower temperature for more consistent tool calls
-                timeout: 30000, // Reduced to 30 seconds to fail faster
-                maxRetries: 1 // Reduce retries to fail faster
+                temperature: 0.3,
+                timeout: 30000,
+                maxRetries: 1
             });
         } else {
             console.log("Initializing Ollama LLM...");
@@ -33,6 +47,8 @@ export class LLMService {
                 timeout: 30000
             });
         }
+
+        LLMService.instance = this;
     }
 
     async testConnection() {
@@ -106,7 +122,7 @@ export class LLMService {
     sanitizeMessages(messages) {
         return messages.map(msg => {
             // If it's an AIMessage with empty tool_calls, remove the tool_calls property
-            if (msg instanceof AIMessage || msg._getType ? .() === 'ai') {
+            if (msg instanceof AIMessage || (msg._getType && msg._getType() === 'ai')) {
                 if (msg.tool_calls && msg.tool_calls.length === 0) {
                     // Create a new AIMessage without tool_calls
                     return new AIMessage({

@@ -1904,7 +1904,7 @@ class CourseDetailFragment : Fragment() {
 
         // Set click listener for the edit button (only if visible)
         editTaskButton?.setOnClickListener {
-            navigateToEditTask(task.id)
+            navigateToEditTask(task.id, task.topicId)
         }
 
         // For course creator: show view submissions button
@@ -2152,10 +2152,12 @@ class CourseDetailFragment : Fragment() {
     }
 
     // Add this function to navigate to CourseTaskFragment for editing
-    private fun navigateToEditTask(taskId: Long) {
+    private fun navigateToEditTask(taskId: Long, topicId: Long) {
         val bundle = Bundle().apply {
             putLong("taskId", taskId)
-            // We might need topicId as well, depending on CourseTaskFragment's logic
+            putLong("topicId", topicId)
+            putLong("courseId", if (resolvedCourseId > 0) resolvedCourseId else courseId)
+            putString("courseName", courseName)
         }
         // Use the correct action ID from nav_graph.xml
         findNavController().navigate(R.id.action_courseDetailFragment_to_courseTaskFragment, bundle)

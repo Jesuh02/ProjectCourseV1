@@ -2,12 +2,14 @@ package com.example.tareamov.adapter
 
 import android.net.Uri
 import android.view.LayoutInflater
-import android.view.MotionEvent  // Add this import
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.AnimationUtils
 import android.widget.ImageButton
 import android.widget.TextView
+import androidx.lifecycle.findViewTreeLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -15,8 +17,11 @@ import com.bumptech.glide.Glide
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.Persona
 import de.hdodenhof.circleimageview.CircleImageView
+import kotlinx.coroutines.launch
 
 class PersonaAdapter : ListAdapter<Persona, PersonaAdapter.PersonaViewHolder>(PersonaDiffCallback()) {
+
+    var avatarLoader: (suspend (Long) -> String?)? = null
 
     // Interface for handling item clicks
     interface OnItemClickListener {
@@ -101,21 +106,27 @@ class PersonaAdapter : ListAdapter<Persona, PersonaAdapter.PersonaViewHolder>(Pe
             telefonoTextView.text = persona.telefono
 
             // Load avatar image
-            /* TODO: Fetch avatar from Usuario
-            if (!persona.avatar.isNullOrEmpty()) {
-                try {
-                    Glide.with(context)
-                        .load(Uri.parse(persona.avatar))
-                        .placeholder(R.drawable.default_avatar)
-                        .error(R.drawable.default_avatar)
-                        .into(avatarImageView)
-                } catch (e: Exception) {
-                    // If there's an error loading the image, use the default avatar
-                    avatarImageView.setImageResource(R.drawable.default_avatar)
-                }
-            } else {
-            */
+            val adapter = bindingAdapter as? PersonaAdapter
+            val loader = adapter?.avatarLoader
+            
+            // Set default first to avoid recycling issues
             avatarImageView.setImageResource(R.drawable.default_avatar)
+
+            itemView.findViewTreeLifecycleOwner()?.lifecycleScope?.launch {
+                val avatarUrl = loader?.invoke(persona.id)
+                if (!avatarUrl.isNullOrEmpty()) {
+                    try {
+                        Glide.with(context)
+                            .load(Uri.parse(avatarUrl))
+                            .placeholder(R.drawable.default_avatar)
+                            .error(R.drawable.default_avatar)
+                            .into(avatarImageView)
+                    } catch (e: Exception) {
+                        // If there's an error loading the image, use the default avatar
+                        avatarImageView.setImageResource(R.drawable.default_avatar)
+                    }
+                }
+            }
         }
     }
 

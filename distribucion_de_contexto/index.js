@@ -1,3 +1,6 @@
+// CRITICAL: Load environment variables FIRST
+import './src/config/env.js';
+
 import express from 'express';
 import bodyParser from 'body-parser';
 import axios from 'axios';
@@ -8,10 +11,46 @@ import { networkInterfaces } from 'os';
 import { PDFLoader } from 'langchain/document_loaders/fs/pdf';
 import { TextLoader } from 'langchain/document_loaders/fs/text';
 import { DocxLoader } from 'langchain/document_loaders/fs/docx';
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { LLMService } from './src/infrastructure/ai/LLMService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const MAX_TOKENS = 4096;
+
+// Initialize LLMService with DeepSeek
+let llmService = null;
+try {
+    llmService = LLMService.getInstance();
+    console.log('✅ LLMService initialized with DeepSeek');
+} catch (error) {
+    console.error('❌ Failed to initialize LLMService:', error.message);
+}
+
+/**
+ * Helper function to call DeepSeek via LLMService
+ * Replaces all Ollama calls with DeepSeek API
+ */
+async function callDeepSeek(systemPrompt, userPrompt) {
+    if (!llmService || !llmService.model) {
+        throw new Error('LLMService not available - DeepSeek not configured');
+    }
+
+    const messages = [];
+    if (systemPrompt) {
+        messages.push(new SystemMessage(systemPrompt));
+    }
+    messages.push(new HumanMessage(userPrompt));
+
+    console.log('🤖 Calling DeepSeek v2.3...');
+    const response = await llmService.generateResponse(messages);
+
+    // Extract content from response
+    const content = response.content || response.text || response.toString();
+    console.log('✅ DeepSeek response received:', content.length, 'characters');
+
+    return content;
+}
 
 // Helper: update task_submissions row in Supabase via REST (requires SUPABASE_URL and SUPABASE_KEY env vars)
 async function updateTaskSubmissionSupabase(submissionId, grade, feedback) {
@@ -678,6 +717,38 @@ app.post('/procesar-prompt', async(req, res) => {
         console.log('📋 TaskDescription:', taskDescription || 'NO PROPORCIONADO');
         console.log('📄 FileContent length:', (fileContent || '').length);
 
+        // 🔥 MEJORA: Extraer información estructurada del taskDescription si tiene formato con emojis
+        // El cliente Android envía taskDescription en formato:
+        // "📋 TAREA: nombre\n📝 DESCRIPCIÓN DEL PROFESOR:\ndescripción\n📎 ARCHIVO: archivo.ext\n📄 RESUMEN: resumen"
+        let extractedTaskName = '';
+        let extractedProfessorDescription = '';
+        let extractedFileName = '';
+        let extractedSummary = '';
+
+        if (taskDescription) {
+            // Extraer nombre de la tarea
+            const taskMatch = taskDescription.match(/📋\s*TAREA:\s*([^\n]+)/);
+            if (taskMatch) extractedTaskName = taskMatch[1].trim();
+
+            // Extraer descripción del profesor
+            const descMatch = taskDescription.match(/📝\s*DESCRIPCIÓN(?:\s+DEL\s+PROFESOR)?[:\s]*\n?([\s\S]*?)(?=\n📎|\n📄|$)/i);
+            if (descMatch) extractedProfessorDescription = descMatch[1].trim();
+
+            // Extraer nombre del archivo
+            const fileMatch = taskDescription.match(/📎\s*ARCHIVO[^:]*:\s*([^\n]+)/);
+            if (fileMatch) extractedFileName = fileMatch[1].trim();
+
+            // Extraer resumen del contenido
+            const summaryMatch = taskDescription.match(/📄\s*RESUMEN[^:]*:\s*([\s\S]+?)$/);
+            if (summaryMatch) extractedSummary = summaryMatch[1].trim();
+
+            console.log('🔍 INFORMACIÓN EXTRAÍDA DEL CONTEXTO:');
+            console.log('   - Tarea:', extractedTaskName || '(no encontrado)');
+            console.log('   - Descripción profesor:', extractedProfessorDescription ? extractedProfessorDescription.substring(0, 100) + '...' : '(no encontrado)');
+            console.log('   - Archivo:', extractedFileName || '(no encontrado)');
+            console.log('   - Resumen:', extractedSummary ? extractedSummary.substring(0, 100) + '...' : '(no encontrado)');
+        }
+
         // Detectar archivos no procesables y responder inmediatamente
         // LÓGICA MEJORADA: Un archivo es no procesable solo si tiene indicadores de error específicos
         const esArchivoNoProcessable = fileContent && (
@@ -733,6 +804,12 @@ El archivo que enviaste no pudo ser procesado correctamente por el sistema. Esto
 
         // Determinar si la pregunta es sobre nota/calificación/tarea/feedback/archivo (ampliado)
         const preguntaLower = (prompt || '').toLowerCase();
+
+        // 🔥 MEJORA: También considerar como pregunta de nota si hay contexto de tarea disponible
+        const hayContextoTarea = (taskDescription && taskDescription.trim().length > 0) ||
+            (extractedTaskName && extractedTaskName.length > 0) ||
+            (extractedProfessorDescription && extractedProfessorDescription.length > 0);
+
         const esPreguntaNota =
             /nota|calificaci(ó|o)n|puntaje|puntuaci(ó|o)n|evaluaci(ó|o)n|score|grade|calif(í|i)ca(me|la|el)|eval(ú|u)a(me|la|el)/.test(preguntaLower) ||
             /archivo|documento|contenido|trata|tema|enviado|subido|entregado|analiza|analizar/.test(preguntaLower) ||
@@ -740,13 +817,21 @@ El archivo que enviaste no pudo ser procesado correctamente por el sistema. Esto
             (
                 /(revisa|corrige|ver|dime|cu(á|a)l|qu(é|e))/.test(preguntaLower) &&
                 /(nota|calificaci(ó|o)n|puntaje|archivo|documento|tarea|descripci(ó|o)n)/.test(preguntaLower)
-            );
+            ) ||
+            // 🔥 Si hay contexto de tarea y el usuario hace cualquier pregunta relacionada
+            (hayContextoTarea && /mi|esta|la|el|sobre|de|cumpl|bien|mal|falta|mejora|problema/.test(preguntaLower));
 
         // Configuración especial: usar solo gemma3n para evaluaciones críticas
+        // 🔥 MEJORA: También activar evaluación crítica si hay descripción del profesor aunque fileContent esté vacío
         const esPreguntaEvaluacionCritica =
             /nota|calificaci(ó|o)n|puntaje|evaluaci(ó|o)n|calif(í|i)ca/.test(preguntaLower) &&
-            taskDescription && taskDescription.trim() &&
-            fileContent && fileContent.trim();
+            ((taskDescription && taskDescription.trim()) || (extractedProfessorDescription && extractedProfessorDescription.trim())) &&
+            (fileContent && fileContent.trim() || extractedSummary);
+
+        console.log('🔍 ANÁLISIS DE CONTEXTO:');
+        console.log('   - hayContextoTarea:', hayContextoTarea);
+        console.log('   - esPreguntaNota:', esPreguntaNota);
+        console.log('   - esPreguntaEvaluacionCritica:', esPreguntaEvaluacionCritica);
 
         // DETECCIÓN CRÍTICA DE INCOMPATIBILIDADES ESPECÍFICAS
         const detectarIncompatibilidadCritica = (descripcion, contenido) => {
@@ -818,9 +903,9 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
         console.log('🔍 ¿Es pregunta de nota/tarea/archivo?:', esPreguntaNota);
         console.log('🎯 ¿Es evaluación crítica (solo gemma3n)?:', esPreguntaEvaluacionCritica);
 
-        // Si NO es pregunta de nota/tarea/archivo, solo llama3 responde
+        // Si NO es pregunta de nota/tarea/archivo, solo DeepSeek responde
         if (!esPreguntaNota) {
-            console.log('📊 PROCESANDO PREGUNTA SIMPLE CON LLAMA3...');
+            console.log('📊 PROCESANDO PREGUNTA SIMPLE CON DEEPSEEK V2.3...');
             try {
                 // Si hay contexto académico disponible, incluirlo para dar mejor respuesta
                 let promptCompleto = `INSTRUCCIONES CRÍTICAS:
@@ -851,43 +936,21 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 }
 
                 const tokensPrompt = encode(promptCompleto).length;
-                console.log('[MODELO llama3:latest] TOKENS CONSUMIDOS:', tokensPrompt);
-                console.log('[MODELO llama3:latest] PROMPT ENVIADO:', promptCompleto);
+                console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
+                console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO:', promptCompleto.substring(0, 500) + '...');
 
-                const response2 = await axios({
-                    method: 'post',
-                    url: `${ollamaUrl}/api/generate`,
-                    data: {
-                        model: 'llama3:latest',
-                        prompt: promptCompleto
-                    },
-                    responseType: 'stream',
-                    timeout: 1200000, // 20 minutos para coincidir con el cliente Android
-                    headers: {
-                        'Accept': 'application/x-ndjson',
-                        'Content-Type': 'application/json'
-                    }
-                });
-                // const ndjson = require('ndjson');
-                let respuestaFinal = await new Promise((resolve, reject) => {
-                    let texto = '';
-                    response2.data
-                        .pipe(ndjson.parse())
-                        .on('data', obj => {
-                            if (obj && obj.response) texto += obj.response;
-                        })
-                        .on('end', () => resolve(texto))
-                        .on('error', err => reject(err));
-                });
+                // Call DeepSeek via LLMService
+                let respuestaFinal = await callDeepSeek(null, promptCompleto);
+
                 // Defensive fallback if model returns empty
                 if (!respuestaFinal || !respuestaFinal.trim()) {
-                    console.log('⚠️ WARNING: modelo llama3 devolvió respuesta VACÍA (fallback path), aplicando mensaje por defecto');
+                    console.log('⚠️ WARNING: DeepSeek devolvió respuesta VACÍA, aplicando mensaje por defecto');
                     respuestaFinal = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
                 }
 
                 const tokensRespuestaSimple = encode(respuestaFinal).length;
-                console.log('[MODELO llama3:latest] TOKENS DE RESPUESTA:', tokensRespuestaSimple);
-                console.log('[MODELO llama3:latest] RESPUESTA RECIBIDA:', respuestaFinal);
+                console.log('[MODELO DeepSeek v2.3] TOKENS DE RESPUESTA:', tokensRespuestaSimple);
+                console.log('[MODELO DeepSeek v2.3] RESPUESTA RECIBIDA:', respuestaFinal.substring(0, 300) + '...');
 
                 // Resumen de consumo total de tokens para respuesta simple
                 const tokensTotal = tokensPrompt + tokensRespuestaSimple;
@@ -914,13 +977,13 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 return res.json({ respuesta_texto: respuestaFinal });
             } catch (err) {
-                console.log('❌ ERROR EN MODELO LLAMA3:', err.message);
-                return res.status(500).json({ error: 'Error en modelo llama3', detalle: err.message });
+                console.log('❌ ERROR EN DEEPSEEK:', err.message);
+                return res.status(500).json({ error: 'Error en DeepSeek', detalle: err.message });
             }
         }
 
         // Si es pregunta de nota/tarea, usar taskDescription y fileContent por separado
-        console.log('📊 PROCESANDO PREGUNTA DE NOTA/TAREA CON AMBOS MODELOS...');
+        console.log('📊 PROCESANDO PREGUNTA DE NOTA/TAREA CON DEEPSEEK V2.3...');
 
         // Validar taskDescription pero permitir que esté vacío (usar prompt simple en ese caso)
         if (!taskDescription || !taskDescription.trim()) {
@@ -929,43 +992,21 @@ Responde considerando el contexto académico disponible si es relevante para la 
             // Procesar como pregunta simple sin contexto de archivo
             try {
                 const tokensPrompt = encode(prompt).length;
-                console.log('[MODELO llama3:latest] TOKENS CONSUMIDOS (FALLBACK):', tokensPrompt);
-                console.log('[MODELO llama3:latest] PROMPT ENVIADO (FALLBACK):', prompt);
+                console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS (FALLBACK):', tokensPrompt);
+                console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO (FALLBACK):', prompt.substring(0, 300) + '...');
 
-                const response2 = await axios({
-                    method: 'post',
-                    url: `${ollamaUrl}/api/generate`,
-                    data: {
-                        model: 'llama3:latest',
-                        prompt: prompt
-                    },
-                    responseType: 'stream',
-                    timeout: 1200000,
-                    headers: {
-                        'Accept': 'application/x-ndjson',
-                        'Content-Type': 'application/json'
-                    }
-                });
-                // const ndjson = require('ndjson');
-                let respuestaFinal = await new Promise((resolve, reject) => {
-                    let texto = '';
-                    response2.data
-                        .pipe(ndjson.parse())
-                        .on('data', obj => {
-                            if (obj && obj.response) texto += obj.response;
-                        })
-                        .on('end', () => resolve(texto))
-                        .on('error', err => reject(err));
-                });
+                // Call DeepSeek via LLMService
+                let respuestaFinal = await callDeepSeek(null, prompt);
+
                 // Defensive fallback if model returns empty
                 if (!respuestaFinal || !respuestaFinal.trim()) {
-                    console.log('⚠️ WARNING: modelo llama3 devolvió respuesta VACÍA (simple path), aplicando mensaje por defecto');
+                    console.log('⚠️ WARNING: DeepSeek devolvió respuesta VACÍA (simple path), aplicando mensaje por defecto');
                     respuestaFinal = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
                 }
 
                 const tokensRespuestaSimple = encode(respuestaFinal).length;
-                console.log('[MODELO llama3:latest] TOKENS DE RESPUESTA (FALLBACK):', tokensRespuestaSimple);
-                console.log('[MODELO llama3:latest] RESPUESTA RECIBIDA (FALLBACK):', respuestaFinal);
+                console.log('[MODELO DeepSeek v2.3] TOKENS DE RESPUESTA (FALLBACK):', tokensRespuestaSimple);
+                console.log('[MODELO DeepSeek v2.3] RESPUESTA RECIBIDA (FALLBACK):', respuestaFinal.substring(0, 300) + '...');
 
                 const tokensTotal = tokensPrompt + tokensRespuestaSimple;
                 console.log('📊 RESUMEN DE TOKENS - TOTAL CONSUMIDO (FALLBACK):', tokensTotal);
@@ -989,8 +1030,8 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 return res.json({ respuesta_texto: respuestaFinal });
             } catch (err) {
-                console.log('❌ ERROR EN MODELO LLAMA3 (FALLBACK):', err.message);
-                return res.status(500).json({ error: 'Error en modelo llama3', detalle: err.message });
+                console.log('❌ ERROR EN DEEPSEEK (FALLBACK):', err.message);
+                return res.status(500).json({ error: 'Error en DeepSeek', detalle: err.message });
             }
         }
 
@@ -998,42 +1039,57 @@ Responde considerando el contexto académico disponible si es relevante para la 
         if (!fileContent || !fileContent.trim()) {
             console.log('⚠️ WARNING: fileContent vacío, usando solo taskDescription');
             console.log('📄 fileContent recibido (longitud):', (fileContent || '').length);
-            // Procesar solo con taskDescription
-            const promptSimple = `${prompt}\n\nDescripción de la tarea: ${taskDescription}`;
-            try {
-                const tokensPrompt = encode(promptSimple).length;
-                console.log('[MODELO llama3:latest] TOKENS CONSUMIDOS (SIN ARCHIVO):', tokensPrompt);
-                console.log('[MODELO llama3:latest] PROMPT ENVIADO (SIN ARCHIVO):', promptSimple);
 
-                const response2 = await axios({
-                    method: 'post',
-                    url: `${ollamaUrl}/api/generate`,
-                    data: {
-                        model: 'llama3:latest',
-                        prompt: promptSimple
-                    },
-                    responseType: 'stream',
-                    timeout: 1200000,
-                    headers: {
-                        'Accept': 'application/x-ndjson',
-                        'Content-Type': 'application/json'
-                    }
-                });
-                // const ndjson = require('ndjson');
-                let respuestaFinal = await new Promise((resolve, reject) => {
-                    let texto = '';
-                    response2.data
-                        .pipe(ndjson.parse())
-                        .on('data', obj => {
-                            if (obj && obj.response) texto += obj.response;
-                        })
-                        .on('end', () => resolve(texto))
-                        .on('error', err => reject(err));
-                });
+            // 🔥 MEJORADO: Detectar si el taskDescription indica que el archivo no está disponible
+            const archivoNoDisponible = taskDescription && (
+                taskDescription.includes('⚠️ NOTA IMPORTANTE') ||
+                taskDescription.includes('contenido del archivo del estudiante NO está disponible') ||
+                taskDescription.includes('⚠️ NOTA: No se encontró archivo')
+            );
+
+            // Construir prompt contextualizado según el caso
+            let promptContextualizado;
+            if (archivoNoDisponible) {
+                promptContextualizado = `CONTEXTO ACADÉMICO:
+El estudiante ha seleccionado una tarea pero el contenido del archivo NO está disponible para análisis.
+Solo puedo proporcionar información basada en la DESCRIPCIÓN de la tarea.
+
+${taskDescription}
+
+PREGUNTA DEL ESTUDIANTE: ${prompt}
+
+INSTRUCCIONES DE RESPUESTA:
+1. Si el estudiante pregunta por calificación o evaluación:
+   - Explica que NO puedes calificar porque no tienes acceso al contenido del archivo
+   - Describe qué se espera en base a la descripción de la tarea
+   - Sugiere que vuelva a subir el archivo o contacte al profesor
+
+2. Si el estudiante pregunta sobre la tarea:
+   - Proporciona información basada en la descripción disponible
+   - Explica los requisitos de la tarea
+   - Da orientación sobre cómo completarla
+
+RESPONDE EN ESPAÑOL de forma clara y educativa.`;
+            } else {
+                promptContextualizado = `CONTEXTO ACADÉMICO:
+${taskDescription}
+
+PREGUNTA DEL ESTUDIANTE: ${prompt}
+
+INSTRUCCIONES: Responde en español de forma clara y educativa basándote en la información de la tarea proporcionada.`;
+            }
+
+            try {
+                const tokensPrompt = encode(promptContextualizado).length;
+                console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS (SIN ARCHIVO):', tokensPrompt);
+                console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO (SIN ARCHIVO):', promptContextualizado.substring(0, 500) + '...');
+
+                // Call DeepSeek via LLMService
+                let respuestaFinal = await callDeepSeek(null, promptContextualizado);
 
                 const tokensRespuesta = encode(respuestaFinal).length;
-                console.log('[MODELO llama3:latest] TOKENS DE RESPUESTA (SIN ARCHIVO):', tokensRespuesta);
-                console.log('[MODELO llama3:latest] RESPUESTA RECIBIDA (SIN ARCHIVO):', respuestaFinal);
+                console.log('[MODELO DeepSeek v2.3] TOKENS DE RESPUESTA (SIN ARCHIVO):', tokensRespuesta);
+                console.log('[MODELO DeepSeek v2.3] RESPUESTA RECIBIDA (SIN ARCHIVO):', respuestaFinal.substring(0, 300) + '...');
 
                 const tokensTotal = tokensPrompt + tokensRespuesta;
                 console.log('📊 RESUMEN DE TOKENS - TOTAL CONSUMIDO (SIN ARCHIVO):', tokensTotal);
@@ -1057,17 +1113,17 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 return res.json({ respuesta_texto: respuestaFinal });
             } catch (err) {
-                console.log('❌ ERROR EN MODELO LLAMA3 (SIN ARCHIVO):', err.message);
-                return res.status(500).json({ error: 'Error en modelo llama3', detalle: err.message });
+                console.log('❌ ERROR EN DEEPSEEK (SIN ARCHIVO):', err.message);
+                return res.status(500).json({ error: 'Error en DeepSeek', detalle: err.message });
             }
         }
 
         const taskDescriptionClean = taskDescription.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
         const fileContentClean = fileContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
 
-        // MODO ESPECIAL: Solo gemma3n para evaluaciones críticas
+        // MODO ESPECIAL: DeepSeek para evaluaciones críticas (reemplaza gemma3n)
         if (esPreguntaEvaluacionCritica) {
-            console.log('🎯 MODO EVALUACIÓN CRÍTICA - SOLO GEMMA3N');
+            console.log('🎯 MODO EVALUACIÓN CRÍTICA - DEEPSEEK V2.3');
             const promptEvaluacionCritica = `EVALUADOR ACADÉMICO JUSTO Y EQUILIBRADO:
 
 INSTRUCCIONES EDUCATIVAS:
@@ -1126,40 +1182,14 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
 
             try {
                 const tokensEvaluacion = encode(promptEvaluacionCritica).length;
-                console.log('[MODO CRÍTICO - GEMMA3N] TOKENS CONSUMIDOS:', tokensEvaluacion);
-                console.log('[MODO CRÍTICO - GEMMA3N] URL COMPLETA:', `${ollamaUrl}/api/generate`);
-                console.log('[MODO CRÍTICO - GEMMA3N] MODELO:', 'gemma3n:latest');
+                console.log('[MODO CRÍTICO - DEEPSEEK v2.3] TOKENS CONSUMIDOS:', tokensEvaluacion);
 
-                const response = await axios({
-                    method: 'post',
-                    url: `${ollamaUrl}/api/generate`,
-                    data: {
-                        model: 'gemma3n:latest',
-                        prompt: promptEvaluacionCritica
-                    },
-                    responseType: 'stream',
-                    timeout: 1200000,
-                    headers: {
-                        'Accept': 'application/x-ndjson',
-                        'Content-Type': 'application/json'
-                    }
-                });
-
-                // const ndjson = require('ndjson');
-                let respuestaEvaluacion = await new Promise((resolve, reject) => {
-                    let texto = '';
-                    response.data
-                        .pipe(ndjson.parse())
-                        .on('data', obj => {
-                            if (obj && obj.response) texto += obj.response;
-                        })
-                        .on('end', () => resolve(texto))
-                        .on('error', err => reject(err));
-                });
+                // Call DeepSeek via LLMService
+                let respuestaEvaluacion = await callDeepSeek(null, promptEvaluacionCritica);
 
                 const tokensRespuesta = encode(respuestaEvaluacion).length;
-                console.log('[MODO CRÍTICO - GEMMA3N] TOKENS DE RESPUESTA:', tokensRespuesta);
-                console.log('[MODO CRÍTICO - GEMMA3N] RESPUESTA:', respuestaEvaluacion);
+                console.log('[MODO CRÍTICO - DEEPSEEK v2.3] TOKENS DE RESPUESTA:', tokensRespuesta);
+                console.log('[MODO CRÍTICO - DEEPSEEK v2.3] RESPUESTA:', respuestaEvaluacion.substring(0, 500) + '...');
 
                 const endTime = new Date();
                 const duration = endTime - startTime;
@@ -1176,8 +1206,8 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
             }
         }
 
-        // Construir prompt para modelo 1 usando taskDescription y fileContent por separado
-        let promptModelo1 = `EVALUADOR ACADÉMICO JUSTO Y EDUCATIVO:
+        // Construir prompt unificado para DeepSeek (reemplaza gemma3n + llama3)
+        let promptUnificado = `EVALUADOR ACADÉMICO JUSTO Y EDUCATIVO:
 
 INSTRUCCIONES EDUCATIVAS:
 - RESPONDE SIEMPRE EN ESPAÑOL
@@ -1208,10 +1238,12 @@ REGLAS DE EVALUACIÓN ESPECÍFICAS:
 - "login/registro" → DEBE tener autenticación
 - Si no coincide específicamente = 0-2
 
-EVALUACIÓN INTELIGENTE:
-✅ "ejemplo algoritmo Python" + script Python = 10/10 (GENERAL ✓)
-❌ "base de datos de IA" + BD películas = 0/10 (ESPECÍFICO ✗)
-✅ "programa Python" + cualquier programa Python = 9/10 (GENERAL ✓)
+FORMATO DE RESPUESTA OBLIGATORIO:
+📊 **CALIFICACIÓN ACTUAL: [NOTA]/10**
+🎯 **ESTADO:** [APROBADO / REVISAR / RECHAZADO]
+🎯 **TEMA SOLICITADO:** [lo que pidió el profesor]
+📄 **TEMA ENTREGADO:** [lo que envió el estudiante]
+📝 **FEEDBACK:** [Tu explicación detallada y constructiva]
 
 PREGUNTA DEL USUARIO: ${prompt}
 
@@ -1221,116 +1253,24 @@ LO QUE SE PIDIÓ:
 LO QUE SE ENTREGÓ:
 ${fileContentClean}
 
-EVALÚA DE MANERA JUSTA: ¿El estudiante cumplió con la solicitud? Recuerda ser educativo y constructivo.`;
+EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CALIFICACIÓN ACTUAL: X/10**" AL INICIO.`;
 
-        const tokensModelo1 = encode(promptModelo1).length;
-        console.log('[MODELO gemma3n:latest] TOKENS CONSUMIDOS:', tokensModelo1);
-        console.log('[MODELO gemma3n:latest] PROMPT ENVIADO:', promptModelo1);
-
-        let veredictoModelo1 = '';
-        let tokensRespuestaGemma1 = 0; // Declarar fuera del try para tener scope correcto
-        try {
-            const response1 = await axios({
-                method: 'post',
-                url: `${ollamaUrl}/api/generate`,
-                data: {
-                    model: 'gemma3n:latest',
-                    prompt: promptModelo1
-                },
-                responseType: 'stream',
-                timeout: 1200000, // 20 minutos para coincidir con el cliente Android
-                headers: {
-                    'Accept': 'application/x-ndjson',
-                    'Content-Type': 'application/json'
-                }
-            });
-            // const ndjson = require('ndjson');
-            veredictoModelo1 = await new Promise((resolve, reject) => {
-                let texto = '';
-                response1.data
-                    .pipe(ndjson.parse())
-                    .on('data', obj => {
-                        if (obj && obj.response) texto += obj.response;
-                    })
-                    .on('end', () => resolve(texto))
-                    .on('error', err => reject(err));
-            });
-
-            tokensRespuestaGemma1 = encode(veredictoModelo1).length; // Ahora sin const
-            console.log('[MODELO gemma3n:latest] TOKENS DE RESPUESTA:', tokensRespuestaGemma1);
-            console.log('[MODELO gemma3n:latest] RESPUESTA RECIBIDA:', veredictoModelo1);
-        } catch (err) {
-            console.log('❌ ERROR EN MODELO GEMMA3N:', err.message);
-            return res.status(500).json({ error: 'Error en modelo gemma3n', detalle: err.message });
-        }
-
-        // Prompt para llama3 incluye el veredicto y instrucciones flexibles
-        let promptModelo2 = `GENERADOR DE FEEDBACK ACADÉMICO FINAL:
-
-INSTRUCCIONES:
-1. Analiza la evaluación previa del modelo auxiliar.
-2. Genera una respuesta final para el estudiante.
-3. OBLIGATORIO: Incluye la calificación en el formato exacto solicitado.
-
-CONTEXTO DE LA TAREA:
-- LO QUE SE PIDIÓ: "${taskDescriptionClean}"
-- LO QUE SE ENTREGÓ: "${fileContentClean}"
-
-EVALUACIÓN PREVIA (MODELO AUXILIAR):
-${veredictoModelo1}
-
-FORMATO DE RESPUESTA OBLIGATORIO (Copiar exactamente el encabezado):
-📊 **CALIFICACIÓN ACTUAL: [NOTA]/10**
-🎯 **ESTADO:** [APROBADO / REVISAR / RECHAZADO]
-📝 **FEEDBACK:**
-[Tu explicación detallada y constructiva aquí]
-
-SI LA EVALUACIÓN PREVIA FUE POSITIVA, MANTÉN LA NOTA ALTA.
-SI HUBO ERRORES, EXPLÍCALOS AMABLEMENTE.
-
-PREGUNTA DEL USUARIO: ${prompt}
-
-Genera la respuesta final ahora. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CALIFICACIÓN ACTUAL: X/10**" AL INICIO.`;
-
-        const tokensModelo2 = encode(promptModelo2).length;
-        console.log('[MODELO llama3:latest] TOKENS CONSUMIDOS:', tokensModelo2);
-        console.log('[MODELO llama3:latest] PROMPT ENVIADO:', promptModelo2);
+        const tokensPrompt = encode(promptUnificado).length;
+        console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
+        console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO:', promptUnificado.substring(0, 500) + '...');
 
         let respuestaFinal = '';
         try {
-            const response2 = await axios({
-                method: 'post',
-                url: `${ollamaUrl}/api/generate`,
-                data: {
-                    model: 'llama3:latest',
-                    prompt: promptModelo2
-                },
-                responseType: 'stream',
-                timeout: 1200000, // 20 minutos para coincidir con el cliente Android
-                headers: {
-                    'Accept': 'application/x-ndjson',
-                    'Content-Type': 'application/json'
-                }
-            });
-            // const ndjson = require('ndjson');
-            respuestaFinal = await new Promise((resolve, reject) => {
-                let texto = '';
-                response2.data
-                    .pipe(ndjson.parse())
-                    .on('data', obj => {
-                        if (obj && obj.response) texto += obj.response;
-                    })
-                    .on('end', () => resolve(texto))
-                    .on('error', err => reject(err));
-            });
+            // Call DeepSeek via LLMService
+            respuestaFinal = await callDeepSeek(null, promptUnificado);
 
             const tokensRespuestaFinal = encode(respuestaFinal).length;
-            console.log('[MODELO llama3:latest] TOKENS DE RESPUESTA:', tokensRespuestaFinal);
-            console.log('[MODELO llama3:latest] RESPUESTA RECIBIDA:', respuestaFinal);
+            console.log('[MODELO DeepSeek v2.3] TOKENS DE RESPUESTA:', tokensRespuestaFinal);
+            console.log('[MODELO DeepSeek v2.3] RESPUESTA RECIBIDA:', respuestaFinal.substring(0, 500) + '...');
 
             // Resumen de consumo total de tokens
-            const tokensTotal = tokensModelo1 + tokensRespuestaGemma1 + tokensModelo2 + tokensRespuestaFinal;
-            console.log('📊 RESUMEN DE TOKENS - TOTAL CONSUMIDO:', tokensTotal, '(Gemma3n:', tokensModelo1 + tokensRespuestaGemma1, '+ Llama3:', tokensModelo2 + tokensRespuestaFinal, ')');
+            const tokensTotal = tokensPrompt + tokensRespuestaFinal;
+            console.log('📊 RESUMEN DE TOKENS - TOTAL CONSUMIDO:', tokensTotal);
 
             console.log('✅ ENVIANDO RESPUESTA COMPLETA AL CLIENTE');
             const endTime = new Date();
@@ -1341,8 +1281,8 @@ Genera la respuesta final ahora. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CALIFIC
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
             return res.json({ respuesta_texto: respuestaFinal });
         } catch (err) {
-            console.log('❌ ERROR EN MODELO LLAMA3 (SEGUNDA LLAMADA):', err.message);
-            return res.status(500).json({ error: 'Error en modelo llama3', detalle: err.message });
+            console.log('❌ ERROR EN DEEPSEEK:', err.message);
+            return res.status(500).json({ error: 'Error en DeepSeek', detalle: err.message });
         }
 
     } catch (error) {
@@ -1375,10 +1315,11 @@ function getLocalIPAddress() {
 app.listen(PORT, '0.0.0.0', () => {
     const localIPs = getLocalIPAddress();
     console.log('='.repeat(60));
-    console.log('🚀 Microservicio de distribución de contexto iniciado');
+    console.log('🚀 Microservicio de distribución de contexto con DeepSeek v2.3');
     console.log('='.repeat(60));
     console.log(`📡 Puerto: ${PORT}`);
     console.log(`🌐 Escuchando en todas las interfaces: 0.0.0.0`);
+    console.log(`🤖 Modelo LLM: DeepSeek v2.3 (Cloud API)`);
     console.log('\n📍 Direcciones IP detectadas automáticamente:');
     console.log('   ℹ️  Configura tu app Android para usar una de estas IPs');
     console.log('');
@@ -1386,7 +1327,6 @@ app.listen(PORT, '0.0.0.0', () => {
     if (localIPs.length > 0) {
         localIPs.forEach((ip, index) => {
             console.log(`   ${index + 1}. http://${ip}:${PORT}`);
-            console.log(`      Ollama: http://${ip}:11435`);
         });
         console.log('');
         console.log(`   💡 IP Principal recomendada: http://${localIPs[0]}:${PORT}`);
