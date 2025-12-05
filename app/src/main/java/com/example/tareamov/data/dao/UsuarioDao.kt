@@ -55,6 +55,9 @@ interface UsuarioDao {
 
     @Query("SELECT * FROM usuarios WHERE id = :id LIMIT 1")
     suspend fun getUsuarioById(id: Long): Usuario?
+    
+    @Query("SELECT * FROM usuarios WHERE email = :email LIMIT 1")
+    suspend fun getUsuarioByEmail(email: String): Usuario?
 
     @Query("UPDATE usuarios SET rol_id = :rolId WHERE id = :userId")
     suspend fun updateUserRolId(userId: Long, rolId: Long)

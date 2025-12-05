@@ -2,10 +2,13 @@ package com.example.tareamov.ui
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.text.method.HideReturnsTransformationMethod
 import android.text.method.PasswordTransformationMethod
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -16,20 +19,32 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
-import com.example.tareamov.MainActivity
 import com.example.tareamov.R
 import com.example.tareamov.data.AppDatabase
-// Add this import for Usuario
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.viewmodel.AuthViewModel
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount
+import com.google.android.gms.auth.api.signin.GoogleSignInClient
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.tasks.Task
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 class LoginFragment : Fragment() {
     private lateinit var usernameEditText: EditText
@@ -45,6 +60,66 @@ class LoginFragment : Fragment() {
     private lateinit var particle1: View
     private lateinit var particle2: View
     private lateinit var particle3: View
+    
+    // Google Sign-In (Legacy API - more compatible)
+    private lateinit var googleSignInClient: GoogleSignInClient
+    private lateinit var googleSignInButton: View
+    private lateinit var googleSignInLauncher: ActivityResultLauncher<Intent>
+    
+    companion object {
+        private const val TAG = "LoginFragment"
+    }
+    
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        // Initialize Google Sign-In launcher
+        googleSignInLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            Log.d(TAG, "Google Sign-In result: resultCode=${result.resultCode}, data=${result.data}")
+            
+            when (result.resultCode) {
+                Activity.RESULT_OK -> {
+                    val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                    handleGoogleSignInResult(task)
+                }
+                Activity.RESULT_CANCELED -> {
+                    // Try to get more info from the intent
+                    val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                    try {
+                        task.getResult(ApiException::class.java)
+                    } catch (e: ApiException) {
+                        Log.e(TAG, "Google Sign-In ApiException: statusCode=${e.statusCode}, message=${e.message}")
+                        handleGoogleSignInError(e.statusCode)
+                    }
+                }
+                else -> {
+                    Log.e(TAG, "Google Sign-In failed with unknown resultCode: ${result.resultCode}")
+                    // Still try to parse the result
+                    if (result.data != null) {
+                        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                        handleGoogleSignInResult(task)
+                    } else {
+                        Toast.makeText(requireContext(), "Error al iniciar sesión con Google", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+    
+    private fun handleGoogleSignInError(statusCode: Int) {
+        val errorMessage = when (statusCode) {
+            10 -> "Error de configuración (código 10). El SHA-1 o Client ID no coinciden."
+            12500 -> "Error de Google Play Services. Actualiza Google Play Services."
+            12501 -> "Inicio de sesión cancelado por el usuario"
+            12502 -> "Error de red. Verifica tu conexión a internet."
+            7 -> "Error de conexión de red"
+            8 -> "Error interno de Google"
+            else -> "Error de Google Sign-In (código: $statusCode)"
+        }
+        Toast.makeText(requireContext(), errorMessage, Toast.LENGTH_LONG).show()
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -65,6 +140,18 @@ class LoginFragment : Fragment() {
         particle1 = view.findViewById(R.id.particle1)
         particle2 = view.findViewById(R.id.particle2)
         particle3 = view.findViewById(R.id.particle3)
+        
+        // Initialize Google Sign-In button
+        googleSignInButton = view.findViewById(R.id.googleLoginButton)
+        
+        // Configure Google Sign-In
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(getString(R.string.default_web_client_id))
+            .requestEmail()
+            .requestProfile()
+            .build()
+        
+        googleSignInClient = GoogleSignIn.getClient(requireActivity(), gso)
 
         // Initialize SessionManager
         sessionManager = SessionManager.getInstance(requireContext())
@@ -80,6 +167,11 @@ class LoginFragment : Fragment() {
         
         // Start animations
         startAnimations()
+        
+        // Set up Google Sign-In button
+        googleSignInButton.setOnClickListener {
+            signInWithGoogle()
+        }
     
         // Set up click listener for the register button
         registerButton.setOnClickListener {
@@ -341,6 +433,200 @@ class LoginFragment : Fragment() {
                 // Consider if this navigation is always desired or if it should
                 // depend on whether a user is already logged in via SessionManager.
                 // findNavController().navigate(R.id.action_loginFragment_to_homeFragment)
+            }
+        }
+    }
+    
+    // ==================== GOOGLE SIGN-IN (Legacy API) ====================
+    
+    private fun signInWithGoogle() {
+        Log.d(TAG, "Starting Google Sign-In...")
+        Log.d(TAG, "Web Client ID: ${getString(R.string.default_web_client_id).take(30)}...")
+        
+        // Check if Google Play Services is available
+        val googleApiAvailability = com.google.android.gms.common.GoogleApiAvailability.getInstance()
+        val resultCode = googleApiAvailability.isGooglePlayServicesAvailable(requireContext())
+        
+        if (resultCode != com.google.android.gms.common.ConnectionResult.SUCCESS) {
+            Log.e(TAG, "Google Play Services not available: $resultCode")
+            if (googleApiAvailability.isUserResolvableError(resultCode)) {
+                googleApiAvailability.getErrorDialog(requireActivity(), resultCode, 9000)?.show()
+            } else {
+                Toast.makeText(requireContext(), "Google Play Services no disponible", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        
+        // Sign out first to allow account selection, then sign in
+        googleSignInClient.signOut().addOnCompleteListener {
+            Log.d(TAG, "Signed out, now launching sign in intent...")
+            try {
+                val signInIntent = googleSignInClient.signInIntent
+                googleSignInLauncher.launch(signInIntent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error launching sign in intent", e)
+                Toast.makeText(requireContext(), "Error al iniciar Google Sign-In: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    
+    private fun handleGoogleSignInResult(task: Task<GoogleSignInAccount>) {
+        try {
+            val account = task.getResult(ApiException::class.java)
+            
+            val idToken = account.idToken
+            val email = account.email ?: ""
+            val displayName = account.displayName ?: email.substringBefore("@")
+            val profilePictureUri = account.photoUrl?.toString()
+            
+            Log.d(TAG, "Google Sign-In successful for: $email")
+            
+            if (idToken != null) {
+                // Authenticate with Supabase using the ID token
+                authenticateWithSupabase(idToken, email, displayName, profilePictureUri)
+            } else {
+                // No ID token, just create local account
+                Log.w(TAG, "No ID token received, creating local account")
+                lifecycleScope.launch {
+                    createOrLoginLocalUser(email, displayName, profilePictureUri)
+                }
+            }
+            
+        } catch (e: ApiException) {
+            Log.e(TAG, "Google Sign-In failed with code: ${e.statusCode}", e)
+            val errorMessage = when (e.statusCode) {
+                12501 -> "Inicio de sesión cancelado"
+                12502 -> "Error de conexión. Verifica tu internet."
+                10 -> "Error de configuración. Verifica el SHA-1 y Client ID."
+                7 -> "Error de red. Verifica tu conexión a internet."
+                else -> "Error de Google Sign-In: ${e.statusCode}"
+            }
+            Toast.makeText(requireContext(), errorMessage, Toast.LENGTH_LONG).show()
+        }
+    }
+    
+    private fun authenticateWithSupabase(idToken: String, email: String, displayName: String, avatarUrl: String?) {
+        lifecycleScope.launch {
+            try {
+                val supabaseUrl = com.example.tareamov.BuildConfig.SUPABASE_URL
+                val supabaseKey = com.example.tareamov.BuildConfig.SUPABASE_KEY
+                
+                if (supabaseUrl.isBlank() || supabaseKey.isBlank()) {
+                    Log.w(TAG, "Supabase not configured, creating local account")
+                    createOrLoginLocalUser(email, displayName, avatarUrl)
+                    return@launch
+                }
+                
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .build()
+                
+                // Call Supabase auth endpoint with Google ID token
+                val jsonBody = JSONObject().apply {
+                    put("id_token", idToken)
+                }
+                
+                val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
+                
+                val request = Request.Builder()
+                    .url("$supabaseUrl/auth/v1/token?grant_type=id_token")
+                    .addHeader("apikey", supabaseKey)
+                    .addHeader("Content-Type", "application/json")
+                    .post(requestBody)
+                    .build()
+                
+                val response = withContext(Dispatchers.IO) {
+                    client.newCall(request).execute()
+                }
+                
+                val responseBody = response.body?.string()
+                
+                if (response.isSuccessful && responseBody != null) {
+                    val jsonResponse = JSONObject(responseBody)
+                    Log.d(TAG, "Supabase auth successful")
+                    
+                    // Extract user info from Supabase response
+                    val user = jsonResponse.optJSONObject("user")
+                    val supabaseUserId = user?.optString("id") ?: ""
+                    
+                    // Create or update local user and session
+                    createOrLoginLocalUser(email, displayName, avatarUrl, supabaseUserId)
+                    
+                } else {
+                    Log.e(TAG, "Supabase auth failed: ${response.code} - $responseBody")
+                    // Fallback to local account
+                    createOrLoginLocalUser(email, displayName, avatarUrl)
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Error authenticating with Supabase", e)
+                // Fallback to local account
+                createOrLoginLocalUser(email, displayName, avatarUrl)
+            }
+        }
+    }
+    
+    private suspend fun createOrLoginLocalUser(email: String, displayName: String, avatarUrl: String?, supabaseUserId: String? = null) {
+        withContext(Dispatchers.IO) {
+            try {
+                val db = AppDatabase.getDatabase(requireContext())
+                val usuarioDao = db.usuarioDao()
+                
+                // Check if user already exists by email
+                var existingUser = usuarioDao.getUsuarioByEmail(email)
+                
+                if (existingUser == null) {
+                    // Create new user
+                    val username = email.substringBefore("@")
+                    val newUser = Usuario(
+                        usuario = username,
+                        email = email,
+                        contrasena = "", // No password for Google users
+                        avatar = avatarUrl,
+                        rol_id = 2 // Default role (student)
+                    )
+                    
+                    val userId = usuarioDao.insertUsuario(newUser)
+                    existingUser = usuarioDao.getUsuarioById(userId)
+                    
+                    Log.d(TAG, "Created new user: $username with ID: $userId")
+                } else {
+                    // Update avatar if changed
+                    if (avatarUrl != null && existingUser.avatar != avatarUrl) {
+                        existingUser.avatar = avatarUrl
+                        usuarioDao.updateUsuario(existingUser)
+                    }
+                    Log.d(TAG, "Found existing user: ${existingUser.usuario}")
+                }
+                
+                existingUser?.let { user ->
+                    // Create session
+                    withContext(Dispatchers.Main) {
+                        sessionManager.createLoginSession(
+                            username = user.usuario,
+                            userId = user.id,
+                            personaId = user.persona_id,
+                            roleName = "user",
+                            avatarUri = user.avatar
+                        )
+                        
+                        // Store userId in SharedPreferences
+                        val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                        sharedPrefs.edit().putLong("current_user_id", user.id).apply()
+                        
+                        Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
+                        
+                        // Navigate to home
+                        findNavController().navigate(R.id.videoHomeFragment)
+                    }
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Error creating/logging in local user", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "Error al crear cuenta: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
