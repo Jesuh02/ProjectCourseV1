@@ -42,6 +42,8 @@ class CourseAdapter(
 
     // Cache for creator usernames by userId to reduce repeated network calls
     private val creatorUsernameCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
+    // Cache for creator avatars by userId
+    private val creatorAvatarCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
 
     class CourseViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val thumbnailImageView: ImageView = itemView.findViewById(R.id.courseThumbnailImageView)
@@ -176,6 +178,13 @@ class CourseAdapter(
                         ?: com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)?.also {
                             creatorUsernameCache[course.creatorUserId] = it
                         }
+                    
+                    // Fetch Avatar
+                    val creatorAvatar = creatorAvatarCache[course.creatorUserId]
+                        ?: com.example.tareamov.service.SupabaseClient.fetchUsuarioById(course.creatorUserId)?.avatar?.also {
+                            if (it.isNotEmpty()) creatorAvatarCache[course.creatorUserId] = it
+                        }
+
                     withContext(Dispatchers.Main) {
                         // Fallback: If username matches, treat as creator even if currentUserIdCached was null
                         if (currentUsername != null && creatorUsername == currentUsername) {
@@ -195,6 +204,17 @@ class CourseAdapter(
                             holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"
                             Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
                             
+                            // Update Avatar
+                            if (!creatorAvatar.isNullOrEmpty()) {
+                                 Glide.with(context)
+                                    .load(creatorAvatar)
+                                    .placeholder(R.drawable.default_avatar)
+                                    .error(R.drawable.default_avatar)
+                                    .into(holder.creatorAvatarImageView)
+                            } else {
+                                 holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                            }
+
                             // Load subscription data with user IDs
                             loadSubscriptionDataWithUserId(holder, course, course.creatorUserId)
                             Unit
@@ -204,12 +224,15 @@ class CourseAdapter(
                     Log.e("CourseAdapter", "Error loading creator username for course ${course.id}", e)
                     withContext(Dispatchers.Main) {
                         holder.creatorTextView.text = "Creador desconocido"
+                        holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
                     }
                 }
             }
             
-            // Load creator avatar (default for now)
-            holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+            // Initial placeholder while loading
+            if (holder.creatorAvatarImageView.drawable == null) {
+                holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+            }
             
             // ONLY check enrollment status for non-creators
             // This prevents any enrollment UI from appearing on creator's own courses

@@ -1,9 +1,11 @@
 package com.example.tareamov.data.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.google.gson.annotations.SerializedName
 
 @Entity(
     tableName = "usuarios",
@@ -21,17 +23,36 @@ import androidx.room.PrimaryKey
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("persona_id"), Index("rol_id")]
+    indices = [
+        Index("persona_id"), 
+        Index("rol_id"),
+        Index(value = ["username"], unique = true),
+        Index(value = ["email"], unique = true)
+    ]
 )
 data class Usuario(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val usuario: String = "",
+    @ColumnInfo(name = "username")
+    @SerializedName("username")
+    val usuario: String = "", // Keeping property name 'usuario' to minimize refactoring, but mapping to 'username' column
     val contrasena: String = "",
     val persona_id: Long = 0,
     val rol_id: Long = 1, // Default to estudiante role (ID 1)
-    var email: String? = null,
-    var avatar: String? = null
+    val email: String = "",
+    val avatar: String? = null,
+    @ColumnInfo(name = "is_active")
+    @SerializedName("is_active")
+    val isActive: Boolean = true,
+    @ColumnInfo(name = "email_verified")
+    @SerializedName("email_verified")
+    val emailVerified: Boolean = false,
+    @ColumnInfo(name = "last_login")
+    @SerializedName("last_login")
+    val lastLogin: String? = null,
+    @ColumnInfo(name = "created_at")
+    @SerializedName("created_at")
+    val createdAt: String? = null
 ) {
     // Alias for password field (for Google Sign-In compatibility)
     var password: String

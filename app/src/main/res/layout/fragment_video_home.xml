@@ -169,7 +169,7 @@
                 <!-- Profile Avatar -->
                 <de.hdodenhof.circleimageview.CircleImageView
                     android:id="@+id/profileAvatars"
-                    android:layout_width="36dp"
+                    android:layout_width="wrap_content"
                     android:layout_height="36dp"
                     android:src="@drawable/ic_profile_avatars"
                     app:civ_border_color="#FFFFFF"

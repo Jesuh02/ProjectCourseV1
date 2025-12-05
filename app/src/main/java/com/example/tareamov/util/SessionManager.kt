@@ -135,10 +135,7 @@ class SessionManager private constructor(private val context: Context) {
             if (u == null) return false
 
             val roleName = r?.nombre ?: getUserRole() ?: ""
-            val avatar = try { // fetch persona avatar if possible
-                val persona = if (u.persona_id > 0) com.example.tareamov.service.SupabaseClient.fetchPersonas().firstOrNull { p -> p.id == u.persona_id } else null
-                persona?.avatar
-            } catch (_: Exception) { null }
+            val avatar = u.avatar
 
             editor.putString(KEY_USERNAME, u.usuario)
             editor.putLong(KEY_USER_ID, u.id)

@@ -55,13 +55,12 @@ class PersonaRepository(
     }
 
     // Add method to update profile information
-    suspend fun updateProfile(personaId: Long, nombres: String, apellidos: String, avatar: String?): Boolean {
+    suspend fun updateProfile(personaId: Long, nombres: String, apellidos: String): Boolean {
         val persona = getPersonaById(personaId)
         return if (persona != null) {
             val updatedPersona = persona.copy(
                 nombres = nombres,
-                apellidos = apellidos,
-                avatar = avatar ?: persona.avatar
+                apellidos = apellidos
             )
             update(updatedPersona)
             true

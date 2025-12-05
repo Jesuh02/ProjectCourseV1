@@ -282,24 +282,24 @@ class ProfileFragment : Fragment() {
             subscribersTextView.text = "$subscriberCount suscriptores"
         }
 
-        // Update profile image with persona's avatar
-        if (persona != null && !persona.avatar.isNullOrEmpty()) {
-            Log.d("ProfileFragment", "Loading avatar: ${persona.avatar}")
+        // Update profile image with usuario's avatar
+        if (usuario != null && !usuario.avatar.isNullOrEmpty()) {
+            Log.d("ProfileFragment", "Loading avatar: ${usuario.avatar}")
             try {
                 when {
-                    persona.avatar.startsWith("http") -> {
+                    usuario.avatar.startsWith("http") -> {
                         // Load as URL
                         Glide.with(requireContext())
-                            .load(persona.avatar)
+                            .load(usuario.avatar)
                             .placeholder(R.drawable.ic_profile)
                             .error(R.drawable.ic_profile)
                             .circleCrop()
                             .into(profileImage)
                         Log.d("ProfileFragment", "Loaded avatar from URL")
                     }
-                    persona.avatar.startsWith("file:") -> {
+                    usuario.avatar.startsWith("file:") -> {
                         // Load as file URI
-                        val fileUri = Uri.parse(persona.avatar)
+                        val fileUri = Uri.parse(usuario.avatar)
                         Glide.with(requireContext())
                             .load(fileUri)
                             .placeholder(R.drawable.ic_profile)
@@ -308,9 +308,9 @@ class ProfileFragment : Fragment() {
                             .into(profileImage)
                         Log.d("ProfileFragment", "Loaded avatar from file URI")
                     }
-                    persona.avatar.startsWith("/") -> {
+                    usuario.avatar.startsWith("/") -> {
                         // Load as file path
-                        val file = File(persona.avatar)
+                        val file = File(usuario.avatar)
                         Glide.with(requireContext())
                             .load(file)
                             .placeholder(R.drawable.ic_profile)
@@ -322,7 +322,7 @@ class ProfileFragment : Fragment() {
                     else -> {
                         // Try to load as resource ID first
                         try {
-                            val resourceId = persona.avatar.toInt()
+                            val resourceId = usuario.avatar.toInt()
                             Glide.with(requireContext())
                                 .load(resourceId)
                                 .placeholder(R.drawable.ic_profile)
@@ -333,7 +333,7 @@ class ProfileFragment : Fragment() {
                         } catch (e: NumberFormatException) {
                             // Try to load as drawable resource name
                             val drawableId = resources.getIdentifier(
-                                persona.avatar, "drawable", requireContext().packageName
+                                usuario.avatar, "drawable", requireContext().packageName
                             )
                             if (drawableId != 0) {
                                 Glide.with(requireContext())

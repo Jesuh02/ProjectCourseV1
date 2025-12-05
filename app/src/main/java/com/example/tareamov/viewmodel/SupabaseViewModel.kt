@@ -27,8 +27,7 @@ class SupabaseViewModel(
         viewModelScope.launch {
             // 1. Buscar usuario por personaId
             val usuarioEntity = usuarioDao.getUsuarioByPersonaId(personaId)
-            val persona = personaDao.getPersonaById(personaId)
-            val email = persona?.email
+            val email = usuarioEntity?.email
 
             // 2. Si se encontró el email, intenta login en Supabase
             if (usuarioEntity != null && email != null) {
