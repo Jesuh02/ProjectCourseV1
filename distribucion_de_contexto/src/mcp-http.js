@@ -183,6 +183,62 @@ usuarios, personas, courses, videos, topics, content_items, tasks, task_submissi
                         properties: {},
                         description: 'No parameters required - returns full schema'
                     }
+                },
+                {
+                    name: 'analyze_github_repo',
+                    description: `Analyze and grade a GitHub repository. Extracts code, README, and structure to evaluate quality.
+
+**CAPABILITIES:**
+- Clone/read public GitHub repositories
+- Extract source code files (Python, JavaScript, Java, Kotlin, etc.)
+- Analyze project structure and organization
+- Evaluate code quality, documentation, and best practices
+- Generate grades (0-100) with detailed feedback
+
+**HOW TO USE:**
+Provide a GitHub URL and optional evaluation criteria.
+
+**EXAMPLES:**
+1. Basic: {"repoUrl": "https://github.com/user/project"}
+2. With criteria: {"repoUrl": "https://github.com/user/project", "criteria": "Evaluar implementación de patrones de diseño"}
+3. With task: {"repoUrl": "github.com/user/repo", "taskDescription": "Crear una API REST con autenticación"}
+
+**SUPPORTED URL FORMATS:**
+- https://github.com/owner/repo
+- github.com/owner/repo
+- owner/repo
+
+**RETURNS:**
+- Repository info (name, language, description)
+- Grade (0-100) with justification
+- Strengths and areas for improvement
+- Detailed technical analysis
+- List of analyzed files
+
+**NOTE:** Only works with PUBLIC repositories. For private repos, configure GITHUB_TOKEN.`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            repoUrl: {
+                                type: 'string',
+                                description: 'GitHub repository URL (e.g., https://github.com/user/repo)'
+                            },
+                            criteria: {
+                                type: 'string',
+                                description: 'Optional evaluation criteria or rubric'
+                            },
+                            taskDescription: {
+                                type: 'string',
+                                description: 'Optional task/assignment description for context'
+                            },
+                            fileTypes: {
+                                type: 'array',
+                                items: { type: 'string' },
+                                description: 'Optional file extensions to analyze (e.g., [".py", ".js"])'
+                            }
+                        },
+                        required: ['repoUrl']
+                    }
                 }
             ]
         }
@@ -253,6 +309,45 @@ app.post('/tools/call', async(req, res) => {
                     }]
                 }
             });
+        } else if (name === 'analyze_github_repo') {
+            // Nueva herramienta para analizar y calificar repositorios de GitHub
+            console.log('🐙 Analyzing GitHub repository:', args.repoUrl);
+
+            try {
+                const result = await mcpService.analyzeGitHubRepo(args.repoUrl, {
+                    taskDescription: args.taskDescription,
+                    gradingCriteria: args.gradingCriteria,
+                    focusAreas: args.focusAreas,
+                    maxFiles: args.maxFiles
+                });
+
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify(result, null, 2)
+                        }]
+                    }
+                });
+            } catch (githubError) {
+                console.error('❌ GitHub analysis error:', githubError);
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                error: true,
+                                message: `Error analizando repositorio: ${githubError.message}`,
+                                hint: mcpService.getGitHubErrorHint ? mcpService.getGitHubErrorHint(githubError.message) : null
+                            }, null, 2)
+                        }]
+                    }
+                });
+            }
         } else {
             res.status(404).json({
                 jsonrpc: '2.0',

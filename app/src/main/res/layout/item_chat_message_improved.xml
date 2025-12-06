@@ -3,93 +3,98 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical">
+    android:orientation="vertical"
+    android:background="#000000">
 
     <!-- User Message Container -->
-    <LinearLayout
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/userMessageContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="20dp"
-        android:background="#000000"
-        android:gravity="start|top"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
         android:visibility="gone">
 
-        <!-- User Avatar -->
-        <androidx.cardview.widget.CardView
+        <!-- Avatar del usuario -->
+        <ImageView
+            android:id="@+id/userAvatar"
             android:layout_width="32dp"
             android:layout_height="32dp"
-            android:layout_marginEnd="12dp"
-            android:layout_marginTop="2dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp"
-            app:cardBackgroundColor="#4A90E2">
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_avatar_user"
+            android:src="@drawable/ic_person"
+            app:tint="#FFFFFF"
+            android:padding="6dp"
+            app:layout_constraintEnd_toStartOf="@+id/messageBubble"
+            app:layout_constraintTop_toTopOf="@+id/messageBubble" />
 
-            <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_gravity="center"
-                android:src="@drawable/ic_user"
-                android:tint="#FFFFFF" />
-        </androidx.cardview.widget.CardView>
-
-        <!-- User Message Content -->
+        <!-- Message Bubble -->
         <LinearLayout
-            android:layout_width="0dp"
+            android:id="@+id/messageBubble"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
+            android:background="@drawable/bg_message_user"
+            android:maxWidth="280dp"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:elevation="2dp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
 
             <TextView
                 android:id="@+id/userMessageTextView"
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="#FFFFFF"
                 android:textSize="16sp"
-                android:lineSpacingExtra="4dp"
                 android:textIsSelectable="true"
-                android:fontFamily="sans-serif"
+                android:lineSpacingExtra="2dp"
                 android:text="Mensaje del usuario" />
 
             <TextView
                 android:id="@+id/userMessageTime"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#888888"
+                android:layout_gravity="end"
+                android:layout_marginTop="8dp"
+                android:textColor="#E6FFFFFF"
                 android:textSize="12sp"
-                android:layout_marginTop="6dp"
+                android:textStyle="italic"
                 android:text="00:00" />
-
-            <!-- User Message Action Buttons -->
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="8dp">
-
-                <ImageButton
-                    android:id="@+id/editUserMessageButton"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:background="?android:attr/selectableItemBackgroundBorderless"
-                    android:src="@android:drawable/ic_menu_edit"
-                    android:tint="#888888"
-                    android:contentDescription="Editar mensaje"
-                    android:layout_marginEnd="8dp" />
-
-                <ImageButton
-                    android:id="@+id/copyUserMessageButton"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:background="?android:attr/selectableItemBackgroundBorderless"
-                    android:src="@android:drawable/ic_menu_save"
-                    android:tint="#888888"
-                    android:contentDescription="Copiar mensaje"
-                    android:layout_marginEnd="8dp" />
-            </LinearLayout>
         </LinearLayout>
-    </LinearLayout>
+
+        <!-- User Action Buttons -->
+        <LinearLayout
+            android:id="@+id/userActionButtons"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="4dp"
+            app:layout_constraintTop_toBottomOf="@id/messageBubble"
+            app:layout_constraintEnd_toEndOf="@id/messageBubble">
+
+            <ImageButton
+                android:id="@+id/shareButtonUser"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginEnd="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_share_minimal"
+                android:tint="#777777"
+                android:padding="6dp" />
+
+            <ImageButton
+                android:id="@+id/copyButtonUser"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_copy_minimal"
+                android:tint="#777777"
+                android:padding="6dp" />
+        </LinearLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- Bot Message Container -->
     <LinearLayout
@@ -97,28 +102,28 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:padding="20dp"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="12dp"
         android:background="#000000"
         android:gravity="start|top"
         android:visibility="gone">
 
-        <!-- Bot Avatar -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_marginEnd="12dp"
+        <!-- Bot Avatar - círculo verde con icono -->
+        <FrameLayout
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="10dp"
             android:layout_marginTop="2dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp"
-            app:cardBackgroundColor="#10A37F">
+            android:background="@drawable/circle_shape"
+            android:backgroundTint="#10A37F">
 
             <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_cpu"
                 android:tint="#FFFFFF" />
-        </androidx.cardview.widget.CardView>
+        </FrameLayout>
 
         <!-- Bot Message Content -->
         <LinearLayout
@@ -133,14 +138,15 @@
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:layout_marginBottom="8dp">
+                android:layout_marginBottom="6dp">
 
                 <TextView
+                    android:id="@+id/modelNameTextView"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Llama 3.3 70B"
+                    android:text="DeepSeek-V3.2-Speciale"
                     android:textColor="#10A37F"
-                    android:textSize="13sp"
+                    android:textSize="12sp"
                     android:textStyle="bold" />
 
                 <View
@@ -156,57 +162,66 @@
                     android:layout_height="wrap_content"
                     android:text="RAG"
                     android:textColor="#4CAF50"
-                    android:textSize="11sp"
+                    android:textSize="10sp"
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/botMessageTextView"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:lineSpacingExtra="4dp"
-                android:textIsSelectable="true"
-                android:fontFamily="sans-serif"
-                android:text="Respuesta del modelo" />
+                android:background="@drawable/bg_message_user"
+                android:backgroundTint="#1A1A1A"
+                android:padding="12dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/botMessageTextView"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FFFFFF"
+                    android:textSize="15sp"
+                    android:lineSpacingExtra="4dp"
+                    android:textIsSelectable="true"
+                    android:fontFamily="sans-serif"
+                    android:text="Respuesta del modelo" />
+            </LinearLayout>
 
             <!-- Action buttons container -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginTop="12dp"
-                android:gravity="start">
+                android:layout_marginTop="10dp"
+                android:gravity="start|center_vertical">
 
                 <ImageButton
                     android:id="@+id/copyButton"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:layout_marginEnd="8dp"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_marginEnd="12dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
-                    android:src="@drawable/ic_copy"
-                    android:tint="#888888"
+                    android:src="@drawable/ic_copy_minimal"
+                    android:tint="#555555"
                     android:contentDescription="Copiar mensaje"
-                    android:padding="6dp" />
+                    android:padding="4dp" />
 
                 <ImageButton
                     android:id="@+id/shareButton"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
-                    android:src="@drawable/ic_share"
-                    android:tint="#888888"
+                    android:src="@drawable/ic_share_minimal"
+                    android:tint="#555555"
                     android:contentDescription="Compartir mensaje"
-                    android:padding="6dp" />
+                    android:padding="4dp" />
             </LinearLayout>
 
             <TextView
                 android:id="@+id/botMessageTime"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#888888"
-                android:textSize="12sp"
+                android:textColor="#555555"
+                android:textSize="11sp"
                 android:layout_marginTop="6dp"
                 android:text="00:00" />
         </LinearLayout>
@@ -218,7 +233,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="12dp"
         android:background="#000000"
         android:visibility="gone">
 
@@ -227,10 +243,10 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="¿Agregar calificación al sistema?"
-            android:textColor="#CCCCCC"
-            android:textSize="12sp"
+            android:textColor="#888888"
+            android:textSize="11sp"
             android:gravity="center"
-            android:layout_marginBottom="12dp" />
+            android:layout_marginBottom="10dp" />
 
         <!-- Small aesthetic buttons row -->
         <LinearLayout
@@ -242,8 +258,8 @@
             <!-- Small Accept button -->
             <Button
                 android:id="@+id/addCalificationButton"
-                android:layout_width="60dp"
-                android:layout_height="36dp"
+                android:layout_width="72dp"
+                android:layout_height="42dp"
                 android:backgroundTint="#4CAF50"
                 android:text="✓"
                 android:textColor="#FFFFFF"
@@ -251,14 +267,14 @@
                 android:textSize="16sp"
                 android:contentDescription="Agregar calificación"
                 android:layout_marginEnd="8dp"
-                android:elevation="4dp"
+                android:elevation="2dp"
                 style="@style/Widget.Material3.Button.UnelevatedButton" />
 
             <!-- Small Reject button -->
             <Button
                 android:id="@+id/rejectCalificationButton"
-                android:layout_width="60dp"
-                android:layout_height="36dp"
+                android:layout_width="72dp"
+                android:layout_height="42dp"
                 android:backgroundTint="#f44336"
                 android:text="✗"
                 android:textColor="#FFFFFF"
@@ -266,19 +282,12 @@
                 android:textSize="16sp"
                 android:contentDescription="No agregar calificación"
                 android:layout_marginStart="8dp"
-                android:elevation="4dp"
+                android:elevation="2dp"
                 style="@style/Widget.Material3.Button.UnelevatedButton" />
         </LinearLayout>
-        <!-- Subtle divider line -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="12dp"
-            android:background="#333333"
-            android:alpha="0.3" />
     </LinearLayout>
 
-    <!-- Hidden timestamp (for compatibility) -->
+    <!-- Hidden views for compatibility -->
     <TextView
         android:id="@+id/messageTimestampTextView"
         android:layout_width="wrap_content"

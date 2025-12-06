@@ -2,21 +2,27 @@
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/chatBotRootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="#000000"
+    android:clipToPadding="false"
+    android:clipChildren="false">
 
-    <!-- Top App Bar - Minimalist -->
+    <!-- Top App Bar - Minimalist (Fixed at top, not affected by keyboard) -->
     <LinearLayout
         android:id="@+id/topBar"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="?attr/actionBarSize"
         android:background="#000000"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingHorizontal="8dp"
-        android:elevation="0dp"
-        app:layout_constraintTop_toTopOf="parent">
+        android:elevation="8dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:translationZ="8dp">
 
         <ImageButton
             android:id="@+id/backButton"
@@ -108,7 +114,7 @@
         app:layout_constraintBottom_toTopOf="@id/inputAreaWrapper"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHeight_max="300dp">
+        app:layout_constraintHeight_max="350dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -122,14 +128,24 @@
                 android:background="#161616"
                 android:gravity="center_vertical">
                 <TextView
+                    android:id="@+id/overlayTitleTextView"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Seleccionar Tarea"
+                    android:text="Seleccionar Curso"
                     android:textColor="#DDDDDD"
                     android:textSize="12sp"
                     android:textStyle="bold"
                     android:paddingStart="4dp"/>
+                <ImageButton
+                    android:id="@+id/backToCoursesButton"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_menu_revert"
+                    android:tint="#666666"
+                    android:visibility="gone" />
                 <ImageButton
                     android:id="@+id/closeTaskListButton"
                     android:layout_width="20dp"
@@ -138,6 +154,43 @@
                     android:src="@android:drawable/ic_menu_close_clear_cancel"
                     android:tint="#666666" />
             </LinearLayout>
+
+            <!-- Search Bar -->
+            <LinearLayout
+                android:id="@+id/searchBarContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="8dp"
+                android:gravity="center_vertical">
+                
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@android:drawable/ic_menu_search"
+                    android:tint="#666666"
+                    android:layout_marginEnd="8dp" />
+                
+                <EditText
+                    android:id="@+id/overlaySearchEditText"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:hint="Buscar por nombre o categoría..."
+                    android:textColorHint="#555555"
+                    android:textColor="#CCCCCC"
+                    android:textSize="12sp"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:imeOptions="actionSearch" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#1A1A1A" />
 
             <TextView
                 android:id="@+id/courseNameTextView"
@@ -343,6 +396,18 @@
                 android:padding="8dp"
                 android:layout_marginBottom="2dp"/>
         </LinearLayout>
+
+        <!-- Powered by DeepSeek indicator -->
+        <TextView
+            android:id="@+id/poweredByTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="⚡ Potenciado por DeepSeek-V3.2-Speciale"
+            android:textColor="#444444"
+            android:textSize="10sp"
+            android:gravity="center"
+            android:paddingVertical="4dp"
+            android:background="#000000" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -16,6 +16,14 @@ class FileAnalysisService(private val context: Context) {
             Log.d("FileAnalysisService", "Iniciando extracción de archivo: $fileName")
             Log.d("FileAnalysisService", "URI: $uri")
             Log.d("FileAnalysisService", "Esquema URI: ${uri.scheme}")
+            
+            // Detectar si es una URL de GitHub
+            val uriString = uri.toString()
+            if (isGitHubUrl(uriString)) {
+                Log.d("FileAnalysisService", "Detectado URL de GitHub - Usando manejo especial")
+                return@withContext handleGitHubUrl(uriString, fileName)
+            }
+            
             // Extracción SIEMPRE dinámica, usando el archivo seleccionado por el usuario
             val contentResolver = context.contentResolver
             val isGoogleDriveUri = uri.authority?.contains("google") == true || 
@@ -167,6 +175,134 @@ class FileAnalysisService(private val context: Context) {
             )
         }
     }
+    
+    /**
+     * Verifica si una URL es de GitHub
+     */
+    private fun isGitHubUrl(url: String): Boolean {
+        return url.contains("github.com", ignoreCase = true) ||
+               url.contains("github.io", ignoreCase = true) ||
+               url.startsWith("https://github.com") ||
+               url.startsWith("http://github.com")
+    }
+    
+    /**
+     * Maneja URLs de repositorios de GitHub
+     * Extrae información del repositorio y crea un contexto para el análisis
+     */
+    private suspend fun handleGitHubUrl(url: String, fileName: String): FileAnalysisResult = withContext(Dispatchers.IO) {
+        try {
+            Log.d("FileAnalysisService", "Procesando URL de GitHub: $url")
+            
+            // Extraer información del repositorio de la URL
+            val repoInfo = extractGitHubRepoInfo(url)
+            
+            // Crear contenido estructurado con la información del repositorio
+            val content = buildString {
+                appendLine("=== REPOSITORIO DE GITHUB ===")
+                appendLine()
+                appendLine("URL: $url")
+                appendLine("Propietario: ${repoInfo.owner}")
+                appendLine("Repositorio: ${repoInfo.repo}")
+                if (repoInfo.branch != null) {
+                    appendLine("Rama: ${repoInfo.branch}")
+                }
+                if (repoInfo.path != null) {
+                    appendLine("Ruta: ${repoInfo.path}")
+                }
+                appendLine()
+                appendLine("=== INFORMACIÓN PARA ANÁLISIS ===")
+                appendLine()
+                appendLine("Este es un enlace a un repositorio de GitHub.")
+                appendLine("El repositorio puede contener código fuente, documentación y otros archivos del proyecto.")
+                appendLine()
+                appendLine("Para analizar el contenido del repositorio:")
+                appendLine("1. Se puede revisar la estructura del proyecto")
+                appendLine("2. Analizar el código fuente disponible")
+                appendLine("3. Revisar la documentación (README, docs, etc.)")
+                appendLine("4. Evaluar las buenas prácticas de desarrollo")
+                appendLine()
+                appendLine("URL del repositorio para referencia: $url")
+            }
+            
+            val metadata = buildString {
+                append("type: github_repository, ")
+                append("owner: ${repoInfo.owner}, ")
+                append("repo: ${repoInfo.repo}, ")
+                append("url: $url")
+                if (repoInfo.branch != null) append(", branch: ${repoInfo.branch}")
+                if (repoInfo.path != null) append(", path: ${repoInfo.path}")
+            }
+            
+            Log.d("FileAnalysisService", "GitHub URL procesada exitosamente: ${repoInfo.owner}/${repoInfo.repo}")
+            
+            return@withContext FileAnalysisResult(
+                success = true,
+                content = content,
+                fileType = FileType.CODE, // Tratamos repos de GitHub como código
+                metadata = metadata
+            )
+            
+        } catch (e: Exception) {
+            Log.e("FileAnalysisService", "Error procesando URL de GitHub: ${e.message}")
+            
+            // Aún así, devolver éxito con la URL como contexto
+            return@withContext FileAnalysisResult(
+                success = true,
+                content = "Repositorio de GitHub: $url\n\nEste enlace apunta a un repositorio de GitHub que puede ser analizado.",
+                fileType = FileType.CODE,
+                metadata = "type: github_url, url: $url"
+            )
+        }
+    }
+    
+    /**
+     * Extrae información del repositorio desde una URL de GitHub
+     */
+    private fun extractGitHubRepoInfo(url: String): GitHubRepoInfo {
+        try {
+            // Normalizar URL
+            val cleanUrl = url.trim().removeSuffix("/")
+            
+            // Patrón: https://github.com/owner/repo[/tree|blob/branch/path]
+            val parts = cleanUrl
+                .replace("https://github.com/", "")
+                .replace("http://github.com/", "")
+                .split("/")
+            
+            val owner = parts.getOrNull(0) ?: "unknown"
+            val repo = parts.getOrNull(1) ?: "unknown"
+            
+            // Detectar rama y ruta si existen
+            var branch: String? = null
+            var path: String? = null
+            
+            if (parts.size > 3) {
+                val treeOrBlob = parts.getOrNull(2)
+                if (treeOrBlob == "tree" || treeOrBlob == "blob") {
+                    branch = parts.getOrNull(3)
+                    if (parts.size > 4) {
+                        path = parts.drop(4).joinToString("/")
+                    }
+                }
+            }
+            
+            return GitHubRepoInfo(owner, repo, branch, path)
+        } catch (e: Exception) {
+            Log.e("FileAnalysisService", "Error extrayendo info de GitHub URL: ${e.message}")
+            return GitHubRepoInfo("unknown", "unknown", null, null)
+        }
+    }
+    
+    /**
+     * Data class para información de repositorio de GitHub
+     */
+    private data class GitHubRepoInfo(
+        val owner: String,
+        val repo: String,
+        val branch: String?,
+        val path: String?
+    )
 
     private fun extractTextContent(inputStream: java.io.InputStream): String {
         return try {

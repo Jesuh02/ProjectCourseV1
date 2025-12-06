@@ -39,19 +39,28 @@ class MCPService(private val context: Context) {
     companion object {
         private const val TAG = "MCPService"
         
-        // URL del servidor MCP - Actualiza con la URL real del servidor
-        // Usando localhost (127.0.0.1) en lugar de 10.0.2.2 para reducir problemas de conectividad
-        private const val MCP_SERVER_URL = "http://127.0.0.1:3000/convert"
+        // URL del servidor MCP - Usar 10.0.2.2 para emulador Android -> Host
+        private const val MCP_SERVER_URL = "http://10.0.2.2:3000/convert"
+        
+        // URL para JSON-RPC tools/call (GitHub analysis y otros)
+        private const val MCP_TOOLS_CALL_URL = "http://10.0.2.2:3000/tools/call"
         
         // Tiempo máximo de espera para la conversión de archivos grandes y carga de modelos
-        // Reduced to 60s to prevent long hangs
-        private const val TIMEOUT_SECONDS = 60L
+        // Increased to 120s for GitHub repo analysis which can take time
+        private const val TIMEOUT_SECONDS = 120L
         
         // URLs alternativos en caso de que el principal falle - EMULADOR PRIMERO
         private val FALLBACK_URLS = listOf(
             "http://10.0.2.2:3000/convert",       // 🎯 EMULADOR -> HOST (MÁXIMA PRIORIDAD)
-            "http://127.0.0.1:3000/convert",      // Localhost
+            "http://127.0.0.1:3000/convert",      // Localhost (dispositivo físico)
             "http://localhost:3000/convert"       // Localhost alternative
+        )
+        
+        // URLs para JSON-RPC tools/call
+        private val TOOLS_CALL_FALLBACK_URLS = listOf(
+            "http://10.0.2.2:3000/tools/call",    // 🎯 EMULADOR -> HOST
+            "http://127.0.0.1:3000/tools/call",   // Localhost
+            "http://localhost:3000/tools/call"    // Localhost alternative
         )
     }
 
@@ -1846,5 +1855,341 @@ $tableList
             Log.e(TAG, "❌ Error exportando archivo de Google Drive: ${e.message}", e)
             return@withContext null
         }
+    }
+    
+    /**
+     * Analiza un repositorio de GitHub y genera una calificación automática
+     * Usa JSON-RPC para llamar al tool analyze_github_repo en el servidor MCP
+     * @param repoUrl URL del repositorio de GitHub (ej: https://github.com/usuario/repositorio)
+     * @param taskDescription Descripción de la tarea para contexto de evaluación
+     * @param criteria Criterios de evaluación específicos (opcional)
+     * @return FileContext con el análisis del repositorio
+     */
+    suspend fun analyzeGitHubRepository(
+        repoUrl: String,
+        taskDescription: String = "",
+        criteria: String = ""
+    ): FileContext = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔍 Analizando repositorio de GitHub: $repoUrl")
+            Log.d(TAG, "📝 Descripción de tarea: $taskDescription")
+            
+            // Validar URL de GitHub (más flexible)
+            if (!isValidGitHubUrl(repoUrl)) {
+                return@withContext createErrorFileContext(
+                    "github_repository",
+                    "URL de GitHub inválida. Usa el formato: https://github.com/usuario/repositorio"
+                )
+            }
+            
+            // Crear JSON-RPC request para tools/call
+            val argumentsJson = JSONObject().apply {
+                put("repoUrl", repoUrl)
+                put("taskDescription", taskDescription)
+                put("gradingCriteria", criteria)
+                put("maxFiles", 20)
+            }
+            
+            val paramsJson = JSONObject().apply {
+                put("name", "analyze_github_repo")
+                put("arguments", argumentsJson)
+            }
+            
+            val requestJson = JSONObject().apply {
+                put("jsonrpc", "2.0")
+                put("id", System.currentTimeMillis())
+                put("method", "tools/call")
+                put("params", paramsJson)
+            }
+            
+            Log.d(TAG, "📤 JSON-RPC Request: ${requestJson.toString(2)}")
+            
+            // Crear solicitud HTTP
+            val requestBody = okhttp3.RequestBody.create(
+                "application/json".toMediaTypeOrNull(),
+                requestJson.toString()
+            )
+            
+            // Intentar con múltiples URLs (prioridad: emulador -> localhost)
+            val allUrls = listOf(MCP_TOOLS_CALL_URL) + TOOLS_CALL_FALLBACK_URLS
+            var lastError: Exception? = null
+            var successResult: FileContext? = null
+            
+            for (url in allUrls.distinct()) {
+                if (successResult != null) break
+                
+                try {
+                    Log.d(TAG, "🔄 Intentando análisis con URL: $url")
+                    
+                    val request = Request.Builder()
+                        .url(url)
+                        .post(requestBody)
+                        .addHeader("Content-Type", "application/json")
+                        .build()
+                    
+                    val response = client.newCall(request).execute()
+                    val responseBody = response.body?.string() ?: "{}"
+                    response.close()
+                    
+                    Log.d(TAG, "📥 Response code: ${response.code}")
+                    Log.d(TAG, "📥 Response body preview: ${responseBody.take(500)}")
+                    
+                    if (response.isSuccessful) {
+                        // Parsear respuesta JSON-RPC
+                        val rpcResponse = JSONObject(responseBody)
+                        
+                        // Verificar si hay error en JSON-RPC
+                        if (rpcResponse.has("error")) {
+                            val error = rpcResponse.getJSONObject("error")
+                            val errorMsg = error.optString("message", "Error desconocido")
+                            Log.e(TAG, "❌ JSON-RPC Error: $errorMsg")
+                            lastError = Exception(errorMsg)
+                            continue
+                        }
+                        
+                        // Extraer resultado de JSON-RPC
+                        val result = rpcResponse.optJSONObject("result")
+                        val content = result?.optJSONArray("content")
+                        val textContent = content?.optJSONObject(0)?.optString("text", "{}") ?: "{}"
+                        
+                        Log.d(TAG, "✅ Análisis completado exitosamente")
+                        
+                        // Parsear el contenido del resultado
+                        val analysisResult = JSONObject(textContent)
+                        
+                        // Verificar si hay error en el análisis
+                        if (analysisResult.optBoolean("error", false)) {
+                            val errorMsg = analysisResult.optString("message", "Error desconocido")
+                            val hint = analysisResult.optString("hint", "")
+                            return@withContext createErrorFileContext(
+                                "github_repository",
+                                "$errorMsg${if (hint.isNotEmpty()) "\n\nSugerencia: $hint" else ""}"
+                            )
+                        }
+                        
+                        // Extraer información del análisis
+                        val success = analysisResult.optBoolean("success", false)
+                        
+                        if (!success) {
+                            val error = analysisResult.optString("error", "Error desconocido")
+                            val hint = analysisResult.optString("hint", "")
+                            return@withContext createErrorFileContext(
+                                "github_repository",
+                                "$error${if (hint.isNotEmpty()) "\n\nSugerencia: $hint" else ""}"
+                            )
+                        }
+                        
+                        // Construir el contenido formateado del análisis
+                        val repository = analysisResult.optJSONObject("repository")
+                        val grade = analysisResult.optInt("grade", 0)
+                        val feedback = analysisResult.optString("feedback", "Sin retroalimentación")
+                        val strengths = analysisResult.optJSONArray("strengths")
+                        val improvements = analysisResult.optJSONArray("improvements")
+                        val detailedAnalysis = analysisResult.optString("detailedAnalysis", "")
+                        val filesAnalyzed = analysisResult.optJSONArray("filesAnalyzed")
+                        
+                        // Formatear el contenido para el FileContext
+                        val formattedContent = buildGitHubAnalysisContent(
+                            repoUrl = repoUrl,
+                            repository = repository,
+                            grade = grade,
+                            feedback = feedback,
+                            strengths = strengths,
+                            improvements = improvements,
+                            detailedAnalysis = detailedAnalysis,
+                            filesAnalyzed = filesAnalyzed
+                        )
+                        
+                        successResult = FileContext(
+                            id = 0,
+                            submissionId = -1,
+                            fileName = "github_${extractRepoName(repoUrl)}.md",
+                            fileType = "github_repository",
+                            fileContent = formattedContent,
+                            extractedText = feedback,
+                            metadata = "GitHub Repository Analysis | Grade: $grade/100",
+                            jsonContent = textContent,
+                            contentSummary = taskDescription
+                        )
+                    } else {
+                        Log.e(TAG, "❌ Error en respuesta del servidor: ${response.code}")
+                        Log.e(TAG, "❌ Response body: $responseBody")
+                        lastError = Exception("Servidor respondió con código ${response.code}: $responseBody")
+                    }
+                } catch (e: java.net.ConnectException) {
+                    Log.w(TAG, "⚠️ No se pudo conectar a $url: ${e.message}")
+                    lastError = e
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error conectando a $url: ${e.message}")
+                    lastError = e
+                }
+            }
+            
+            // Retornar resultado exitoso si existe
+            if (successResult != null) {
+                return@withContext successResult
+            }
+            
+            throw lastError ?: Exception("No se pudo conectar con ningún servidor MCP para análisis de GitHub")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error al analizar repositorio de GitHub", e)
+            return@withContext createErrorFileContext(
+                "github_repository",
+                "Error al analizar el repositorio: ${e.message}\n\nAsegúrate de que:\n1. El servidor MCP esté ejecutándose en tu PC (puerto 3000)\n2. La URL del repositorio sea pública\n3. Tengas conexión a internet\n4. Si usas emulador, verifica que el servidor escuche en 0.0.0.0"
+            )
+        }
+    }
+    
+    /**
+     * Valida si una URL es una URL válida de GitHub
+     * Acepta formatos: https://github.com/user/repo, github.com/user/repo, user/repo
+     */
+    private fun isValidGitHubUrl(url: String): Boolean {
+        // Patrón más flexible que acepta múltiples formatos
+        val patterns = listOf(
+            Regex("^https?://github\\.com/[\\w.-]+/[\\w.-]+(/(tree|blob)/[\\w.-/]+)?/?$"),
+            Regex("^github\\.com/[\\w.-]+/[\\w.-]+(/(tree|blob)/[\\w.-/]+)?/?$"),
+            Regex("^[\\w.-]+/[\\w.-]+$") // user/repo format
+        )
+        return patterns.any { it.matches(url.trim()) }
+    }
+    
+    /**
+     * Extrae el nombre del repositorio de una URL de GitHub
+     */
+    private fun extractRepoName(url: String): String {
+        return try {
+            val parts = url.trimEnd('/').split('/')
+            if (parts.size >= 2) {
+                "${parts[parts.size - 2]}_${parts[parts.size - 1]}"
+            } else {
+                "repository"
+            }
+        } catch (e: Exception) {
+            "repository"
+        }
+    }
+    
+    /**
+     * Construye el contenido formateado del análisis de GitHub
+     */
+    private fun buildGitHubAnalysisContent(
+        repoUrl: String,
+        repository: JSONObject?,
+        grade: Int,
+        feedback: String,
+        strengths: org.json.JSONArray?,
+        improvements: org.json.JSONArray?,
+        detailedAnalysis: String,
+        filesAnalyzed: org.json.JSONArray?
+    ): String {
+        val content = StringBuilder()
+        
+        // Encabezado
+        content.appendLine("# 📊 Análisis de Repositorio de GitHub")
+        content.appendLine()
+        content.appendLine("**URL:** $repoUrl")
+        
+        repository?.let {
+            content.appendLine("**Repositorio:** ${it.optString("fullName", "Desconocido")}")
+            content.appendLine("**Lenguaje:** ${it.optString("language", "No especificado")}")
+            content.appendLine("**Descripción:** ${it.optString("description", "Sin descripción")}")
+        }
+        
+        content.appendLine()
+        content.appendLine("---")
+        content.appendLine()
+        
+        // Calificación
+        content.appendLine("## 🎯 CALIFICACIÓN FINAL")
+        content.appendLine()
+        content.appendLine("### **$grade/100**")
+        content.appendLine()
+        
+        // Determinar calidad
+        val qualityLabel = when {
+            grade >= 90 -> "⭐⭐⭐⭐⭐ Excelente"
+            grade >= 80 -> "⭐⭐⭐⭐ Muy Bueno"
+            grade >= 70 -> "⭐⭐⭐ Bueno"
+            grade >= 60 -> "⭐⭐ Aceptable"
+            else -> "⭐ Necesita Mejoras"
+        }
+        
+        content.appendLine("**Calidad:** $qualityLabel")
+        content.appendLine()
+        content.appendLine("---")
+        content.appendLine()
+        
+        // Fortalezas
+        content.appendLine("## ✅ FORTALEZAS")
+        content.appendLine()
+        
+        if (strengths != null && strengths.length() > 0) {
+            for (i in 0 until strengths.length()) {
+                content.appendLine("${i + 1}. ${strengths.getString(i)}")
+            }
+        } else {
+            content.appendLine("- No se identificaron fortalezas específicas")
+        }
+        
+        content.appendLine()
+        content.appendLine("---")
+        content.appendLine()
+        
+        // Áreas de mejora
+        content.appendLine("## 📈 ÁREAS DE MEJORA")
+        content.appendLine()
+        
+        if (improvements != null && improvements.length() > 0) {
+            for (i in 0 until improvements.length()) {
+                content.appendLine("${i + 1}. ${improvements.getString(i)}")
+            }
+        } else {
+            content.appendLine("- No se identificaron áreas de mejora específicas")
+        }
+        
+        content.appendLine()
+        content.appendLine("---")
+        content.appendLine()
+        
+        // Análisis detallado
+        content.appendLine("## 📝 ANÁLISIS DETALLADO")
+        content.appendLine()
+        content.appendLine(detailedAnalysis.ifEmpty { "No disponible" })
+        content.appendLine()
+        content.appendLine("---")
+        content.appendLine()
+        
+        // Retroalimentación general
+        content.appendLine("## 💬 RETROALIMENTACIÓN")
+        content.appendLine()
+        content.appendLine(feedback)
+        content.appendLine()
+        content.appendLine("---")
+        content.appendLine()
+        
+        // Archivos analizados
+        content.appendLine("## 📁 ARCHIVOS ANALIZADOS")
+        content.appendLine()
+        
+        if (filesAnalyzed != null && filesAnalyzed.length() > 0) {
+            content.appendLine("Total de archivos analizados: ${filesAnalyzed.length()}")
+            content.appendLine()
+            for (i in 0 until minOf(filesAnalyzed.length(), 10)) {
+                content.appendLine("- `${filesAnalyzed.getString(i)}`")
+            }
+            if (filesAnalyzed.length() > 10) {
+                content.appendLine("- ... y ${filesAnalyzed.length() - 10} archivos más")
+            }
+        } else {
+            content.appendLine("No se especificaron archivos analizados")
+        }
+        
+        content.appendLine()
+        content.appendLine("---")
+        content.appendLine()
+        content.appendLine("*Análisis generado automáticamente por DeepSeek-V3.2-Speciale*")
+        
+        return content.toString()
     }
 }

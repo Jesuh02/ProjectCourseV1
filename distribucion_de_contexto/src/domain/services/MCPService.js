@@ -7,6 +7,7 @@ import { RAGService } from './RAGService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { logger } from '../../infrastructure/logging/Logger.js';
 import { LLMService } from '../../infrastructure/ai/LLMService.js';
+import { getGitHubService } from '../../infrastructure/github/GitHubService.js';
 import { HumanMessage, SystemMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 
 export class MCPService {
@@ -14,6 +15,7 @@ export class MCPService {
         this.ragService = new RAGService();
         this.supabase = SupabaseService.getInstance();
         this.llmService = LLMService.getInstance();
+        this.githubService = getGitHubService();
     }
 
     /**
@@ -751,6 +753,227 @@ Después de la tabla, añade un breve análisis.
             logger.error('Error adding knowledge:', error);
             throw error;
         }
+    }
+
+    /**
+     * Analyze and grade a GitHub repository using LLM
+     * @param {string} repoUrl - GitHub repository URL
+     * @param {Object} options - Analysis options
+     * @param {string} options.criteria - Evaluation criteria
+     * @param {string[]} options.fileTypes - File extensions to analyze
+     * @param {string} options.taskDescription - Task description for context
+     * @returns {Promise<Object>} Analysis result with grade and feedback
+     */
+    async analyzeGitHubRepo(repoUrl, options = {}) {
+        const {
+            criteria = '',
+            fileTypes = null,
+            taskDescription = '',
+            maxFiles = 20
+        } = options;
+
+        logger.info(`🔍 Starting GitHub repository analysis: ${repoUrl}`);
+
+        try {
+            // Step 1: Analyze repository and extract content
+            const analysis = await this.githubService.analyzeRepository(repoUrl, {
+                criteria: criteria || taskDescription,
+                fileTypes: fileTypes || undefined, // Pass undefined to use default
+                maxFiles
+            });
+
+            logger.info(`✅ Repository analyzed: ${analysis.files.length} files extracted`);
+
+            // Step 2: Format content for LLM
+            const formattedContent = this.githubService.formatForLLM(analysis);
+
+            // Step 3: Build grading prompt
+            const gradingPrompt = this.buildGitHubGradingPrompt(analysis, taskDescription, criteria);
+
+            // Step 4: Send to LLM for analysis
+            if (!this.llmService || !this.llmService.model) {
+                logger.warn("⚠️ LLM Service not available");
+                return {
+                    success: false,
+                    error: 'LLM Service not available',
+                    repository: analysis.repository,
+                    files: analysis.files.map(f => f.path)
+                };
+            }
+
+            const messages = [
+                new SystemMessage(gradingPrompt.system),
+                new HumanMessage(gradingPrompt.user + '\n\n' + formattedContent)
+            ];
+
+            logger.info('📤 Sending to LLM for grading...');
+            const response = await this.llmService.generateResponse(messages, []);
+            const llmResponse = response.content || '';
+
+            logger.info('✅ LLM grading complete');
+
+            // Step 5: Parse LLM response
+            const gradingResult = this.parseGitHubGradingResponse(llmResponse);
+
+            return {
+                success: true,
+                repository: analysis.repository,
+                statistics: analysis.statistics,
+                filesAnalyzed: analysis.files.map(f => f.path),
+                grade: gradingResult.grade,
+                feedback: gradingResult.feedback,
+                strengths: gradingResult.strengths,
+                improvements: gradingResult.improvements,
+                detailedAnalysis: gradingResult.detailedAnalysis,
+                rawResponse: llmResponse
+            };
+
+        } catch (error) {
+            logger.error(`❌ GitHub analysis failed: ${error.message}`);
+            return {
+                success: false,
+                error: error.message,
+                hint: this.getGitHubErrorHint(error.message)
+            };
+        }
+    }
+
+    /**
+     * Build grading prompt for GitHub repository analysis
+     */
+    buildGitHubGradingPrompt(analysis, taskDescription, criteria) {
+        const systemPrompt = `Eres un profesor experto en programación evaluando un proyecto de GitHub.
+
+Tu tarea es analizar el código del repositorio y proporcionar:
+1. **NOTA** (0-100): Calificación numérica justificada
+2. **FORTALEZAS**: Lo que está bien hecho (mínimo 3 puntos)
+3. **ÁREAS DE MEJORA**: Sugerencias constructivas (mínimo 3 puntos)
+4. **FEEDBACK DETALLADO**: Análisis técnico completo
+
+CRITERIOS DE EVALUACIÓN:
+${criteria || `
+- Estructura del proyecto (20%): Organización de carpetas, separación de concerns
+- Calidad del código (25%): Legibilidad, naming conventions, modularidad
+- Documentación (15%): README, comentarios, docstrings
+- Buenas prácticas (20%): Git workflow, .gitignore, configuración
+- Funcionalidad (20%): Completitud, manejo de errores, tests
+`}
+
+INFORMACIÓN DE LA TAREA:
+${taskDescription || 'No se especificó descripción de la tarea. Evaluar según buenas prácticas generales.'}
+
+FORMATO DE RESPUESTA OBLIGATORIO:
+
+## 📊 CALIFICACIÓN
+
+**NOTA FINAL: XX/100**
+
+## ✅ FORTALEZAS
+1. [Fortaleza 1]
+2. [Fortaleza 2]
+3. [Fortaleza 3]
+
+## 📈 ÁREAS DE MEJORA
+1. [Mejora 1]
+2. [Mejora 2]
+3. [Mejora 3]
+
+## 📝 ANÁLISIS DETALLADO
+
+[Análisis técnico del código, estructura, y decisiones de diseño]
+
+## 🎯 RECOMENDACIONES
+
+[Próximos pasos sugeridos para mejorar el proyecto]`;
+
+        const userPrompt = `Analiza y califica el siguiente repositorio de GitHub:
+
+**Repositorio:** ${analysis.repository.fullName}
+**Lenguaje principal:** ${analysis.repository.language}
+**Descripción:** ${analysis.repository.description}
+
+A continuación se muestra el contenido del repositorio para análisis:`;
+
+        return {
+            system: systemPrompt,
+            user: userPrompt
+        };
+    }
+
+    /**
+     * Parse LLM grading response
+     */
+    parseGitHubGradingResponse(response) {
+        const result = {
+            grade: null,
+            feedback: response,
+            strengths: [],
+            improvements: [],
+            detailedAnalysis: ''
+        };
+
+        // Extract grade (look for patterns like "NOTA: 85/100", "85/100", "Nota Final: 85")
+        const gradePatterns = [
+            /NOTA\s*(?:FINAL)?[:\s]*(\d{1,3})\s*(?:\/\s*100)?/i,
+            /(\d{1,3})\s*\/\s*100/,
+            /calificaci[oó]n[:\s]*(\d{1,3})/i,
+            /puntuaci[oó]n[:\s]*(\d{1,3})/i
+        ];
+
+        for (const pattern of gradePatterns) {
+            const match = response.match(pattern);
+            if (match) {
+                const grade = parseInt(match[1]);
+                if (grade >= 0 && grade <= 100) {
+                    result.grade = grade;
+                    break;
+                }
+            }
+        }
+
+        // Extract strengths (look for numbered list after "FORTALEZAS" or "✅")
+        const strengthsMatch = response.match(/(?:FORTALEZAS|✅[^]*?)\n((?:\d+\.[^\n]+\n?)+)/i);
+        if (strengthsMatch) {
+            result.strengths = strengthsMatch[1]
+                .split('\n')
+                .filter(line => /^\d+\./.test(line.trim()))
+                .map(line => line.replace(/^\d+\.\s*/, '').trim())
+                .filter(s => s.length > 0);
+        }
+
+        // Extract improvements
+        const improvementsMatch = response.match(/(?:MEJORA|📈|SUGERENCIAS)[^]*?\n((?:\d+\.[^\n]+\n?)+)/i);
+        if (improvementsMatch) {
+            result.improvements = improvementsMatch[1]
+                .split('\n')
+                .filter(line => /^\d+\./.test(line.trim()))
+                .map(line => line.replace(/^\d+\.\s*/, '').trim())
+                .filter(s => s.length > 0);
+        }
+
+        // Extract detailed analysis
+        const analysisMatch = response.match(/(?:ANÁLISIS DETALLADO|📝)[^]*?\n([\s\S]+?)(?=##|🎯|$)/i);
+        if (analysisMatch) {
+            result.detailedAnalysis = analysisMatch[1].trim();
+        }
+
+        return result;
+    }
+
+    /**
+     * Get helpful error hint for GitHub errors
+     */
+    getGitHubErrorHint(errorMessage) {
+        if (errorMessage.includes('404') || errorMessage.includes('Not Found')) {
+            return 'El repositorio no existe o es privado. Verifica la URL y que el repositorio sea público.';
+        }
+        if (errorMessage.includes('403') || errorMessage.includes('rate limit')) {
+            return 'Límite de peticiones a GitHub alcanzado. Configura un GITHUB_TOKEN en las variables de entorno.';
+        }
+        if (errorMessage.includes('Invalid GitHub URL')) {
+            return 'URL de GitHub inválida. Usa el formato: https://github.com/usuario/repositorio';
+        }
+        return 'Error al acceder al repositorio. Verifica que la URL sea correcta y el repositorio sea público.';
     }
 
     /**

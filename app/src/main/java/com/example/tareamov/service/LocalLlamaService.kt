@@ -1299,7 +1299,7 @@ ${if (requiresData) "⚡ PRIMERO ejecuta query_database, LUEGO analiza y explica
         } else {
             """
 Asistente TareaMov (sin herramientas MCP disponibles).
-Estás ejecutándote en los servidores seguros de TareaMov usando Llama 3:8b.
+Estás ejecutándote en los servidores seguros de TareaMov usando DeepSeek-V3.2-Speciale.
 
 CONSULTA: $optimizedPrompt
 

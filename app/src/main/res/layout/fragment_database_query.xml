@@ -5,7 +5,8 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000"
-    android:fitsSystemWindows="true"
+    android:clipToPadding="false"
+    android:clipChildren="false"
     tools:context=".ui.DatabaseQueryFragment">
 
     <!-- Header -->
@@ -14,36 +15,44 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:padding="16dp"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="10dp"
         android:gravity="center_vertical"
         android:background="#000000"
         app:layout_constraintTop_toTopOf="parent">
 
-        <ImageView
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/ic_brain"
-            app:tint="#10A37F" />
+        <!-- Delete conversation button -->
+        <ImageButton
+            android:id="@+id/deleteConversationButton"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_delete_minimal"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            app:tint="#666666"
+            android:padding="8dp"
+            android:contentDescription="Eliminar conversación" />
 
+        <!-- Message counter -->
         <TextView
+            android:id="@+id/messageCounterText"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="12dp"
-            android:text="Database Assistant"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
-            android:textStyle="bold" />
+            android:text="0 mensajes en esta conversación"
+            android:textColor="#888888"
+            android:textSize="13sp"
+            android:gravity="center" />
 
+        <!-- Export conversation button -->
         <ImageButton
-            android:id="@+id/historyButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:src="@drawable/ic_history"
+            android:id="@+id/exportConversationButton"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_share_minimal"
             android:background="?android:attr/selectableItemBackgroundBorderless"
-            app:tint="#FFFFFF"
+            app:tint="#666666"
             android:padding="8dp"
-            android:layout_marginEnd="0dp" />
+            android:contentDescription="Exportar conversación" />
     </LinearLayout>
 
     <!-- Chat Area -->
@@ -247,6 +256,18 @@
                     android:indeterminateTint="#10A37F" />
             </FrameLayout>
         </LinearLayout>
+
+        <!-- Powered by DeepSeek indicator -->
+        <TextView
+            android:id="@+id/poweredByTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="⚡ Potenciado por DeepSeek-V3.2-Speciale"
+            android:textColor="#444444"
+            android:textSize="10sp"
+            android:gravity="center"
+            android:paddingVertical="4dp"
+            android:background="#000000" />
     </LinearLayout>
 
     <!-- Hidden Views for Compatibility -->
@@ -268,6 +289,7 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent">
         <ImageButton android:id="@+id/clearHistoryButton" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <ImageButton android:id="@+id/historyButton" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <TextView android:id="@+id/messageCountText" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <LinearLayout android:id="@+id/messageInfoBar" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>

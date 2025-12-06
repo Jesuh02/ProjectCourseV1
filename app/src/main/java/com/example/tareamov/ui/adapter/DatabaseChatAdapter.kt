@@ -104,8 +104,8 @@ class DatabaseChatAdapter(
     }
 
     inner class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val userMessageContainer: LinearLayout = itemView.findViewById(R.id.userMessageContainer)
-        private val botMessageContainer: LinearLayout = itemView.findViewById(R.id.botMessageContainer)
+        private val userMessageContainer: ViewGroup = itemView.findViewById(R.id.userMessageContainer)
+        private val botMessageContainer: ViewGroup = itemView.findViewById(R.id.botMessageContainer)
         private val userMessageTextView: TextView = itemView.findViewById(R.id.userMessageTextView)
         private val botMessageTextView: TextView = itemView.findViewById(R.id.botMessageTextView)
         private val userMessageTime: TextView = itemView.findViewById(R.id.userMessageTime)
@@ -113,8 +113,8 @@ class DatabaseChatAdapter(
         private val timestampTextView: TextView = itemView.findViewById(R.id.messageTimestampTextView)
         private val copyButton: ImageButton = itemView.findViewById(R.id.copyButton)
         private val shareButton: ImageButton = itemView.findViewById(R.id.shareButton)
-        private val editUserMessageButton: ImageButton = itemView.findViewById(R.id.editUserMessageButton)
-        private val copyUserMessageButton: ImageButton = itemView.findViewById(R.id.copyUserMessageButton)
+        private val copyButtonUser: ImageButton = itemView.findViewById(R.id.copyButtonUser)
+        private val shareButtonUser: ImageButton = itemView.findViewById(R.id.shareButtonUser)
 
         fun bind(message: ChatMessage) {
             // Animate the message appearance
@@ -128,9 +128,7 @@ class DatabaseChatAdapter(
                 userMessageTextView.text = formatBoldText(message.text)
                 userMessageTime.text = timeFormat.format(Date(message.timestamp))
                 
-                // Setup user message action buttons
                 setupUserMessageActions(message)
-                
             } else {
                 // Show bot message
                 userMessageContainer.visibility = View.GONE
@@ -163,7 +161,7 @@ class DatabaseChatAdapter(
         private fun formatBotMessage(message: ChatMessage): String {
             // Special handling for typing indicator
             if (message.isTyping) {
-                return "🤖 Llama 3.3 está procesando tu consulta..."
+                return "🤖 DeepSeek-V3.2-Speciale está procesando tu consulta..."
             }
             
             // Add helpful formatting for common response types
@@ -194,29 +192,24 @@ class DatabaseChatAdapter(
                 shareMessage(message.text)
             }
         }
-        
-        private fun setupUserMessageActions(message: ChatMessage) {
-            editUserMessageButton.setImageResource(R.drawable.ic_edit_minimal)
-            copyUserMessageButton.setImageResource(R.drawable.ic_copy_minimal)
 
-            // Edit button
-            editUserMessageButton.setOnClickListener {
-                onEditUserMessageClick(message)
+        private fun setupUserMessageActions(message: ChatMessage) {
+            // Use minimal icons for user actions too
+            copyButtonUser.setImageResource(R.drawable.ic_copy_minimal)
+            shareButtonUser.setImageResource(R.drawable.ic_share_minimal)
+
+            copyButtonUser.setOnClickListener {
+                copyToClipboard(message.text)
             }
             
-            // Copy button
-            copyUserMessageButton.setOnClickListener {
-                val clipboard = itemView.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("message", message.text)
-                clipboard.setPrimaryClip(clip)
-                
-                Toast.makeText(itemView.context, "Mensaje copiado", Toast.LENGTH_SHORT).show()
+            shareButtonUser.setOnClickListener {
+                shareMessage(message.text)
             }
         }
         
         private fun copyToClipboard(text: String) {
             val clipboard = itemView.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("Mensaje de Llama", text)
+            val clip = ClipData.newPlainText("Mensaje de DeepSeek", text)
             clipboard.setPrimaryClip(clip)
             Toast.makeText(itemView.context, "💾 Mensaje copiado al portapapeles", Toast.LENGTH_SHORT).show()
         }
@@ -224,7 +217,7 @@ class DatabaseChatAdapter(
         private fun shareMessage(text: String) {
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, "🤖 Respuesta de Llama 3.3:\n\n$text")
+                putExtra(Intent.EXTRA_TEXT, "🤖 Respuesta de DeepSeek-V3.2-Speciale:\n\n$text")
                 putExtra(Intent.EXTRA_SUBJECT, "Conversación con IA")
             }
             itemView.context.startActivity(Intent.createChooser(intent, "Compartir respuesta"))

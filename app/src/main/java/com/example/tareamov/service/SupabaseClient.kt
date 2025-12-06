@@ -828,9 +828,9 @@ object SupabaseClient {
             if (submission.id != null && submission.id != 0L) {
                 android.util.Log.w("SupabaseClient", "Not sending local id=${submission.id} to server for task_submissions (will let DB assign id)")
             }
-                map["task_id"] = submission.taskId
-                // Send numeric student_id (long) instead of student_username string
-                map["student_id"] = submission.studentId
+            map["task_id"] = submission.taskId
+            // Note: task_submissions table only has student_id (integer), not student_username
+            map["student_id"] = submission.studentId
             map["file_uri"] = submission.fileUri
             map["file_name"] = submission.fileName
             map["submission_date"] = submission.submissionDate
@@ -853,14 +853,13 @@ object SupabaseClient {
                 .addHeader("Authorization", "Bearer $apiKey")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
-                // CRITICAL: Disable triggers to avoid ambiguous column reference error (42702)
-                // The database trigger has a bug where "student_username" reference is ambiguous
-                // We handle progress updates in the application layer instead (see TaskSubmissionsFragment.triggerProgressUpdateEvent)
-                .addHeader("Prefer", "return=representation,resolution=ignore-duplicates,session_replication_role=replica")
+                // Request the inserted row back in the response
+                .addHeader("Prefer", "return=representation")
                 .build()
 
             client.newCall(request).execute().use { resp ->
                 var respBody = resp.body?.string()
+                android.util.Log.d("SupabaseClient", "📥 insertTaskSubmission response: code=${resp.code}, body=${respBody?.take(500)}")
                 if (!resp.isSuccessful) {
                     val bodyStr = respBody ?: ""
                     android.util.Log.e("SupabaseClient", "❌ insertTaskSubmission failed: code=${resp.code} message=${resp.message}")
@@ -901,7 +900,7 @@ object SupabaseClient {
                                 .addHeader("Authorization", "Bearer $apiKey")
                                 .addHeader("Accept", "application/json")
                                 .addHeader("Content-Type", "application/json")
-                                .addHeader("Prefer", "return=representation,resolution=ignore-duplicates,session_replication_role=replica")
+                                .addHeader("Prefer", "return=representation")
                                 .build()
 
                             client.newCall(retryReq).execute().use { r2 ->
@@ -952,7 +951,7 @@ object SupabaseClient {
                 return@withContext null
             }
         } catch (e: Exception) {
-            android.util.Log.e("SupabaseClient", "❌ Exception in insertTaskSubmission", e)
+            android.util.Log.e("SupabaseClient", "❌ Exception in insertTaskSubmission: ${e.message}", e)
             e.printStackTrace()
             return@withContext null
         }
@@ -1042,7 +1041,7 @@ object SupabaseClient {
                 .addHeader("Authorization", "Bearer $apiKey")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
-                .addHeader("Prefer", "return=representation,session_replication_role=replica")
+                .addHeader("Prefer", "return=representation")
                 .build()
 
             client.newCall(request).execute().use { resp ->
@@ -1066,7 +1065,7 @@ object SupabaseClient {
                     .addHeader("Authorization", "Bearer $apiKey")
                     .addHeader("Accept", "application/json")
                     .addHeader("Content-Type", "application/json")
-                    .addHeader("Prefer", "return=representation,session_replication_role=replica")
+                    .addHeader("Prefer", "return=representation")
                     .build()
 
                 client.newCall(request).execute().use { resp2 ->
@@ -1112,7 +1111,7 @@ object SupabaseClient {
                 .addHeader("Authorization", "Bearer $apiKey")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
-                .addHeader("Prefer", "return=representation,session_replication_role=replica")
+                .addHeader("Prefer", "return=representation")
                 .build()
 
             client.newCall(request).execute().use { resp ->
@@ -1133,7 +1132,7 @@ object SupabaseClient {
                     .addHeader("Authorization", "Bearer $apiKey")
                     .addHeader("Accept", "application/json")
                     .addHeader("Content-Type", "application/json")
-                    .addHeader("Prefer", "return=representation,session_replication_role=replica")
+                    .addHeader("Prefer", "return=representation")
                     .build()
 
                 client.newCall(request).execute().use { resp2 ->
@@ -3349,6 +3348,269 @@ object SupabaseClient {
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error fetching subscription count for subscriberId $subscriberId", e)
             0L
+        }
+    }
+
+    // Fetch graded submissions for a specific course (grade > 0)
+    // Returns a list of maps containing submission data + task title + student username
+    suspend fun fetchGradedSubmissionsForCourse(courseId: Long): List<Map<String, Any>> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+
+            // Step 1: Fetch submissions with task info (without usuarios join to avoid FK issues)
+            val url = "$baseUrl/rest/v1/task_submissions?select=id,grade,student_id,task_id,submission_date,tasks!inner(title,topics!inner(course_id))&tasks.topics.course_id=eq.$courseId&grade=gt.0"
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .build()
+
+            val submissions = mutableListOf<MutableMap<String, Any>>()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string()
+                    Log.e("SupabaseClient", "fetchGradedSubmissionsForCourse failed: ${response.code} - $errorBody")
+                    return@withContext emptyList()
+                }
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                for (elem in jsonArray) {
+                    val obj = elem.asJsonObject
+                    val map = mutableMapOf<String, Any>()
+                    
+                    map["id"] = obj.get("id").asLong
+                    map["grade"] = if (obj.has("grade") && !obj.get("grade").isJsonNull) obj.get("grade").asFloat else 0f
+                    map["student_id"] = obj.get("student_id").asLong
+                    map["task_id"] = obj.get("task_id").asLong
+                    if (obj.has("submission_date") && !obj.get("submission_date").isJsonNull) {
+                        map["submission_date"] = obj.get("submission_date").asString
+                    }
+                    
+                    // Extract Task Title
+                    if (obj.has("tasks") && !obj.get("tasks").isJsonNull) {
+                        val taskObj = obj.get("tasks").asJsonObject
+                        if (taskObj.has("title")) {
+                            map["task_title"] = taskObj.get("title").asString
+                        }
+                    }
+                    
+                    submissions.add(map)
+                }
+            }
+            
+            // Step 2: Fetch usernames separately for all unique student_ids
+            if (submissions.isNotEmpty()) {
+                val studentIds = submissions.mapNotNull { it["student_id"] as? Long }.distinct()
+                val usernames = mutableMapOf<Long, String>()
+                
+                // Fetch all usuarios and create a map - use 'username' column name from DB
+                try {
+                    val usersUrl = "$baseUrl/rest/v1/usuarios?select=id,username&id=in.(${studentIds.joinToString(",")})"
+                    val usersRequest = Request.Builder()
+                        .url(usersUrl)
+                        .get()
+                        .addHeader("apikey", apiKey)
+                        .addHeader("Authorization", "Bearer $apiKey")
+                        .build()
+                    
+                    client.newCall(usersRequest).execute().use { usersResponse ->
+                        if (usersResponse.isSuccessful) {
+                            val usersBody = usersResponse.body?.string() ?: "[]"
+                            Log.d("SupabaseClient", "Users response: $usersBody")
+                            val usersArray = com.google.gson.JsonParser.parseString(usersBody).asJsonArray
+                            for (userElem in usersArray) {
+                                val userObj = userElem.asJsonObject
+                                val userId = userObj.get("id").asLong
+                                // Try 'username' first (actual DB column), then 'usuario' as fallback
+                                val username = when {
+                                    userObj.has("username") && !userObj.get("username").isJsonNull -> userObj.get("username").asString
+                                    userObj.has("usuario") && !userObj.get("usuario").isJsonNull -> userObj.get("usuario").asString
+                                    else -> "Usuario_$userId"
+                                }
+                                usernames[userId] = username
+                            }
+                        } else {
+                            Log.e("SupabaseClient", "Failed to fetch users: ${usersResponse.code}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("SupabaseClient", "Failed to fetch usernames for submissions", e)
+                }
+                
+                // Step 3: Add usernames to submissions
+                for (submission in submissions) {
+                    val studentId = submission["student_id"] as? Long
+                    if (studentId != null) {
+                        submission["student_username"] = usernames[studentId] ?: "Usuario_$studentId"
+                    }
+                }
+            }
+            
+            return@withContext submissions
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching graded submissions for course $courseId", e)
+            emptyList()
+        }
+    }
+    
+    // Fetch ALL submissions for a specific course (both graded and ungraded)
+    suspend fun fetchAllSubmissionsForCourse(courseId: Long): List<Map<String, Any>> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+
+            // Fetch ALL submissions with task info (not just grade > 0)
+            val url = "$baseUrl/rest/v1/task_submissions?select=id,grade,student_id,task_id,submission_date,file_name,tasks!inner(title,topics!inner(course_id))&tasks.topics.course_id=eq.$courseId"
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .build()
+
+            val submissions = mutableListOf<MutableMap<String, Any>>()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string()
+                    Log.e("SupabaseClient", "fetchAllSubmissionsForCourse failed: ${response.code} - $errorBody")
+                    return@withContext emptyList()
+                }
+                val body = response.body?.string() ?: return@withContext emptyList()
+                Log.d("SupabaseClient", "All submissions response: $body")
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                for (elem in jsonArray) {
+                    val obj = elem.asJsonObject
+                    val map = mutableMapOf<String, Any>()
+                    
+                    map["id"] = obj.get("id").asLong
+                    map["grade"] = if (obj.has("grade") && !obj.get("grade").isJsonNull) obj.get("grade").asFloat else 0f
+                    map["student_id"] = if (obj.has("student_id") && !obj.get("student_id").isJsonNull) obj.get("student_id").asLong else 0L
+                    map["task_id"] = obj.get("task_id").asLong
+                    if (obj.has("submission_date") && !obj.get("submission_date").isJsonNull) {
+                        map["submission_date"] = obj.get("submission_date").asLong
+                    }
+                    if (obj.has("file_name") && !obj.get("file_name").isJsonNull) {
+                        map["file_name"] = obj.get("file_name").asString
+                    }
+                    
+                    // Extract Task Title
+                    if (obj.has("tasks") && !obj.get("tasks").isJsonNull) {
+                        val taskObj = obj.get("tasks").asJsonObject
+                        if (taskObj.has("title")) {
+                            map["task_title"] = taskObj.get("title").asString
+                        }
+                    }
+                    
+                    submissions.add(map)
+                }
+            }
+            
+            // Fetch usernames for all student_ids
+            if (submissions.isNotEmpty()) {
+                val studentIds = submissions.mapNotNull { (it["student_id"] as? Long)?.takeIf { id -> id > 0 } }.distinct()
+                val usernames = mutableMapOf<Long, String>()
+                
+                if (studentIds.isNotEmpty()) {
+                    try {
+                        val usersUrl = "$baseUrl/rest/v1/usuarios?select=id,username&id=in.(${studentIds.joinToString(",")})"
+                        val usersRequest = Request.Builder()
+                            .url(usersUrl)
+                            .get()
+                            .addHeader("apikey", apiKey)
+                            .addHeader("Authorization", "Bearer $apiKey")
+                            .build()
+                        
+                        client.newCall(usersRequest).execute().use { usersResponse ->
+                            if (usersResponse.isSuccessful) {
+                                val usersBody = usersResponse.body?.string() ?: "[]"
+                                val usersArray = com.google.gson.JsonParser.parseString(usersBody).asJsonArray
+                                for (userElem in usersArray) {
+                                    val userObj = userElem.asJsonObject
+                                    val userId = userObj.get("id").asLong
+                                    val username = when {
+                                        userObj.has("username") && !userObj.get("username").isJsonNull -> userObj.get("username").asString
+                                        else -> "Usuario_$userId"
+                                    }
+                                    usernames[userId] = username
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("SupabaseClient", "Failed to fetch usernames for all submissions", e)
+                    }
+                }
+                
+                // Add usernames to submissions
+                for (submission in submissions) {
+                    val studentId = submission["student_id"] as? Long
+                    if (studentId != null && studentId > 0) {
+                        submission["student_username"] = usernames[studentId] ?: "Usuario_$studentId"
+                    } else {
+                        submission["student_username"] = "Usuario desconocido"
+                    }
+                }
+            }
+            
+            Log.d("SupabaseClient", "Loaded ${submissions.size} total submissions for course $courseId")
+            return@withContext submissions
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching all submissions for course $courseId", e)
+            emptyList()
+        }
+    }
+    
+    // Fetch courses by creator user ID
+    suspend fun fetchCoursesByCreator(creatorUserId: Long): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+            
+            val url = "$baseUrl/rest/v1/courses?select=*&creator_user_id=eq.$creatorUserId&order=created_at.desc"
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string()
+                    Log.e("SupabaseClient", "fetchCoursesByCreator failed: ${response.code} - $errorBody")
+                    return@withContext emptyList()
+                }
+                
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                val courses = mutableListOf<Course>()
+                for (elem in jsonArray) {
+                    val obj = elem.asJsonObject
+                    courses.add(
+                        Course(
+                            id = obj.get("id").asLong,
+                            title = obj.get("title")?.asString ?: "",
+                            description = if (obj.has("description") && !obj.get("description").isJsonNull) obj.get("description").asString else "",
+                            creatorUserId = creatorUserId,
+                            category = if (obj.has("category") && !obj.get("category").isJsonNull) obj.get("category").asString else null,
+                            isPublished = if (obj.has("is_published") && !obj.get("is_published").isJsonNull) obj.get("is_published").asBoolean else true,
+                            thumbnailUri = if (obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull) obj.get("thumbnail_uri").asString else null
+                        )
+                    )
+                }
+                
+                Log.d("SupabaseClient", "Loaded ${courses.size} courses for creator $creatorUserId")
+                return@withContext courses
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching courses by creator $creatorUserId", e)
+            emptyList()
         }
     }
 }

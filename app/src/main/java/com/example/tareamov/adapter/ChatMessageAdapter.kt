@@ -95,7 +95,7 @@ class ChatMessageAdapter(
     }
 
     inner class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val userMessageContainer: LinearLayout = itemView.findViewById(R.id.userMessageContainer)
+        private val userMessageContainer: androidx.constraintlayout.widget.ConstraintLayout = itemView.findViewById(R.id.userMessageContainer)
         private val botMessageContainer: LinearLayout = itemView.findViewById(R.id.botMessageContainer)
         private val userMessageTextView: TextView = itemView.findViewById(R.id.userMessageTextView)
         private val botMessageTextView: TextView = itemView.findViewById(R.id.botMessageTextView)
@@ -107,8 +107,8 @@ class ChatMessageAdapter(
         private val rejectCalificationButton: Button = itemView.findViewById(R.id.rejectCalificationButton)
         private val copyButton: ImageButton = itemView.findViewById(R.id.copyButton)
         private val shareButton: ImageButton = itemView.findViewById(R.id.shareButton)
-        private val editUserMessageButton: ImageButton = itemView.findViewById(R.id.editUserMessageButton)
-        private val copyUserMessageButton: ImageButton = itemView.findViewById(R.id.copyUserMessageButton)
+        private val copyButtonUser: ImageButton = itemView.findViewById(R.id.copyButtonUser)
+        private val shareButtonUser: ImageButton = itemView.findViewById(R.id.shareButtonUser)
 
         fun bind(message: ChatMessage) {
             if (message.isFromUser) {
@@ -119,9 +119,7 @@ class ChatMessageAdapter(
                 userMessageTextView.text = formatBoldText(message.message)
                 userMessageTime.text = timeFormat.format(Date(message.timestamp))
                 
-                // Setup user message action buttons
                 setupUserMessageActions(message)
-                
                 calificationButtonsContainer.visibility = View.GONE
             } else {
                 // Show bot message
@@ -156,7 +154,8 @@ class ChatMessageAdapter(
         
         private fun buildEnhancedTaskMessage(message: ChatMessage): String {
             return buildString {
-                appendLine("� **ANÁLISIS DE TAREA COMPLETADO**")
+                appendLine("🤖 **ANÁLISIS DE TAREA COMPLETADO**")
+                appendLine("⚡ _DeepSeek-V3.2-Speciale_")
                 appendLine()
                 appendLine("**${taskInfo!!.taskName}**")
                 appendLine("📚 Tema: ${taskInfo!!.topicName}")
@@ -202,14 +201,14 @@ class ChatMessageAdapter(
                 shareMessage(message.message)
             }
         }
-        
+
         private fun setupUserMessageActions(message: ChatMessage) {
-            editUserMessageButton.setOnClickListener {
-                onEditUserMessageClick(message)
+            copyButtonUser.setOnClickListener {
+                copyToClipboard(message.message)
             }
             
-            copyUserMessageButton.setOnClickListener {
-                copyToClipboard(message.message)
+            shareButtonUser.setOnClickListener {
+                shareMessage(message.message)
             }
         }
         
@@ -225,7 +224,7 @@ class ChatMessageAdapter(
         
         private fun copyToClipboard(text: String) {
             val clipboard = itemView.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("Mensaje de Llama", text)
+            val clip = ClipData.newPlainText("Mensaje de DeepSeek", text)
             clipboard.setPrimaryClip(clip)
             Toast.makeText(itemView.context, "Mensaje copiado al portapapeles", Toast.LENGTH_SHORT).show()
         }
@@ -233,7 +232,7 @@ class ChatMessageAdapter(
         private fun shareMessage(text: String) {
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, "Respuesta de Llama 3.3:\n\n$text")
+                putExtra(Intent.EXTRA_TEXT, "Respuesta de DeepSeek-V3.2-Speciale:\n\n$text")
                 putExtra(Intent.EXTRA_SUBJECT, "Conversación con IA")
             }
             itemView.context.startActivity(Intent.createChooser(intent, "Compartir respuesta"))

@@ -243,7 +243,7 @@ class ChatBotFragment : Fragment() {
                     lastCursorPosition = currentCursorPosition
                     onCursorPositionChanged()
                 }
-                cursorCheckHandler.postDelayed(this, 100) // Verificar cada 100ms
+                cursorCheckHandler.postDelayed(this, 50) // Verificar cada 50ms para respuesta instantánea
             }
         }
     }
@@ -262,8 +262,15 @@ class ChatBotFragment : Fragment() {
     private lateinit var taskListRecyclerView: RecyclerView
     private lateinit var courseNameTextView: TextView
     private lateinit var closeTaskListButton: ImageButton
+    private lateinit var backToCoursesButton: ImageButton
+    private lateinit var overlayTitleTextView: TextView
+    private lateinit var overlaySearchEditText: EditText
     private lateinit var taskOverlayAdapter: com.example.tareamov.adapter.TaskOverlayAdapter
     private val currentCourseTasks: MutableList<TaskItem> = mutableListOf()
+    private val allCoursesList: MutableList<TaskItem> = mutableListOf() // Lista completa de cursos para filtrar
+    private var isSelectingCourse = true
+    private var selectedCourseId: Long = -1L
+    private var selectedCourseTitle: String = ""
     
     // UI Components for graded tasks overlay
     private lateinit var gradedTasksOverlay: androidx.cardview.widget.CardView
@@ -361,6 +368,55 @@ class ChatBotFragment : Fragment() {
         
         // Cargar tareas calificadas persistidas al inicializar
         loadGradedTasksOnStart()
+        
+        // Setup keyboard handling para que no tape el contenido
+        setupKeyboardHandling(view)
+    }
+    
+    /**
+     * Configura el manejo del teclado estilo ChatGPT:
+     * - El topbar permanece fijo arriba
+     * - El input se eleva con el teclado
+     * - El contenido del chat se ajusta entre ambos
+     */
+    private fun setupKeyboardHandling(view: View) {
+        val rootLayout = view.findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.chatBotRootLayout)
+        val inputAreaWrapper = view.findViewById<LinearLayout>(R.id.inputAreaWrapper)
+        
+        // Usar WindowInsets para detectar el teclado y ajustar solo el área de input
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { v, insets ->
+            val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val navigationBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            
+            // Mover el inputAreaWrapper hacia arriba cuando aparece el teclado
+            val bottomPadding = if (imeInsets.bottom > 0) {
+                imeInsets.bottom
+            } else {
+                navigationBars.bottom
+            }
+            
+            // Aplicar el padding solo al área de input (no a toda la vista)
+            inputAreaWrapper.setPadding(
+                inputAreaWrapper.paddingLeft,
+                inputAreaWrapper.paddingTop,
+                inputAreaWrapper.paddingRight,
+                bottomPadding
+            )
+            
+            // Scroll al último mensaje cuando aparece el teclado
+            if (imeInsets.bottom > 0) {
+                messagesRecyclerView.post {
+                    if (::chatAdapter.isInitialized && chatAdapter.itemCount > 0) {
+                        messagesRecyclerView.scrollToPosition(chatAdapter.itemCount - 1)
+                    }
+                }
+            }
+            
+            insets
+        }
+        
+        // Solicitar insets
+        ViewCompat.requestApplyInsets(rootLayout)
     }
 
     override fun onDestroyView() {
@@ -370,14 +426,19 @@ class ChatBotFragment : Fragment() {
     }
 
     private fun initializeViews(view: View) {
-        // Handle TopBar Insets for Immersive Look
+        // Handle TopBar Insets for status bar only
         val topBar = view.findViewById<LinearLayout>(R.id.topBar)
+        val originalTopPadding = topBar.paddingTop
+        
         ViewCompat.setOnApplyWindowInsetsListener(topBar) { v, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            // Mantener padding original (12dp vertical) + status bar
-            val originalPaddingTop = 36 // aprox 12dp en px, o mejor usar padding actual
-            v.setPadding(v.paddingLeft, statusBars.top + v.paddingTop, v.paddingRight, v.paddingBottom)
+            v.setPadding(v.paddingLeft, statusBars.top + originalTopPadding, v.paddingRight, v.paddingBottom)
             insets
+        }
+        
+        // Forzar que el topBar siempre esté arriba incluso durante animaciones
+        topBar.post {
+            topBar.bringToFront()
         }
 
         messagesRecyclerView = view.findViewById(R.id.messagesRecyclerView)
@@ -396,6 +457,9 @@ class ChatBotFragment : Fragment() {
         taskListRecyclerView = view.findViewById(R.id.taskListRecyclerView)
         courseNameTextView = view.findViewById(R.id.courseNameTextView)
         closeTaskListButton = view.findViewById(R.id.closeTaskListButton)
+        backToCoursesButton = view.findViewById(R.id.backToCoursesButton)
+        overlayTitleTextView = view.findViewById(R.id.overlayTitleTextView)
+        overlaySearchEditText = view.findViewById(R.id.overlaySearchEditText)
         
         // Initialize graded tasks overlay components
         gradedTasksOverlay = view.findViewById(R.id.gradedTasksOverlay)
@@ -2388,61 +2452,158 @@ class ChatBotFragment : Fragment() {
     }
 
     /**
-     * Muestra el overlay con la lista de tareas del curso
+     * Muestra el overlay con la lista de cursos del usuario
      */
     private fun showTaskListOverlay(initialQuery: String = "") {
-        // Permitir mostrar tareas incluso si no hay curso seleccionado (mostrará todas)
-        /* if (courseId == -1L) {
-            Toast.makeText(context, "No hay información del curso disponible", Toast.LENGTH_SHORT).show()
-            // messageEditText.setText("") // Clear the # symbol
-            return
-        } */
+        // Show background and overlay immediately for instant feedback
+        taskListOverlayBackground.visibility = View.VISIBLE
+        taskListOverlayBackground.alpha = 0f
+        taskListOverlayBackground.animate()
+            .alpha(1f)
+            .setDuration(100)
+            .start()
+        
+        // Show overlay with skeleton immediately
+        if (taskListOverlay.visibility != View.VISIBLE) {
+            taskListOverlay.visibility = View.VISIBLE
+            taskListOverlay.alpha = 0f
+            taskListOverlay.animate()
+                .alpha(1f)
+                .setDuration(100)
+                .start()
+        }
+        
+        // Reset to course selection mode
+        isSelectingCourse = true
+        selectedCourseId = -1L
+        selectedCourseTitle = ""
+        backToCoursesButton.visibility = View.GONE
+        overlayTitleTextView.text = "Seleccionar Curso"
+        overlaySearchEditText.hint = "Buscar por nombre o categoría..."
+        overlaySearchEditText.text.clear()
+        
+        // Show skeleton loading state immediately
+        courseNameTextView.text = "Cargando cursos..."
+        taskOverlayAdapter.setLoading(true)
+
+        // Setup search listener
+        setupSearchListener()
+        
+        // Setup back button listener
+        backToCoursesButton.setOnClickListener {
+            navigateBackToCourses()
+        }
 
         lifecycleScope.launch {
             try {
-                val tasks = loadCourseTasksForOverlay()
+                // Load ALL courses for the user
+                val courses = loadAllUserCourses()
+                
+                courseNameTextView.text = "${courses.size} cursos encontrados"
+                allCoursesList.clear()
+                allCoursesList.addAll(courses)
+                currentCourseTasks.clear()
+                currentCourseTasks.addAll(courses)
                 
                 val filtered = if (initialQuery.isNotEmpty()) {
-                    tasks.filter { 
+                    courses.filter { 
                         it.taskName.contains(initialQuery, ignoreCase = true) || 
-                        it.index.toString().contains(initialQuery)
+                        it.topicName.contains(initialQuery, ignoreCase = true) // topicName = category
                     }
                 } else {
-                    tasks
+                    courses
                 }
                 
+                // Hide skeleton and show real data
+                taskOverlayAdapter.setLoading(false)
                 taskOverlayAdapter.updateTasks(filtered)
-                courseNameTextView.text = courseTitle
                 
-                if (taskListOverlay.visibility != View.VISIBLE) {
-                    taskListOverlayBackground.visibility = View.VISIBLE
-                    taskListOverlay.visibility = View.VISIBLE
-                    
-                    // Animate the overlay appearance
-                    taskListOverlayBackground.alpha = 0f
-                    taskListOverlay.alpha = 0f
-                    taskListOverlayBackground.animate()
-                        .alpha(1f)
-                        .setDuration(200)
-                        .start()
-                    taskListOverlay.animate()
-                        .alpha(1f)
-                        .setDuration(200)
-                        .start()
+                if (courses.isEmpty()) {
+                    Toast.makeText(context, "No se encontraron cursos", Toast.LENGTH_SHORT).show()
                 }
                     
             } catch (e: Exception) {
-                Log.e("ChatBotFragment", "Error loading tasks for overlay", e)
-                Toast.makeText(context, "Error al cargar las tareas", Toast.LENGTH_SHORT).show()
-                // messageEditText.setText("") // Clear the # symbol
+                Log.e("ChatBotFragment", "Error loading courses for overlay", e)
+                Toast.makeText(context, "Error al cargar los cursos", Toast.LENGTH_SHORT).show()
+                taskOverlayAdapter.setLoading(false)
+                taskListOverlayBackground.visibility = View.GONE
             }
         }
+    }
+    
+    /**
+     * Configura el listener de búsqueda para filtrar cursos/tareas
+     */
+    private fun setupSearchListener() {
+        overlaySearchEditText.removeTextChangedListener(searchTextWatcher)
+        overlaySearchEditText.addTextChangedListener(searchTextWatcher)
+    }
+    
+    private val searchTextWatcher = object : android.text.TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        override fun afterTextChanged(s: android.text.Editable?) {
+            val query = s?.toString()?.trim() ?: ""
+            filterOverlayList(query)
+        }
+    }
+    
+    /**
+     * Filtra la lista del overlay según la búsqueda
+     */
+    private fun filterOverlayList(query: String) {
+        val sourceList = if (isSelectingCourse) allCoursesList else currentCourseTasks
+        
+        val filtered = if (query.isEmpty()) {
+            sourceList
+        } else {
+            sourceList.filter { item ->
+                item.taskName.contains(query, ignoreCase = true) ||
+                item.topicName.contains(query, ignoreCase = true) ||
+                item.taskDescription.contains(query, ignoreCase = true) ||
+                (item.studentUsername?.contains(query, ignoreCase = true) == true)
+            }
+        }
+        
+        taskOverlayAdapter.updateTasks(filtered)
+        
+        // Update subtitle
+        if (isSelectingCourse) {
+            courseNameTextView.text = if (query.isEmpty()) {
+                "${allCoursesList.size} cursos encontrados"
+            } else {
+                "${filtered.size} de ${allCoursesList.size} cursos"
+            }
+        }
+    }
+    
+    /**
+     * Navega de vuelta a la lista de cursos
+     */
+    private fun navigateBackToCourses() {
+        isSelectingCourse = true
+        selectedCourseId = -1L
+        selectedCourseTitle = ""
+        backToCoursesButton.visibility = View.GONE
+        overlayTitleTextView.text = "Seleccionar Curso"
+        overlaySearchEditText.hint = "Buscar por nombre o categoría..."
+        overlaySearchEditText.text.clear()
+        courseNameTextView.text = "${allCoursesList.size} cursos encontrados"
+        
+        currentCourseTasks.clear()
+        currentCourseTasks.addAll(allCoursesList)
+        taskOverlayAdapter.updateTasks(allCoursesList)
     }
 
     /**
      * Oculta el overlay de la lista de tareas
      */
     private fun hideTaskListOverlay() {
+        // Reset state when hiding
+        isSelectingCourse = true
+        selectedCourseId = -1L
+        selectedCourseTitle = ""
+        overlaySearchEditText.text.clear()
         taskListOverlayBackground.animate()
             .alpha(0f)
             .setDuration(200)
@@ -2457,6 +2618,119 @@ class ChatBotFragment : Fragment() {
                 taskListOverlay.visibility = View.GONE
             }
             .start()
+    }
+
+    /**
+     * Carga TODOS los cursos del usuario (creador)
+     */
+    private suspend fun loadAllUserCourses(): List<TaskItem> {
+        return withContext(Dispatchers.IO) {
+            val userId = sessionManager.getUserId()
+            if (userId == -1L) {
+                Log.w("ChatBotFragment", "No user ID found")
+                return@withContext emptyList()
+            }
+            
+            try {
+                // Primero intentar desde Supabase para datos actualizados
+                val supabaseClient = com.example.tareamov.service.SupabaseClient
+                val courses = if (supabaseClient.isConfigured()) {
+                    try {
+                        supabaseClient.fetchCoursesByCreator(userId)
+                    } catch (e: Exception) {
+                        Log.w("ChatBotFragment", "Error fetching from Supabase, using local: ${e.message}")
+                        database.courseDao().getCoursesByCreator(userId)
+                    }
+                } else {
+                    database.courseDao().getCoursesByCreator(userId)
+                }
+                
+                Log.d("ChatBotFragment", "Loaded ${courses.size} courses for user $userId")
+                
+                courses.mapIndexed { index, course ->
+                    TaskItem(
+                        taskId = course.id,
+                        taskName = course.title,
+                        taskDescription = course.description ?: "Sin descripción",
+                        topicName = course.category ?: "Sin categoría", // category for filtering
+                        index = index + 1
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("ChatBotFragment", "Error loading user courses", e)
+                emptyList()
+            }
+        }
+    }
+
+    private suspend fun loadCoursesWithGradedSubmissions(): List<TaskItem> {
+        return loadAllUserCourses() // Now just delegates to loadAllUserCourses
+    }
+
+    /**
+     * Carga TODAS las tareas enviadas por usuarios en un curso específico
+     */
+    private suspend fun loadSubmissionsForCourse(courseId: Long): List<TaskItem> {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Fetch ALL submissions for the course (not just graded ones)
+                val submissions = syncRepository.fetchAllSubmissionsForCourse(courseId)
+                
+                Log.d("ChatBotFragment", "Loaded ${submissions.size} submissions for course $courseId")
+                
+                // Group submissions by student and sort by username
+                val submissionsByStudent = submissions
+                    .groupBy { it["student_username"] as? String ?: "Unknown" }
+                    .toSortedMap(String.CASE_INSENSITIVE_ORDER)
+                
+                val taskItems = mutableListOf<TaskItem>()
+                var index = 1
+                
+                for ((username, studentSubmissions) in submissionsByStudent) {
+                    // Calculate student average for context
+                    val progressManager = com.example.tareamov.util.StudentProgressManager(requireContext())
+                    val avgGrade = try {
+                        progressManager.calculateStudentAverageForCourse(courseId, username)
+                    } catch (e: Exception) {
+                        Log.e("ChatBotFragment", "Error calculating average for $username", e)
+                        0f
+                    }
+                    val formattedAvg = String.format("%.1f", avgGrade)
+                    
+                    // Add each submission for this student
+                    for (sub in studentSubmissions) {
+                        val taskTitle = sub["task_title"] as? String ?: "Tarea sin título"
+                        val grade = (sub["grade"] as? Number)?.toFloat() ?: 0f
+                        val submissionDate = sub["submission_date"] as? Long
+                        
+                        // Format grade info
+                        val gradeInfo = if (grade > 0) {
+                            val gradeFormatted = if (grade % 1 == 0f) grade.toInt().toString() else String.format("%.1f", grade)
+                            "✅ Nota: $gradeFormatted/10"
+                        } else {
+                            "⏳ Pendiente de calificar"
+                        }
+                        
+                        taskItems.add(
+                            TaskItem(
+                                taskId = (sub["task_id"] as? Number)?.toLong() ?: 0L,
+                                taskName = taskTitle,
+                                taskDescription = "$gradeInfo • Promedio: $formattedAvg",
+                                topicName = "Entrega", // Changed from username
+                                index = index++,
+                                studentUsername = username,
+                                averageGrade = formattedAvg
+                            )
+                        )
+                    }
+                }
+                
+                taskItems
+            } catch (e: Exception) {
+                Log.e("ChatBotFragment", "Error loading submissions for course $courseId", e)
+                emptyList()
+            }
+        }
     }
 
     /**
@@ -2594,6 +2868,47 @@ class ChatBotFragment : Fragment() {
      * Ahora también carga el contexto del archivo (contentSummary y fileContent)
      */
     private fun onTaskSelected(task: TaskItem) {
+        if (isSelectingCourse) {
+            // User selected a course, load ALL submissions with skeleton
+            lifecycleScope.launch {
+                try {
+                    isSelectingCourse = false
+                    selectedCourseId = task.taskId
+                    selectedCourseTitle = task.taskName
+                    
+                    // Update UI for course mode
+                    overlayTitleTextView.text = "Entregas del Curso"
+                    backToCoursesButton.visibility = View.VISIBLE
+                    courseNameTextView.text = task.taskName
+                    overlaySearchEditText.hint = "Buscar por estudiante o tarea..."
+                    overlaySearchEditText.text.clear()
+                    
+                    // Show skeleton while loading submissions
+                    taskOverlayAdapter.setLoading(true)
+                    
+                    val submissions = loadSubmissionsForCourse(task.taskId) // taskId is courseId here
+                    currentCourseTasks.clear()
+                    currentCourseTasks.addAll(submissions)
+                    
+                    // Update subtitle with count
+                    courseNameTextView.text = "${task.taskName} • ${submissions.size} entregas"
+                    
+                    // Hide skeleton and show real data
+                    taskOverlayAdapter.setLoading(false)
+                    taskOverlayAdapter.updateTasks(currentCourseTasks)
+                    
+                    if (submissions.isEmpty()) {
+                        Toast.makeText(context, "No hay entregas en este curso", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Log.e("ChatBotFragment", "Error loading submissions for course", e)
+                    Toast.makeText(context, "Error al cargar las entregas", Toast.LENGTH_SHORT).show()
+                    taskOverlayAdapter.setLoading(false)
+                }
+            }
+            return
+        }
+        
         lifecycleScope.launch {
             try {
                 // ✅ CRÍTICO: Actualizar SIEMPRE las variables de instancia para que sendMessage las use
@@ -2639,8 +2954,27 @@ class ChatBotFragment : Fragment() {
                 }
                 
                 // Intentar cargar submission y contexto usando el taskId y usuario actual
-                val username = sessionManager.getUsername() ?: ""
-                val userId = sessionManager.getUserId()
+                // Use studentUsername from task if available (instructor view), otherwise current user
+                val username = task.studentUsername ?: sessionManager.getUsername() ?: ""
+                val userId = if (task.studentUsername != null) {
+                    // If viewing a student submission, we need their ID.
+                    withContext(Dispatchers.IO) {
+                        // Try local DB first
+                        var uid = database.usuarioDao().getUsuarioByUsername(username)?.id
+                        // If not found locally, try remote
+                        if (uid == null) {
+                            try {
+                                val userWithRole = syncRepository.fetchUsuarioWithRoleFromSupabase(username)
+                                uid = userWithRole?.id
+                            } catch (e: Exception) {
+                                Log.e("ChatBotFragment", "Error fetching user id for $username", e)
+                            }
+                        }
+                        uid ?: sessionManager.getUserId()
+                    }
+                } else {
+                    sessionManager.getUserId()
+                }
                 
                 Log.d("ChatBotFragment", "🔍 Buscando submission para:")
                 Log.d("ChatBotFragment", "   - taskId: ${task.taskId}")

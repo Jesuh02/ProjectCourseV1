@@ -2363,4 +2363,32 @@ class SyncRepository(
         }
     }
 
+    // Fetch courses created by user that have at least one graded submission (grade > 0)
+    suspend fun fetchCoursesWithGradedSubmissions(username: String): List<Course> {
+        // 1. Fetch all courses by creator
+        val courses = fetchCoursesByCreatorFromSupabase(username)
+        if (courses.isEmpty()) return emptyList()
+        
+        // 2. Filter courses that have graded submissions
+        // This is N+1 but unavoidable without complex backend RPC or view
+        val result = mutableListOf<Course>()
+        for (course in courses) {
+            val submissions = supabaseClient.fetchGradedSubmissionsForCourse(course.id)
+            if (submissions.isNotEmpty()) {
+                result.add(course)
+            }
+        }
+        return result
+    }
+
+    // Fetch graded submissions for a course with student info
+    suspend fun fetchGradedSubmissionsWithDetails(courseId: Long): List<Map<String, Any>> {
+        return supabaseClient.fetchGradedSubmissionsForCourse(courseId)
+    }
+    
+    // Fetch ALL submissions for a course (both graded and ungraded)
+    suspend fun fetchAllSubmissionsForCourse(courseId: Long): List<Map<String, Any>> {
+        return supabaseClient.fetchAllSubmissionsForCourse(courseId)
+    }
+
 }

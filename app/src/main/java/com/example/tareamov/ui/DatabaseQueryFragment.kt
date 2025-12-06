@@ -37,6 +37,8 @@ import java.text.SimpleDateFormat
 import java.util.*
 import android.graphics.Rect
 import android.view.ViewTreeObserver
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeListener {
 
@@ -170,8 +172,54 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             addWelcomeMessage()
         }
         
-        // Setup keyboard visibility listener to scroll chat when keyboard appears
-        setupKeyboardListener()
+        // Setup keyboard handling para que no tape el contenido (estilo ChatGPT)
+        setupKeyboardHandling(view)
+    }
+    
+    /**
+     * Configura el manejo del teclado estilo ChatGPT:
+     * - El header permanece fijo arriba
+     * - El input se eleva con el teclado
+     * - El contenido del chat se ajusta entre ambos
+     */
+    private fun setupKeyboardHandling(view: View) {
+        val inputContainer = view.findViewById<LinearLayout>(R.id.inputContainer)
+        
+        // Usar WindowInsets para detectar el teclado y ajustar solo el área de input
+        ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
+            val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val navigationBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            
+            // Mover el inputContainer hacia arriba cuando aparece el teclado
+            val bottomPadding = if (imeInsets.bottom > 0) {
+                imeInsets.bottom
+            } else {
+                navigationBars.bottom
+            }
+            
+            // Aplicar el padding solo al área de input
+            inputContainer.setPadding(
+                inputContainer.paddingLeft,
+                inputContainer.paddingTop,
+                inputContainer.paddingRight,
+                bottomPadding
+            )
+            
+            // Scroll al último mensaje cuando aparece el teclado
+            if (imeInsets.bottom > 0) {
+                _binding?.chatRecyclerView?.post {
+                    val itemCount = chatAdapter.itemCount
+                    if (itemCount > 0) {
+                        _binding?.chatRecyclerView?.scrollToPosition(itemCount - 1)
+                    }
+                }
+            }
+            
+            insets
+        }
+        
+        // Solicitar insets
+        ViewCompat.requestApplyInsets(view)
     }
     
     private fun setupKeyboardListener() {
@@ -1696,10 +1744,10 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         val welcomeText = """
 🎯 ¡Bienvenido/a, $username!
 
-Estás conectado al sistema de Consulta Inteligente con IA Privada (Llama 3).
+Estás conectado al sistema de Consulta Inteligente con IA (DeepSeek-V3.2-Speciale).
 
 💬 **¿Cómo funciona?**
-Simplemente escribe tu consulta en lenguaje natural. El modelo Llama 3 ejecutándose en nuestros servidores seguros analizará tu petición y consultará la base de datos automáticamente.
+Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutándose en nuestros servidores seguros analizará tu petición y consultará la base de datos automáticamente.
 
 📊 **Capacidades:**
   • Consultas a la base de datos en tiempo real

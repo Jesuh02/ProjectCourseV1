@@ -13,6 +13,7 @@ import { TextLoader } from 'langchain/document_loaders/fs/text';
 import { DocxLoader } from 'langchain/document_loaders/fs/docx';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { LLMService } from './src/infrastructure/ai/LLMService.js';
+import { MCPService } from './src/domain/services/MCPService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -50,6 +51,148 @@ async function callDeepSeek(systemPrompt, userPrompt) {
     console.log('✅ DeepSeek response received:', content.length, 'characters');
 
     return content;
+}
+
+// Initialize MCPService for GitHub analysis
+let mcpService = null;
+try {
+    mcpService = new MCPService();
+    console.log('✅ MCPService initialized for GitHub analysis');
+} catch (error) {
+    console.error('❌ Failed to initialize MCPService:', error.message);
+}
+
+/**
+ * Detecta si el nombre de archivo indica un repositorio de GitHub
+ * Formato: github_OWNER_REPO o github_OWNER_REPO_BRANCH
+ */
+function isGitHubRepository(fileName) {
+    if (!fileName) return false;
+    return fileName.toLowerCase().startsWith('github_') ||
+        fileName.toLowerCase().includes('github.com');
+}
+
+/**
+ * Extrae la URL de GitHub del nombre del archivo
+ * Convierte: github_Jesuh02_ProjectCourseV1 -> https://github.com/Jesuh02/ProjectCourseV1
+ */
+function extractGitHubUrl(fileName) {
+    if (!fileName) return null;
+
+    // Si ya es una URL completa
+    if (fileName.includes('github.com')) {
+        const urlMatch = fileName.match(/https?:\/\/github\.com\/[\w-]+\/[\w-]+/);
+        return urlMatch ? urlMatch[0] : null;
+    }
+
+    // Formato: github_OWNER_REPO o github_OWNER_REPO_BRANCH
+    const match = fileName.match(/github[_-](\w+)[_-](\w+)(?:[_-](\w+))?/i);
+    if (match) {
+        const owner = match[1];
+        const repo = match[2];
+        return `https://github.com/${owner}/${repo}`;
+    }
+
+    return null;
+}
+
+/**
+ * Analiza un repositorio de GitHub usando el MCP Service
+ */
+async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
+    console.log('🐙 INICIANDO ANÁLISIS DE REPOSITORIO GITHUB...');
+    console.log('   📦 URL:', repoUrl);
+    console.log('   📋 Tarea:', taskDescription ? .substring(0, 100) || 'Sin descripción');
+
+    if (!mcpService) {
+        throw new Error('MCPService no está disponible');
+    }
+
+    try {
+        const result = await mcpService.analyzeGitHubRepo(repoUrl, {
+            taskDescription: taskDescription,
+            criteria: prompt,
+            maxFiles: 25
+        });
+
+        console.log('✅ Análisis de GitHub completado');
+        console.log('   📊 Nota:', result.grade || 'N/A');
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
+
+        return result;
+    } catch (error) {
+        console.error('❌ Error analizando repositorio GitHub:', error.message);
+        throw error;
+    }
+}
+
+/**
+ * Formatea el resultado del análisis de GitHub para respuesta al usuario
+ */
+function formatGitHubAnalysisResponse(analysis, taskDescription) {
+    const grade = analysis.grade || 0;
+    const feedback = analysis.feedback || analysis.detailedAnalysis || 'Sin feedback disponible';
+    const strengths = analysis.strengths || [];
+    const improvements = analysis.improvements || [];
+    const filesAnalyzed = analysis.filesAnalyzed || [];
+
+    let response = `📊 **CALIFICACIÓN DEL REPOSITORIO: ${grade}/100**\n\n`;
+
+    // Estado basado en la nota
+    if (grade >= 80) {
+        response += `🎯 **ESTADO:** ✅ APROBADO - Excelente trabajo\n\n`;
+    } else if (grade >= 60) {
+        response += `🎯 **ESTADO:** ⚠️ APROBADO CON OBSERVACIONES\n\n`;
+    } else if (grade >= 40) {
+        response += `🎯 **ESTADO:** 📝 NECESITA MEJORAS\n\n`;
+    } else {
+        response += `🎯 **ESTADO:** ❌ REQUIERE REVISIÓN SIGNIFICATIVA\n\n`;
+    }
+
+    // Información del repositorio
+    if (analysis.repository) {
+        response += `📦 **REPOSITORIO:** ${analysis.repository.fullName || analysis.repository.name || 'N/A'}\n`;
+        if (analysis.repository.description) {
+            response += `📝 **Descripción:** ${analysis.repository.description}\n`;
+        }
+        response += `\n`;
+    }
+
+    // Feedback principal
+    response += `💬 **EVALUACIÓN:**\n${feedback}\n\n`;
+
+    // Fortalezas
+    if (strengths.length > 0) {
+        response += `✅ **FORTALEZAS:**\n`;
+        strengths.forEach((s, i) => {
+            response += `${i + 1}. ${s}\n`;
+        });
+        response += `\n`;
+    }
+
+    // Áreas de mejora
+    if (improvements.length > 0) {
+        response += `📈 **ÁREAS DE MEJORA:**\n`;
+        improvements.forEach((imp, i) => {
+            response += `${i + 1}. ${imp}\n`;
+        });
+        response += `\n`;
+    }
+
+    // Archivos analizados (resumido)
+    if (filesAnalyzed.length > 0) {
+        response += `📁 **ARCHIVOS ANALIZADOS:** ${filesAnalyzed.length} archivos\n`;
+        // Mostrar solo los primeros 5
+        const filesToShow = filesAnalyzed.slice(0, 5);
+        filesToShow.forEach(f => {
+            response += `   • ${f}\n`;
+        });
+        if (filesAnalyzed.length > 5) {
+            response += `   ... y ${filesAnalyzed.length - 5} archivos más\n`;
+        }
+    }
+
+    return response;
 }
 
 // Helper: update task_submissions row in Supabase via REST (requires SUPABASE_URL and SUPABASE_KEY env vars)
@@ -800,6 +943,114 @@ El archivo que enviaste no pudo ser procesado correctamente por el sistema. Esto
                 esError: true,
                 archivoNoProcesable: true
             });
+        }
+
+        // 🐙 DETECCIÓN DE REPOSITORIOS GITHUB
+        // Si el archivo enviado es un repositorio de GitHub, usar el MCP para analizarlo
+        const esRepositorioGitHub = isGitHubRepository(extractedFileName);
+
+        if (esRepositorioGitHub) {
+            console.log('🐙 REPOSITORIO DE GITHUB DETECTADO:', extractedFileName);
+
+            const gitHubUrl = extractGitHubUrl(extractedFileName);
+
+            if (gitHubUrl) {
+                console.log('🔗 URL de GitHub extraída:', gitHubUrl);
+
+                // Verificar si es una pregunta que requiere análisis del repositorio
+                const preguntaLowerGH = (prompt || '').toLowerCase();
+                const requiereAnalisis =
+                    /nota|calificaci(ó|o)n|puntaje|evaluaci(ó|o)n|analiza|revisa|califica|eval(ú|u)a/.test(preguntaLowerGH) ||
+                    /archivo|repositorio|c(ó|o)digo|proyecto|entrega/.test(preguntaLowerGH) ||
+                    /tarea|trabajo|dame|dime/.test(preguntaLowerGH);
+
+                if (requiereAnalisis) {
+                    console.log('📊 Iniciando análisis de repositorio GitHub con MCP...');
+
+                    try {
+                        const analysisResult = await analyzeGitHubRepository(
+                            gitHubUrl,
+                            extractedProfessorDescription || extractedTaskName || taskDescription,
+                            prompt
+                        );
+
+                        if (analysisResult && analysisResult.success) {
+                            const respuestaFormateada = formatGitHubAnalysisResponse(
+                                analysisResult,
+                                taskDescription
+                            );
+
+                            const endTime = new Date();
+                            const duration = endTime - startTime;
+                            console.log('✅ ANÁLISIS DE GITHUB COMPLETADO');
+                            console.log('🕐 HORA DE RESPUESTA:', endTime.toLocaleString('es-ES'));
+                            console.log('⏱️ DURACIÓN TOTAL:', Math.round(duration / 1000), 'segundos');
+                            console.log('==============================================');
+
+                            // Intentar persistir la calificación si hay submissionId
+                            const submissionId = req.body.submissionId;
+                            if (submissionId && analysisResult.grade) {
+                                try {
+                                    // Convertir nota de 100 a 10
+                                    const gradeOutOf10 = Math.round(analysisResult.grade / 10 * 10) / 10;
+                                    await updateTaskSubmissionSupabase(submissionId, gradeOutOf10, respuestaFormateada);
+                                    console.log(`🔁 Calificación GitHub persistida: ${gradeOutOf10}/10`);
+                                } catch (err) {
+                                    console.log('⚠️ Error persistiendo calificación GitHub:', err.message);
+                                }
+                            }
+
+                            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                            return res.json({ respuesta_texto: respuestaFormateada });
+                        } else {
+                            // Si el análisis falló pero tenemos información del error
+                            console.log('⚠️ Análisis de GitHub falló:', analysisResult ? .error || 'Error desconocido');
+
+                            const respuestaError = `⚠️ **ERROR AL ANALIZAR REPOSITORIO**
+
+No se pudo analizar el repositorio de GitHub: ${gitHubUrl}
+
+📋 **Error:** ${analysisResult?.error || 'Error desconocido'}
+💡 **Sugerencia:** ${analysisResult?.hint || 'Verifica que el repositorio sea público y la URL sea correcta'}
+
+🔗 **URL del repositorio:** ${gitHubUrl}
+📝 **Tarea:** ${extractedTaskName || 'Sin nombre'}
+
+Por favor, verifica que:
+1. El repositorio exista y sea público
+2. La URL sea correcta
+3. El repositorio contenga archivos de código fuente`;
+
+                            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                            return res.json({ respuesta_texto: respuestaError });
+                        }
+                    } catch (githubError) {
+                        console.error('❌ Error en análisis de GitHub:', githubError.message);
+
+                        // Fallback: informar al usuario sobre el error
+                        const respuestaFallback = `⚠️ **ERROR AL CONECTAR CON GITHUB**
+
+No se pudo analizar el repositorio: ${gitHubUrl}
+
+📋 **Error técnico:** ${githubError.message}
+
+💡 **Alternativas:**
+1. Verifica que el servidor MCP esté ejecutándose
+2. Comprueba que el repositorio sea público
+3. Intenta nuevamente más tarde
+
+🔗 **Repositorio:** ${gitHubUrl}`;
+
+                        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                        return res.json({ respuesta_texto: respuestaFallback });
+                    }
+                } else {
+                    console.log('ℹ️ Pregunta sobre GitHub detectada pero no requiere análisis completo');
+                    // Continuar con el flujo normal pero informando sobre el repositorio
+                }
+            } else {
+                console.log('⚠️ No se pudo extraer URL de GitHub del nombre:', extractedFileName);
+            }
         }
 
         // Determinar si la pregunta es sobre nota/calificación/tarea/feedback/archivo (ampliado)
