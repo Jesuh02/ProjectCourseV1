@@ -81,7 +81,25 @@ data class VideoData(
 
     // Get the best available URI for playback
     fun getBestVideoUri(): Uri? {
-        // First try the local file path
+        // First try to get R2 streaming URL if available
+        try {
+            val r2Service = com.example.tareamov.service.CloudflareR2Service
+            
+            // Check if videoUriString is already an R2 URL
+            if (r2Service.isR2Url(videoUriString)) {
+                return Uri.parse(videoUriString)
+            }
+            
+            // Try to get streaming URL from R2
+            val r2Url = r2Service.getVideoStreamUrl(videoUriString)
+            if (r2Url != null) {
+                return Uri.parse(r2Url)
+            }
+        } catch (e: Exception) {
+            // Fall through to local file check
+        }
+        
+        // Then try the local file path (for locally created videos)
         if (localFilePath != null) {
             val file = File(localFilePath)
             if (file.exists() && file.canRead()) {
@@ -95,8 +113,24 @@ data class VideoData(
             try {
                 val uri = Uri.parse(videoUriString)
                 // Accept http(s) and file schemes
-                if (uri.scheme == "http" || uri.scheme == "https" || uri.scheme == "file" || uri.scheme == "content") {
+                if (uri.scheme == "http" || uri.scheme == "https") {
                     return uri
+                }
+                // For file:// scheme, check if file exists
+                if (uri.scheme == "file" || uri.scheme == "content") {
+                    val path = uri.path
+                    if (path != null) {
+                        val file = File(path)
+                        if (file.exists() && file.canRead()) {
+                            return uri
+                        }
+                    }
+                    // File doesn't exist locally, try R2 fallback with filename
+                    val fileName = videoUriString?.substringAfterLast("/")
+                    if (!fileName.isNullOrEmpty()) {
+                        val r2FallbackUrl = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/$fileName"
+                        return Uri.parse(r2FallbackUrl)
+                    }
                 }
             } catch (e: Exception) {
                 // fall through to returning the parsed property if available

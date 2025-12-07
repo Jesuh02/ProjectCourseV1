@@ -35,6 +35,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
+import android.graphics.Rect
+import android.view.ViewTreeObserver
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeListener {
 
@@ -70,6 +74,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     // Session management per user
     private var currentSessionId: String = ""
     private val maxMessagesPerSession = 1000 // Prevent memory issues
+    
+    // Keyboard visibility listener
+    private var keyboardLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
     companion object {
         private const val TAG = "DatabaseQueryFragment"
@@ -164,6 +171,80 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         if (chatAdapter.getMessages().isEmpty()) {
             addWelcomeMessage()
         }
+        
+        // Setup keyboard handling para que no tape el contenido (estilo ChatGPT)
+        setupKeyboardHandling(view)
+    }
+    
+    /**
+     * Configura el manejo del teclado estilo ChatGPT:
+     * - El header permanece fijo arriba
+     * - El input se eleva con el teclado
+     * - El contenido del chat se ajusta entre ambos
+     */
+    private fun setupKeyboardHandling(view: View) {
+        val inputContainer = view.findViewById<LinearLayout>(R.id.inputContainer)
+        
+        // Usar WindowInsets para detectar el teclado y ajustar solo el área de input
+        ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
+            val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val navigationBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            
+            // Mover el inputContainer hacia arriba cuando aparece el teclado
+            val bottomPadding = if (imeInsets.bottom > 0) {
+                imeInsets.bottom
+            } else {
+                navigationBars.bottom
+            }
+            
+            // Aplicar el padding solo al área de input
+            inputContainer.setPadding(
+                inputContainer.paddingLeft,
+                inputContainer.paddingTop,
+                inputContainer.paddingRight,
+                bottomPadding
+            )
+            
+            // Scroll al último mensaje cuando aparece el teclado
+            if (imeInsets.bottom > 0) {
+                _binding?.chatRecyclerView?.post {
+                    val itemCount = chatAdapter.itemCount
+                    if (itemCount > 0) {
+                        _binding?.chatRecyclerView?.scrollToPosition(itemCount - 1)
+                    }
+                }
+            }
+            
+            insets
+        }
+        
+        // Solicitar insets
+        ViewCompat.requestApplyInsets(view)
+    }
+    
+    private fun setupKeyboardListener() {
+        keyboardLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+            _binding?.let { binding ->
+                val rootView = binding.root
+                val rect = Rect()
+                rootView.getWindowVisibleDisplayFrame(rect)
+                
+                val screenHeight = rootView.rootView.height
+                val keypadHeight = screenHeight - rect.bottom
+                
+                // If keyboard is showing (more than 15% of screen height)
+                if (keypadHeight > screenHeight * 0.15) {
+                    // Keyboard is visible - scroll to bottom
+                    if (chatAdapter.itemCount > 0) {
+                        binding.chatRecyclerView.post {
+                            binding.chatRecyclerView.scrollToPosition(chatAdapter.itemCount - 1)
+                        }
+                    }
+                }
+            }
+        }
+        
+        binding.root.viewTreeObserver.addOnGlobalLayoutListener(keyboardLayoutListener)
     }
 
     private fun setupUIComponents() {
@@ -788,7 +869,7 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
     }
     
     /**
-     * Format JSON array results from MCP
+     * Format JSON array results from MCP - Estilo cards limpias como ChatGPT
      */
     private fun formatMCPJsonArrayResults(data: JSONArray): String {
         if (data.length() == 0) return "No se encontraron resultados."
@@ -797,59 +878,104 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         if (data.length() == 1) {
             val item = data.getJSONObject(0)
             if (item.length() == 1 && (item.has("count") || item.has("COUNT"))) {
-                return item.optString("count", item.optString("COUNT"))
+                val count = item.optString("count", item.optString("COUNT"))
+                return "📊 Total: $count registros"
             }
         }
         
         val sb = StringBuilder()
+        
+        // Get all columns from first item
+        val firstItem = data.getJSONObject(0)
+        val columns = mutableListOf<String>()
+        val keys = firstItem.keys()
+        while (keys.hasNext()) {
+            columns.add(keys.next())
+        }
+        
+        // Build column labels (friendly names)
+        val columnLabels = columns.map { col ->
+            when (col.lowercase()) {
+                "id" -> "ID"
+                "usuario" -> "Usuario"
+                "email" -> "Email"
+                "nombre_completo" -> "Nombre"
+                "telefono" -> "Teléfono"
+                "rol" -> "Rol"
+                "activo" -> "Activo"
+                "fecha_registro" -> "Registro"
+                "title", "titulo" -> "Título"
+                "description", "descripcion" -> "Descripción"
+                "created_at" -> "Creado"
+                "updated_at" -> "Actualizado"
+                "name", "nombre" -> "Nombre"
+                else -> col.replaceFirstChar { it.uppercase() }.replace("_", " ")
+            }
+        }
+        
+        // Formato de cards verticales - más limpio en móvil
         for (i in 0 until data.length()) {
             val item = data.getJSONObject(i)
             
-            // Format as simple list
-            if (item.length() == 1) {
-                // Single field result (e.g., just a name or title)
-                val keys = item.keys()
-                if (keys.hasNext()) {
-                    sb.append("${i + 1}. ${item.get(keys.next())}\n")
-                }
-            } else {
-                // Multiple fields - show key fields
-                sb.append("${i + 1}. ")
-                val keys = item.keys()
-                var count = 0
-                while (keys.hasNext() && count < 3) {
-                    val key = keys.next()
-                    sb.append("$key: ${item.get(key)}, ")
-                    count++
-                }
+            // Número de registro
+            sb.append("━━━ ${i + 1} ━━━\n")
+            
+            // Cada campo en una línea
+            columns.forEachIndexed { index, col ->
+                val value = item.opt(col)?.toString() ?: "-"
+                val label = columnLabels[index]
+                sb.append("$label: $value\n")
+            }
+            
+            // Espaciado entre registros
+            if (i < data.length() - 1) {
                 sb.append("\n")
             }
         }
-        return sb.toString().trim()
+        
+        // Resumen final
+        sb.append("\n━━━━━━━━━━━━━━\n")
+        sb.append("Total: ${data.length()} resultados")
+        
+        return sb.toString()
     }
     
     /**
-     * Format JSON object result from MCP
+     * Format JSON object result from MCP - Estilo card minimalista
      */
     private fun formatMCPJsonObjectResult(data: JSONObject): String {
         if (data.length() == 0) return "No se encontraron resultados."
         
         // Check for count result
         if (data.length() == 1 && (data.has("count") || data.has("COUNT"))) {
-            return data.optString("count", data.optString("COUNT"))
+            val count = data.optString("count", data.optString("COUNT"))
+            return "📊 Total: $count registros"
         }
         
         val sb = StringBuilder()
+        sb.append("━━━ Resultado ━━━\n")
+        
         val keys = data.keys()
         while (keys.hasNext()) {
             val key = keys.next()
-            sb.append("$key: ${data.get(key)}\n")
+            val label = when (key.lowercase()) {
+                "id" -> "ID"
+                "usuario" -> "Usuario"
+                "email" -> "Email"
+                "nombre_completo" -> "Nombre"
+                "telefono" -> "Teléfono"
+                "rol" -> "Rol"
+                "activo" -> "Activo"
+                "fecha_registro" -> "Registro"
+                else -> key.replaceFirstChar { it.uppercase() }.replace("_", " ")
+            }
+            sb.append("$label: ${data.get(key)}\n")
         }
         return sb.toString().trim()
     }
     
     /**
-     * Format list results from MCP in a readable way
+     * Format list results from MCP - Estilo cards limpias como ChatGPT
      */
     private fun formatMCPListResults(data: List<*>): String {
         if (data.isEmpty()) return "No se encontraron resultados."
@@ -858,30 +984,62 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         if (data.size == 1 && data[0] is Map<*, *>) {
             val map = data[0] as Map<*, *>
             if (map.size == 1 && (map.containsKey("count") || map.containsKey("COUNT"))) {
-                return map.values.first().toString()
+                return "📊 Total: ${map.values.first()} registros"
             }
         }
         
         val sb = StringBuilder()
-        data.forEachIndexed { index, item ->
-            when (item) {
-                is Map<*, *> -> {
-                    // Format as simple list
-                    if (item.size == 1) {
-                        // Single field result (e.g., just a name or title)
-                        sb.append("${index + 1}. ${item.values.first()}\n")
-                    } else {
-                        // Multiple fields - show key fields
-                        sb.append("${index + 1}. ")
-                        item.entries.take(3).forEach { (key, value) ->
-                            sb.append("$key: $value, ")
-                        }
+        
+        // Get columns from first item
+        val firstItem = data[0]
+        if (firstItem is Map<*, *>) {
+            val columns = firstItem.keys.map { it.toString() }
+            
+            // Build column labels (friendly names)
+            val columnLabels = columns.map { col ->
+                when (col.lowercase()) {
+                    "id" -> "ID"
+                    "usuario" -> "Usuario"
+                    "email" -> "Email"
+                    "nombre_completo" -> "Nombre"
+                    "telefono" -> "Teléfono"
+                    "rol" -> "Rol"
+                    "activo" -> "Activo"
+                    "fecha_registro" -> "Registro"
+                    else -> col.replaceFirstChar { it.uppercase() }.replace("_", " ")
+                }
+            }
+            
+            // Formato de cards verticales - más limpio en móvil
+            data.forEachIndexed { i, item ->
+                if (item is Map<*, *>) {
+                    // Número de registro
+                    sb.append("━━━ ${i + 1} ━━━\n")
+                    
+                    // Cada campo en una línea
+                    columns.forEachIndexed { index, col ->
+                        val value = item[col]?.toString() ?: "-"
+                        val label = columnLabels[index]
+                        sb.append("$label: $value\n")
+                    }
+                    
+                    // Espaciado entre registros
+                    if (i < data.size - 1) {
                         sb.append("\n")
                     }
                 }
-                else -> sb.append("${index + 1}. $item\n")
+            }
+            
+            // Resumen final
+            sb.append("\n━━━━━━━━━━━━━━\n")
+            sb.append("Total: ${data.size} resultados")
+        } else {
+            // Lista simple numerada
+            data.forEachIndexed { index, item ->
+                sb.append("${index + 1}. $item\n")
             }
         }
+        
         return sb.toString().trim()
     }
     
@@ -1663,10 +1821,10 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         val welcomeText = """
 🎯 ¡Bienvenido/a, $username!
 
-Estás conectado al sistema de Consulta Inteligente con IA Privada (Llama 3).
+Estás conectado al sistema de Consulta Inteligente con IA (DeepSeek-V3.2-Speciale).
 
 💬 **¿Cómo funciona?**
-Simplemente escribe tu consulta en lenguaje natural. El modelo Llama 3 ejecutándose en nuestros servidores seguros analizará tu petición y consultará la base de datos automáticamente.
+Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutándose en nuestros servidores seguros analizará tu petición y consultará la base de datos automáticamente.
 
 📊 **Capacidades:**
   • Consultas a la base de datos en tiempo real
@@ -1878,6 +2036,12 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo Llama 3 ejecután
         
         // Remove any pending callbacks
         view?.removeCallbacks(autoSaveRunnable)
+        
+        // Remove keyboard listener to avoid memory leaks
+        keyboardLayoutListener?.let { listener ->
+            binding.root.viewTreeObserver.removeOnGlobalLayoutListener(listener)
+        }
+        keyboardLayoutListener = null
         
         // Unregister from user change notifications
         SessionManager.removeUserChangeListener(this)

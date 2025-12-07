@@ -93,6 +93,21 @@ android {
     // DeepSeek API Key para LLM
     val deepseekApiKey = (project.findProperty("DEEPSEEK_API_KEY") as? String) ?: localPropsMap["DEEPSEEK_API_KEY"] ?: ""
     buildConfigField("String", "DEEPSEEK_API_KEY", "\"$deepseekApiKey\"")
+    
+    // Cloudflare R2 Storage Configuration
+    val r2AccountId = (project.findProperty("R2_ACCOUNT_ID") as? String) ?: localPropsMap["R2_ACCOUNT_ID"] ?: ""
+    val r2AccessKeyId = (project.findProperty("R2_ACCESS_KEY_ID") as? String) ?: localPropsMap["R2_ACCESS_KEY_ID"] ?: ""
+    val r2SecretAccessKey = (project.findProperty("R2_SECRET_ACCESS_KEY") as? String) ?: localPropsMap["R2_SECRET_ACCESS_KEY"] ?: ""
+    val r2BucketName = (project.findProperty("R2_BUCKET_NAME") as? String) ?: localPropsMap["R2_BUCKET_NAME"] ?: "coursev-files"
+    // Remove escape characters from R2_ENDPOINT (local.properties escapes : as \:)
+    val r2EndpointRaw = (project.findProperty("R2_ENDPOINT") as? String) ?: localPropsMap["R2_ENDPOINT"] ?: ""
+    val r2Endpoint = r2EndpointRaw.replace("\\:", ":").replace("\\=", "=")
+    
+    buildConfigField("String", "R2_ACCOUNT_ID", "\"$r2AccountId\"")
+    buildConfigField("String", "R2_ACCESS_KEY_ID", "\"$r2AccessKeyId\"")
+    buildConfigField("String", "R2_SECRET_ACCESS_KEY", "\"$r2SecretAccessKey\"")
+    buildConfigField("String", "R2_BUCKET_NAME", "\"$r2BucketName\"")
+    buildConfigField("String", "R2_ENDPOINT", "\"$r2Endpoint\"")
 
         // Add Room schema location
         ksp {

@@ -166,6 +166,10 @@ class TaskSubmissionsFragment : Fragment() {
         val selectedFileNameTextView = view.findViewById<TextView>(R.id.selectedFileNameTextView)
         val mySubmissionStatusTextView = view.findViewById<TextView>(R.id.mySubmissionStatusTextView)
         
+        // GitHub repository section
+        val githubUrlEditText = view.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.githubUrlEditText)
+        val submitGitHubButton = view.findViewById<Button>(R.id.submitGitHubButton)
+        
         // Configure visibility based on user role
         if (isCourseCreator) {
             // Course creator sees progress of all students
@@ -178,6 +182,7 @@ class TaskSubmissionsFragment : Fragment() {
             uploadSection.visibility = View.VISIBLE
             selectFileButton.setOnClickListener { openFilePicker() }
             submitFileButton.setOnClickListener { submitTaskFile() }
+            submitGitHubButton.setOnClickListener { submitGitHubRepository(githubUrlEditText) }
 
             // Check if user has already submitted this task
             checkUserSubmission(mySubmissionStatusTextView)
@@ -499,7 +504,7 @@ class TaskSubmissionsFragment : Fragment() {
                         if (isCourseCreator) all
                         else {
                             val userId = sessionManager.getUserId()
-                                if (userId != -1L) all.filter { it.studentId == userId } else emptyList()
+                            if (userId != -1L) all.filter { it.studentId == userId } else emptyList()
                         }
                     } catch (e: Exception) {
                         Log.e("TaskSubmissionsFragment", "Error fetching submissions from Supabase", e)
@@ -775,22 +780,61 @@ class TaskSubmissionsFragment : Fragment() {
         
         // Mostrar progreso mientras se procesa
         progressSection.visibility = View.VISIBLE
-        progressBar.isIndeterminate = true
-        progressTextView.text = "Analizando archivo $fileName..."
+        progressBar.isIndeterminate = false
+        progressBar.progress = 0
+        progressTextView.text = "Preparando archivo $fileName..."
         
-        val submission = TaskSubmission(
-            taskId = taskId,
-            studentId = currentUserId,
-            fileUri = finalUri.toString(),
-            fileName = fileName,
-            submissionDate = System.currentTimeMillis(),
-            grade = 0.0f, // Nota por defecto 0 en lugar de null
-            feedback = null
-        )
-
         CoroutineScope(Dispatchers.Main).launch {
             try {
+                // PASO 0: Subir archivo a Cloudflare R2 si está configurado
+                var cloudFileUri = finalUri.toString()
+                val currentUsername = sessionManager.getUsername() ?: "unknown"
+                
+                if (com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
+                    progressTextView.text = "Subiendo archivo a la nube..."
+                    progressBar.progress = 10
+                    
+                    val uploadResult = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.CloudflareR2Service.uploadSubmission(
+                            context = requireContext(),
+                            fileUri = finalUri,
+                            taskId = taskId,
+                            username = currentUsername
+                        ) { progress ->
+                            CoroutineScope(Dispatchers.Main).launch {
+                                progressBar.progress = 10 + (progress * 0.3).toInt() // 10-40%
+                                progressTextView.text = "Subiendo archivo: $progress%"
+                            }
+                        }
+                    }
+                    
+                    when (uploadResult) {
+                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
+                            cloudFileUri = uploadResult.url
+                            Log.d("TaskSubmissionsFragment", "✅ Archivo subido a R2: $cloudFileUri")
+                            progressTextView.text = "Archivo subido, procesando..."
+                        }
+                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
+                            Log.w("TaskSubmissionsFragment", "⚠️ R2 upload failed: ${uploadResult.message}")
+                            // Continuar con URI local si falla R2
+                        }
+                    }
+                }
+                
+                progressBar.progress = 40
+                
+                val submission = TaskSubmission(
+                    taskId = taskId,
+                    studentId = currentUserId,
+                    fileUri = cloudFileUri, // Usar URL de R2 o local
+                    fileName = fileName,
+                    submissionDate = System.currentTimeMillis(),
+                    grade = 0.0f,
+                    feedback = null
+                )
+
                 // PASO 1: Extraer el contenido del archivo ANTES de subirlo
+                progressTextView.text = "Analizando contenido del archivo..."
                 Log.d("TaskSubmissionsFragment", "🔄 Extrayendo contenido del archivo antes de subir...")
                 val analysisResult = withContext(Dispatchers.IO) {
                     fileAnalysisService.extractFileContent(uri, fileName)
@@ -798,6 +842,7 @@ class TaskSubmissionsFragment : Fragment() {
                 Log.d("TaskSubmissionsFragment", "📊 Contenido extraído: ${analysisResult.content.take(100)}...")
 
                 progressTextView.text = "Generando contexto estructurado..."
+                progressBar.progress = 50
                 var structuredFileContext: FileContext? = null
                 try {
                     structuredFileContext = withContext(Dispatchers.IO) {
@@ -824,7 +869,7 @@ class TaskSubmissionsFragment : Fragment() {
                 }
 
                 progressTextView.text = "Subiendo tarea al servidor..."
-                progressBar.progress = 30
+                progressBar.progress = 60
                 
                 try {
                     // Directly insert submission to Supabase
@@ -861,7 +906,7 @@ class TaskSubmissionsFragment : Fragment() {
                         if (created != null) {
                             // PASO 2: Crear el FileContext con el contenido extraído
                             progressTextView.text = "Guardando contexto del archivo..."
-                            progressBar.progress = 70
+                            progressBar.progress = 80
                             
                             val createdSubmissionId = created.id
                             val taskDescription = withContext(Dispatchers.IO) {
@@ -1812,6 +1857,156 @@ class TaskSubmissionsFragment : Fragment() {
         }
     }
 
+    /**
+     * Envía un repositorio de GitHub como tarea
+     * Solo guarda la URL del repositorio sin análisis
+     */
+    private fun submitGitHubRepository(githubUrlEditText: com.google.android.material.textfield.TextInputEditText) {
+        val repoUrl = githubUrlEditText.text.toString().trim()
+        
+        if (repoUrl.isEmpty()) {
+            Toast.makeText(context, "Por favor ingresa una URL de repositorio de GitHub", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // Validar formato de URL de GitHub (más flexible)
+        val githubPatterns = listOf(
+            Regex("^https?://github\\.com/[\\w.-]+/[\\w.-]+(/(tree|blob)/[\\w.-/]+)?/?$"),
+            Regex("^github\\.com/[\\w.-]+/[\\w.-]+/?$"),
+            Regex("^[\\w.-]+/[\\w.-]+$") // formato user/repo
+        )
+        
+        if (!githubPatterns.any { it.matches(repoUrl) }) {
+            Toast.makeText(context, "❌ URL de GitHub inválida. Usa el formato:\nhttps://github.com/usuario/repositorio", Toast.LENGTH_LONG).show()
+            return
+        }
+        
+        val currentUserId = sessionManager.getUserId()
+        if (currentUserId == -1L) {
+            Toast.makeText(context, "Debes iniciar sesión para enviar tareas", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // Mostrar progreso
+        progressSection.visibility = View.VISIBLE
+        progressBar.isIndeterminate = true
+        progressTextView.text = "📤 Enviando repositorio de GitHub..."
+        
+        Log.d("TaskSubmissionsFragment", "🚀 Enviando URL de repositorio: $repoUrl")
+        
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                // Crear la entrega de tarea con la URL
+                val fileName = "github_${extractRepoName(repoUrl)}"
+                val submission = TaskSubmission(
+                    taskId = taskId,
+                    studentId = currentUserId,
+                    fileUri = repoUrl, // Guardamos la URL del repositorio
+                    fileName = fileName,
+                    submissionDate = System.currentTimeMillis(),
+                    grade = 0f, // Sin calificación inicial
+                    feedback = null
+                )
+                
+                Log.d("TaskSubmissionsFragment", "📤 Enviando TaskSubmission a Supabase...")
+                Log.d("TaskSubmissionsFragment", "📤 taskId=$taskId, studentId=$currentUserId, fileUri=$repoUrl, fileName=$fileName")
+                
+                // Enviar a Supabase
+                val remoteId = withContext(Dispatchers.IO) {
+                    try {
+                        SupabaseClient.insertTaskSubmission(submission)
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "❌ Exception en insertTaskSubmission: ${e.message}", e)
+                        null
+                    }
+                }
+                
+                if (remoteId != null) {
+                    Log.i("TaskSubmissionsFragment", "✅ Repositorio enviado con ID: $remoteId")
+                    
+                    // Trigger progress update event
+                    triggerProgressUpdateEvent(currentUserId, taskId)
+                    
+                    // Limpiar el campo de texto
+                    githubUrlEditText.text?.clear()
+                    
+                    // Actualizar UI
+                    progressTextView.text = "✅ ¡Repositorio enviado!"
+                    Toast.makeText(
+                        context,
+                        "✅ Repositorio enviado exitosamente",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    
+                    // Recargar entregas
+                    loadSubmissions()
+                    
+                    // Ocultar barra de progreso después de 1 segundo
+                    kotlinx.coroutines.delay(1000)
+                    progressSection.visibility = View.GONE
+                    
+                    // Deshabilitar botón
+                    view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = false
+                    view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Ya enviado"
+                    
+                } else {
+                    Log.w("TaskSubmissionsFragment", "❌ insertTaskSubmission retornó null")
+                    Toast.makeText(context, "Error al enviar repositorio al servidor", Toast.LENGTH_SHORT).show()
+                    progressSection.visibility = View.GONE
+                }
+                
+            } catch (e: Exception) {
+                Log.e("TaskSubmissionsFragment", "❌ Error al enviar repositorio de GitHub", e)
+                Toast.makeText(
+                    context,
+                    "Error al enviar el repositorio:\n${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+                progressSection.visibility = View.GONE
+            }
+        }
+    }
+    
+    /**
+     * Extrae el nombre del repositorio de una URL de GitHub
+     */
+    private fun extractRepoName(url: String): String {
+        return try {
+            val parts = url.trimEnd('/').split('/')
+            if (parts.size >= 2) {
+                "${parts[parts.size - 2]}_${parts[parts.size - 1]}"
+            } else {
+                "repository"
+            }
+        } catch (e: Exception) {
+            "repository"
+        }
+    }
+    
+    /**
+     * Extrae la calificación numérica del metadata del análisis
+     */
+    private fun extractGradeFromMetadata(metadata: String?): Float {
+        return try {
+            if (metadata == null) return 0f
+            
+            // Buscar patrón "Grade: XX/100" o similar
+            val gradePattern = Regex("Grade:\\s*(\\d+)/100")
+            val match = gradePattern.find(metadata)
+            
+            if (match != null) {
+                val gradeValue = match.groupValues[1].toInt()
+                // Convertir de escala 0-100 a 0-10
+                (gradeValue / 10f).coerceIn(0f, 10f)
+            } else {
+                0f
+            }
+        } catch (e: Exception) {
+            Log.e("TaskSubmissionsFragment", "Error extrayendo calificación: ${e.message}")
+            0f
+        }
+    }
+    
     /**
      * Obtiene el nombre real del archivo desde el URI, incluyendo la extensión
      * Esta función consulta el ContentResolver para obtener el DISPLAY_NAME real del archivo

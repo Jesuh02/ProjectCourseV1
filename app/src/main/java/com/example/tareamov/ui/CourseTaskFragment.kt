@@ -24,6 +24,7 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.UriPermissionManager
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.viewmodel.CourseCreationViewModel
+import com.example.tareamov.service.CloudflareR2Service
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -106,10 +107,64 @@ class CourseTaskFragment : Fragment() {
                         Log.e("CourseTaskFragment", "Could not take persistable permission: ${e.message}")
                     }
 
-                    // Create a local copy of the file if needed
-                    val localUri = copyUriToLocalStorage(uri, "document")
-                    addContentItemView(localUri ?: uri, "document")
+                    // Subir documento a Cloudflare R2
+                    handleSelectedDocumentUri(uri)
                 }
+            }
+        }
+    }
+
+    // Método para manejar documentos y subirlos a R2
+    private fun handleSelectedDocumentUri(uri: Uri) {
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                var finalUri: Uri = uri
+                var r2Url: String? = null
+
+                // Subir a Cloudflare R2 si está configurado
+                if (CloudflareR2Service.isConfigured()) {
+                    Log.d("CourseTaskFragment", "☁️ Uploading document to Cloudflare R2: $uri")
+                    Toast.makeText(context, "Subiendo documento a la nube...", Toast.LENGTH_SHORT).show()
+                    
+                    val result = CloudflareR2Service.uploadDocument(
+                        context = requireContext(),
+                        documentUri = uri,
+                        onProgress = { progress ->
+                            Log.d("CourseTaskFragment", "Document upload progress: $progress%")
+                        }
+                    )
+                    
+                    when (result) {
+                        is CloudflareR2Service.UploadResult.Success -> {
+                            r2Url = result.url
+                            finalUri = Uri.parse(r2Url)
+                            Log.d("CourseTaskFragment", "✅ R2 Document Upload successful: $r2Url")
+                            Toast.makeText(context, "Documento subido a la nube ✓", Toast.LENGTH_SHORT).show()
+                        }
+                        is CloudflareR2Service.UploadResult.Error -> {
+                            Log.e("CourseTaskFragment", "❌ R2 Document Upload failed: ${result.message}")
+                            Toast.makeText(context, "Error subiendo documento a nube, usando copia local", Toast.LENGTH_SHORT).show()
+                            // Fallback: guardar localmente
+                            val localUri = withContext(Dispatchers.IO) {
+                                copyUriToLocalStorage(uri, "document")
+                            }
+                            finalUri = localUri ?: uri
+                        }
+                    }
+                } else {
+                    Log.w("CourseTaskFragment", "⚠️ R2 not configured for documents, saving locally")
+                    // Fallback: guardar localmente
+                    val localUri = withContext(Dispatchers.IO) {
+                        copyUriToLocalStorage(uri, "document")
+                    }
+                    finalUri = localUri ?: uri
+                }
+
+                Log.d("CourseTaskFragment", "Using URI for document: $finalUri, r2Url: $r2Url")
+                addContentItemView(finalUri, "document", r2Url = r2Url)
+            } catch (e: Exception) {
+                Log.e("CourseTaskFragment", "Error processing document", e)
+                Toast.makeText(context, "Error al procesar el documento", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -644,17 +699,52 @@ class CourseTaskFragment : Fragment() {
                     Log.w("CourseTaskFragment", "Could not take persistable permission: ${e.message}")
                 }
 
-                // Always make a local copy to ensure we can access it later
-                val localUri = withContext(Dispatchers.IO) {
-                    copyUriToLocalStorage(uri, "video")
+                var finalUri: Uri = uri
+                var r2Url: String? = null
+
+                // Subir a Cloudflare R2 si está configurado
+                if (CloudflareR2Service.isConfigured()) {
+                    Log.d("CourseTaskFragment", "☁️ Uploading video to Cloudflare R2: $uri")
+                    Toast.makeText(context, "Subiendo video a la nube...", Toast.LENGTH_SHORT).show()
+                    
+                    val result = CloudflareR2Service.uploadVideo(
+                        context = requireContext(),
+                        videoUri = uri,
+                        onProgress = { progress ->
+                            Log.d("CourseTaskFragment", "Video upload progress: $progress%")
+                        }
+                    )
+                    
+                    when (result) {
+                        is CloudflareR2Service.UploadResult.Success -> {
+                            r2Url = result.url
+                            finalUri = Uri.parse(r2Url)
+                            Log.d("CourseTaskFragment", "✅ R2 Video Upload successful: $r2Url")
+                            Toast.makeText(context, "Video subido a la nube ✓", Toast.LENGTH_SHORT).show()
+                        }
+                        is CloudflareR2Service.UploadResult.Error -> {
+                            Log.e("CourseTaskFragment", "❌ R2 Video Upload failed: ${result.message}")
+                            Toast.makeText(context, "Error subiendo video a nube, usando copia local", Toast.LENGTH_SHORT).show()
+                            // Fallback: guardar localmente
+                            val localUri = withContext(Dispatchers.IO) {
+                                copyUriToLocalStorage(uri, "video")
+                            }
+                            finalUri = localUri ?: uri
+                        }
+                    }
+                } else {
+                    Log.w("CourseTaskFragment", "⚠️ R2 not configured, saving locally")
+                    // Fallback: guardar localmente
+                    val localUri = withContext(Dispatchers.IO) {
+                        copyUriToLocalStorage(uri, "video")
+                    }
+                    finalUri = localUri ?: uri
                 }
 
-                // Use the local URI if available, otherwise fall back to the original
-                val bestUri = localUri ?: uri
-                Log.d("CourseTaskFragment", "Using URI for video: $bestUri")
+                Log.d("CourseTaskFragment", "Using URI for video: $finalUri, r2Url: $r2Url")
 
                 // Add the content item view with the best URI
-                addContentItemView(bestUri, "video")
+                addContentItemView(finalUri, "video", r2Url = r2Url)
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error processing video", e)
                 Toast.makeText(context, "Error al procesar el video", Toast.LENGTH_SHORT).show()
@@ -747,7 +837,7 @@ class CourseTaskFragment : Fragment() {
         private val CONTENT_ID_TAG = R.id.content_id_tag
     }
 
-    private fun addContentItemView(uri: Uri, type: String, name: String? = null, contentId: Long? = null) {
+    private fun addContentItemView(uri: Uri, type: String, name: String? = null, contentId: Long? = null, r2Url: String? = null) {
         val inflater = LayoutInflater.from(context)
         val contentView = inflater.inflate(R.layout.item_course_content, contentContainer, false)
 
@@ -756,7 +846,9 @@ class CourseTaskFragment : Fragment() {
         val deleteButton = contentView.findViewById<ImageButton>(R.id.deleteContentButton)
 
         // Get a meaningful display name
-        val displayName = name ?: getFileName(uri) ?: "Contenido ${contentContainer.childCount + 1}"
+        val baseName = name ?: getFileName(uri) ?: "Contenido ${contentContainer.childCount + 1}"
+        // Mostrar ☁️ si está en la nube
+        val displayName = if (r2Url != null) "☁️ $baseName" else baseName
         nameView.text = displayName
 
         // Set appropriate icon based on content type and file extension
@@ -783,6 +875,17 @@ class CourseTaskFragment : Fragment() {
         // Handle delete button click
         deleteButton.setOnClickListener {
             contentContainer.removeView(contentView)
+            // Si es URL de R2, eliminar del servidor
+            if (r2Url != null) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        CloudflareR2Service.deleteFile(r2Url)
+                        Log.d("CourseTaskFragment", "🗑️ Deleted from R2: $r2Url")
+                    } catch (e: Exception) {
+                        Log.e("CourseTaskFragment", "Error deleting from R2", e)
+                    }
+                }
+            }
         }
 
         // Make the content item clickable to preview

@@ -98,6 +98,80 @@
             android:textStyle="bold"
             android:layout_marginBottom="8dp"/>
 
+        <!-- GitHub Repository Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Repositorio de GitHub"
+            android:textColor="#CCCCCC"
+            android:textSize="14sp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"/>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="https://github.com/usuario/repositorio"
+            app:boxBackgroundColor="#1A1A2E"
+            app:boxBackgroundMode="filled"
+            app:boxStrokeColor="#3F51B5"
+            app:hintTextColor="#888888">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/githubUrlEditText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textUri"
+                android:textColor="#FFFFFF"
+                android:maxLines="1"/>
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <Button
+            android:id="@+id/submitGitHubButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📦 Enviar Repositorio"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp"
+            android:backgroundTint="#FF9800"/>
+
+        <!-- OR Divider -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginVertical="8dp">
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1"
+                android:background="#333333"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="  O  "
+                android:textColor="#888888"
+                android:textSize="12sp"/>
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1"
+                android:background="#333333"/>
+        </LinearLayout>
+
+        <!-- File Upload Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Archivo Local"
+            android:textColor="#CCCCCC"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp"/>
+
         <TextView
             android:id="@+id/selectedFileNameTextView"
             android:layout_width="match_parent"

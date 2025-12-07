@@ -37,6 +37,10 @@ object ServerEndpointResolver {
     private const val PREFS_NAME = "server_endpoint_resolver"
     private const val PREF_KEY_PREFIX = "last_host_"
     private const val MAX_SCAN_HOSTS = 32 // Reduced from 128 to scan fewer hosts
+    
+    // Railway Cloud URLs (Production)
+    const val RAILWAY_MCP_URL = "https://mcp-backenddeploy-production.up.railway.app"
+    const val RAILWAY_API_URL = "https://mcp-backenddeploy-production.up.railway.app"  // Same service, different port internally
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()

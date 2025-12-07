@@ -101,6 +101,10 @@ class HomeFragment : Fragment(), PersonaAdapter.OnItemClickListener {
         // Set up RecyclerView
         adapter = PersonaAdapter()
         adapter.setOnItemClickListener(this)
+        // Set up avatar loader
+        adapter.avatarLoader = { personaId ->
+            personaViewModel.getUsuarioByPersonaId(personaId)?.avatar
+        }
         recyclerView.adapter = adapter
         recyclerView.layoutManager = LinearLayoutManager(requireContext())
 

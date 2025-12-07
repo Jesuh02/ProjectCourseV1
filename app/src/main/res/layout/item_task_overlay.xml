@@ -3,10 +3,11 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginBottom="8dp"
+    android:layout_marginHorizontal="8dp"
+    android:layout_marginBottom="10dp"
     app:cardBackgroundColor="#1E1E2E"
-    app:cardCornerRadius="8dp"
-    app:cardElevation="2dp"
+    app:cardCornerRadius="10dp"
+    app:cardElevation="3dp"
     android:clickable="true"
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground">
@@ -15,7 +16,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="12dp">
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="14dp">
 
         <!-- Topic Name -->
         <TextView
@@ -24,9 +26,9 @@
             android:layout_height="wrap_content"
             android:text="Tema"
             android:textColor="#6366F1"
-            android:textSize="12sp"
+            android:textSize="13sp"
             android:textStyle="bold"
-            android:layout_marginBottom="4dp" />
+            android:layout_marginBottom="6dp" />
 
         <!-- Task Name -->
         <TextView
@@ -35,9 +37,9 @@
             android:layout_height="wrap_content"
             android:text="Nombre de la Tarea"
             android:textColor="#FFFFFF"
-            android:textSize="16sp"
+            android:textSize="17sp"
             android:textStyle="bold"
-            android:layout_marginBottom="4dp" />
+            android:layout_marginBottom="6dp" />
 
         <!-- Task Description -->
         <TextView
@@ -47,6 +49,7 @@
             android:text="Descripción de la tarea"
             android:textColor="#BBBBBB"
             android:textSize="14sp"
+            android:lineSpacingExtra="2dp"
             android:maxLines="2"
             android:ellipsize="end" />
 
@@ -60,7 +63,7 @@
             android:textSize="12sp"
             android:textStyle="bold"
             android:layout_gravity="end"
-            android:layout_marginTop="4dp" />
+            android:layout_marginTop="8dp" />
 
     </LinearLayout>
 </androidx.cardview.widget.CardView>

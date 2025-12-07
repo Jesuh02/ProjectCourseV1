@@ -104,8 +104,8 @@ class DatabaseChatAdapter(
     }
 
     inner class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val userMessageContainer: LinearLayout = itemView.findViewById(R.id.userMessageContainer)
-        private val botMessageContainer: LinearLayout = itemView.findViewById(R.id.botMessageContainer)
+        private val userMessageContainer: ViewGroup = itemView.findViewById(R.id.userMessageContainer)
+        private val botMessageContainer: ViewGroup = itemView.findViewById(R.id.botMessageContainer)
         private val userMessageTextView: TextView = itemView.findViewById(R.id.userMessageTextView)
         private val botMessageTextView: TextView = itemView.findViewById(R.id.botMessageTextView)
         private val userMessageTime: TextView = itemView.findViewById(R.id.userMessageTime)
@@ -113,8 +113,8 @@ class DatabaseChatAdapter(
         private val timestampTextView: TextView = itemView.findViewById(R.id.messageTimestampTextView)
         private val copyButton: ImageButton = itemView.findViewById(R.id.copyButton)
         private val shareButton: ImageButton = itemView.findViewById(R.id.shareButton)
-        private val editUserMessageButton: ImageButton = itemView.findViewById(R.id.editUserMessageButton)
-        private val copyUserMessageButton: ImageButton = itemView.findViewById(R.id.copyUserMessageButton)
+        private val copyButtonUser: ImageButton = itemView.findViewById(R.id.copyButtonUser)
+        private val shareButtonUser: ImageButton = itemView.findViewById(R.id.shareButtonUser)
 
         fun bind(message: ChatMessage) {
             // Animate the message appearance
@@ -128,9 +128,7 @@ class DatabaseChatAdapter(
                 userMessageTextView.text = formatBoldText(message.text)
                 userMessageTime.text = timeFormat.format(Date(message.timestamp))
                 
-                // Setup user message action buttons
                 setupUserMessageActions(message)
-                
             } else {
                 // Show bot message
                 userMessageContainer.visibility = View.GONE
@@ -163,7 +161,7 @@ class DatabaseChatAdapter(
         private fun formatBotMessage(message: ChatMessage): String {
             // Special handling for typing indicator
             if (message.isTyping) {
-                return "🤖 Llama 3.3 está procesando tu consulta..."
+                return "🤖 DeepSeek-V3.2-Speciale está procesando tu consulta..."
             }
             
             // Add helpful formatting for common response types
@@ -194,29 +192,24 @@ class DatabaseChatAdapter(
                 shareMessage(message.text)
             }
         }
-        
-        private fun setupUserMessageActions(message: ChatMessage) {
-            editUserMessageButton.setImageResource(R.drawable.ic_edit_minimal)
-            copyUserMessageButton.setImageResource(R.drawable.ic_copy_minimal)
 
-            // Edit button
-            editUserMessageButton.setOnClickListener {
-                onEditUserMessageClick(message)
+        private fun setupUserMessageActions(message: ChatMessage) {
+            // Use minimal icons for user actions too
+            copyButtonUser.setImageResource(R.drawable.ic_copy_minimal)
+            shareButtonUser.setImageResource(R.drawable.ic_share_minimal)
+
+            copyButtonUser.setOnClickListener {
+                copyToClipboard(message.text)
             }
             
-            // Copy button
-            copyUserMessageButton.setOnClickListener {
-                val clipboard = itemView.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("message", message.text)
-                clipboard.setPrimaryClip(clip)
-                
-                Toast.makeText(itemView.context, "Mensaje copiado", Toast.LENGTH_SHORT).show()
+            shareButtonUser.setOnClickListener {
+                shareMessage(message.text)
             }
         }
         
         private fun copyToClipboard(text: String) {
             val clipboard = itemView.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("Mensaje de Llama", text)
+            val clip = ClipData.newPlainText("Mensaje de DeepSeek", text)
             clipboard.setPrimaryClip(clip)
             Toast.makeText(itemView.context, "💾 Mensaje copiado al portapapeles", Toast.LENGTH_SHORT).show()
         }
@@ -224,43 +217,97 @@ class DatabaseChatAdapter(
         private fun shareMessage(text: String) {
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, "🤖 Respuesta de Llama 3.3:\n\n$text")
+                putExtra(Intent.EXTRA_TEXT, "🤖 Respuesta de DeepSeek-V3.2-Speciale:\n\n$text")
                 putExtra(Intent.EXTRA_SUBJECT, "Conversación con IA")
             }
             itemView.context.startActivity(Intent.createChooser(intent, "Compartir respuesta"))
         }
         
         private fun formatBoldText(text: String): SpannableString {
-            // Enhanced text formatting with better markdown support
-            val cleanText = text.replace(Regex("\\*\\*(.*?)\\*\\*")) { matchResult ->
-                matchResult.groupValues[1]
+            var processedText = text
+            
+            // Convert markdown tables to clean format if present
+            if (text.contains("|") && text.contains("---")) {
+                processedText = formatMarkdownTable(text)
             }
             
-            val spannableString = SpannableString(cleanText)
-            val regex = Regex("\\*\\*(.*?)\\*\\*")
-            var offset = 0
+            val spannableString = SpannableString(processedText)
             
-            // Apply bold formatting to text between **
-            regex.findAll(text).forEach { match ->
-                val originalStart = match.range.first
-                val boldText = match.groupValues[1]
-                
-                val cleanStart = originalStart - offset
-                val cleanEnd = cleanStart + boldText.length
-                
-                if (cleanStart >= 0 && cleanEnd <= cleanText.length && cleanStart < cleanEnd) {
-                    spannableString.setSpan(
-                        StyleSpan(Typeface.BOLD),
-                        cleanStart,
-                        cleanEnd,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                    )
+            // Apply bold to lines that start with ━━━ (card headers)
+            val lines = processedText.split("\n")
+            var currentPos = 0
+            
+            for (line in lines) {
+                // Bold for card separators and labels before ":"
+                if (line.contains(":") && !line.startsWith("━") && !line.startsWith("Total")) {
+                    val colonIndex = line.indexOf(":")
+                    if (colonIndex > 0 && currentPos + colonIndex <= spannableString.length) {
+                        spannableString.setSpan(
+                            StyleSpan(Typeface.BOLD),
+                            currentPos,
+                            currentPos + colonIndex,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
                 }
-                
-                offset += 4 // Account for removed ** **
+                currentPos += line.length + 1 // +1 for newline
             }
             
             return spannableString
+        }
+        
+        /**
+         * Format markdown table to a clean card format
+         */
+        private fun formatMarkdownTable(text: String): String {
+            val lines = text.split("\n")
+            val result = StringBuilder()
+            var headers = listOf<String>()
+            var rowNumber = 0
+            
+            for (line in lines) {
+                val trimmedLine = line.trim()
+                
+                // Skip separator lines
+                if (trimmedLine.matches(Regex("^\\|[\\s\\-:|]+\\|$")) || 
+                    trimmedLine.matches(Regex("^[━─\\s]+$"))) {
+                    continue
+                }
+                
+                // Process table rows with | delimiters
+                if (trimmedLine.startsWith("|") && trimmedLine.endsWith("|")) {
+                    val cells = trimmedLine
+                        .removePrefix("|")
+                        .removeSuffix("|")
+                        .split("|")
+                        .map { it.trim() }
+                    
+                    if (headers.isEmpty()) {
+                        // Store headers
+                        headers = cells
+                    } else {
+                        // Format as card
+                        rowNumber++
+                        result.append("━━━ $rowNumber ━━━\n")
+                        cells.forEachIndexed { index, value ->
+                            val label = if (index < headers.size) headers[index] else "Campo"
+                            result.append("$label: $value\n")
+                        }
+                        result.append("\n")
+                    }
+                } else if (trimmedLine.isNotEmpty() && !trimmedLine.startsWith("━")) {
+                    // Non-table content
+                    result.append(trimmedLine)
+                    result.append("\n")
+                }
+            }
+            
+            if (rowNumber > 0) {
+                result.append("━━━━━━━━━━━━━━\n")
+                result.append("Total: $rowNumber resultados")
+            }
+            
+            return result.toString().trimEnd()
         }
     }
 }

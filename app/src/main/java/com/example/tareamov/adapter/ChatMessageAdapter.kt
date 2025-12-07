@@ -95,7 +95,7 @@ class ChatMessageAdapter(
     }
 
     inner class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val userMessageContainer: LinearLayout = itemView.findViewById(R.id.userMessageContainer)
+        private val userMessageContainer: androidx.constraintlayout.widget.ConstraintLayout = itemView.findViewById(R.id.userMessageContainer)
         private val botMessageContainer: LinearLayout = itemView.findViewById(R.id.botMessageContainer)
         private val userMessageTextView: TextView = itemView.findViewById(R.id.userMessageTextView)
         private val botMessageTextView: TextView = itemView.findViewById(R.id.botMessageTextView)
@@ -107,8 +107,8 @@ class ChatMessageAdapter(
         private val rejectCalificationButton: Button = itemView.findViewById(R.id.rejectCalificationButton)
         private val copyButton: ImageButton = itemView.findViewById(R.id.copyButton)
         private val shareButton: ImageButton = itemView.findViewById(R.id.shareButton)
-        private val editUserMessageButton: ImageButton = itemView.findViewById(R.id.editUserMessageButton)
-        private val copyUserMessageButton: ImageButton = itemView.findViewById(R.id.copyUserMessageButton)
+        private val copyButtonUser: ImageButton = itemView.findViewById(R.id.copyButtonUser)
+        private val shareButtonUser: ImageButton = itemView.findViewById(R.id.shareButtonUser)
 
         fun bind(message: ChatMessage) {
             if (message.isFromUser) {
@@ -119,9 +119,7 @@ class ChatMessageAdapter(
                 userMessageTextView.text = formatBoldText(message.message)
                 userMessageTime.text = timeFormat.format(Date(message.timestamp))
                 
-                // Setup user message action buttons
                 setupUserMessageActions(message)
-                
                 calificationButtonsContainer.visibility = View.GONE
             } else {
                 // Show bot message
@@ -156,7 +154,8 @@ class ChatMessageAdapter(
         
         private fun buildEnhancedTaskMessage(message: ChatMessage): String {
             return buildString {
-                appendLine("📚 **ANÁLISIS DE TAREA COMPLETADO**")
+                appendLine("🤖 **ANÁLISIS DE TAREA COMPLETADO**")
+                appendLine("⚡ _DeepSeek-V3.2-Speciale_")
                 appendLine()
                 appendLine("**${taskInfo!!.taskName}**")
                 appendLine("📚 Tema: ${taskInfo!!.topicName}")
@@ -202,14 +201,14 @@ class ChatMessageAdapter(
                 shareMessage(message.message)
             }
         }
-        
+
         private fun setupUserMessageActions(message: ChatMessage) {
-            editUserMessageButton.setOnClickListener {
-                onEditUserMessageClick(message)
+            copyButtonUser.setOnClickListener {
+                copyToClipboard(message.message)
             }
             
-            copyUserMessageButton.setOnClickListener {
-                copyToClipboard(message.message)
+            shareButtonUser.setOnClickListener {
+                shareMessage(message.message)
             }
         }
         
@@ -225,7 +224,7 @@ class ChatMessageAdapter(
         
         private fun copyToClipboard(text: String) {
             val clipboard = itemView.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("Mensaje de Llama", text)
+            val clip = ClipData.newPlainText("Mensaje de DeepSeek", text)
             clipboard.setPrimaryClip(clip)
             Toast.makeText(itemView.context, "Mensaje copiado al portapapeles", Toast.LENGTH_SHORT).show()
         }
@@ -233,40 +232,93 @@ class ChatMessageAdapter(
         private fun shareMessage(text: String) {
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, "Respuesta de Llama 3.3:\n\n$text")
+                putExtra(Intent.EXTRA_TEXT, "Respuesta de DeepSeek-V3.2-Speciale:\n\n$text")
                 putExtra(Intent.EXTRA_SUBJECT, "Conversación con IA")
             }
             itemView.context.startActivity(Intent.createChooser(intent, "Compartir respuesta"))
         }
         
         private fun formatBoldText(text: String): SpannableString {
-            // Enhanced text formatting with better markdown support
-            val cleanText = text.replace(Regex("\\*\\*(.*?)\\*\\*")) { matchResult ->
-                matchResult.groupValues[1]
+            // Process markdown formatting: **bold**, *italic*, _italic_, ##headers
+            val result = StringBuilder()
+            val boldRanges = mutableListOf<Pair<Int, Int>>()
+            val italicRanges = mutableListOf<Pair<Int, Int>>()
+            
+            var i = 0
+            while (i < text.length) {
+                when {
+                    // Bold: **text**
+                    i + 1 < text.length && text[i] == '*' && text[i + 1] == '*' -> {
+                        val endIndex = text.indexOf("**", i + 2)
+                        if (endIndex != -1) {
+                            val startPos = result.length
+                            val boldContent = text.substring(i + 2, endIndex)
+                            result.append(boldContent)
+                            boldRanges.add(Pair(startPos, result.length))
+                            i = endIndex + 2
+                        } else {
+                            result.append(text[i])
+                            i++
+                        }
+                    }
+                    // Italic: _text_ (but not in middle of word)
+                    text[i] == '_' && (i == 0 || !text[i-1].isLetterOrDigit()) -> {
+                        val endIndex = text.indexOf('_', i + 1)
+                        if (endIndex != -1 && (endIndex + 1 >= text.length || !text[endIndex + 1].isLetterOrDigit())) {
+                            val startPos = result.length
+                            val italicContent = text.substring(i + 1, endIndex)
+                            result.append(italicContent)
+                            italicRanges.add(Pair(startPos, result.length))
+                            i = endIndex + 1
+                        } else {
+                            result.append(text[i])
+                            i++
+                        }
+                    }
+                    // Headers: ## text -> just bold without ##
+                    text[i] == '#' && i + 1 < text.length && text[i + 1] == '#' -> {
+                        // Skip the ## and any following space
+                        i += 2
+                        while (i < text.length && text[i] == ' ') i++
+                        // Find end of line
+                        val lineEnd = text.indexOf('\n', i).let { if (it == -1) text.length else it }
+                        val startPos = result.length
+                        val headerContent = text.substring(i, lineEnd)
+                        result.append(headerContent)
+                        boldRanges.add(Pair(startPos, result.length))
+                        i = lineEnd
+                    }
+                    else -> {
+                        result.append(text[i])
+                        i++
+                    }
+                }
             }
             
-            val spannableString = SpannableString(cleanText)
-            val regex = Regex("\\*\\*(.*?)\\*\\*")
-            var offset = 0
+            val spannableString = SpannableString(result.toString())
             
-            // Apply bold formatting to text between **
-            regex.findAll(text).forEach { match ->
-                val originalStart = match.range.first
-                val boldText = match.groupValues[1]
-                
-                val cleanStart = originalStart - offset
-                val cleanEnd = cleanStart + boldText.length
-                
-                if (cleanStart >= 0 && cleanEnd <= cleanText.length && cleanStart < cleanEnd) {
+            // Apply bold spans
+            for ((start, end) in boldRanges) {
+                if (start >= 0 && end <= spannableString.length && start < end) {
                     spannableString.setSpan(
                         StyleSpan(Typeface.BOLD),
-                        cleanStart,
-                        cleanEnd,
+                        start,
+                        end,
                         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                 }
-                
-                offset += 4 // Account for removed ** **
+            }
+            
+            // Apply italic spans
+            for ((start, end) in italicRanges) {
+                if (start >= 0 && end <= spannableString.length && start < end) {
+                    spannableString.setSpan(
+                        StyleSpan(Typeface.ITALIC),
+                        start,
+                        end,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
             }
             
             return spannableString

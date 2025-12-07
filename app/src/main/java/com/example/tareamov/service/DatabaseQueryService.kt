@@ -220,11 +220,33 @@ class DatabaseQueryService(private val context: Context) {
                     response.appendLine("**Resultado:** ${data.length()} registro(s) encontrado(s)")
                     response.appendLine()
                     
-                    // Display data in a readable format
-                    for (i in 0 until minOf(data.length(), 50)) { // Limit to 50 for readability
-                        val item = data.optJSONObject(i)
-                        if (item != null) {
-                            response.appendLine("**${i + 1}.** ${formatJsonObject(item)}")
+                    // Display data in a readable Markdown Table format
+                    val firstItem = data.optJSONObject(0)
+                    if (firstItem != null) {
+                        // Extract keys for headers (limit to 6 columns for readability)
+                        val keys = firstItem.keys().asSequence().take(6).toList()
+                        
+                        // Header
+                        response.append("| ")
+                        keys.forEach { response.append("**${it.uppercase()}** | ") }
+                        response.appendLine()
+                        
+                        // Separator
+                        response.append("| ")
+                        keys.forEach { response.append(":--- | ") }
+                        response.appendLine()
+                        
+                        // Rows
+                        for (i in 0 until minOf(data.length(), 50)) { // Limit to 50 for readability
+                            val item = data.optJSONObject(i)
+                            if (item != null) {
+                                response.append("| ")
+                                keys.forEach { key -> 
+                                    val valStr = item.optString(key, "").replace("\n", " ").take(50)
+                                    response.append("$valStr | ") 
+                                }
+                                response.appendLine()
+                            }
                         }
                     }
                     
@@ -233,6 +255,9 @@ class DatabaseQueryService(private val context: Context) {
                         response.appendLine("... y ${data.length() - 50} registro(s) más")
                     }
                 }
+            }
+            is String -> {
+                response.appendLine(data)
             }
             is JSONObject -> {
                 // Special handling for BI-style responses from remote MCP server
@@ -354,10 +379,31 @@ class DatabaseQueryService(private val context: Context) {
                     "Sin resultados"
                 } else {
                     val sb = StringBuilder()
-                    for (i in 0 until data.length()) {
-                        val item = data.optJSONObject(i)
-                        if (item != null) {
-                            sb.appendLine("${i + 1}. ${formatJsonObject(item)}")
+                    val firstItem = data.optJSONObject(0)
+                    if (firstItem != null) {
+                        val keys = firstItem.keys().asSequence().take(6).toList()
+                        
+                        // Header
+                        sb.append("| ")
+                        keys.forEach { sb.append("**${it.uppercase()}** | ") }
+                        sb.appendLine()
+                        
+                        // Separator
+                        sb.append("| ")
+                        keys.forEach { sb.append(":--- | ") }
+                        sb.appendLine()
+                        
+                        // Rows
+                        for (i in 0 until data.length()) {
+                            val item = data.optJSONObject(i)
+                            if (item != null) {
+                                sb.append("| ")
+                                keys.forEach { key -> 
+                                    val valStr = item.optString(key, "").replace("\n", " ").take(50)
+                                    sb.append("$valStr | ") 
+                                }
+                                sb.appendLine()
+                            }
                         }
                     }
                     sb.toString()
@@ -409,16 +455,36 @@ class DatabaseQueryService(private val context: Context) {
                     } else {
                         sb.appendLine("### 📊 Datos obtenidos:")
                         sb.appendLine()
-                        data.forEachIndexed { index, item ->
-                            sb.appendLine("**Registro ${index + 1}:**")
-                            if (item is Map<*, *>) {
-                                item.forEach { (key, value) ->
-                                    sb.appendLine("  • **$key**: $value")
-                                }
-                            } else {
-                                sb.appendLine("  $item")
-                            }
+                        
+                        val firstItem = data.firstOrNull()
+                        if (firstItem is Map<*, *>) {
+                            // Table Header
+                            val keys = firstItem.keys.map { it.toString() }.take(6)
+                            sb.append("| ")
+                            keys.forEach { sb.append("**${it.uppercase()}** | ") }
                             sb.appendLine()
+                            
+                            // Separator
+                            sb.append("| ")
+                            keys.forEach { sb.append(":--- | ") }
+                            sb.appendLine()
+                            
+                            // Rows
+                            data.forEach { item ->
+                                if (item is Map<*, *>) {
+                                    sb.append("| ")
+                                    keys.forEach { key ->
+                                        val valStr = item[key]?.toString()?.replace("\n", " ")?.take(50) ?: ""
+                                        sb.append("$valStr | ")
+                                    }
+                                    sb.appendLine()
+                                }
+                            }
+                        } else {
+                            // Simple list for non-map items
+                            data.forEach { item ->
+                                sb.appendLine("- $item")
+                            }
                         }
                     }
                 }
@@ -559,6 +625,15 @@ class DatabaseQueryService(private val context: Context) {
             4. Subscription: subscriberUsername → creatorUsername
             
             CONSULTA: $query
+            
+            INSTRUCCIONES DE FORMATO:
+            1. Si la consulta pide una LISTA (ej: "dame usuarios", "listar cursos"), DEBES responder con una TABLA MARKDOWN.
+            2. Formato de tabla:
+               | **Columna 1** | **Columna 2** |
+               | :--- | :--- |
+               | valor1 | valor2 |
+            3. Usa encabezados en negrita.
+            4. Si es una respuesta de análisis, usa párrafos claros y listas con viñetas.
             
             Responde de manera concisa usando solo la información disponible.
         """.trimIndent()
@@ -746,6 +821,14 @@ class DatabaseQueryService(private val context: Context) {
             La tabla 'subscriptions' contiene información sobre las relaciones de suscripción entre usuarios, no el total de usuarios.
 
             Consulta del Usuario: $query
+            
+            INSTRUCCIONES DE FORMATO:
+            1. Si la consulta pide una LISTA, DEBES responder con una TABLA MARKDOWN estética.
+               | **Header 1** | **Header 2** |
+               | :--- | :--- |
+               | Row 1 | Data 1 |
+            2. Usa encabezados en negrita.
+            
             Responde usando únicamente la información del JSON. Si la información no está disponible, indícalo claramente.
             """.trimIndent()
 
@@ -849,7 +932,14 @@ class DatabaseQueryService(private val context: Context) {
                         if (users.isEmpty()) {
                             "No hay usuarios registrados."
                         } else {
-                            "Usuarios:\n" + users.joinToString("\n") { it.toString() }
+                            val sb = StringBuilder()
+                            sb.append("### 👥 Lista de Usuarios\n\n")
+                            sb.append("| ID | Usuario | Rol ID | Persona ID |\n")
+                            sb.append("| :--- | :--- | :--- | :--- |\n")
+                            users.forEach { 
+                                sb.append("| ${it.id} | ${it.usuario} | ${it.rol_id} | ${it.persona_id} |\n") 
+                            }
+                            sb.toString()
                         }
                     }
                     normalizedQuery.contains("video") || normalizedQuery.contains("videos") || normalizedQuery.contains("curso") || normalizedQuery.contains("cursos") -> {
@@ -857,7 +947,15 @@ class DatabaseQueryService(private val context: Context) {
                         if (videos.isEmpty()) {
                             "No hay videos (cursos) registrados."
                         } else {
-                            "Lista de Videos (Cursos):\n" + videos.joinToString("\n") { it.toString() }
+                            val sb = StringBuilder()
+                            sb.append("### 🎥 Lista de Videos (Cursos)\n\n")
+                            sb.append("| ID | Título | Precio | Creador |\n")
+                            sb.append("| :--- | :--- | :--- | :--- |\n")
+                            videos.forEach { 
+                                val price = if (it.isPaid) "$${it.price}" else "Gratis"
+                                sb.append("| ${it.id} | ${it.title} | $price | ${it.username} |\n") 
+                            }
+                            sb.toString()
                         }
                     }
                     normalizedQuery.contains("tema") || normalizedQuery.contains("temas") -> {
@@ -865,7 +963,14 @@ class DatabaseQueryService(private val context: Context) {
                         if (topics.isEmpty()) {
                             "No hay temas registrados."
                         } else {
-                            "Lista de Temas:\n" + topics.joinToString("\n") { it.toString() }
+                            val sb = StringBuilder()
+                            sb.append("### 📚 Lista de Temas\n\n")
+                            sb.append("| ID | Nombre | Orden | Course ID |\n")
+                            sb.append("| :--- | :--- | :--- | :--- |\n")
+                            topics.forEach { 
+                                sb.append("| ${it.id} | ${it.name} | ${it.orderIndex} | ${it.courseId} |\n") 
+                            }
+                            sb.toString()
                         }
                     }
                     normalizedQuery.contains("contenido") || normalizedQuery.contains("contenidos") -> {
@@ -873,7 +978,14 @@ class DatabaseQueryService(private val context: Context) {
                         if (items.isEmpty()) {
                             "No hay elementos de contenido."
                         } else {
-                            "Lista de Contenido:\n" + items.joinToString("\n") { it.toString() }
+                            val sb = StringBuilder()
+                            sb.append("### 📄 Lista de Contenido\n\n")
+                            sb.append("| ID | Nombre | Tipo | Tema ID |\n")
+                            sb.append("| :--- | :--- | :--- | :--- |\n")
+                            items.forEach { 
+                                sb.append("| ${it.id} | ${it.name} | ${it.contentType} | ${it.topicId} |\n") 
+                            }
+                            sb.toString()
                         }
                     }
                     normalizedQuery.contains("persona") || normalizedQuery.contains("personas") -> {
@@ -881,7 +993,14 @@ class DatabaseQueryService(private val context: Context) {
                         if (personas.isEmpty()) {
                             "No hay personas registradas."
                         } else {
-                            "Lista de Personas:\n" + personas.joinToString("\n") { it.toString() }
+                            val sb = StringBuilder()
+                            sb.append("### 👤 Lista de Personas\n\n")
+                            sb.append("| ID | Nombres | Apellidos | Identificación |\n")
+                            sb.append("| :--- | :--- | :--- | :--- |\n")
+                            personas.forEach { 
+                                sb.append("| ${it.id} | ${it.nombres} | ${it.apellidos} | ${it.identificacion} |\n") 
+                            }
+                            sb.toString()
                         }
                     }
                     // Agrega aquí más tablas si lo necesitas

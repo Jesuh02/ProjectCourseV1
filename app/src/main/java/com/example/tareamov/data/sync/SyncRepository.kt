@@ -1858,6 +1858,34 @@ class SyncRepository(
         try {
             Log.d("SyncRepository", "Creating default submissions for task=$taskId in course=$courseId")
             
+            // IMPORTANTE: Verificar que la tarea exista localmente antes de crear submissions
+            // La tarea se guarda en Supabase pero puede no existir localmente, causando FOREIGN KEY constraint
+            var localTask = taskDao.getTaskById(taskId)
+            if (localTask == null) {
+                Log.d("SyncRepository", "Task $taskId not found locally, attempting to sync from Supabase...")
+                
+                // Intentar obtener la tarea desde Supabase
+                val remoteTask = fetchTaskByIdFromSupabase(taskId)
+                if (remoteTask != null) {
+                    try {
+                        taskDao.insertTask(remoteTask)
+                        localTask = remoteTask
+                        Log.d("SyncRepository", "Successfully synced task $taskId from Supabase to local DB")
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Failed to insert task $taskId locally", e)
+                    }
+                } else {
+                    Log.e("SyncRepository", "Task $taskId not found in Supabase either, cannot create submissions")
+                    return@withContext 0
+                }
+            }
+            
+            // Verificación final: si la tarea aún no existe localmente, no podemos continuar
+            if (localTask == null) {
+                Log.e("SyncRepository", "Task $taskId still not available locally after sync attempt")
+                return@withContext 0
+            }
+            
             // Obtener todos los estudiantes inscritos en el curso
             val enrolledStudents = progresoEstudianteDao.getProgresosByCurso(courseId)
             Log.d("SyncRepository", "Found ${enrolledStudents.size} enrolled students")
@@ -2333,6 +2361,34 @@ class SyncRepository(
             // Also try to sync to remote
             deleteSubscriptionRemote(subscriberId, creatorId)
         }
+    }
+
+    // Fetch courses created by user that have at least one graded submission (grade > 0)
+    suspend fun fetchCoursesWithGradedSubmissions(username: String): List<Course> {
+        // 1. Fetch all courses by creator
+        val courses = fetchCoursesByCreatorFromSupabase(username)
+        if (courses.isEmpty()) return emptyList()
+        
+        // 2. Filter courses that have graded submissions
+        // This is N+1 but unavoidable without complex backend RPC or view
+        val result = mutableListOf<Course>()
+        for (course in courses) {
+            val submissions = supabaseClient.fetchGradedSubmissionsForCourse(course.id)
+            if (submissions.isNotEmpty()) {
+                result.add(course)
+            }
+        }
+        return result
+    }
+
+    // Fetch graded submissions for a course with student info
+    suspend fun fetchGradedSubmissionsWithDetails(courseId: Long): List<Map<String, Any>> {
+        return supabaseClient.fetchGradedSubmissionsForCourse(courseId)
+    }
+    
+    // Fetch ALL submissions for a course (both graded and ungraded)
+    suspend fun fetchAllSubmissionsForCourse(courseId: Long): List<Map<String, Any>> {
+        return supabaseClient.fetchAllSubmissionsForCourse(courseId)
     }
 
 }

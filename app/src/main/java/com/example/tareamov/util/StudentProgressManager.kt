@@ -259,4 +259,33 @@ class StudentProgressManager(private val context: Context) {
         Log.d("StudentProgressManager", "Calculated average grade: $avg (totalGrade=$totalGrade, totalTasks=${tasks.size})")
         return avg
     }
+    
+    // Helper function to calculate student average for a course (accessible from other classes)
+    suspend fun calculateStudentAverageForCourse(courseId: Long, username: String): Float {
+        return withContext(Dispatchers.IO) {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                
+                // Fetch all tasks for the course
+                val topics = db.topicDao().getTopicsByCourse(courseId)
+                val allTasks = mutableListOf<Task>()
+                for (topic in topics) {
+                    allTasks.addAll(db.taskDao().getTasksByTopic(topic.id))
+                }
+                
+                if (allTasks.isEmpty()) return@withContext 0f
+                
+                // Fetch submissions for this student
+                val studentId = db.usuarioDao().getUsuarioByUsername(username)?.id
+                    ?: SessionManager.getInstance(context).getUserId()
+                val submissions = db.taskSubmissionDao().getStudentSubmissionsForCourse(studentId, courseId)
+                
+                // Calculate average
+                calculateWeightedAverageGrade(allTasks, submissions)
+            } catch (e: Exception) {
+                Log.e("StudentProgressManager", "Error calculating average for $username in course $courseId", e)
+                0f
+            }
+        }
+    }
 }
