@@ -75,6 +75,7 @@ class CourseDetailFragment : Fragment() {
     private lateinit var continueWatchingContainer: LinearLayout
     private var currentTab = "documentos" // Add this property for tab tracking
     private lateinit var courseActionBar: LinearLayout // To control visibility of the whole bar
+    private lateinit var skeletonLayout: FrameLayout
 
     // Add subscription state variable
     private var isSubscribed = false
@@ -145,6 +146,7 @@ class CourseDetailFragment : Fragment() {
         topicsContainer = view.findViewById(R.id.topicsContainer)
         val backButton = view.findViewById<ImageButton>(R.id.backButton)
         courseActionBar = view.findViewById(R.id.courseActionBar) // Initialize courseActionBar
+        skeletonLayout = view.findViewById(R.id.skeletonLayout)
 
         // Initialize creator info views - Creating placeholder views to prevent compilation errors (functionality moved to ExploreFragment cards)
         creatorInfoContainer = View(requireContext())
@@ -263,9 +265,6 @@ class CourseDetailFragment : Fragment() {
         coursePriceIcon = view.findViewById(R.id.coursePriceIcon)
         togglePriceButton = view.findViewById(R.id.togglePriceButton)
         editCourseButton = view.findViewById(R.id.editCourseButton)
-
-        // Animate title and description with iPhone-style entrance
-        animateCourseTitleEntrance()
 
         // Initially hide edit controls until we verify creator ownership remotely
         editCourseButton.visibility = View.GONE
@@ -811,6 +810,7 @@ class CourseDetailFragment : Fragment() {
 
     // In the loadCourseDetails() method, update to use SubscriptionDao
     private fun loadCourseDetails() {
+        startSkeletonAnimation()
         val db = AppDatabase.getDatabase(requireContext())
         val topicDao = db.topicDao()
         val contentItemDao = db.contentItemDao()
@@ -1158,8 +1158,10 @@ class CourseDetailFragment : Fragment() {
                     animateViewIfVisible(topicsContainer, 300)
                 }
 
-                animateContentSections()
+                stopSkeletonAnimation()
+                animateCourseTitleEntrance()
             } catch (e: Exception) { // This is the correct catch block for the main try
+                stopSkeletonAnimation()
                 Log.e("CourseDetailFragment", "Error loading course details", e)
                 Toast.makeText(context, "Error al cargar detalles del curso", Toast.LENGTH_SHORT).show()
                 noTopicsTextView?.text = "Error al cargar datos." // Generic error message
@@ -2748,6 +2750,33 @@ class CourseDetailFragment : Fragment() {
                 Log.e("CourseDetailFragment", "Error updating course price", e)
                 Toast.makeText(requireContext(), "Error al actualizar el precio", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun startSkeletonAnimation() {
+        skeletonLayout.visibility = View.VISIBLE
+        skeletonLayout.alpha = 1f
+    }
+
+    private fun stopSkeletonAnimation() {
+        skeletonLayout.animate()
+            .alpha(0f)
+            .setDuration(300)
+            .withEndAction {
+                skeletonLayout.visibility = View.GONE
+            }
+            .start()
+    }
+
+    private fun isNetworkAvailable(context: android.content.Context): Boolean {
+        val connectivityManager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val network = connectivityManager.activeNetwork ?: return false
+        val activeNetwork = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return when {
+            activeNetwork.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> true
+            activeNetwork.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> true
+            activeNetwork.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> true
+            else -> false
         }
     }
 }
