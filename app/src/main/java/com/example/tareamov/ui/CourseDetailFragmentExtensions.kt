@@ -22,6 +22,7 @@ import com.example.tareamov.util.CertificateGenerator
 import com.example.tareamov.util.AnimatedCertificateGenerator
 import com.example.tareamov.util.CourseProgressManager
 import com.example.tareamov.util.SessionManager
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -78,7 +79,7 @@ fun Fragment.initializeAndLoadCourseProgress(
     val progressManager = CourseProgressManager(requireContext())
 
     // Calculate and display progress
-    CoroutineScope(Dispatchers.Main).launch {
+    viewLifecycleOwner.lifecycleScope.launch {
         val averageGrade = progressManager.calculateAndDisplayCourseProgress(
             courseId = courseId,
             userId = userId,
@@ -87,6 +88,8 @@ fun Fragment.initializeAndLoadCourseProgress(
             progressPercentTextView = progressPercentTextView,
             progressStatusTextView = progressStatusTextView
         )
+
+        if (!isAdded) return@launch
 
         if (progressContainer.visibility == View.VISIBLE) {
             val offset = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
