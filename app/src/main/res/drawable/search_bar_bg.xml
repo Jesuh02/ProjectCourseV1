@@ -1,7 +1,0 @@
-<!-- res/drawable/search_bar_bg.xml -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="#1A1A1A"/>
-    <corners android:radius="16dp"/>
-    <stroke android:width="2dp" android:color="#A259FF"/>
-</shape>
