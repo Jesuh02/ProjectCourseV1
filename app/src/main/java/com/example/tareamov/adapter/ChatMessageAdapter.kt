@@ -239,33 +239,86 @@ class ChatMessageAdapter(
         }
         
         private fun formatBoldText(text: String): SpannableString {
-            // Enhanced text formatting with better markdown support
-            val cleanText = text.replace(Regex("\\*\\*(.*?)\\*\\*")) { matchResult ->
-                matchResult.groupValues[1]
+            // Process markdown formatting: **bold**, *italic*, _italic_, ##headers
+            val result = StringBuilder()
+            val boldRanges = mutableListOf<Pair<Int, Int>>()
+            val italicRanges = mutableListOf<Pair<Int, Int>>()
+            
+            var i = 0
+            while (i < text.length) {
+                when {
+                    // Bold: **text**
+                    i + 1 < text.length && text[i] == '*' && text[i + 1] == '*' -> {
+                        val endIndex = text.indexOf("**", i + 2)
+                        if (endIndex != -1) {
+                            val startPos = result.length
+                            val boldContent = text.substring(i + 2, endIndex)
+                            result.append(boldContent)
+                            boldRanges.add(Pair(startPos, result.length))
+                            i = endIndex + 2
+                        } else {
+                            result.append(text[i])
+                            i++
+                        }
+                    }
+                    // Italic: _text_ (but not in middle of word)
+                    text[i] == '_' && (i == 0 || !text[i-1].isLetterOrDigit()) -> {
+                        val endIndex = text.indexOf('_', i + 1)
+                        if (endIndex != -1 && (endIndex + 1 >= text.length || !text[endIndex + 1].isLetterOrDigit())) {
+                            val startPos = result.length
+                            val italicContent = text.substring(i + 1, endIndex)
+                            result.append(italicContent)
+                            italicRanges.add(Pair(startPos, result.length))
+                            i = endIndex + 1
+                        } else {
+                            result.append(text[i])
+                            i++
+                        }
+                    }
+                    // Headers: ## text -> just bold without ##
+                    text[i] == '#' && i + 1 < text.length && text[i + 1] == '#' -> {
+                        // Skip the ## and any following space
+                        i += 2
+                        while (i < text.length && text[i] == ' ') i++
+                        // Find end of line
+                        val lineEnd = text.indexOf('\n', i).let { if (it == -1) text.length else it }
+                        val startPos = result.length
+                        val headerContent = text.substring(i, lineEnd)
+                        result.append(headerContent)
+                        boldRanges.add(Pair(startPos, result.length))
+                        i = lineEnd
+                    }
+                    else -> {
+                        result.append(text[i])
+                        i++
+                    }
+                }
             }
             
-            val spannableString = SpannableString(cleanText)
-            val regex = Regex("\\*\\*(.*?)\\*\\*")
-            var offset = 0
+            val spannableString = SpannableString(result.toString())
             
-            // Apply bold formatting to text between **
-            regex.findAll(text).forEach { match ->
-                val originalStart = match.range.first
-                val boldText = match.groupValues[1]
-                
-                val cleanStart = originalStart - offset
-                val cleanEnd = cleanStart + boldText.length
-                
-                if (cleanStart >= 0 && cleanEnd <= cleanText.length && cleanStart < cleanEnd) {
+            // Apply bold spans
+            for ((start, end) in boldRanges) {
+                if (start >= 0 && end <= spannableString.length && start < end) {
                     spannableString.setSpan(
                         StyleSpan(Typeface.BOLD),
-                        cleanStart,
-                        cleanEnd,
+                        start,
+                        end,
                         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                 }
-                
-                offset += 4 // Account for removed ** **
+            }
+            
+            // Apply italic spans
+            for ((start, end) in italicRanges) {
+                if (start >= 0 && end <= spannableString.length && start < end) {
+                    spannableString.setSpan(
+                        StyleSpan(Typeface.ITALIC),
+                        start,
+                        end,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
             }
             
             return spannableString
