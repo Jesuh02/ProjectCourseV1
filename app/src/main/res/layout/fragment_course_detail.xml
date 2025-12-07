@@ -696,7 +696,23 @@
                 android:fontFamily="@font/sf_pro_display_regular"
                 tools:visibility="visible"/>
         </LinearLayout>
-    </androidx.core.widget.NestedScrollView>    <!-- Course Action Buttons (above bottom navigation) -->
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- Skeleton Loading Container -->
+    <FrameLayout
+        android:id="@+id/skeletonLayout"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="@drawable/bg_app_gradient"
+        android:visibility="gone"
+        android:stateListAnimator="@animator/skeleton_shimmer"
+        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        app:layout_constraintBottom_toTopOf="@id/bottomNavigation">
+
+        <include layout="@layout/layout_course_detail_skeleton" />
+    </FrameLayout>
+
+    <!-- Course Action Buttons (above bottom navigation) -->
     <LinearLayout
         android:id="@+id/courseActionBar"
         android:layout_width="0dp"

@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/bg_app_gradient"
+    android:paddingTop="80dp">
+
+    <!-- Hero Section Skeleton -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="280dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="20dp"
+        android:background="@drawable/bg_skeleton_shape"
+        android:padding="24dp">
+
+        <!-- Icon Skeleton -->
+        <View
+            android:id="@+id/iconSkeleton"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:background="@drawable/bg_skeleton_circle"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- Meta Label Skeleton -->
+        <View
+            android:layout_width="80dp"
+            android:layout_height="16dp"
+            android:layout_marginStart="10dp"
+            android:background="@drawable/bg_skeleton_shape"
+            app:layout_constraintStart_toEndOf="@id/iconSkeleton"
+            app:layout_constraintTop_toTopOf="@id/iconSkeleton"
+            app:layout_constraintBottom_toBottomOf="@id/iconSkeleton" />
+
+        <!-- Divider Skeleton -->
+        <View
+            android:id="@+id/dividerSkeleton"
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="12dp"
+            android:background="#33FFFFFF"
+            app:layout_constraintTop_toBottomOf="@id/iconSkeleton" />
+
+        <!-- Title Skeleton -->
+        <View
+            android:id="@+id/titleSkeleton"
+            android:layout_width="200dp"
+            android:layout_height="32dp"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_skeleton_shape"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/dividerSkeleton" />
+
+        <!-- Description Skeleton Lines -->
+        <View
+            android:id="@+id/descLine1"
+            android:layout_width="match_parent"
+            android:layout_height="16dp"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_skeleton_shape"
+            app:layout_constraintTop_toBottomOf="@id/titleSkeleton" />
+
+        <View
+            android:id="@+id/descLine2"
+            android:layout_width="250dp"
+            android:layout_height="16dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_skeleton_shape"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/descLine1" />
+
+        <!-- Thematic Skeleton -->
+        <View
+            android:layout_width="120dp"
+            android:layout_height="20dp"
+            android:layout_marginTop="24dp"
+            android:background="@drawable/bg_skeleton_shape"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/descLine2" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- Tabs Skeleton -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="18dp"
+        android:background="@drawable/bg_skeleton_shape"
+        android:orientation="horizontal">
+        
+        <View
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_margin="4dp"
+            android:background="@drawable/bg_skeleton_shape"
+            android:alpha="0.5"/>
+            
+        <View
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_margin="4dp"
+            android:background="@drawable/bg_skeleton_shape"
+            android:alpha="0.5"/>
+    </LinearLayout>
+
+    <!-- Content List Skeleton -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="24dp">
+
+        <!-- Item 1 -->
+        <View
+            android:layout_width="150dp"
+            android:layout_height="24dp"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_skeleton_shape" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_marginBottom="16dp"
+            android:background="@drawable/bg_skeleton_shape" />
+
+        <!-- Item 2 -->
+        <View
+            android:layout_width="180dp"
+            android:layout_height="24dp"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_skeleton_shape" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_marginBottom="16dp"
+            android:background="@drawable/bg_skeleton_shape" />
+            
+
+
+    </LinearLayout>
+
+</LinearLayout>
