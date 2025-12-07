@@ -15,6 +15,8 @@ import com.example.tareamov.data.dao.CourseDao
 import com.example.tareamov.data.dao.RolDao
 import com.example.tareamov.data.dao.RecursoDao
 import com.example.tareamov.data.dao.RolRecursoDao
+import com.example.tareamov.data.dao.VideoLikeDao
+import com.example.tareamov.data.dao.VideoCommentDao
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Topic
@@ -26,6 +28,9 @@ import com.example.tareamov.data.entity.Rol
 import com.example.tareamov.data.entity.Course
 import com.example.tareamov.data.entity.Recurso
 import com.example.tareamov.data.entity.RolRecurso
+import com.example.tareamov.data.entity.VideoLike
+import com.example.tareamov.data.entity.UserVideoLike
+import com.example.tareamov.data.entity.VideoComment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -48,7 +53,9 @@ class SyncRepository(
     private val rolRecursoDao: RolRecursoDao,
     private val chatMessageDao: com.example.tareamov.data.dao.ChatMessageDao,
     private val fileContextDao: com.example.tareamov.data.dao.FileContextDao,
-    private val progresoEstudianteDao: com.example.tareamov.data.dao.ProgresoEstudianteDao
+    private val progresoEstudianteDao: com.example.tareamov.data.dao.ProgresoEstudianteDao,
+    private val videoLikeDao: VideoLikeDao? = null,
+    private val videoCommentDao: VideoCommentDao? = null
 ) {
     // SharedPreferences-based cache to store last remote 'updated_at' per table
     private val prefs by lazy {
@@ -2389,6 +2396,362 @@ class SyncRepository(
     // Fetch ALL submissions for a course (both graded and ungraded)
     suspend fun fetchAllSubmissionsForCourse(courseId: Long): List<Map<String, Any>> {
         return supabaseClient.fetchAllSubmissionsForCourse(courseId)
+    }
+
+    // ========== VIDEO LIKES SYNC OPERATIONS ==========
+    
+    /**
+     * Get like count for a video (from Supabase first, fallback to local)
+     */
+    suspend fun getVideoLikeCount(videoId: Long): Int = withContext(Dispatchers.IO) {
+        try {
+            // Try from Supabase first
+            val remoteCount = supabaseClient.getVideoLikeCount(videoId)
+            if (remoteCount != null) {
+                // Update local cache
+                videoLikeDao?.let { dao ->
+                    // Ensure video exists locally before inserting/updating like
+                    val localVideo = videoDao.getVideoById(videoId)
+                    if (localVideo == null) {
+                        val remoteVideo = supabaseClient.fetchVideoById(videoId)
+                        if (remoteVideo != null) {
+                            // Sanitize remote video
+                            val safeVideo = remoteVideo.copy(
+                                username = remoteVideo.username ?: "Unknown",
+                                description = remoteVideo.description ?: "",
+                                title = remoteVideo.title ?: "Untitled Video"
+                            )
+                            videoDao.insertVideo(safeVideo)
+                        } else {
+                            // If video doesn't exist remotely either, we can't store the like count locally
+                            // Just return the remote count
+                            return@let
+                        }
+                    }
+
+                    val existing = dao.getLikesByVideoId(videoId)
+                    if (existing != null) {
+                        dao.updateVideoLike(existing.copy(likeCount = remoteCount))
+                    } else {
+                        dao.insertVideoLike(VideoLike(videoId = videoId, likeCount = remoteCount))
+                    }
+                }
+                return@withContext remoteCount
+            }
+            
+            // Fallback to local
+            return@withContext videoLikeDao?.getLikeCount(videoId) ?: 0
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error getting like count for video $videoId", e)
+            videoLikeDao?.getLikeCount(videoId) ?: 0
+        }
+    }
+    
+    /**
+     * Check if user has liked a video
+     */
+    suspend fun hasUserLikedVideo(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Check local first (faster)
+            return@withContext videoLikeDao?.hasUserLikedVideo(videoId, usuarioId) ?: false
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error checking user like status", e)
+            false
+        }
+    }
+    
+    /**
+     * Toggle like on a video
+     */
+    suspend fun toggleVideoLike(videoId: Long, usuarioId: Long, isLiked: Boolean): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Ensure video exists locally
+            val localVideo = videoDao.getVideoById(videoId)
+            if (localVideo == null) {
+                val remoteVideo = supabaseClient.fetchVideoById(videoId)
+                if (remoteVideo != null) {
+                    // Sanitize remote video to prevent NPE on non-null fields
+                    val safeVideo = remoteVideo.copy(
+                        username = remoteVideo.username ?: "Unknown",
+                        description = remoteVideo.description ?: "",
+                        title = remoteVideo.title ?: "Untitled Video"
+                    )
+                    videoDao.insertVideo(safeVideo)
+                } else {
+                    Log.e("SyncRepository", "Cannot toggle like: Video $videoId not found locally or remotely")
+                    return@withContext false
+                }
+            }
+
+            // Ensure user exists locally
+            val localUser = usuarioDao.getUsuarioById(usuarioId)
+            if (localUser == null) {
+                val remoteUser = supabaseClient.fetchUsuarioById(usuarioId)
+                if (remoteUser != null) {
+                    usuarioDao.insertUsuario(remoteUser)
+                } else {
+                    Log.e("SyncRepository", "Cannot toggle like: User $usuarioId not found locally or remotely")
+                    return@withContext false
+                }
+            }
+
+            if (isLiked) {
+                // Add like
+                // Update local
+                videoLikeDao?.let { dao ->
+                    val userLike = UserVideoLike(videoId = videoId, usuarioId = usuarioId)
+                    dao.insertUserLike(userLike)
+                    dao.incrementLikeCount(videoId)
+                }
+                // Sync to Supabase
+                supabaseClient.incrementVideoLike(videoId)
+                // supabaseClient.addUserVideoLike(videoId, usuarioId) // Disabled: table does not exist
+            } else {
+                // Remove like
+                // Update local
+                videoLikeDao?.let { dao ->
+                    dao.deleteUserLike(videoId, usuarioId)
+                    dao.decrementLikeCount(videoId)
+                }
+                // Sync to Supabase
+                supabaseClient.decrementVideoLike(videoId)
+                // supabaseClient.removeUserVideoLike(videoId, usuarioId) // Disabled: table does not exist
+            }
+            return@withContext true
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error toggling like for video $videoId", e)
+            false
+        }
+    }
+    
+    /**
+     * Sync all video likes from Supabase to local database
+     */
+    suspend fun syncVideoLikesFromSupabase() = withContext(Dispatchers.IO) {
+        try {
+            val remoteLikes = supabaseClient.fetchAllVideoLikes()
+            videoLikeDao?.insertAllVideoLikes(remoteLikes)
+            Log.d("SyncRepository", "Synced ${remoteLikes.size} video likes from Supabase")
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error syncing video likes from Supabase", e)
+        }
+    }
+    
+    // ========== VIDEO COMMENTS SYNC OPERATIONS ==========
+    
+    /**
+     * Add a comment to a video
+     */
+    suspend fun addVideoComment(videoId: Long, usuarioId: Long, comment: String): Long? = withContext(Dispatchers.IO) {
+        try {
+            // Ensure video exists locally to satisfy FK constraint
+            val localVideo = videoDao.getVideoById(videoId)
+            if (localVideo == null) {
+                val remoteVideo = supabaseClient.fetchVideoById(videoId)
+                if (remoteVideo != null) {
+                    // Sanitize remote video to prevent NPE on non-null fields
+                    val safeVideo = remoteVideo.copy(
+                        username = remoteVideo.username ?: "Unknown",
+                        description = remoteVideo.description ?: "",
+                        title = remoteVideo.title ?: "Untitled Video"
+                    )
+                    videoDao.insertVideo(safeVideo)
+                } else {
+                    Log.e("SyncRepository", "Cannot add comment: Video $videoId not found locally or remotely")
+                    return@withContext null
+                }
+            }
+
+            // Ensure user exists locally to satisfy FK constraint
+            val localUser = usuarioDao.getUsuarioById(usuarioId)
+            if (localUser == null) {
+                val remoteUser = supabaseClient.fetchUsuarioById(usuarioId)
+                if (remoteUser != null) {
+                    usuarioDao.insertUsuario(remoteUser)
+                } else {
+                    Log.e("SyncRepository", "Cannot add comment: User $usuarioId not found locally or remotely")
+                    return@withContext null
+                }
+            }
+
+            // Add to Supabase first
+            val remoteId = supabaseClient.addVideoComment(videoId, usuarioId, comment)
+            
+            if (remoteId != null) {
+                // Add to local with the remote ID
+                val localComment = VideoComment(
+                    id = remoteId,
+                    videoId = videoId,
+                    usuarioId = usuarioId,
+                    comment = comment
+                )
+                videoCommentDao?.insertComment(localComment)
+            }
+            
+            return@withContext remoteId
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error adding comment to video $videoId", e)
+            null
+        }
+    }
+    
+    /**
+     * Get comments for a video
+     */
+    suspend fun getVideoComments(videoId: Long): List<VideoComment> = withContext(Dispatchers.IO) {
+        try {
+            // Try from Supabase first for fresh data
+            val remoteComments = supabaseClient.getVideoComments(videoId)
+            
+            if (remoteComments.isNotEmpty()) {
+                // Ensure video exists locally
+                val localVideo = videoDao.getVideoById(videoId)
+                if (localVideo == null) {
+                    val remoteVideo = supabaseClient.fetchVideoById(videoId)
+                    if (remoteVideo != null) {
+                        // Sanitize remote video to prevent NPE on non-null fields
+                        val safeVideo = remoteVideo.copy(
+                            username = remoteVideo.username ?: "Unknown",
+                            description = remoteVideo.description ?: "",
+                            title = remoteVideo.title ?: "Untitled Video"
+                        )
+                        videoDao.insertVideo(safeVideo)
+                    }
+                }
+
+                // Ensure all users exist locally
+                val userIds = remoteComments.map { it.usuarioId }.distinct()
+                userIds.forEach { uid ->
+                    if (usuarioDao.getUsuarioById(uid) == null) {
+                         val u = supabaseClient.fetchUsuarioById(uid)
+                         if (u != null) usuarioDao.insertUsuario(u)
+                    }
+                }
+
+                // Update local cache
+                videoCommentDao?.insertAllComments(remoteComments)
+                return@withContext remoteComments
+            }
+            
+            // Fallback to local
+            return@withContext videoCommentDao?.getCommentsByVideoId(videoId) ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error getting comments for video $videoId", e)
+            videoCommentDao?.getCommentsByVideoId(videoId) ?: emptyList()
+        }
+    }
+    
+    /**
+     * Get comment count for a video
+     */
+    suspend fun getVideoCommentCount(videoId: Long): Int = withContext(Dispatchers.IO) {
+        try {
+            // Try from Supabase first
+            val remoteCount = supabaseClient.getVideoCommentCount(videoId)
+            if (remoteCount > 0) {
+                return@withContext remoteCount
+            }
+            
+            // Fallback to local
+            return@withContext videoCommentDao?.getCommentCount(videoId) ?: 0
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error getting comment count for video $videoId", e)
+            videoCommentDao?.getCommentCount(videoId) ?: 0
+        }
+    }
+    
+    /**
+     * Delete a comment
+     */
+    suspend fun deleteVideoComment(commentId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Delete from Supabase first
+            val success = supabaseClient.deleteVideoComment(commentId)
+            
+            if (success) {
+                // Delete from local
+                videoCommentDao?.deleteCommentById(commentId)
+            }
+            
+            return@withContext success
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error deleting comment $commentId", e)
+            false
+        }
+    }
+    
+    /**
+     * Sync all video comments from Supabase to local database
+     */
+    suspend fun syncVideoCommentsFromSupabase() = withContext(Dispatchers.IO) {
+        try {
+            val remoteComments = supabaseClient.fetchAllVideoComments()
+            videoCommentDao?.insertAllComments(remoteComments)
+            Log.d("SyncRepository", "Synced ${remoteComments.size} video comments from Supabase")
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error syncing video comments from Supabase", e)
+        }
+    }
+    
+    // ========== DOCENTE ROLE OPERATIONS ==========
+    
+    /**
+     * Check if user is docente or higher
+     */
+    suspend fun isUserDocente(userId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Check from Supabase
+            return@withContext supabaseClient.isUserDocente(userId)
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error checking docente status for user $userId", e)
+            false
+        }
+    }
+    
+    /**
+     * Promote user to docente role
+     */
+    suspend fun promoteUserToDocente(userId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Promote in Supabase
+            val success = supabaseClient.promoteToDocente(userId)
+            
+            if (success) {
+                // Update local
+                val docenteRole = rolDao.getDocenteRole()
+                if (docenteRole != null) {
+                    val user = usuarioDao.getUsuarioById(userId)
+                    if (user != null) {
+                        usuarioDao.updateUsuario(user.copy(rol_id = docenteRole.id))
+                    }
+                }
+            }
+            
+            return@withContext success
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error promoting user $userId to docente", e)
+            false
+        }
+    }
+    
+    /**
+     * Initialize docente role in database if not exists
+     */
+    suspend fun initializeDocenteRole() = withContext(Dispatchers.IO) {
+        try {
+            if (!rolDao.roleExists("docente")) {
+                val docenteRole = Rol.createDocenteRole()
+                rolDao.insertRol(docenteRole)
+                Log.d("SyncRepository", "Created docente role")
+            }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error initializing docente role", e)
+        }
+    }
+
+    // Helper to get user by ID locally
+    suspend fun getUsuarioByIdLocal(userId: Long): Usuario? {
+        return usuarioDao.getUsuarioById(userId)
     }
 
 }

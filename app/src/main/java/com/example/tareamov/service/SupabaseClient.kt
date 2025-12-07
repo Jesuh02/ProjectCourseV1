@@ -1544,6 +1544,16 @@ object SupabaseClient {
         }
     }
 
+    suspend fun fetchVideoById(id: Long): VideoData? = withContext(Dispatchers.IO) {
+        try {
+            val list = fetchList("videos?id=eq.$id", Array<VideoData>::class.java)
+            list.firstOrNull()
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching video by id $id", e)
+            null
+        }
+    }
+
     suspend fun fetchVideos(): List<VideoData> = withContext(Dispatchers.IO) {
         try {
             // Try typed mapping first
@@ -2448,20 +2458,6 @@ object SupabaseClient {
             Log.e("SupabaseClient", "❌ Error executing raw SQL: ${e.message}", e)
             e.printStackTrace()
             return@withContext emptyList()
-        }
-    }
-
-    /**
-     * Fetch Video by ID
-     */
-    suspend fun fetchVideoById(id: Long): VideoData? = withContext(Dispatchers.IO) {
-        try {
-            val path = "videos?id=eq.$id"
-            val list = fetchList(path, Array<VideoData>::class.java)
-            return@withContext list.firstOrNull()
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching video by ID", e)
-            return@withContext null
         }
     }
 
@@ -3611,6 +3607,455 @@ object SupabaseClient {
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error fetching courses by creator $creatorUserId", e)
             emptyList()
+        }
+    }
+
+    // ========== VIDEO LIKES OPERATIONS ==========
+    
+    /**
+     * Get like count for a video from Supabase
+     */
+    suspend fun getVideoLikeCount(videoId: Long): Int? = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/video_likes?video_id=eq.$videoId&select=like_count"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            requestListener?.invoke(url)
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e("SupabaseClient", "getVideoLikeCount failed: ${response.code}")
+                    return@withContext null
+                }
+                
+                val body = response.body?.string() ?: return@withContext null
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                if (jsonArray.size() > 0) {
+                    return@withContext jsonArray[0].asJsonObject.get("like_count")?.asInt ?: 0
+                }
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error getting like count for video $videoId", e)
+            null
+        }
+    }
+    
+    /**
+     * Increment like count for a video (or create entry if not exists)
+     */
+    suspend fun incrementVideoLike(videoId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val key = effectiveApiKey()
+            
+            // First try to update existing record
+            val updateUrl = "$baseUrl/rest/v1/rpc/increment_video_like"
+            val updateBody = gson.toJson(mapOf("p_video_id" to videoId)).toRequestBody(jsonMedia)
+            
+            val updateRequest = Request.Builder()
+                .url(updateUrl)
+                .post(updateBody)
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Content-Type", "application/json")
+                .build()
+            
+            client.newCall(updateRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    Log.d("SupabaseClient", "Incremented like for video $videoId via RPC")
+                    return@withContext true
+                }
+            }
+            
+            // Fallback: Check if record exists and upsert
+            val existingCount = getVideoLikeCount(videoId)
+            if (existingCount != null) {
+                // Update existing
+                val patchUrl = "$baseUrl/rest/v1/video_likes?video_id=eq.$videoId"
+                val patchBody = gson.toJson(mapOf("like_count" to (existingCount + 1))).toRequestBody(jsonMedia)
+                
+                val patchRequest = Request.Builder()
+                    .url(patchUrl)
+                    .patch(patchBody)
+                    .addHeader("apikey", key)
+                    .addHeader("Authorization", "Bearer $key")
+                    .addHeader("Content-Type", "application/json")
+                    .build()
+                
+                client.newCall(patchRequest).execute().use { resp ->
+                    return@withContext resp.isSuccessful
+                }
+            } else {
+                // Insert new
+                val insertUrl = "$baseUrl/rest/v1/video_likes"
+                val insertBody = gson.toJson(mapOf(
+                    "video_id" to videoId,
+                    "like_count" to 1
+                )).toRequestBody(jsonMedia)
+                
+                val insertRequest = Request.Builder()
+                    .url(insertUrl)
+                    .post(insertBody)
+                    .addHeader("apikey", key)
+                    .addHeader("Authorization", "Bearer $key")
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Prefer", "return=minimal")
+                    .build()
+                
+                client.newCall(insertRequest).execute().use { resp ->
+                    return@withContext resp.isSuccessful
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error incrementing like for video $videoId", e)
+            false
+        }
+    }
+    
+    /**
+     * Decrement like count for a video
+     */
+    suspend fun decrementVideoLike(videoId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val key = effectiveApiKey()
+            val existingCount = getVideoLikeCount(videoId) ?: return@withContext false
+            
+            if (existingCount <= 0) return@withContext true
+            
+            val patchUrl = "$baseUrl/rest/v1/video_likes?video_id=eq.$videoId"
+            val patchBody = gson.toJson(mapOf("like_count" to (existingCount - 1))).toRequestBody(jsonMedia)
+            
+            val request = Request.Builder()
+                .url(patchUrl)
+                .patch(patchBody)
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Content-Type", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { resp ->
+                return@withContext resp.isSuccessful
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error decrementing like for video $videoId", e)
+            false
+        }
+    }
+    
+    /**
+     * Add a user like to a video
+     */
+    suspend fun addUserVideoLike(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
+        // Table 'user_video_likes' does not exist in Supabase and we cannot create it.
+        // We only sync the count via incrementVideoLike.
+        Log.w("SupabaseClient", "addUserVideoLike: Skipped because 'user_video_likes' table is missing.")
+        return@withContext true
+    }
+
+    /**
+     * Remove a user like from a video
+     */
+    suspend fun removeUserVideoLike(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
+        // Table 'user_video_likes' does not exist in Supabase.
+        Log.w("SupabaseClient", "removeUserVideoLike: Skipped because 'user_video_likes' table is missing.")
+        return@withContext true
+    }
+
+    /**
+     * Check if user has liked a video
+     */
+    suspend fun hasUserLikedVideo(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
+        // Table 'user_video_likes' does not exist in Supabase.
+        // We cannot check remote status for specific user.
+        return@withContext false
+    }
+
+    /**
+     * Fetch all video likes from Supabase
+     */
+    suspend fun fetchAllVideoLikes(): List<com.example.tareamov.data.entity.VideoLike> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/video_likes?select=*"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                jsonArray.map { elem ->
+                    val obj = elem.asJsonObject
+                    com.example.tareamov.data.entity.VideoLike(
+                        id = obj.get("id")?.asLong ?: 0,
+                        videoId = obj.get("video_id")?.asLong ?: 0,
+                        likeCount = obj.get("like_count")?.asInt ?: 0
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching all video likes", e)
+            emptyList()
+        }
+    }
+
+    // ========== VIDEO COMMENTS OPERATIONS ==========
+    
+    /**
+     * Add a comment to a video
+     */
+    suspend fun addVideoComment(videoId: Long, usuarioId: Long, comment: String): Long? = withContext(Dispatchers.IO) {
+        try {
+            val payload = mapOf(
+                "video_id" to videoId,
+                "usuario_id" to usuarioId,
+                "comment" to comment
+            )
+            return@withContext insertRecord("video_comments", payload)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error adding comment to video $videoId", e)
+            null
+        }
+    }
+    
+    /**
+     * Get comments for a video
+     */
+    suspend fun getVideoComments(videoId: Long): List<com.example.tareamov.data.entity.VideoComment> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/video_comments?video_id=eq.$videoId&order=created_at.desc"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                jsonArray.map { elem ->
+                    val obj = elem.asJsonObject
+                    com.example.tareamov.data.entity.VideoComment(
+                        id = obj.get("id")?.asLong ?: 0,
+                        videoId = obj.get("video_id")?.asLong ?: 0,
+                        usuarioId = obj.get("usuario_id")?.asLong ?: 0,
+                        comment = obj.get("comment")?.asString ?: "",
+                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
+                            obj.get("created_at").asString else null
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching comments for video $videoId", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * Get comment count for a video
+     */
+    suspend fun getVideoCommentCount(videoId: Long): Int = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/video_comments?video_id=eq.$videoId&select=id"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .addHeader("Prefer", "count=exact")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                // Try to get count from header first
+                val countHeader = response.header("content-range")
+                if (countHeader != null) {
+                    val count = countHeader.substringAfter("/").toIntOrNull()
+                    if (count != null) return@withContext count
+                }
+                
+                // Fallback: count array elements
+                if (!response.isSuccessful) return@withContext 0
+                val body = response.body?.string() ?: return@withContext 0
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                return@withContext jsonArray.size()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error getting comment count for video $videoId", e)
+            0
+        }
+    }
+    
+    /**
+     * Delete a comment
+     */
+    suspend fun deleteVideoComment(commentId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/video_comments?id=eq.$commentId"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .build()
+            
+            client.newCall(request).execute().use { resp ->
+                return@withContext resp.isSuccessful
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error deleting comment $commentId", e)
+            false
+        }
+    }
+    
+    /**
+     * Fetch all video comments from Supabase
+     */
+    suspend fun fetchAllVideoComments(): List<com.example.tareamov.data.entity.VideoComment> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/video_comments?select=*&order=created_at.desc"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                jsonArray.map { elem ->
+                    val obj = elem.asJsonObject
+                    com.example.tareamov.data.entity.VideoComment(
+                        id = obj.get("id")?.asLong ?: 0,
+                        videoId = obj.get("video_id")?.asLong ?: 0,
+                        usuarioId = obj.get("usuario_id")?.asLong ?: 0,
+                        comment = obj.get("comment")?.asString ?: "",
+                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
+                            obj.get("created_at").asString else null
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching all video comments", e)
+            emptyList()
+        }
+    }
+    
+    // ========== DOCENTE ROLE OPERATIONS ==========
+    
+    /**
+     * Check if a user has docente role or higher
+     */
+    suspend fun isUserDocente(userId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/usuarios?id=eq.$userId&select=rol_id,roles(nombre,nivel)"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                
+                val body = response.body?.string() ?: return@withContext false
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                if (jsonArray.size() > 0) {
+                    val user = jsonArray[0].asJsonObject
+                    val roles = user.getAsJsonObject("roles")
+                    if (roles != null) {
+                        val nivel = roles.get("nivel")?.asFloat ?: 0f
+                        return@withContext nivel >= 1.5f // NIVEL_DOCENTE
+                    }
+                }
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error checking docente status for user $userId", e)
+            false
+        }
+    }
+    
+    /**
+     * Promote user to docente role
+     */
+    suspend fun promoteToDocente(userId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // First get the docente role id
+            val rolesUrl = "$baseUrl/rest/v1/roles?nombre=eq.docente&select=id"
+            val key = effectiveApiKey()
+            
+            val rolesRequest = Request.Builder()
+                .url(rolesUrl)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            var docenteRoleId: Long? = null
+            client.newCall(rolesRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    if (!body.isNullOrEmpty()) {
+                        val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                        if (jsonArray.size() > 0) {
+                            docenteRoleId = jsonArray[0].asJsonObject.get("id")?.asLong
+                        }
+                    }
+                }
+            }
+            
+            if (docenteRoleId == null) {
+                Log.e("SupabaseClient", "Docente role not found in database")
+                return@withContext false
+            }
+            
+            // Update user's role
+            return@withContext updateRecord("usuarios", userId, mapOf("rol_id" to docenteRoleId))
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error promoting user $userId to docente", e)
+            false
         }
     }
 }

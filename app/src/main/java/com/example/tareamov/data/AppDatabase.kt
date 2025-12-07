@@ -25,6 +25,8 @@ import com.example.tareamov.data.dao.RolDao
 import com.example.tareamov.data.dao.RecursoDao
 import com.example.tareamov.data.dao.RolRecursoDao
 import com.example.tareamov.data.dao.ProgresoEstudianteDao
+import com.example.tareamov.data.dao.VideoLikeDao
+import com.example.tareamov.data.dao.VideoCommentDao
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.VideoData
@@ -40,6 +42,9 @@ import com.example.tareamov.data.entity.Rol
 import com.example.tareamov.data.entity.Recurso
 import com.example.tareamov.data.entity.RolRecurso
 import com.example.tareamov.data.entity.ProgresoEstudiante
+import com.example.tareamov.data.entity.VideoLike
+import com.example.tareamov.data.entity.UserVideoLike
+import com.example.tareamov.data.entity.VideoComment
 import com.example.tareamov.service.OllamaService
 import com.example.tareamov.service.MSPClient
 import kotlinx.coroutines.CoroutineScope
@@ -64,9 +69,12 @@ import com.example.tareamov.service.DatabaseContextHttpServer
         Rol::class,
         Recurso::class,
         RolRecurso::class,
-        ProgresoEstudiante::class
+        ProgresoEstudiante::class,
+        VideoLike::class,
+        UserVideoLike::class,
+        VideoComment::class
     ],
-    version = 30, // <-- Update version to add email and avatar columns to usuarios
+    version = 31, // Updated version to add video_likes, user_video_likes, and video_comments tables
     exportSchema = false
 )
 @TypeConverters(VideoDataConverters::class)
@@ -86,6 +94,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recursoDao(): RecursoDao  // Add RecursoDao
     abstract fun rolRecursoDao(): RolRecursoDao  // Add RolRecursoDao
     abstract fun progresoEstudianteDao(): ProgresoEstudianteDao  // Add ProgresoEstudianteDao
+    abstract fun videoLikeDao(): VideoLikeDao  // Add VideoLikeDao
+    abstract fun videoCommentDao(): VideoCommentDao  // Add VideoCommentDao
 
     // Métodos para notificar cambios en la base de datos
     fun notifyDataChanged() {
@@ -159,7 +169,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
                         MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
                         MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
-                        MIGRATION_29_30
+                        MIGRATION_29_30, MIGRATION_30_31
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -1046,6 +1056,58 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.i(TAG, "Migration 29 to 30 completed: Added email and avatar columns to usuarios table")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 29 to 30", e)
+                }
+            }
+        }
+
+        // Migration 30 to 31: Add video_likes, user_video_likes, and video_comments tables
+        private val MIGRATION_30_31 = object : Migration(30, 31) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    // Create video_likes table
+                    db.execSQL("""
+                        CREATE TABLE IF NOT EXISTS `video_likes` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `video_id` INTEGER NOT NULL,
+                            `like_count` INTEGER NOT NULL DEFAULT 0,
+                            FOREIGN KEY(`video_id`) REFERENCES `videos`(`id`) ON DELETE CASCADE
+                        )
+                    """)
+                    db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_video_likes_video_id` ON `video_likes` (`video_id`)")
+                    
+                    // Create user_video_likes table (to track which user liked which video)
+                    db.execSQL("""
+                        CREATE TABLE IF NOT EXISTS `user_video_likes` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `video_id` INTEGER NOT NULL,
+                            `usuario_id` INTEGER NOT NULL,
+                            `created_at` TEXT,
+                            FOREIGN KEY(`video_id`) REFERENCES `videos`(`id`) ON DELETE CASCADE,
+                            FOREIGN KEY(`usuario_id`) REFERENCES `usuarios`(`id`) ON DELETE CASCADE
+                        )
+                    """)
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_user_video_likes_video_id` ON `user_video_likes` (`video_id`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_user_video_likes_usuario_id` ON `user_video_likes` (`usuario_id`)")
+                    db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_user_video_likes_video_id_usuario_id` ON `user_video_likes` (`video_id`, `usuario_id`)")
+                    
+                    // Create video_comments table
+                    db.execSQL("""
+                        CREATE TABLE IF NOT EXISTS `video_comments` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `video_id` INTEGER NOT NULL,
+                            `usuario_id` INTEGER NOT NULL,
+                            `comment` TEXT NOT NULL,
+                            `created_at` TEXT,
+                            FOREIGN KEY(`video_id`) REFERENCES `videos`(`id`) ON DELETE CASCADE,
+                            FOREIGN KEY(`usuario_id`) REFERENCES `usuarios`(`id`) ON DELETE CASCADE
+                        )
+                    """)
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_video_comments_video_id` ON `video_comments` (`video_id`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_video_comments_usuario_id` ON `video_comments` (`usuario_id`)")
+                    
+                    Log.i(TAG, "Migration 30 to 31 completed: Added video_likes, user_video_likes, and video_comments tables")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 30 to 31", e)
                 }
             }
         }
