@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_bottom_sheet"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <!-- Handle bar -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="24dp"
+        android:background="#40FFFFFF" />
+
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="200dp"
+        android:layout_marginBottom="16dp"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="0dp"
+        app:cardBackgroundColor="#2A2A2A">
+
+        <ImageView
+            android:id="@+id/sheetCourseImage"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_video" />
+            
+        <ImageView
+            android:id="@+id/sheetPlayIcon"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="center"
+            android:src="@android:drawable/ic_media_play"
+            app:tint="@color/white" />
+
+    </androidx.cardview.widget.CardView>
+
+    <TextView
+        android:id="@+id/sheetCourseTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:text="Título del Curso"
+        android:textColor="@color/white"
+        android:textSize="22sp"
+        android:textStyle="bold" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/sheetCourseCreator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Creador"
+            android:textColor="#AAAAAA"
+            android:textSize="14sp" />
+            
+        <View
+            android:layout_width="4dp"
+            android:layout_height="4dp"
+            android:layout_marginHorizontal="8dp"
+            android:background="@drawable/circle_shape"
+            android:backgroundTint="#AAAAAA"/>
+            
+        <TextView
+            android:id="@+id/sheetCoursePrice"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Gratis"
+            android:textColor="@color/purple_500"
+            android:textStyle="bold"
+            android:textSize="14sp" />
+
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/sheetCourseDescription"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="24dp"
+        android:text="Descripción del curso..."
+        android:textColor="#DDDDDD"
+        android:textSize="14sp"
+        android:maxLines="4"
+        android:ellipsize="end" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:weightSum="2">
+
+        <Button
+            android:id="@+id/sheetBtnEnroll"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:backgroundTint="#333333"
+            android:text="Inscribirse"
+            android:textColor="@color/white"
+            android:textAllCaps="false" />
+
+        <Button
+            android:id="@+id/sheetBtnOpen"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:backgroundTint="@color/purple_500"
+            android:text="Ver Curso"
+            android:textColor="@color/white"
+            android:textAllCaps="false" />
+
+    </LinearLayout>
+
+</LinearLayout>
