@@ -196,13 +196,13 @@ class ChatBotFragment : Fragment() {
     }
 
     private fun getMicroserviceBaseUrl(): String {
-        val hostIp = getHostIpAddress()
-        return "http://$hostIp:3001/"
+        // Use Railway Cloud in production
+        return "https://mcp-backenddeploy-production.up.railway.app/"
     }
 
     private fun getOllamaUrl(): String {
-        val hostIp = getHostIpAddress()
-        return "http://$hostIp:11435"
+        // Ollama is now replaced by DeepSeek in the cloud backend
+        return "https://mcp-backenddeploy-production.up.railway.app"
     }
     // Aumentar los timeouts para evitar que el chat cierre la espera antes de que el modelo responda
     private val microservicioApi: MicroservicioApi by lazy {

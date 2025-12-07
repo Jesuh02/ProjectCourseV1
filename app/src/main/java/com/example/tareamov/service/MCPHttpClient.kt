@@ -49,13 +49,16 @@ class MCPHttpClient(private val context: Context) {
     private suspend fun <T> withMcpBase(action: suspend (String) -> T): T? {
         val candidates = LinkedHashSet<String>()
         
-        // Priority 1: Active base URL
-        activeBaseUrl?.let { candidates.add(it) }
+        // Priority 1: Railway Cloud (Production) - ALWAYS TRY FIRST
+        candidates.add(ServerEndpointResolver.RAILWAY_MCP_URL)
         
-        // Priority 2: Emulator fallback (Always try this for reliability in dev)
+        // Priority 2: Active base URL (if different from Railway)
+        activeBaseUrl?.let { if (it != ServerEndpointResolver.RAILWAY_MCP_URL) candidates.add(it) }
+        
+        // Priority 3: Emulator fallback (for local development only)
         candidates.add("http://10.0.2.2:3000")
         
-        // Priority 3: Discovery (if not already covered)
+        // Priority 4: Discovery (if not already covered)
         val discovered = ServerEndpointResolver.getMcpBaseUrl(false)
         if (discovered != null) candidates.add(discovered)
         
