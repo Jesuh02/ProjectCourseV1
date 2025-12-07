@@ -171,15 +171,15 @@
                 android:layout_height="wrap_content"
                 android:background="@drawable/bg_message_user"
                 android:backgroundTint="#1A1A1A"
-                android:padding="12dp"
+                android:padding="14dp"
                 android:orientation="vertical">
 
                 <TextView
                     android:id="@+id/botMessageTextView"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textColor="#FFFFFF"
-                    android:textSize="15sp"
+                    android:textColor="#E8E8E8"
+                    android:textSize="14sp"
                     android:lineSpacingExtra="4dp"
                     android:textIsSelectable="true"
                     android:fontFamily="sans-serif"

@@ -41,6 +41,7 @@ import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
+import com.example.tareamov.service.CloudflareR2Service
 import com.example.tareamov.service.SupabaseClient
 import de.hdodenhof.circleimageview.CircleImageView
 import android.view.ViewOutlineProvider
@@ -1654,8 +1655,32 @@ class UserProfileViewFragment : Fragment() {
         currentCourseForThumbnailChange?.let { course ->
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
+                    // Subir miniatura a Cloudflare R2 si está configurado
+                    var finalThumbnailUri = imageUri.toString()
+                    if (CloudflareR2Service.isConfigured()) {
+                        Toast.makeText(requireContext(), "Subiendo miniatura a la nube...", Toast.LENGTH_SHORT).show()
+                        val result = withContext(Dispatchers.IO) {
+                            CloudflareR2Service.uploadFile(
+                                context = requireContext(),
+                                fileUri = imageUri,
+                                folder = "thumbnails/courses",
+                                customFileName = "course_${course.id}_${System.currentTimeMillis()}"
+                            )
+                        }
+                        when (result) {
+                            is CloudflareR2Service.UploadResult.Success -> {
+                                finalThumbnailUri = result.url
+                                Log.d("UserProfileView", "☁️ Thumbnail uploaded to R2: $finalThumbnailUri")
+                            }
+                            is CloudflareR2Service.UploadResult.Error -> {
+                                Log.e("UserProfileView", "❌ Failed to upload thumbnail: ${result.message}")
+                                Toast.makeText(requireContext(), "Error subiendo a nube, usando local", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+
                     // Update the course with new thumbnail
-                    val updatedCourse = course.copy(thumbnailUri = imageUri.toString())
+                    val updatedCourse = course.copy(thumbnailUri = finalThumbnailUri)
 
                     withContext(Dispatchers.IO) {
                         // Update in VideoData table

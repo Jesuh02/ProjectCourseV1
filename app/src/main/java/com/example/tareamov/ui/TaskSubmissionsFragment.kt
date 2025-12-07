@@ -780,22 +780,61 @@ class TaskSubmissionsFragment : Fragment() {
         
         // Mostrar progreso mientras se procesa
         progressSection.visibility = View.VISIBLE
-        progressBar.isIndeterminate = true
-        progressTextView.text = "Analizando archivo $fileName..."
+        progressBar.isIndeterminate = false
+        progressBar.progress = 0
+        progressTextView.text = "Preparando archivo $fileName..."
         
-        val submission = TaskSubmission(
-            taskId = taskId,
-            studentId = currentUserId,
-            fileUri = finalUri.toString(),
-            fileName = fileName,
-            submissionDate = System.currentTimeMillis(),
-            grade = 0.0f, // Nota por defecto 0 en lugar de null
-            feedback = null
-        )
-
         CoroutineScope(Dispatchers.Main).launch {
             try {
+                // PASO 0: Subir archivo a Cloudflare R2 si está configurado
+                var cloudFileUri = finalUri.toString()
+                val currentUsername = sessionManager.getUsername() ?: "unknown"
+                
+                if (com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
+                    progressTextView.text = "Subiendo archivo a la nube..."
+                    progressBar.progress = 10
+                    
+                    val uploadResult = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.CloudflareR2Service.uploadSubmission(
+                            context = requireContext(),
+                            fileUri = finalUri,
+                            taskId = taskId,
+                            username = currentUsername
+                        ) { progress ->
+                            CoroutineScope(Dispatchers.Main).launch {
+                                progressBar.progress = 10 + (progress * 0.3).toInt() // 10-40%
+                                progressTextView.text = "Subiendo archivo: $progress%"
+                            }
+                        }
+                    }
+                    
+                    when (uploadResult) {
+                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
+                            cloudFileUri = uploadResult.url
+                            Log.d("TaskSubmissionsFragment", "✅ Archivo subido a R2: $cloudFileUri")
+                            progressTextView.text = "Archivo subido, procesando..."
+                        }
+                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
+                            Log.w("TaskSubmissionsFragment", "⚠️ R2 upload failed: ${uploadResult.message}")
+                            // Continuar con URI local si falla R2
+                        }
+                    }
+                }
+                
+                progressBar.progress = 40
+                
+                val submission = TaskSubmission(
+                    taskId = taskId,
+                    studentId = currentUserId,
+                    fileUri = cloudFileUri, // Usar URL de R2 o local
+                    fileName = fileName,
+                    submissionDate = System.currentTimeMillis(),
+                    grade = 0.0f,
+                    feedback = null
+                )
+
                 // PASO 1: Extraer el contenido del archivo ANTES de subirlo
+                progressTextView.text = "Analizando contenido del archivo..."
                 Log.d("TaskSubmissionsFragment", "🔄 Extrayendo contenido del archivo antes de subir...")
                 val analysisResult = withContext(Dispatchers.IO) {
                     fileAnalysisService.extractFileContent(uri, fileName)
@@ -803,6 +842,7 @@ class TaskSubmissionsFragment : Fragment() {
                 Log.d("TaskSubmissionsFragment", "📊 Contenido extraído: ${analysisResult.content.take(100)}...")
 
                 progressTextView.text = "Generando contexto estructurado..."
+                progressBar.progress = 50
                 var structuredFileContext: FileContext? = null
                 try {
                     structuredFileContext = withContext(Dispatchers.IO) {
@@ -829,7 +869,7 @@ class TaskSubmissionsFragment : Fragment() {
                 }
 
                 progressTextView.text = "Subiendo tarea al servidor..."
-                progressBar.progress = 30
+                progressBar.progress = 60
                 
                 try {
                     // Directly insert submission to Supabase
@@ -866,7 +906,7 @@ class TaskSubmissionsFragment : Fragment() {
                         if (created != null) {
                             // PASO 2: Crear el FileContext con el contenido extraído
                             progressTextView.text = "Guardando contexto del archivo..."
-                            progressBar.progress = 70
+                            progressBar.progress = 80
                             
                             val createdSubmissionId = created.id
                             val taskDescription = withContext(Dispatchers.IO) {

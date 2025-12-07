@@ -869,7 +869,7 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
     }
     
     /**
-     * Format JSON array results from MCP
+     * Format JSON array results from MCP - Estilo cards limpias como ChatGPT
      */
     private fun formatMCPJsonArrayResults(data: JSONArray): String {
         if (data.length() == 0) return "No se encontraron resultados."
@@ -878,59 +878,104 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         if (data.length() == 1) {
             val item = data.getJSONObject(0)
             if (item.length() == 1 && (item.has("count") || item.has("COUNT"))) {
-                return item.optString("count", item.optString("COUNT"))
+                val count = item.optString("count", item.optString("COUNT"))
+                return "📊 Total: $count registros"
             }
         }
         
         val sb = StringBuilder()
+        
+        // Get all columns from first item
+        val firstItem = data.getJSONObject(0)
+        val columns = mutableListOf<String>()
+        val keys = firstItem.keys()
+        while (keys.hasNext()) {
+            columns.add(keys.next())
+        }
+        
+        // Build column labels (friendly names)
+        val columnLabels = columns.map { col ->
+            when (col.lowercase()) {
+                "id" -> "ID"
+                "usuario" -> "Usuario"
+                "email" -> "Email"
+                "nombre_completo" -> "Nombre"
+                "telefono" -> "Teléfono"
+                "rol" -> "Rol"
+                "activo" -> "Activo"
+                "fecha_registro" -> "Registro"
+                "title", "titulo" -> "Título"
+                "description", "descripcion" -> "Descripción"
+                "created_at" -> "Creado"
+                "updated_at" -> "Actualizado"
+                "name", "nombre" -> "Nombre"
+                else -> col.replaceFirstChar { it.uppercase() }.replace("_", " ")
+            }
+        }
+        
+        // Formato de cards verticales - más limpio en móvil
         for (i in 0 until data.length()) {
             val item = data.getJSONObject(i)
             
-            // Format as simple list
-            if (item.length() == 1) {
-                // Single field result (e.g., just a name or title)
-                val keys = item.keys()
-                if (keys.hasNext()) {
-                    sb.append("${i + 1}. ${item.get(keys.next())}\n")
-                }
-            } else {
-                // Multiple fields - show key fields
-                sb.append("${i + 1}. ")
-                val keys = item.keys()
-                var count = 0
-                while (keys.hasNext() && count < 3) {
-                    val key = keys.next()
-                    sb.append("$key: ${item.get(key)}, ")
-                    count++
-                }
+            // Número de registro
+            sb.append("━━━ ${i + 1} ━━━\n")
+            
+            // Cada campo en una línea
+            columns.forEachIndexed { index, col ->
+                val value = item.opt(col)?.toString() ?: "-"
+                val label = columnLabels[index]
+                sb.append("$label: $value\n")
+            }
+            
+            // Espaciado entre registros
+            if (i < data.length() - 1) {
                 sb.append("\n")
             }
         }
-        return sb.toString().trim()
+        
+        // Resumen final
+        sb.append("\n━━━━━━━━━━━━━━\n")
+        sb.append("Total: ${data.length()} resultados")
+        
+        return sb.toString()
     }
     
     /**
-     * Format JSON object result from MCP
+     * Format JSON object result from MCP - Estilo card minimalista
      */
     private fun formatMCPJsonObjectResult(data: JSONObject): String {
         if (data.length() == 0) return "No se encontraron resultados."
         
         // Check for count result
         if (data.length() == 1 && (data.has("count") || data.has("COUNT"))) {
-            return data.optString("count", data.optString("COUNT"))
+            val count = data.optString("count", data.optString("COUNT"))
+            return "📊 Total: $count registros"
         }
         
         val sb = StringBuilder()
+        sb.append("━━━ Resultado ━━━\n")
+        
         val keys = data.keys()
         while (keys.hasNext()) {
             val key = keys.next()
-            sb.append("$key: ${data.get(key)}\n")
+            val label = when (key.lowercase()) {
+                "id" -> "ID"
+                "usuario" -> "Usuario"
+                "email" -> "Email"
+                "nombre_completo" -> "Nombre"
+                "telefono" -> "Teléfono"
+                "rol" -> "Rol"
+                "activo" -> "Activo"
+                "fecha_registro" -> "Registro"
+                else -> key.replaceFirstChar { it.uppercase() }.replace("_", " ")
+            }
+            sb.append("$label: ${data.get(key)}\n")
         }
         return sb.toString().trim()
     }
     
     /**
-     * Format list results from MCP in a readable way
+     * Format list results from MCP - Estilo cards limpias como ChatGPT
      */
     private fun formatMCPListResults(data: List<*>): String {
         if (data.isEmpty()) return "No se encontraron resultados."
@@ -939,30 +984,62 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         if (data.size == 1 && data[0] is Map<*, *>) {
             val map = data[0] as Map<*, *>
             if (map.size == 1 && (map.containsKey("count") || map.containsKey("COUNT"))) {
-                return map.values.first().toString()
+                return "📊 Total: ${map.values.first()} registros"
             }
         }
         
         val sb = StringBuilder()
-        data.forEachIndexed { index, item ->
-            when (item) {
-                is Map<*, *> -> {
-                    // Format as simple list
-                    if (item.size == 1) {
-                        // Single field result (e.g., just a name or title)
-                        sb.append("${index + 1}. ${item.values.first()}\n")
-                    } else {
-                        // Multiple fields - show key fields
-                        sb.append("${index + 1}. ")
-                        item.entries.take(3).forEach { (key, value) ->
-                            sb.append("$key: $value, ")
-                        }
+        
+        // Get columns from first item
+        val firstItem = data[0]
+        if (firstItem is Map<*, *>) {
+            val columns = firstItem.keys.map { it.toString() }
+            
+            // Build column labels (friendly names)
+            val columnLabels = columns.map { col ->
+                when (col.lowercase()) {
+                    "id" -> "ID"
+                    "usuario" -> "Usuario"
+                    "email" -> "Email"
+                    "nombre_completo" -> "Nombre"
+                    "telefono" -> "Teléfono"
+                    "rol" -> "Rol"
+                    "activo" -> "Activo"
+                    "fecha_registro" -> "Registro"
+                    else -> col.replaceFirstChar { it.uppercase() }.replace("_", " ")
+                }
+            }
+            
+            // Formato de cards verticales - más limpio en móvil
+            data.forEachIndexed { i, item ->
+                if (item is Map<*, *>) {
+                    // Número de registro
+                    sb.append("━━━ ${i + 1} ━━━\n")
+                    
+                    // Cada campo en una línea
+                    columns.forEachIndexed { index, col ->
+                        val value = item[col]?.toString() ?: "-"
+                        val label = columnLabels[index]
+                        sb.append("$label: $value\n")
+                    }
+                    
+                    // Espaciado entre registros
+                    if (i < data.size - 1) {
                         sb.append("\n")
                     }
                 }
-                else -> sb.append("${index + 1}. $item\n")
+            }
+            
+            // Resumen final
+            sb.append("\n━━━━━━━━━━━━━━\n")
+            sb.append("Total: ${data.size} resultados")
+        } else {
+            // Lista simple numerada
+            data.forEachIndexed { index, item ->
+                sb.append("${index + 1}. $item\n")
             }
         }
+        
         return sb.toString().trim()
     }
     

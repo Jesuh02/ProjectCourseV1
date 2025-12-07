@@ -21,6 +21,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import com.example.tareamov.data.entity.Task // Import Task entity
 import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.service.CloudflareR2Service
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -298,63 +299,105 @@ class CourseTopicFragment : Fragment() {
     }
 
     private fun addContentToList(contentUri: Uri, contentType: String) {
-        try {
-            // For videos, we'll make a local copy to ensure persistence
-            var finalUri = contentUri
-            if (contentType == "video") {
-                finalUri = saveVideoLocally(contentUri) ?: contentUri
-            }
-
-            // Take persistable URI permission for the content if it's a content URI
-            if (finalUri.scheme == "content") {
-                try {
-                    val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    requireContext().contentResolver.takePersistableUriPermission(finalUri, takeFlags)
-                    Log.d("CourseTopicFragment", "Took persistable permission for URI: $finalUri")
-                } catch (e: Exception) {
-                    Log.e("CourseTopicFragment", "Failed to take persistable permission: ${e.message}", e)
-                    // Continue anyway as we'll try to handle this when opening the content
-                }
-            }
-
-            val contentContainer = view?.findViewById<LinearLayout>(R.id.contentContainer)
-            if (contentContainer != null) {
-                val inflater = LayoutInflater.from(context)
-                val contentView = inflater.inflate(R.layout.item_course_content, contentContainer, false)
-
-                // Set content name based on URI
-                val contentName = getContentName(finalUri)
-                val contentNameView = contentView.findViewById<TextView>(R.id.contentNameView)
-                contentNameView.text = contentName
-
-                // Set appropriate icon
-                val contentIconView = contentView.findViewById<ImageView>(R.id.contentIconView)
-                if (contentType == "video") {
-                    contentIconView.setImageResource(android.R.drawable.ic_media_play)
+        // Subir a Cloudflare R2 en segundo plano
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                var finalUri = contentUri
+                var r2Url: String? = null
+                
+                // Subir a Cloudflare R2 si está configurado
+                if (CloudflareR2Service.isConfigured()) {
+                    Log.d("CourseTopicFragment", "☁️ Uploading to Cloudflare R2: $contentUri")
+                    Toast.makeText(context, "Subiendo archivo a la nube...", Toast.LENGTH_SHORT).show()
+                    
+                    val folder = if (contentType == "video") "videos" else "documents"
+                    val result = CloudflareR2Service.uploadFile(
+                        context = requireContext(),
+                        fileUri = contentUri,
+                        folder = "topics/$folder",
+                        onProgress = { progress ->
+                            Log.d("CourseTopicFragment", "Upload progress: $progress%")
+                        }
+                    )
+                    
+                    when (result) {
+                        is CloudflareR2Service.UploadResult.Success -> {
+                            r2Url = result.url
+                            finalUri = Uri.parse(r2Url)
+                            Log.d("CourseTopicFragment", "✅ R2 Upload successful: $r2Url")
+                            Toast.makeText(context, "Archivo subido a la nube ✓", Toast.LENGTH_SHORT).show()
+                        }
+                        is CloudflareR2Service.UploadResult.Error -> {
+                            Log.e("CourseTopicFragment", "❌ R2 Upload failed: ${result.message}")
+                            Toast.makeText(context, "Error subiendo a nube, usando copia local", Toast.LENGTH_SHORT).show()
+                            // Fallback: guardar localmente
+                            if (contentType == "video") {
+                                finalUri = saveVideoLocally(contentUri) ?: contentUri
+                            }
+                        }
+                    }
                 } else {
-                    contentIconView.setImageResource(android.R.drawable.ic_menu_edit)
+                    Log.w("CourseTopicFragment", "⚠️ R2 not configured, saving locally")
+                    // Guardar localmente si R2 no está configurado
+                    if (contentType == "video") {
+                        finalUri = saveVideoLocally(contentUri) ?: contentUri
+                    }
                 }
 
-                // Set up delete button
-                val deleteButton = contentView.findViewById<ImageButton>(R.id.deleteContentButton)
-                deleteButton.setOnClickListener {
-                    contentContainer.removeView(contentView)
+                // Take persistable URI permission for the content if it's a content URI
+                if (finalUri.scheme == "content") {
+                    try {
+                        val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        requireContext().contentResolver.takePersistableUriPermission(finalUri, takeFlags)
+                        Log.d("CourseTopicFragment", "Took persistable permission for URI: $finalUri")
+                    } catch (e: Exception) {
+                        Log.e("CourseTopicFragment", "Failed to take persistable permission: ${e.message}", e)
+                    }
                 }
 
-                // Store URI and content type as tags
-                contentView.tag = finalUri
-                contentView.setTag(R.id.content_type_tag, contentType)
+                val contentContainer = view?.findViewById<LinearLayout>(R.id.contentContainer)
+                if (contentContainer != null) {
+                    val inflater = LayoutInflater.from(context)
+                    val contentView = inflater.inflate(R.layout.item_course_content, contentContainer, false)
 
-                // Add to container
-                contentContainer.addView(contentView)
+                    // Set content name based on URI
+                    val contentName = getContentName(contentUri) // Usar URI original para el nombre
+                    val contentNameView = contentView.findViewById<TextView>(R.id.contentNameView)
+                    contentNameView.text = if (r2Url != null) "☁️ $contentName" else contentName
 
-                // Log for debugging
-                Log.d("CourseTopicFragment", "Added content: $contentName, type: $contentType, uri: $finalUri")
+                    // Set appropriate icon
+                    val contentIconView = contentView.findViewById<ImageView>(R.id.contentIconView)
+                    if (contentType == "video") {
+                        contentIconView.setImageResource(android.R.drawable.ic_media_play)
+                    } else {
+                        contentIconView.setImageResource(android.R.drawable.ic_menu_edit)
+                    }
+
+                    // Set up delete button
+                    val deleteButton = contentView.findViewById<ImageButton>(R.id.deleteContentButton)
+                    deleteButton.setOnClickListener {
+                        contentContainer.removeView(contentView)
+                        // Si es URL de R2, podríamos eliminar del servidor (opcional)
+                        if (r2Url != null) {
+                            CoroutineScope(Dispatchers.IO).launch {
+                                CloudflareR2Service.deleteFile(r2Url!!)
+                            }
+                        }
+                    }
+
+                    // Store URI and content type as tags
+                    contentView.tag = finalUri
+                    contentView.setTag(R.id.content_type_tag, contentType)
+
+                    // Add to container
+                    contentContainer.addView(contentView)
+
+                    Log.d("CourseTopicFragment", "Added content: $contentName, type: $contentType, uri: $finalUri, r2Url: $r2Url")
+                }
+            } catch (e: Exception) {
+                Log.e("CourseTopicFragment", "Error adding content to list", e)
+                Toast.makeText(context, "Error al agregar contenido: ${e.message}", Toast.LENGTH_SHORT).show()
             }
-        } catch (e: Exception) {
-            // Add error handling for the entire method
-            Log.e("CourseTopicFragment", "Error adding content to list", e)
-            Toast.makeText(context, "Error al agregar contenido: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 

@@ -266,20 +266,32 @@ class VideoAdapter(
             val bestUri = videoData.getBestVideoUri()
             if (bestUri != null) {
                 try {
-                    Log.d("VideoAdapter", "Setting video URI: $bestUri")
+                    Log.d("VideoAdapter", "Setting video URI: $bestUri (scheme: ${bestUri.scheme})")
                     
                     // Check if it's a local file URI and if the file exists
+                    // For HTTP/HTTPS URLs (R2 streaming), skip the file existence check
                     if (bestUri.scheme == "file") {
                         val file = File(bestUri.path ?: "")
                         if (!file.exists()) {
-                            Log.e("VideoAdapter", "Local video file does not exist: ${bestUri.path}")
-                            showErrorPlaceholder()
-                            errorPlaceholder.text = "Video no disponible en este dispositivo"
-                            return
+                            Log.w("VideoAdapter", "Local video file does not exist: ${bestUri.path}, trying R2 fallback")
+                            // Try to get R2 URL as fallback
+                            val fileName = bestUri.path?.substringAfterLast("/")
+                            if (!fileName.isNullOrEmpty()) {
+                                val r2FallbackUrl = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/$fileName"
+                                Log.d("VideoAdapter", "Trying R2 fallback URL: $r2FallbackUrl")
+                                videoView.setVideoURI(Uri.parse(r2FallbackUrl))
+                            } else {
+                                showErrorPlaceholder()
+                                errorPlaceholder.text = "Video no disponible"
+                                return
+                            }
+                        } else {
+                            videoView.setVideoURI(bestUri)
                         }
+                    } else {
+                        // For HTTP/HTTPS URLs (streaming from R2 or other sources)
+                        videoView.setVideoURI(bestUri)
                     }
-                    
-                    videoView.setVideoURI(bestUri)
 
                     videoView.setOnPreparedListener { mp ->
                         loadingProgressBar?.visibility = View.GONE

@@ -224,36 +224,90 @@ class DatabaseChatAdapter(
         }
         
         private fun formatBoldText(text: String): SpannableString {
-            // Enhanced text formatting with better markdown support
-            val cleanText = text.replace(Regex("\\*\\*(.*?)\\*\\*")) { matchResult ->
-                matchResult.groupValues[1]
+            var processedText = text
+            
+            // Convert markdown tables to clean format if present
+            if (text.contains("|") && text.contains("---")) {
+                processedText = formatMarkdownTable(text)
             }
             
-            val spannableString = SpannableString(cleanText)
-            val regex = Regex("\\*\\*(.*?)\\*\\*")
-            var offset = 0
+            val spannableString = SpannableString(processedText)
             
-            // Apply bold formatting to text between **
-            regex.findAll(text).forEach { match ->
-                val originalStart = match.range.first
-                val boldText = match.groupValues[1]
-                
-                val cleanStart = originalStart - offset
-                val cleanEnd = cleanStart + boldText.length
-                
-                if (cleanStart >= 0 && cleanEnd <= cleanText.length && cleanStart < cleanEnd) {
-                    spannableString.setSpan(
-                        StyleSpan(Typeface.BOLD),
-                        cleanStart,
-                        cleanEnd,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                    )
+            // Apply bold to lines that start with ━━━ (card headers)
+            val lines = processedText.split("\n")
+            var currentPos = 0
+            
+            for (line in lines) {
+                // Bold for card separators and labels before ":"
+                if (line.contains(":") && !line.startsWith("━") && !line.startsWith("Total")) {
+                    val colonIndex = line.indexOf(":")
+                    if (colonIndex > 0 && currentPos + colonIndex <= spannableString.length) {
+                        spannableString.setSpan(
+                            StyleSpan(Typeface.BOLD),
+                            currentPos,
+                            currentPos + colonIndex,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
                 }
-                
-                offset += 4 // Account for removed ** **
+                currentPos += line.length + 1 // +1 for newline
             }
             
             return spannableString
+        }
+        
+        /**
+         * Format markdown table to a clean card format
+         */
+        private fun formatMarkdownTable(text: String): String {
+            val lines = text.split("\n")
+            val result = StringBuilder()
+            var headers = listOf<String>()
+            var rowNumber = 0
+            
+            for (line in lines) {
+                val trimmedLine = line.trim()
+                
+                // Skip separator lines
+                if (trimmedLine.matches(Regex("^\\|[\\s\\-:|]+\\|$")) || 
+                    trimmedLine.matches(Regex("^[━─\\s]+$"))) {
+                    continue
+                }
+                
+                // Process table rows with | delimiters
+                if (trimmedLine.startsWith("|") && trimmedLine.endsWith("|")) {
+                    val cells = trimmedLine
+                        .removePrefix("|")
+                        .removeSuffix("|")
+                        .split("|")
+                        .map { it.trim() }
+                    
+                    if (headers.isEmpty()) {
+                        // Store headers
+                        headers = cells
+                    } else {
+                        // Format as card
+                        rowNumber++
+                        result.append("━━━ $rowNumber ━━━\n")
+                        cells.forEachIndexed { index, value ->
+                            val label = if (index < headers.size) headers[index] else "Campo"
+                            result.append("$label: $value\n")
+                        }
+                        result.append("\n")
+                    }
+                } else if (trimmedLine.isNotEmpty() && !trimmedLine.startsWith("━")) {
+                    // Non-table content
+                    result.append(trimmedLine)
+                    result.append("\n")
+                }
+            }
+            
+            if (rowNumber > 0) {
+                result.append("━━━━━━━━━━━━━━\n")
+                result.append("Total: $rowNumber resultados")
+            }
+            
+            return result.toString().trimEnd()
         }
     }
 }

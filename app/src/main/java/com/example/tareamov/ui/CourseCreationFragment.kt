@@ -24,6 +24,7 @@ import com.example.tareamov.data.entity.ContentItem
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.data.entity.Course
 import com.example.tareamov.MainActivity
+import com.example.tareamov.service.CloudflareR2Service
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -266,7 +267,29 @@ class CourseCreationFragment : Fragment() {
                     return@launch
                 }
 
-                val thumbnailUriString = selectedThumbnailUri?.toString()
+                // Subir miniatura a Cloudflare R2 si está seleccionada
+                var thumbnailUriString = selectedThumbnailUri?.toString()
+                if (selectedThumbnailUri != null && CloudflareR2Service.isConfigured()) {
+                    Toast.makeText(context, "Subiendo miniatura a la nube...", Toast.LENGTH_SHORT).show()
+                    val result = withContext(Dispatchers.IO) {
+                        CloudflareR2Service.uploadFile(
+                            context = requireContext(),
+                            fileUri = selectedThumbnailUri!!,
+                            folder = "thumbnails/courses",
+                            customFileName = "course_${System.currentTimeMillis()}"
+                        )
+                    }
+                    when (result) {
+                        is CloudflareR2Service.UploadResult.Success -> {
+                            thumbnailUriString = result.url
+                            Log.d("CourseCreationFragment", "☁️ Thumbnail uploaded to R2: $thumbnailUriString")
+                        }
+                        is CloudflareR2Service.UploadResult.Error -> {
+                            Log.e("CourseCreationFragment", "❌ Failed to upload thumbnail: ${result.message}")
+                            // Continuar con URI local como fallback
+                        }
+                    }
+                }
                 
                 val activity = requireActivity()
                 if (activity !is MainActivity) {
@@ -392,6 +415,30 @@ class CourseCreationFragment : Fragment() {
                 if (userId == null || userId <= 0) {
                     Toast.makeText(context, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show()
                     return@launch
+                }
+
+                // Subir miniatura a Cloudflare R2 si está seleccionada
+                var thumbnailUriString = selectedThumbnailUri?.toString()
+                if (selectedThumbnailUri != null && CloudflareR2Service.isConfigured()) {
+                    Toast.makeText(context, "Subiendo miniatura a la nube...", Toast.LENGTH_SHORT).show()
+                    val result = withContext(Dispatchers.IO) {
+                        CloudflareR2Service.uploadFile(
+                            context = requireContext(),
+                            fileUri = selectedThumbnailUri!!,
+                            folder = "thumbnails/courses",
+                            customFileName = "course_${System.currentTimeMillis()}"
+                        )
+                    }
+                    when (result) {
+                        is CloudflareR2Service.UploadResult.Success -> {
+                            thumbnailUriString = result.url
+                            Log.d("CourseCreationFragment", "☁️ Thumbnail uploaded to R2: $thumbnailUriString")
+                        }
+                        is CloudflareR2Service.UploadResult.Error -> {
+                            Log.e("CourseCreationFragment", "❌ Failed to upload thumbnail: ${result.message}")
+                            // Continuar con URI local como fallback
+                        }
+                    }
                 }
 
                 val courseData = Course(

@@ -246,7 +246,7 @@ export class GitHubService {
             statistics: {
                 totalFiles: tree.tree.filter(t => t.type === 'blob').length,
                 analyzedFiles: fileContents.length,
-                totalChars: fileContents.reduce((sum, f) => sum + (f.content ? .length || 0), 0)
+                totalChars: fileContents.reduce((sum, f) => sum + (f.content?.length || 0), 0)
             },
             criteria: criteria || 'Evaluar calidad del código, estructura del proyecto, documentación y buenas prácticas'
         };

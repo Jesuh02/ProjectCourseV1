@@ -172,6 +172,13 @@ class VideoDetailsFragment : Fragment() {
             return
         }
 
+        // Show upload progress
+        val progressBar = view?.findViewById<android.widget.ProgressBar>(R.id.uploadProgressBar)
+        val progressText = view?.findViewById<android.widget.TextView>(R.id.uploadProgressText)
+        progressBar?.visibility = View.VISIBLE
+        progressText?.visibility = View.VISIBLE
+        progressText?.text = "Preparando..."
+
         // Update the existing video record instead of creating a new one
         viewLifecycleOwner.lifecycleScope.launch {
             try {
@@ -181,25 +188,68 @@ class VideoDetailsFragment : Fragment() {
                 }
 
                 if (userId == null || userId <= 0) {
+                    progressBar?.visibility = View.GONE
+                    progressText?.visibility = View.GONE
                     if (isAdded) context?.let { Toast.makeText(it, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show() }
                     return@launch
                 }
 
                 val activity = activity as? com.example.tareamov.MainActivity
                 if (activity == null) {
+                    progressBar?.visibility = View.GONE
+                    progressText?.visibility = View.GONE
                     if (isAdded) context?.let { Toast.makeText(it, "Error: Contexto inválido", Toast.LENGTH_SHORT).show() }
                     return@launch
                 }
                 
-                // SIEMPRE crear un nuevo video con ID > 82 (nunca actualizar videos existentes)
                 // Verificar título único
                 val duplicateNew = withContext(Dispatchers.IO) {
                     activity.syncRepository.isTitleExistsInSupabase(title)
                 }
 
                 if (duplicateNew) {
+                    progressBar?.visibility = View.GONE
+                    progressText?.visibility = View.GONE
                     if (isAdded) context?.let { Toast.makeText(it, "Ya existe un video/curso con este título. Elige otro título.", Toast.LENGTH_LONG).show() }
                     return@launch
+                }
+
+                // Upload video to Cloudflare R2 if configured
+                var finalVideoUri = videoUri.toString()
+                
+                if (com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
+                    withContext(Dispatchers.Main) {
+                        progressText?.text = "Subiendo video a la nube..."
+                    }
+                    
+                    val uploadResult = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.CloudflareR2Service.uploadVideo(
+                            context = requireContext(),
+                            videoUri = videoUri,
+                            customFileName = title.replace(Regex("[^a-zA-Z0-9]"), "_")
+                        ) { progress ->
+                            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+                                progressBar?.progress = progress
+                                progressText?.text = "Subiendo video: $progress%"
+                            }
+                        }
+                    }
+                    
+                    when (uploadResult) {
+                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
+                            finalVideoUri = uploadResult.url
+                            Log.d("VideoDetailsFragment", "✅ Video uploaded to R2: $finalVideoUri")
+                            withContext(Dispatchers.Main) {
+                                progressText?.text = "Video subido, guardando datos..."
+                            }
+                        }
+                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
+                            Log.w("VideoDetailsFragment", "⚠️ R2 upload failed: ${uploadResult.message}, using local URI")
+                            // Continue with local URI if R2 upload fails
+                        }
+                    }
+                } else {
+                    Log.d("VideoDetailsFragment", "R2 not configured, using local URI")
                 }
 
                 // Get next available video ID (> 82)
@@ -215,7 +265,7 @@ class VideoDetailsFragment : Fragment() {
                     title = title,
                     description = description,
                     creatorUserId = userId, // Foreign key to usuarios.id
-                    videoUri = videoUri.toString(),
+                    videoUri = finalVideoUri, // Use R2 URL or local URI
                     isPremium = isPaidCourse,
                     price = if (isPaidCourse) 9.99 else 0.0,
                     creationDate = System.currentTimeMillis().toString(),
@@ -229,6 +279,8 @@ class VideoDetailsFragment : Fragment() {
                 }
                 
                 if (courseRemoteId == null || courseRemoteId <= 0) {
+                    progressBar?.visibility = View.GONE
+                    progressText?.visibility = View.GONE
                     if (isAdded) context?.let { Toast.makeText(it, "Error creando el curso asociado", Toast.LENGTH_SHORT).show() }
                     Log.e("VideoDetailsFragment", "Failed to create course - courseRemoteId: $courseRemoteId")
                     return@launch
@@ -243,7 +295,7 @@ class VideoDetailsFragment : Fragment() {
                     username = "", // NO se envía a Supabase, se deriva desde course_id
                     description = description,
                     title = title,
-                    videoUriString = videoUri.toString(),
+                    videoUriString = finalVideoUri, // Use R2 URL or local URI
                     isPaid = isPaidCourse,
                     price = if (isPaidCourse) 9.99 else null,
                     courseId = courseRemoteId, // Link to the course
@@ -257,6 +309,8 @@ class VideoDetailsFragment : Fragment() {
                 }
                 
                 if (remoteId != null && remoteId > 0) {
+                    progressBar?.visibility = View.GONE
+                    progressText?.visibility = View.GONE
                     if (isAdded) {
                         context?.let { Toast.makeText(it, "✅ Video guardado con ID $remoteId, Curso ID $courseRemoteId", Toast.LENGTH_LONG).show() }
                         Log.d("VideoDetailsFragment", "Video saved successfully with ID: $remoteId, linked to course: $courseRemoteId")
@@ -269,12 +323,16 @@ class VideoDetailsFragment : Fragment() {
                         }
                     }
                 } else {
+                    progressBar?.visibility = View.GONE
+                    progressText?.visibility = View.GONE
                     if (isAdded) context?.let { Toast.makeText(it, "Error guardando video en Supabase", Toast.LENGTH_SHORT).show() }
                     Log.e("VideoDetailsFragment", "Failed to insert video - remoteId: $remoteId")
                     return@launch
                 }
             } catch (e: Exception) {
                 Log.e("VideoDetailsFragment", "Error saving video details", e)
+                progressBar?.visibility = View.GONE
+                progressText?.visibility = View.GONE
                 if (isAdded) context?.let { Toast.makeText(it, "Error guardando video: ${e.message}", Toast.LENGTH_SHORT).show() }
             }
         }

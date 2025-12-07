@@ -250,7 +250,7 @@ Provide a GitHub URL and optional evaluation criteria.
  */
 app.post('/tools/call', async(req, res) => {
     const { params } = req.body;
-    console.log('🔧 Tool call request:', params ? .name);
+    console.log('🔧 Tool call request:', params?.name);
 
     try {
         const { name, arguments: args } = params;
