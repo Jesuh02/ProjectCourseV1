@@ -37,6 +37,9 @@ import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.tasks.Task
+import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.FirebaseApp
+import com.example.tareamov.service.SupabaseClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -256,6 +259,31 @@ class LoginFragment : Fragment() {
                 if (userId != -1L) {
                     val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                     sharedPrefs.edit().putLong("current_user_id", userId).apply()
+                    
+                    // Register FCM Token safely
+                    try {
+                        if (FirebaseApp.getApps(requireContext()).isNotEmpty()) {
+                            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                                if (!task.isSuccessful) {
+                                    Log.w("LoginFragment", "Fetching FCM registration token failed", task.exception)
+                                    return@addOnCompleteListener
+                                }
+                                val token = task.result
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    try {
+                                        SupabaseClient.registerFcmToken(userId, token)
+                                        Log.d("LoginFragment", "FCM Token registered for user $userId")
+                                    } catch (e: Exception) {
+                                        Log.e("LoginFragment", "Error registering FCM token", e)
+                                    }
+                                }
+                            }
+                        } else {
+                            Log.w("LoginFragment", "FirebaseApp is not initialized. Missing google-services.json? Skipping FCM.")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("LoginFragment", "Error accessing FirebaseMessaging", e)
+                    }
                 }
 
                 findNavController().navigate(R.id.videoHomeFragment)

@@ -2,6 +2,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "langchain": "^0.3.30",
-    "ndjson": "^2.0.0"
+    "ndjson": "^2.0.0",
+    "nodemailer": "^7.0.11"
   }
 }

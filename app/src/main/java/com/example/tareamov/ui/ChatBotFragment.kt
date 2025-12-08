@@ -1396,7 +1396,8 @@ class ChatBotFragment : Fragment() {
                             taskDescription = if (effectiveTaskDescription.isNotEmpty()) effectiveTaskDescription else "",
                             fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else "",
                             jsonContent = if (effectiveJsonContent.isNotEmpty()) effectiveJsonContent else null,
-                            metadata = if (effectiveMetadata.isNotEmpty()) effectiveMetadata else null
+                            metadata = if (effectiveMetadata.isNotEmpty()) effectiveMetadata else null,
+                            userId = sessionManager.getUserId()
                         )   
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📤 ENVIANDO AL MICROSERVICIO:")

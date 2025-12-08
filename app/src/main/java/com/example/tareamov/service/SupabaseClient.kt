@@ -1361,6 +1361,11 @@ object SupabaseClient {
         }
     }
 
+    suspend fun isUserAdmin(userId: Long): Boolean = withContext(Dispatchers.IO) {
+        val user = fetchUsuarioById(userId)
+        return@withContext user?.isAdmin == true
+    }
+
     suspend fun getUserIdFromUsername(username: String): Long? {
         val trimmed = username.trim()
         if (trimmed.isEmpty()) return null
@@ -1382,6 +1387,18 @@ object SupabaseClient {
             throw e
         } catch (e: Exception) {
             android.util.Log.w("SupabaseClient", "getUsernameFromUserId exception for id=$userId: ${e.message}", e)
+            null
+        }
+    }
+
+    suspend fun getUserAvatarUrl(userId: Long): String? {
+        if (userId <= 0) return null
+        return try {
+            fetchUsuarioById(userId)?.avatar?.takeIf { it.isNotBlank() }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("SupabaseClient", "getUserAvatarUrl exception for id=$userId: ${e.message}", e)
             null
         }
     }
@@ -3759,6 +3776,43 @@ object SupabaseClient {
         // We only sync the count via incrementVideoLike.
         Log.w("SupabaseClient", "addUserVideoLike: Skipped because 'user_video_likes' table is missing.")
         return@withContext true
+    }
+
+    suspend fun registerFcmToken(userId: Long, token: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/user_fcm_tokens"
+            // Use ISO 8601 format for timestamp
+            val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssX", java.util.Locale.US)
+                .format(java.util.Date())
+                
+            val payload = mapOf(
+                "user_id" to userId,
+                "token" to token,
+                "device_type" to "android",
+                "last_updated" to timestamp
+            )
+            
+            val requestBody = gson.toJson(payload).toRequestBody("application/json".toMediaType())
+            
+            val request = Request.Builder()
+                .url("$url?on_conflict=user_id,token")
+                .header("apikey", apiKey)
+                .header("Authorization", "Bearer $apiKey")
+                .header("Prefer", "resolution=merge-duplicates")
+                .post(requestBody)
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) {
+                Log.e("SupabaseClient", "Error registering FCM token: ${response.code} ${response.body?.string()}")
+                return@withContext false
+            }
+            Log.d("SupabaseClient", "FCM token registered successfully for user $userId")
+            return@withContext true
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Exception registering FCM token", e)
+            return@withContext false
+        }
     }
 
     /**

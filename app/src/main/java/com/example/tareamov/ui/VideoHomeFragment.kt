@@ -68,6 +68,7 @@ class VideoHomeFragment : Fragment() {
     private lateinit var exploreIconImageView: ImageView
     private lateinit var activityIconImageView: ImageView
     private lateinit var profileIconImageView: ImageView
+    private lateinit var databaseIconImageView: ImageView // New database icon for admins
 
     private var isLiked = false
     private var isMuted = false
@@ -152,16 +153,19 @@ class VideoHomeFragment : Fragment() {
 
         // Initialize bottom navigation icons
         homeIconImageView = view.findViewById(R.id.homeIconImageView)
-        homeIconImageView = view.findViewById(R.id.homeIconImageView)
         exploreIconImageView = view.findViewById(R.id.exploreIconImageView)
         activityIconImageView = view.findViewById(R.id.activityIconImageView)
         profileIconImageView = view.findViewById(R.id.profileIconImageView)
+        databaseIconImageView = view.findViewById(R.id.databaseIconImageView) // Initialize new icon
 
         // Setup initial colors for bottom navigation icons
         setupBottomNavigationIconColors()
         
         // Setup search functionality
         setupSearchBar(view)
+
+        // Initial setup for database icon (will be updated by updateAdminUi)
+        databaseIconImageView.visibility = View.GONE
 
         // Enhanced Courses Button with improved animations and interactions
         val coursesButton = view.findViewById<ImageView>(R.id.coursesButton)
@@ -223,36 +227,6 @@ class VideoHomeFragment : Fragment() {
             }
         }
 
-       // Set up database orbit button click to navigate to DatabaseQueryFragment
-        val databaseOrbitButton = view.findViewById<ImageView>(R.id.databaseOrbitButton)
-
-        // Decide visibility synchronously to avoid leaving a gap for non-admin users.
-        // Default to GONE so the initial layout does not reserve space for the button.
-        databaseOrbitButton?.visibility = View.GONE
-
-        // Use the sessionManager initialized above to check admin synchronously
-        try {
-            if (sessionManager.isAdmin()) {
-                databaseOrbitButton?.visibility = View.VISIBLE
-                databaseOrbitButton?.setOnClickListener {
-                    findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
-                }
-
-                // Start the animated vector drawable for the orbit icon if present
-                val drawable = databaseOrbitButton?.drawable
-                if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
-                    drawable.start()
-                }
-            } else {
-                // non-admin: keep GONE to remove any visual gap
-                databaseOrbitButton?.visibility = View.GONE
-            }
-        } catch (e: Exception) {
-            // If anything goes wrong, ensure the button does not leave a gap
-            databaseOrbitButton?.visibility = View.GONE
-            Log.e("VideoHomeFragment", "Error checking admin for databaseOrbitButton: ${e.message}", e)
-        }
-
         // Also set up the profile avatars in the top bar to navigate to profile
         profileAvatars.setOnClickListener {
             navigateToProfileSafely()
@@ -291,15 +265,49 @@ class VideoHomeFragment : Fragment() {
 
         // Check if the current user is admin
         val sess = SessionManager.getInstance(requireContext())
-        if (!sess.isAdmin()) {
-            // Ocultar por completo el slot antes del primer render para que no quede hueco
-            adminSlot?.visibility = View.GONE
-        } else {
-            // Usuario admin: mostrar y asignar listener
-            goToAdminButton?.visibility = View.VISIBLE
-            goToAdminButton?.setOnClickListener {
-                Log.d("VideoHomeFragment", "Admin button clicked, navigating to HomeFragment")
-                findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
+        
+        // Function to update admin UI elements
+        fun updateAdminUi(isAdmin: Boolean) {
+            if (isAdmin) {
+                // Admin: Show database icon
+                databaseIconImageView.visibility = View.VISIBLE
+                databaseIconImageView.setOnClickListener {
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
+                    val drawable = databaseIconImageView.drawable
+                    if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
+                        drawable.start()
+                    }
+                }
+                
+                // Admin: Show admin slot and button
+                adminSlot?.visibility = View.VISIBLE
+                goToAdminButton?.visibility = View.VISIBLE
+                goToAdminButton?.setOnClickListener {
+                    Log.d("VideoHomeFragment", "Admin button clicked, navigating to HomeFragment")
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
+                }
+            } else {
+                // Non-admin: Hide elements
+                databaseIconImageView.visibility = View.GONE
+                adminSlot?.visibility = View.GONE
+                goToAdminButton?.visibility = View.GONE
+            }
+        }
+
+        // Initial synchronous check using SessionManager (fast)
+        updateAdminUi(sess.isAdmin())
+
+        // Async check using SyncRepository (robust, checks ID 3)
+        lifecycleScope.launch {
+            val userId = getCurrentUserId()
+            if (userId > 0) {
+                val isAdmin = withContext(Dispatchers.IO) {
+                    syncRepository.isUserAdmin(userId)
+                }
+                // Only update if different from session check or to confirm
+                if (isAdmin != sess.isAdmin()) {
+                    updateAdminUi(isAdmin)
+                }
             }
         }   // Load the current user's avatar
         loadCurrentUserAvatar()

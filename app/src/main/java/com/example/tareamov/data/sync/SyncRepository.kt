@@ -116,6 +116,15 @@ class SyncRepository(
         }
     }
 
+    suspend fun isUserAdmin(userId: Long): Boolean {
+        // Check local first
+        val user = usuarioDao.getUsuarioById(userId)
+        if (user != null) return user.isAdmin
+        
+        // Fallback to remote
+        return supabaseClient.isUserAdmin(userId)
+    }
+
     // Wrapper to fetch role by id from Supabase
     suspend fun fetchRolByIdFromSupabase(id: Long): com.example.tareamov.data.entity.Rol? {
         return try {

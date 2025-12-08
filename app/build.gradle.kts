@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     id("com.google.devtools.ksp")
+    id("com.google.gms.google-services")
 }
 
 
@@ -230,6 +231,9 @@ dependencies {
     // Google Sign-In
     implementation("com.google.android.gms:play-services-auth:21.0.0")
     
+    // Firebase Cloud Messaging
+    implementation("com.google.firebase:firebase-messaging-ktx:23.4.0")
+
     // Credential Manager for modern Google Sign-In
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
@@ -240,7 +244,7 @@ dependencies {
 // This avoids build failures on machines/environments where the credentials file is intentionally absent.
 val googleServicesFile = project.file("google-services.json")
 if (googleServicesFile.exists()) {
-    apply(plugin = "com.google.gms.google-services")
+    // Plugin already applied at the top
 } else {
     println("Skipping com.google.gms.google-services plugin because app/google-services.json was not found. If you need Firebase, add the file to app/ or configure local.properties.")
 }

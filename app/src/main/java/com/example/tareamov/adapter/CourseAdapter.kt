@@ -30,7 +30,8 @@ class CourseAdapter(
     private val onEditClickListener: ((Course) -> Unit)? = null, // Edit callback
     private val onDeleteClickListener: ((Course) -> Unit)? = null, // Delete callback
     private val onThumbnailChangeClickListener: ((Course) -> Unit)? = null, // Thumbnail change callback
-    private val onEnrollClickListener: ((Course) -> Unit)? = null // Enrollment callback
+    private val onEnrollClickListener: ((Course) -> Unit)? = null, // Enrollment callback
+    private val onCreatorClickListener: ((String) -> Unit)? = null // Creator profile callback
 ) : RecyclerView.Adapter<CourseAdapter.CourseViewHolder>() {
 
     // Cache current user's id to avoid blocking lookups during bind
@@ -130,6 +131,13 @@ class CourseAdapter(
                         } else {
                             "Por: Tú"
                         }
+                        
+                        // Enable click on creator name/avatar to view profile
+                        if (!creatorUsername.isNullOrBlank()) {
+                            holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                            holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                        }
+                        
                         Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
                     }
                 } catch (e: Exception) {
@@ -179,16 +187,23 @@ class CourseAdapter(
                             creatorUsernameCache[course.creatorUserId] = it
                         }
                     
-                    // Fetch Avatar
+                    // Get creator avatar
                     val creatorAvatar = creatorAvatarCache[course.creatorUserId]
-                        ?: com.example.tareamov.service.SupabaseClient.fetchUsuarioById(course.creatorUserId)?.avatar?.also {
-                            if (it.isNotEmpty()) creatorAvatarCache[course.creatorUserId] = it
+                        ?: com.example.tareamov.service.SupabaseClient.getUserAvatarUrl(course.creatorUserId)?.also {
+                            creatorAvatarCache[course.creatorUserId] = it
                         }
 
                     withContext(Dispatchers.Main) {
                         // Fallback: If username matches, treat as creator even if currentUserIdCached was null
                         if (currentUsername != null && creatorUsername == currentUsername) {
                             holder.creatorTextView.text = "Por: $creatorUsername (Tu curso)"
+                            
+                            // Enable click on creator name/avatar to view profile
+                            if (!creatorUsername.isNullOrBlank()) {
+                                holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                                holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                            }
+                            
                             holder.enrollButtonContainer?.visibility = View.GONE
                             holder.enrollButton?.visibility = View.GONE
                             holder.enrolledStatusContainer?.visibility = View.GONE
@@ -204,6 +219,12 @@ class CourseAdapter(
                             holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"
                             Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
                             
+                            // Enable click on creator name/avatar to view profile
+                            if (!creatorUsername.isNullOrBlank()) {
+                                holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                                holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                            }
+                            
                             // Update Avatar
                             if (!creatorAvatar.isNullOrEmpty()) {
                                  Glide.with(context)
@@ -217,7 +238,6 @@ class CourseAdapter(
 
                             // Load subscription data with user IDs
                             loadSubscriptionDataWithUserId(holder, course, course.creatorUserId)
-                            Unit
                         }
                     }
                 } catch (e: Exception) {

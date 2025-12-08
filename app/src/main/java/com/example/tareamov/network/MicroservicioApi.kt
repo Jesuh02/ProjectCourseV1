@@ -39,7 +39,8 @@ data class MicroservicioPromptRequest(
     val taskDescription: String? = null,  // Descripción específica de la tarea
     val fileContent: String? = null,      // Contenido del archivo (texto plano extraído)
     val jsonContent: String? = null,      // Contenido estructurado en JSON del archivo
-    val metadata: String? = null          // Metadatos adicionales del archivo
+    val metadata: String? = null,          // Metadatos adicionales del archivo
+    val userId: Long? = null              // ID del usuario para notificaciones push
 )
 
 // Data class para la respuesta procesarPrompt
