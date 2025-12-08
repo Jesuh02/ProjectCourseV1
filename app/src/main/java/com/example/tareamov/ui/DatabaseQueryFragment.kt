@@ -647,6 +647,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 
                 // Use MCP Server directly (Server-side Agent)
                 val result = processQueryWithMCPServer(query)
+                
+                // Enviar notificación por email automáticamente después de obtener la respuesta
+                sendNotificationAfterResponse(result)
 
                 Log.d("DatabaseQueryFragment", "=== FINAL RESULT LOG ===")
                 Log.d("DatabaseQueryFragment", "Result Length: ${result.length} characters")
@@ -711,6 +714,37 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     /**
      * Detect if query is asking for Business Intelligence analysis
      */
+    /**
+     * Send email notification to current user after LLM response
+     */
+    private suspend fun sendNotificationAfterResponse(responsePreview: String) = withContext(Dispatchers.IO) {
+        try {
+            val currentUserId = sessionManager.getUserId()
+            if (currentUserId == null || currentUserId <= 0) {
+                Log.w(TAG, "⚠️ No user ID available for notification")
+                return@withContext
+            }
+            
+            Log.d(TAG, "📧 Sending email notification to user $currentUserId")
+            
+            val args = JSONObject().apply {
+                put("userId", currentUserId.toString())
+                put("title", "Respuesta de DeepSeek IA 🤖")
+                put("message", "Tu consulta ha sido procesada.\n\nRespuesta: ${responsePreview.take(200)}...\n\nAbre la app para ver la respuesta completa.")
+                put("channel", "email")  // Solo email
+            }
+            
+            val result = mcpHttpClient.executeTool("send_notification", args)
+            if (result.success) {
+                Log.d(TAG, "✅ Email notification sent successfully")
+            } else {
+                Log.w(TAG, "⚠️ Email notification failed: ${result.error}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error sending notification: ${e.message}", e)
+        }
+    }
+    
     private fun isBIQuery(lowerQuery: String): Boolean {
         val biKeywords = listOf(
             "inteligencia", "kpi", "business intelligence", "indicador",
@@ -822,6 +856,37 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         }
     }
 
+    /**
+     * Send email notification to current user after LLM response
+     */
+    private suspend fun sendNotificationAfterResponse(responsePreview: String) = withContext(Dispatchers.IO) {
+        try {
+            val currentUserId = sessionManager.getUserId()
+            if (currentUserId == null || currentUserId <= 0) {
+                Log.w(TAG, "⚠️ No user ID available for notification")
+                return@withContext
+            }
+            
+            Log.d(TAG, "📧 Sending email notification to user $currentUserId")
+            
+            val args = JSONObject().apply {
+                put("userId", currentUserId.toString())
+                put("title", "Respuesta de DeepSeek IA 🤖")
+                put("message", "Tu consulta ha sido procesada.\n\nRespuesta: ${responsePreview.take(200)}...\n\nAbre la app para ver la respuesta completa.")
+                put("channel", "email")  // Solo email
+            }
+            
+            val result = mcpHttpClient.executeTool("send_notification", args)
+            if (result.success) {
+                Log.d(TAG, "✅ Email notification sent successfully")
+            } else {
+                Log.w(TAG, "⚠️ Email notification failed: ${result.error}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error sending notification: ${e.message}", e)
+        }
+    }
+    
     /**
      * Process query using MCP tareamov-mcp-server (default tool)
      * This uses the query_database tool from the MCP server via HTTP

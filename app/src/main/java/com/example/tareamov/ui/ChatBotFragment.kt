@@ -295,13 +295,17 @@ class ChatBotFragment : Fragment() {
         val esPreguntaNota = preguntaLower.contains("nota") || preguntaLower.contains("calificación") || preguntaLower.contains("feedback") || preguntaLower.contains("tarea")
         val ollamaUrl = getOllamaUrl()
         return try {
+            // Obtener el ID del usuario autenticado para notificaciones
+            val currentUserId = sessionManager.getUserId()
+            
             if (!esPreguntaNota) {
                 // Solo llama3 responde
                 val request = com.example.tareamov.network.MicroservicioPromptRequest(
                     prompt = userMessage,
                     ollamaUrl = ollamaUrl,
                     taskDescription = taskDescription,
-                    fileContent = fileContent
+                    fileContent = fileContent,
+                    userId = currentUserId
                 )
                 val response = microservicioApi.procesarPrompt(request)
                 response.respuesta_texto ?: "No se pudo obtener respuesta."
@@ -311,7 +315,8 @@ class ChatBotFragment : Fragment() {
                     prompt = userMessage,
                     ollamaUrl = ollamaUrl,
                     taskDescription = taskDescription,
-                    fileContent = fileContent
+                    fileContent = fileContent,
+                    userId = currentUserId
                 )
                 val response = microservicioApi.procesarPrompt(request)
                 response.respuesta_texto ?: "No se pudo obtener respuesta."
@@ -1411,7 +1416,10 @@ class ChatBotFragment : Fragment() {
                         Log.d("ChatBotFragment", "==============================================")
                         
                         // Usar suspend function en lugar de .execute() para mejor manejo de timeouts
-                        val res = microservicioApi.procesarPrompt(body)
+                        // Agregar userId para notificaciones
+                        val currentUserId = sessionManager.getUserId()
+                        val bodyWithUserId = body.copy(userId = currentUserId)
+                        val res = microservicioApi.procesarPrompt(bodyWithUserId)
                         Log.d("ChatBotFragment", "✅ RESPUESTA RECIBIDA DEL MICROSERVICIO:")
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📥 RESPUESTA COMPLETA DEL MODELO:")
