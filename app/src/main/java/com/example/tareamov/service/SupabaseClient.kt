@@ -4112,4 +4112,45 @@ object SupabaseClient {
             false
         }
     }
+
+    /**
+     * Fetch notifications for a specific user from Supabase
+     * Returns a list ordered by created_at descending (newest first)
+     */
+    suspend fun fetchNotifications(userId: Long): List<com.example.tareamov.data.entity.Notification> = withContext(Dispatchers.IO) {
+        try {
+            val path = "notifications?user_id=eq.$userId&order=created_at.desc"
+            val request = buildGetRequest(path)
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "Failed to fetch notifications: ${response.code}")
+                    return@withContext emptyList()
+                }
+                
+                val body = response.body?.string()
+                if (body.isNullOrEmpty()) {
+                    return@withContext emptyList()
+                }
+                
+                val notifications = underscoredGson.fromJson(body, Array<com.example.tareamov.data.entity.Notification>::class.java)
+                return@withContext notifications.toList()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching notifications for user $userId", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Mark a notification as read
+     */
+    suspend fun markNotificationAsRead(notificationId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            return@withContext updateRecord("notifications", notificationId, mapOf("is_read" to true))
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error marking notification $notificationId as read", e)
+            false
+        }
+    }
 }

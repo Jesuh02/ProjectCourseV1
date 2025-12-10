@@ -39,6 +39,8 @@ import android.graphics.Rect
 import android.view.ViewTreeObserver
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeListener {
 
@@ -716,6 +718,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
      */
     /**
      * Send email notification to current user after LLM response
+     * 🔒 SEGURIDAD: NO envía la respuesta completa por email
+     * Solo notifica que hay una respuesta disponible
      */
     private suspend fun sendNotificationAfterResponse(responsePreview: String) = withContext(Dispatchers.IO) {
         try {
@@ -725,21 +729,43 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 return@withContext
             }
             
-            Log.d(TAG, "📧 Sending email notification to user $currentUserId")
+            Log.d(TAG, "📧 Sending email notification to user $currentUserId (without sensitive data)")
             
-            val args = JSONObject().apply {
-                put("userId", currentUserId.toString())
-                put("title", "Respuesta de DeepSeek IA 🤖")
-                put("message", "Tu consulta ha sido procesada.\n\nRespuesta: ${responsePreview.take(200)}...\n\nAbre la app para ver la respuesta completa.")
-                put("channel", "email")  // Solo email
+            // Obtener la URL base del backend
+            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
+                "http://10.0.2.2:3000"  // Fallback para emulador
             }
             
-            val result = mcpHttpClient.executeTool("send_notification", args)
-            if (result.success) {
-                Log.d(TAG, "✅ Email notification sent successfully")
+            // 🔒 SEGURIDAD: NO enviar la respuesta completa
+            // El backend solo notifica que hay una respuesta disponible
+            val payload = JSONObject().apply {
+                put("userId", currentUserId)
+                // responsePreview se ignora en el backend por seguridad
+                put("responsePreview", "")  // Vacío por seguridad
+            }
+            
+            // Hacer la petición HTTP POST al backend
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            
+            val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = okhttp3.Request.Builder()
+                .url("$baseUrl/notify-chat-response")
+                .post(body)
+                .build()
+            
+            val response = client.newCall(request).execute()
+            
+            if (response.isSuccessful) {
+                Log.d(TAG, "✅ Email notification sent successfully to user $currentUserId (secure mode)")
             } else {
-                Log.w(TAG, "⚠️ Email notification failed: ${result.error}")
+                Log.w(TAG, "⚠️ Email notification failed: ${response.code} - ${response.message}")
             }
+            
+            response.close()
+            
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error sending notification: ${e.message}", e)
         }
@@ -853,37 +879,6 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
                 }
             }
             else -> null
-        }
-    }
-
-    /**
-     * Send email notification to current user after LLM response
-     */
-    private suspend fun sendNotificationAfterResponse(responsePreview: String) = withContext(Dispatchers.IO) {
-        try {
-            val currentUserId = sessionManager.getUserId()
-            if (currentUserId == null || currentUserId <= 0) {
-                Log.w(TAG, "⚠️ No user ID available for notification")
-                return@withContext
-            }
-            
-            Log.d(TAG, "📧 Sending email notification to user $currentUserId")
-            
-            val args = JSONObject().apply {
-                put("userId", currentUserId.toString())
-                put("title", "Respuesta de DeepSeek IA 🤖")
-                put("message", "Tu consulta ha sido procesada.\n\nRespuesta: ${responsePreview.take(200)}...\n\nAbre la app para ver la respuesta completa.")
-                put("channel", "email")  // Solo email
-            }
-            
-            val result = mcpHttpClient.executeTool("send_notification", args)
-            if (result.success) {
-                Log.d(TAG, "✅ Email notification sent successfully")
-            } else {
-                Log.w(TAG, "⚠️ Email notification failed: ${result.error}")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error sending notification: ${e.message}", e)
         }
     }
     
