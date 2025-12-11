@@ -50,7 +50,6 @@ import com.example.tareamov.service.MSPClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import com.example.tareamov.service.DatabaseContextHttpServer
 
 // In the @Database annotation, add Purchase to the entities list
 @Database(
@@ -77,7 +76,6 @@ import com.example.tareamov.service.DatabaseContextHttpServer
     version = 31, // Updated version to add video_likes, user_video_likes, and video_comments tables
     exportSchema = false
 )
-@TypeConverters(VideoDataConverters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun videoDao(): VideoDao
     abstract fun personaDao(): PersonaDao
@@ -99,27 +97,17 @@ abstract class AppDatabase : RoomDatabase() {
 
     // Métodos para notificar cambios en la base de datos
     fun notifyDataChanged() {
-        databaseQueryService?.updateDatabaseJson()
-    }
-
-    // Referencia al servicio para actualización dinámica del JSON
-    @Volatile
-    private var databaseQueryService: com.example.tareamov.service.DatabaseQueryService? = null
-
-    fun setDatabaseQueryService(service: com.example.tareamov.service.DatabaseQueryService) {
-        databaseQueryService = service
+        // No-op
     }
 
     fun notifyDatabaseChanged() {
-        databaseQueryService?.let {
-            it.updateDatabaseJson()
-        }
+        // No-op
     }
 
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
-        private var httpServer: DatabaseContextHttpServer? = null // Add this line
+
 
         /**
          * Force reset the database by clearing the instance and deleting the database file
@@ -204,41 +192,9 @@ abstract class AppDatabase : RoomDatabase() {
                     }
                 }
 
-                // Start the HTTP server for database context
-                if (httpServer == null) {
-                    httpServer = DatabaseContextHttpServer(context, instance) // Pass context here
-                    httpServer?.start()
-                }
 
-                // Start the Ollama service when the database is initialized
-                startOllamaService(context)
-
-                // Also initialize the local Llama model
-                initializeLocalLlamaModel(context)
 
                 instance
-            }
-        }
-
-        private fun initializeLocalLlamaModel(context: Context) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val mspClient = MSPClient(context)
-                    mspClient.preloadLocalModel()
-                    Log.d(TAG, "Started local Llama 3 model initialization")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to initialize local Llama 3 model", e)
-                }
-            }
-        }
-
-        private fun startOllamaService(context: Context) {
-            try {
-                Log.d(TAG, "Starting OllamaService")
-                val intent = Intent(context, OllamaService::class.java)
-                context.startService(intent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error starting OllamaService", e)
             }
         }
 
