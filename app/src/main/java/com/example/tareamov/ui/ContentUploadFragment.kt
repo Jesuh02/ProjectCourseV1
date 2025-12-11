@@ -21,7 +21,7 @@ import com.example.tareamov.R
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.util.SessionManager
-import com.example.tareamov.util.ThumbnailManager
+// import com.example.tareamov.util.ThumbnailManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,7 +31,7 @@ class ContentUploadFragment : Fragment() {
     private val PICK_VIDEO_REQUEST = 1
     private val PICK_IMAGE_REQUEST = 2
     private lateinit var sessionManager: SessionManager
-    private lateinit var thumbnailManager: ThumbnailManager
+    // private lateinit var thumbnailManager: ThumbnailManager
 
     // --- Agrega esta bandera ---
     private var isSavingVideo = false
@@ -40,7 +40,7 @@ class ContentUploadFragment : Fragment() {
         super.onCreate(savedInstanceState)
         // Initialize SessionManager and ThumbnailManager
         sessionManager = SessionManager.getInstance(requireContext())
-        thumbnailManager = ThumbnailManager(requireContext())
+        // thumbnailManager = ThumbnailManager(requireContext())
     }
 
     override fun onCreateView(
@@ -137,12 +137,13 @@ class ContentUploadFragment : Fragment() {
                         val savedVideo = videoManager.saveVideo(tempVideoData)
                         Log.d("ContentUploadFragment", "Video saved with ID: ${savedVideo.id}, localPath: ${savedVideo.localFilePath}")
 
-                        // Generate thumbnail automatically from video
-                        Log.d("ContentUploadFragment", "Generating thumbnail for video ID: ${savedVideo.id}")
-                        val thumbnailPath = thumbnailManager.ensureThumbnailExists(
-                            savedVideo.videoUriString ?: selectedVideoUri.toString(),
-                            savedVideo.id
-                        )
+                        // Generate thumbnail automatically from video - REMOVED (Obsolete)
+                        // Log.d("ContentUploadFragment", "Generating thumbnail for video ID: ${savedVideo.id}")
+                        // val thumbnailPath = thumbnailManager.ensureThumbnailExists(
+                        //    savedVideo.videoUriString ?: selectedVideoUri.toString(),
+                        //    savedVideo.id
+                        // )
+                        val thumbnailPath: String? = null
                         
                         // Update video with thumbnail path if generated successfully
                         val finalVideo = if (!thumbnailPath.isNullOrEmpty()) {

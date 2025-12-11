@@ -21,7 +21,7 @@ import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.request.RequestOptions
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.VideoData
-import com.example.tareamov.util.ThumbnailManager
+// import com.example.tareamov.util.ThumbnailManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -44,7 +44,7 @@ class CreatedCourseAdapter(
 ) : RecyclerView.Adapter<CreatedCourseAdapter.CourseViewHolder>() {
 
     private var currentPlayingHolder: CourseViewHolder? = null
-    private val thumbnailManager = ThumbnailManager(context)
+    // private val thumbnailManager = ThumbnailManager(context)
     
     // Cache for creator usernames by userId to reduce repeated network calls
     private val creatorUsernameCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
@@ -118,29 +118,11 @@ class CreatedCourseAdapter(
     }
 
     /**
-     * Force regenerate thumbnail for a specific course
+     * Force regenerate thumbnail for a specific course - REMOVED (Obsolete)
      */
     fun forceRegenerateThumbnail(courseId: Long) {
-        val course = courses.find { it.id == courseId }
-        if (course != null) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val videoUri = course.getBestVideoUri()?.toString() ?: course.videoUriString
-                    if (!videoUri.isNullOrEmpty()) {
-                        // Delete existing thumbnail first
-                        thumbnailManager.deleteThumbnail(courseId)
-                        // Generate new thumbnail
-                        thumbnailManager.generateAndSaveThumbnail(videoUri, courseId)
-
-                        withContext(Dispatchers.Main) {
-                            notifyDataSetChanged()
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("CreatedCourseAdapter", "Error regenerating thumbnail for course $courseId", e)
-                }
-            }
-        }
+        // Functionality removed as ThumbnailManager is obsolete
+        Log.d("CreatedCourseAdapter", "forceRegenerateThumbnail called but functionality is removed")
     }
 
     /**
@@ -592,7 +574,7 @@ class CreatedCourseAdapter(
         }
 
         /**
-         * Load existing thumbnail or generate new one
+         * Load existing thumbnail or generate new one - MODIFIED (No local generation)
          */
         private fun loadOrGenerateVideoThumbnail(course: VideoData) {
             CoroutineScope(Dispatchers.Main).launch {
@@ -600,42 +582,15 @@ class CreatedCourseAdapter(
                     // First, set YouTube-style gray placeholder
                     thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
 
-                    // Check if thumbnail already exists
-                    val existingThumbnailPath = withContext(Dispatchers.IO) {
-                        if (thumbnailManager.thumbnailExists(course.id)) {
-                            thumbnailManager.getThumbnailPath(course.id)
-                        } else {
-                            null
-                        }
-                    }
-
-                    if (existingThumbnailPath != null) {
-                        // Load existing thumbnail
-                        loadThumbnailWithGlide("file://$existingThumbnailPath", course)
-                        Log.d("CreatedCourseAdapter", "Loaded existing thumbnail for: ${course.title}")
+                    // Just try to load the thumbnail URI if it exists
+                    if (!course.thumbnailUri.isNullOrEmpty()) {
+                        loadThumbnailWithGlide(course.thumbnailUri, course)
                     } else {
-                        // Generate new thumbnail
-                        val videoUri = course.getBestVideoUri()?.toString() ?: course.videoUriString
-                        if (!videoUri.isNullOrEmpty()) {
-                            val generatedThumbnailPath = withContext(Dispatchers.IO) {
-                                thumbnailManager.ensureThumbnailExists(videoUri, course.id)
-                            }
-
-                            if (generatedThumbnailPath != null) {
-                                loadThumbnailWithGlide("file://$generatedThumbnailPath", course)
-                                Log.d("CreatedCourseAdapter", "Generated and loaded new thumbnail for: ${course.title}")
-                            } else {
-                                Log.w("CreatedCourseAdapter", "Could not generate thumbnail for: ${course.title}")
-                                // Keep purple book placeholder
-                            }
-                        } else {
-                            Log.w("CreatedCourseAdapter", "No valid video URI for thumbnail generation: ${course.title}")
-                            // Keep purple book placeholder
-                        }
+                        // If no thumbnail, just keep placeholder
+                        Log.d("CreatedCourseAdapter", "No thumbnail URI for: ${course.title}")
                     }
                 } catch (e: Exception) {
-                    Log.e("CreatedCourseAdapter", "Error in loadOrGenerateVideoThumbnail for ${course.title}", e)
-                    // Keep purple book placeholder image
+                    Log.e("CreatedCourseAdapter", "Error loading thumbnail", e)
                 }
             }
         }
@@ -690,29 +645,11 @@ class CreatedCourseAdapter(
         }
 
         /**
-         * Regenerate thumbnail asynchronously when loading fails
+         * Regenerate thumbnail asynchronously when loading fails - REMOVED (Obsolete)
          */
         private fun regenerateThumbnailAsync(course: VideoData) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    Log.d("CreatedCourseAdapter", "Attempting to regenerate thumbnail for: ${course.title}")
-                    val videoUri = course.getBestVideoUri()?.toString() ?: course.videoUriString
-                    if (!videoUri.isNullOrEmpty()) {
-                        // Delete the broken thumbnail first
-                        thumbnailManager.deleteThumbnail(course.id)
-                        // Generate new thumbnail
-                        val newThumbnailPath = thumbnailManager.generateAndSaveThumbnail(videoUri, course.id)
-                        if (newThumbnailPath != null) {
-                            withContext(Dispatchers.Main) {
-                                loadThumbnailWithGlide("file://$newThumbnailPath", course)
-                                Log.d("CreatedCourseAdapter", "Successfully regenerated thumbnail for: ${course.title}")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("CreatedCourseAdapter", "Error regenerating thumbnail for: ${course.title}", e)
-                }
-            }
+            // Functionality removed as ThumbnailManager is obsolete
+            Log.d("CreatedCourseAdapter", "regenerateThumbnailAsync called but functionality is removed")
         }
 
         /**

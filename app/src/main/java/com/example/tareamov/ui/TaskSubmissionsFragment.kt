@@ -27,7 +27,7 @@ import com.example.tareamov.data.entity.FileContext
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.service.FileAnalysisService
 import com.example.tareamov.service.FileConverterService
-import com.example.tareamov.service.MCPService
+
 import com.example.tareamov.service.SupabaseClient
 import com.example.tareamov.util.CalificationManager
 import com.example.tareamov.util.SessionManager
@@ -47,7 +47,7 @@ class TaskSubmissionsFragment : Fragment() {
     private lateinit var sessionManager: SessionManager
     private lateinit var fileAnalysisService: FileAnalysisService
     private lateinit var fileConverterService: FileConverterService
-    private lateinit var mcpService: MCPService
+
     private lateinit var database: com.example.tareamov.data.AppDatabase
     private lateinit var syncRepository: com.example.tareamov.data.sync.SyncRepository
     private var taskId: Long = -1
@@ -105,7 +105,7 @@ class TaskSubmissionsFragment : Fragment() {
         sessionManager = SessionManager.getInstance(requireContext())
         fileAnalysisService = FileAnalysisService(requireContext())
     fileConverterService = FileConverterService(requireContext())
-        mcpService = MCPService(requireContext())
+
     val currentUsername = sessionManager.getUsername()
         isCourseCreator = (courseCreatorUsername != null && courseCreatorUsername == currentUsername)
     }
@@ -1323,38 +1323,26 @@ class TaskSubmissionsFragment : Fragment() {
                     navigateToChatWithFileContext(errorFileContext, true)
                 }
                 
-                // PRIMERA ESTRATEGIA: Intentar con el MCP Service para convertir a JSON
-                // Esta es la estrategia preferida para cualquier tipo de archivo
+                // PRIMERA ESTRATEGIA: Usar FileConverterService para convertir a JSON
                 try {
-                    Log.d("TaskSubmissionsFragment", "🌐 Intentando procesar con MCP Service")
+                    Log.d("TaskSubmissionsFragment", "🌐 Intentando procesar con FileConverterService")
+                    Toast.makeText(context, "Procesando archivo...", Toast.LENGTH_SHORT).show()
                     
-                    // Verificar si el servidor MCP está disponible
-                    val isMcpAvailable = mcpService.testMCPServerConnection()
-                    
-                    if (isMcpAvailable) {
-                        // El servidor MCP está disponible, usar para convertir el archivo a JSON
-                        Log.d("TaskSubmissionsFragment", "✅ Servidor MCP disponible, convirtiendo archivo a JSON")
-                        Toast.makeText(context, "Convirtiendo archivo con MCP...", Toast.LENGTH_SHORT).show()
-                        
-                        val fileContext = withContext(Dispatchers.IO) {
-                            mcpService.convertFileToJson(Uri.parse(submission.fileUri), submission.fileName)
-                        }
-                        
-                        // Actualizar el ID de la entrega
-                        val updatedFileContext = fileContext.copy(submissionId = submission.id)
-                        
-                        // Guardar el contexto en la base de datos y navegar al chat
-                        navigateToChatWithFileContext(
-                            updatedFileContext,
-                            fileContext.fileType == "google_drive_error" // Es error si es de tipo google_drive_error
-                        )
-                        return@launch
-                    } else {
-                        Log.d("TaskSubmissionsFragment", "⚠️ Servidor MCP no disponible, intentando con FileAnalysisService")
-                        Toast.makeText(context, "MCP no disponible, usando análisis alternativo...", Toast.LENGTH_SHORT).show()
+                    val fileContext = withContext(Dispatchers.IO) {
+                        fileConverterService.convertFileToStructuredJson(Uri.parse(submission.fileUri), submission.fileName)
                     }
+                    
+                    // Actualizar el ID de la entrega
+                    val updatedFileContext = fileContext.copy(submissionId = submission.id)
+                    
+                    // Guardar el contexto en la base de datos y navegar al chat
+                    navigateToChatWithFileContext(
+                        updatedFileContext,
+                        fileContext.fileType == "google_drive_error" // Es error si es de tipo google_drive_error
+                    )
+                    return@launch
                 } catch (e: Exception) {
-                    Log.e("TaskSubmissionsFragment", "❌ Error usando MCP Service: ${e.message}", e)
+                    Log.e("TaskSubmissionsFragment", "❌ Error usando FileConverterService: ${e.message}", e)
                     // Continuamos con FileAnalysisService como fallback
                 }
                 

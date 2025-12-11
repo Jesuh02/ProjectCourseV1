@@ -6,7 +6,7 @@ import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.dao.CourseDao
 import com.example.tareamov.data.entity.Course
 import com.example.tareamov.data.entity.VideoData
-import com.example.tareamov.util.ThumbnailManager
+// import com.example.tareamov.util.ThumbnailManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -20,7 +20,7 @@ class CourseRepository(private val context: Context) {
 
     private val database = AppDatabase.getDatabase(context)
     private val videoDao = database.videoDao()
-    private val thumbnailManager = ThumbnailManager(context)
+    // private val thumbnailManager = ThumbnailManager(context)
     
     // Try to get courseDao, fall back to VideoData if not available
     private val courseDao: CourseDao? by lazy {
@@ -458,9 +458,11 @@ class CourseRepository(private val context: Context) {
     }
     
     /**
-     * Ensure thumbnail exists for a video, generate if necessary
+     * Ensure thumbnail exists for a video, generate if necessary - REMOVED (Obsolete)
      */
     private suspend fun ensureThumbnailForVideo(video: VideoData): String? {
+        return video.thumbnailUri
+        /*
         return try {
             // Check if video already has a thumbnail
             if (!video.thumbnailUri.isNullOrEmpty()) {
@@ -487,6 +489,7 @@ class CourseRepository(private val context: Context) {
             Log.e("CourseRepository", "Error ensuring thumbnail for video ${video.id}", e)
             return null
         }
+        */
     }
 
     private suspend fun convertCourseToVideoData(course: Course): VideoData {
