@@ -17,7 +17,7 @@ import java.io.IOException
 class VideoManager(private val context: Context) {
     private val videoDao = AppDatabase.getDatabase(context).videoDao()
     private val videoCacheDir = File(context.cacheDir, "videos")
-    private val uriPermissionManager = UriPermissionManager(context)
+    // private val uriPermissionManager = UriPermissionManager(context)
 
     init {
         // Ensure the cache directory exists
@@ -338,7 +338,7 @@ class VideoManager(private val context: Context) {
                     // Cannot directly use this URI, rely on local copy if created.
                 }
                 // For other URIs, check permission and try to open
-                else if (uriPermissionManager.hasPermissionForUri(uri)) {
+                else {
                     try {
                         // Test if we can open the URI
                         context.contentResolver.openInputStream(uri)?.use { it.close() }
@@ -349,8 +349,6 @@ class VideoManager(private val context: Context) {
                     } catch (e: Exception) {
                         Log.e("VideoManager", "Cannot open original URI: $uri - ${e.message}")
                     }
-                } else {
-                    Log.w("VideoManager", "No permission for original URI: $uri")
                 }
             }
 

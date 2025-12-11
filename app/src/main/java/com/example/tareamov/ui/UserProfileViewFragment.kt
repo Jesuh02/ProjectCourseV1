@@ -1549,9 +1549,9 @@ class UserProfileViewFragment : Fragment() {
                             Log.d("UserProfileView", "Course also deleted from VideoData table: ${course.id}")
                         }
 
-                        // Clean up any related thumbnails
-                        val thumbnailManager = com.example.tareamov.util.ThumbnailManager(requireContext())
-                        thumbnailManager.deleteThumbnail(course.id)
+                        // Clean up any related thumbnails - REMOVED (Obsolete)
+                        // val thumbnailManager = com.example.tareamov.util.ThumbnailManager(requireContext())
+                        // thumbnailManager.deleteThumbnail(course.id)
                     }
 
                     // Update UI on main thread
@@ -1719,51 +1719,8 @@ class UserProfileViewFragment : Fragment() {
     /**
      * Regenerate thumbnail from video
      */
-    private fun regenerateThumbnailFromVideo(course: VideoData) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val thumbnailManager = com.example.tareamov.util.ThumbnailManager(requireContext())
-
-                val newThumbnailPath = withContext(Dispatchers.IO) {
-                    val videoUri = course.getBestVideoUri()?.toString() ?: course.videoUriString
-                    if (!videoUri.isNullOrEmpty()) {
-                        // Delete existing thumbnail first
-                        thumbnailManager.deleteThumbnail(course.id)
-
-                        // Generate new thumbnail
-                        thumbnailManager.generateAndSaveThumbnail(videoUri, course.id)
-                    } else {
-                        Log.w("UserProfileView", "No video URI available for thumbnail generation: ${course.title}")
-                        null
-                    }
-                }
-
-                if (newThumbnailPath != null) {
-                    // Update course with new thumbnail path
-                    val updatedCourse = course.copy(thumbnailUri = "file://$newThumbnailPath")
-
-                    withContext(Dispatchers.IO) {
-                        videoManager.updateVideo(updatedCourse)
-                        updateCourseInTable(updatedCourse)
-                    }
-
-                    Toast.makeText(requireContext(), "Miniatura regenerada desde video", Toast.LENGTH_SHORT).show()
-                    Log.d("UserProfileView", "Thumbnail regenerated for: ${course.title}")
-
-                    // Reload user content to show updated thumbnail
-                    username?.let { loadUserData(it) }
-                } else {
-                    Toast.makeText(requireContext(), "No se pudo regenerar la miniatura", Toast.LENGTH_SHORT).show()
-                }
-
-            } catch (e: Exception) {
-                Log.e("UserProfileView", "Error regenerating thumbnail", e)
-                Toast.makeText(requireContext(), "Error al regenerar miniatura", Toast.LENGTH_SHORT).show()
-            } finally {
-                currentCourseForThumbnailChange = null
-            }
-        }
-    }
+    // Regenerate thumbnail from video - REMOVED (Obsolete)
+    // private fun regenerateThumbnailFromVideo(course: VideoData) { ... }
     
     // === FIN FUNCIONES CRUD ===
     

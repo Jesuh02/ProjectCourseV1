@@ -309,39 +309,8 @@ class ExploreFragment : Fragment() {
         Log.d("ExploreFragment", "Course observation from Room DISABLED - using Supabase direct fetch")
     }
 
-    // Generate thumbnails preventively for videos without them
-    private fun generatePreventiveThumbnails(videoDataList: List<VideoData>) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val thumbnailManager = com.example.tareamov.util.ThumbnailManager(requireContext())
-                videoDataList.forEach { videoData ->
-                    try {
-                        // Only generate thumbnails if no thumbnail exists and user owns the course
-                        if ((videoData.thumbnailUri.isNullOrEmpty() || !thumbnailManager.thumbnailExists(videoData.id)) &&
-                            canUserModifyCourse(videoData)) {
-                            val videoUri = videoData.getBestVideoUri()?.toString() ?: videoData.videoUriString
-                            if (!videoUri.isNullOrEmpty()) {
-                                val thumbnailPath = thumbnailManager.ensureThumbnailExists(videoUri, videoData.id)
-                                if (thumbnailPath != null) {
-                                    // Update the corresponding course with thumbnail
-                                    val correspondingCourse = allCoursesList.find { it.id == videoData.id }
-                                    if (correspondingCourse != null && canUserModifyCourse(correspondingCourse)) {
-                                        val updatedCourse = correspondingCourse.copy(thumbnailUri = "file://$thumbnailPath")
-                                        courseRepository.updateCourse(updatedCourse)
-                                        Log.d("ExploreFragment", "Generated preventive thumbnail for owned course: ${videoData.title}")
-                                    }
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e("ExploreFragment", "Error generating preventive thumbnail for: ${videoData.title}", e)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("ExploreFragment", "Error in generatePreventiveThumbnails", e)
-            }
-        }
-    }
+    // Generate thumbnails preventively for videos without them - REMOVED (Obsolete)
+    // private fun generatePreventiveThumbnails(videoDataList: List<VideoData>) { ... }
 
     // Convert Course to VideoData for adapter compatibility
     private suspend fun convertCourseToVideoData(course: Course): VideoData {
@@ -741,9 +710,9 @@ class ExploreFragment : Fragment() {
                             Log.d("ExploreFragment", "Course also deleted from VideoData table: $courseId")
                         }
 
-                        // Clean up any related thumbnails
-                        val thumbnailManager = com.example.tareamov.util.ThumbnailManager(requireContext())
-                        thumbnailManager.deleteThumbnail(courseId)
+                        // Clean up any related thumbnails - REMOVED (Obsolete)
+                        // val thumbnailManager = com.example.tareamov.util.ThumbnailManager(requireContext())
+                        // thumbnailManager.deleteThumbnail(courseId)
                     }
 
                     // Update UI on main thread
@@ -1003,42 +972,8 @@ class ExploreFragment : Fragment() {
         }
     }
 
-    // Public method to force thumbnail generation for all courses
-    fun forceRegenerateThumbnails() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    allCoursesList.forEach { course ->
-                        try {
-                            // Only regenerate thumbnails for courses owned by current user
-                            if (canUserModifyCourse(course)) {
-                                val videoData = convertCourseToVideoData(course)
-                                val videoUri = videoData.getBestVideoUri()?.toString() ?: videoData.videoUriString
-                                if (!videoUri.isNullOrEmpty()) {
-                                    val thumbnailManager = com.example.tareamov.util.ThumbnailManager(requireContext())
-                                    val thumbnailPath = thumbnailManager.generateAndSaveThumbnail(videoUri, course.id)
-                                    if (thumbnailPath != null) {
-                                        val updatedCourse = course.copy(thumbnailUri = "file://$thumbnailPath")
-                                        courseRepository.updateCourse(updatedCourse)
-                                        Log.d("ExploreFragment", "Regenerated thumbnail for owned course: ${course.title}")
-                                    }
-                                }
-                            } else {
-                                Log.d("ExploreFragment", "Skipped thumbnail regeneration for non-owned course: ${course.title}")
-                            }
-                        } catch (e: Exception) {
-                            Log.e("ExploreFragment", "Error regenerating thumbnail for: ${course.title}", e)
-                        }
-                    }
-                }
-                // Reload courses to show updated thumbnails
-                loadCourses()
-                Log.d("ExploreFragment", "Thumbnail regeneration completed for user's courses")
-            } catch (e: Exception) {
-                Log.e("ExploreFragment", "Error during thumbnail regeneration", e)
-            }
-        }
-    }
+    // Public method to force thumbnail generation for all courses - REMOVED (Obsolete)
+    // fun forceRegenerateThumbnails() { ... }
 
     // Initialize image picker launcher for thumbnail change
     private fun initializeImagePickerLauncher() {
@@ -1190,49 +1125,8 @@ class ExploreFragment : Fragment() {
     }
 
     // Regenerate thumbnail from video
-    private fun regenerateThumbnailFromVideo(course: VideoData) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val thumbnailManager = com.example.tareamov.util.ThumbnailManager(requireContext())
-
-                val newThumbnailPath = withContext(Dispatchers.IO) {
-                    val videoUri = course.getBestVideoUri()?.toString() ?: course.videoUriString
-                    if (!videoUri.isNullOrEmpty()) {
-                        // Delete existing thumbnail first
-                        thumbnailManager.deleteThumbnail(course.id)
-                        // Generate new thumbnail
-                        thumbnailManager.generateAndSaveThumbnail(videoUri, course.id)
-                    } else null
-                }
-
-                if (newThumbnailPath != null) {
-                    val updatedCourse = course.copy(thumbnailUri = "file://$newThumbnailPath")
-
-                    withContext(Dispatchers.IO) {
-                        // Update in VideoData table
-                        videoManager.updateVideo(updatedCourse)
-
-                        // Update in Course table
-                        updateCourseInTable(updatedCourse)
-                    }
-
-                    Log.d("ExploreFragment", "Thumbnail regenerated for course: ${course.title}")
-                    Toast.makeText(requireContext(), "Miniatura regenerada", Toast.LENGTH_SHORT).show()
-
-                    // Reload courses to show updated thumbnail
-                    loadCourses()
-                } else {
-                    Toast.makeText(requireContext(), "Error al regenerar miniatura", Toast.LENGTH_SHORT).show()
-                }
-
-            } catch (e: Exception) {
-                Log.e("ExploreFragment", "Error regenerating thumbnail", e)
-                Toast.makeText(requireContext(), "Error al regenerar miniatura", Toast.LENGTH_SHORT).show()
-            } finally {
-                currentCourseForThumbnailChange = null
-            }
-        }
-    }
+    // Regenerate thumbnail from video - REMOVED (Obsolete)
+    // private fun regenerateThumbnailFromVideo(course: VideoData) { ... }
 
     private fun startSkeletonAnimation() {
         skeletonContainer.animate().cancel()
