@@ -67,7 +67,13 @@ data class Usuario(
     val nombreUsuario: String
         get() = usuario
 
+    // Helper to check if user is admin based on ID 3
+    val isAdmin: Boolean
+        get() = rol_id == ROL_ADMIN_ID
+
     companion object {
+        const val ROL_ADMIN_ID = 3L
+
         // Deprecated: Use Rol entity instead
         @Deprecated("Use Rol.NOMBRE_USUARIO instead")
         const val ROL_USUARIO = "usuario"

@@ -33,6 +33,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        createNotificationChannel()
+
         // Set system bars to black
         window.statusBarColor = android.graphics.Color.BLACK
         window.navigationBarColor = android.graphics.Color.BLACK
@@ -203,6 +205,18 @@ class MainActivity : AppCompatActivity() {
         } catch (t: Throwable) {
             // ignore
         }
+        
+        // 📱 NUEVO: Handle notification deep links to open specific fragments
+        try {
+            val openFragment = intent?.getStringExtra("openFragment")
+            if (openFragment == "DatabaseQueryFragment") {
+                // Navigate to DatabaseQueryFragment when notification is tapped
+                navController.navigate(R.id.databaseQueryFragment)
+                println("MainActivity: Opened DatabaseQueryFragment from notification")
+            }
+        } catch (t: Throwable) {
+            println("MainActivity: Error opening fragment from notification: ${t.message}")
+        }
 
         navController.addOnDestinationChangedListener { _, destination, _ ->
             // If we're coming from RegisterFragment and going to HomeFragment, redirect to LoginFragment
@@ -224,6 +238,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent) // Important: update the intent
+        
         try {
             val path = intent.getStringExtra("floating_video_path")
             if (!path.isNullOrEmpty()) {
@@ -235,6 +251,18 @@ class MainActivity : AppCompatActivity() {
                 try {
                     navController.navigate(R.id.videoHomeFragment)
                 } catch (t: Throwable) { t.printStackTrace() }
+            }
+            
+            // 📱 NUEVO: Handle notification deep links when app is already running
+            val openFragment = intent.getStringExtra("openFragment")
+            if (openFragment == "DatabaseQueryFragment") {
+                try {
+                    navController.navigate(R.id.databaseQueryFragment)
+                    println("MainActivity: Opened DatabaseQueryFragment from notification (onNewIntent)")
+                } catch (t: Throwable) { 
+                    println("MainActivity: Error navigating from notification: ${t.message}")
+                    t.printStackTrace() 
+                }
             }
         } catch (t: Throwable) {
             t.printStackTrace()
@@ -309,6 +337,20 @@ class MainActivity : AppCompatActivity() {
         } else {
             // Exited PIP mode - restore normal UI
             println("MainActivity: Exited PIP mode")
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "DeepSeek Updates"
+            val descriptionText = "Notificaciones de respuestas del asistente"
+            val importance = android.app.NotificationManager.IMPORTANCE_HIGH
+            val channel = android.app.NotificationChannel("deepseek_updates", name, importance).apply {
+                description = descriptionText
+            }
+            val notificationManager: android.app.NotificationManager =
+                getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            notificationManager.createNotificationChannel(channel)
         }
     }
 }

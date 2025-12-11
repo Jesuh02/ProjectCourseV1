@@ -68,6 +68,7 @@ class VideoHomeFragment : Fragment() {
     private lateinit var exploreIconImageView: ImageView
     private lateinit var activityIconImageView: ImageView
     private lateinit var profileIconImageView: ImageView
+    private lateinit var databaseIconImageView: ImageView // New database icon for admins
 
     private var isLiked = false
     private var isMuted = false
@@ -126,7 +127,9 @@ class VideoHomeFragment : Fragment() {
             rolRecursoDao = database.rolRecursoDao(),
             chatMessageDao = database.chatMessageDao(),
             fileContextDao = database.fileContextDao(),
-            progresoEstudianteDao = database.progresoEstudianteDao()
+            progresoEstudianteDao = database.progresoEstudianteDao(),
+            videoLikeDao = database.videoLikeDao(),
+            videoCommentDao = database.videoCommentDao()
         )
 
         // Refresh session info from Supabase in background so role checks are current
@@ -150,16 +153,19 @@ class VideoHomeFragment : Fragment() {
 
         // Initialize bottom navigation icons
         homeIconImageView = view.findViewById(R.id.homeIconImageView)
-        homeIconImageView = view.findViewById(R.id.homeIconImageView)
         exploreIconImageView = view.findViewById(R.id.exploreIconImageView)
         activityIconImageView = view.findViewById(R.id.activityIconImageView)
         profileIconImageView = view.findViewById(R.id.profileIconImageView)
+        databaseIconImageView = view.findViewById(R.id.databaseIconImageView) // Initialize new icon
 
         // Setup initial colors for bottom navigation icons
         setupBottomNavigationIconColors()
         
         // Setup search functionality
         setupSearchBar(view)
+
+        // Initial setup for database icon (will be updated by updateAdminUi)
+        databaseIconImageView.visibility = View.GONE
 
         // Enhanced Courses Button with improved animations and interactions
         val coursesButton = view.findViewById<ImageView>(R.id.coursesButton)
@@ -221,36 +227,6 @@ class VideoHomeFragment : Fragment() {
             }
         }
 
-       // Set up database orbit button click to navigate to DatabaseQueryFragment
-        val databaseOrbitButton = view.findViewById<ImageView>(R.id.databaseOrbitButton)
-
-        // Decide visibility synchronously to avoid leaving a gap for non-admin users.
-        // Default to GONE so the initial layout does not reserve space for the button.
-        databaseOrbitButton?.visibility = View.GONE
-
-        // Use the sessionManager initialized above to check admin synchronously
-        try {
-            if (sessionManager.isAdmin()) {
-                databaseOrbitButton?.visibility = View.VISIBLE
-                databaseOrbitButton?.setOnClickListener {
-                    findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
-                }
-
-                // Start the animated vector drawable for the orbit icon if present
-                val drawable = databaseOrbitButton?.drawable
-                if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
-                    drawable.start()
-                }
-            } else {
-                // non-admin: keep GONE to remove any visual gap
-                databaseOrbitButton?.visibility = View.GONE
-            }
-        } catch (e: Exception) {
-            // If anything goes wrong, ensure the button does not leave a gap
-            databaseOrbitButton?.visibility = View.GONE
-            Log.e("VideoHomeFragment", "Error checking admin for databaseOrbitButton: ${e.message}", e)
-        }
-
         // Also set up the profile avatars in the top bar to navigate to profile
         profileAvatars.setOnClickListener {
             navigateToProfileSafely()
@@ -289,15 +265,49 @@ class VideoHomeFragment : Fragment() {
 
         // Check if the current user is admin
         val sess = SessionManager.getInstance(requireContext())
-        if (!sess.isAdmin()) {
-            // Ocultar por completo el slot antes del primer render para que no quede hueco
-            adminSlot?.visibility = View.GONE
-        } else {
-            // Usuario admin: mostrar y asignar listener
-            goToAdminButton?.visibility = View.VISIBLE
-            goToAdminButton?.setOnClickListener {
-                Log.d("VideoHomeFragment", "Admin button clicked, navigating to HomeFragment")
-                findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
+        
+        // Function to update admin UI elements
+        fun updateAdminUi(isAdmin: Boolean) {
+            if (isAdmin) {
+                // Admin: Show database icon
+                databaseIconImageView.visibility = View.VISIBLE
+                databaseIconImageView.setOnClickListener {
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
+                    val drawable = databaseIconImageView.drawable
+                    if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
+                        drawable.start()
+                    }
+                }
+                
+                // Admin: Show admin slot and button
+                adminSlot?.visibility = View.VISIBLE
+                goToAdminButton?.visibility = View.VISIBLE
+                goToAdminButton?.setOnClickListener {
+                    Log.d("VideoHomeFragment", "Admin button clicked, navigating to HomeFragment")
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
+                }
+            } else {
+                // Non-admin: Hide elements
+                databaseIconImageView.visibility = View.GONE
+                adminSlot?.visibility = View.GONE
+                goToAdminButton?.visibility = View.GONE
+            }
+        }
+
+        // Initial synchronous check using SessionManager (fast)
+        updateAdminUi(sess.isAdmin())
+
+        // Async check using SyncRepository (robust, checks ID 3)
+        lifecycleScope.launch {
+            val userId = getCurrentUserId()
+            if (userId > 0) {
+                val isAdmin = withContext(Dispatchers.IO) {
+                    syncRepository.isUserAdmin(userId)
+                }
+                // Only update if different from session check or to confirm
+                if (isAdmin != sess.isAdmin()) {
+                    updateAdminUi(isAdmin)
+                }
             }
         }   // Load the current user's avatar
         loadCurrentUserAvatar()
@@ -508,6 +518,36 @@ class VideoHomeFragment : Fragment() {
             },
             checkSubscriptionStatus = { creatorId ->
                 checkIfSubscribed(creatorId)
+            },
+            onLikeToggle = { videoData, isLiked ->
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val userId = getCurrentUserId()
+                        if (userId > 0) {
+                            syncRepository.toggleVideoLike(videoData.id, userId, isLiked)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("VideoHomeFragment", "Error toggling like", e)
+                    }
+                }
+            },
+            onCommentClick = { videoData ->
+                // Show comment dialog or navigate to comments
+                showCommentsDialog(videoData)
+            },
+            checkUserLikedVideo = { videoId ->
+                val userId = getCurrentUserId()
+                if (userId > 0) {
+                    syncRepository.hasUserLikedVideo(videoId, userId)
+                } else {
+                    false
+                }
+            },
+            getLikeCount = { videoId ->
+                syncRepository.getVideoLikeCount(videoId)
+            },
+            getCommentCount = { videoId ->
+                syncRepository.getVideoCommentCount(videoId)
             }
         )
 
@@ -1295,5 +1335,218 @@ class VideoHomeFragment : Fragment() {
     private fun hideKeyboard(view: View) {
         val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(view.windowToken, 0)
+    }
+    
+    /**
+     * Show comments dialog for a video
+     */
+    private fun showCommentsDialog(videoData: com.example.tareamov.data.entity.VideoData) {
+        val context = context ?: return
+        
+        val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_comments, null)
+        val dialog = android.app.AlertDialog.Builder(context, R.style.Theme_TareaMov_Dialog)
+            .setView(dialogView)
+            .create()
+        
+        val commentsRecyclerView = dialogView.findViewById<RecyclerView>(R.id.commentsRecyclerView)
+        val commentInput = dialogView.findViewById<EditText>(R.id.commentInput)
+        val sendButton = dialogView.findViewById<ImageButton>(R.id.sendCommentButton)
+        val closeButton = dialogView.findViewById<ImageButton>(R.id.closeCommentsButton)
+        val titleText = dialogView.findViewById<TextView>(R.id.commentsTitleText)
+        val emptyText = dialogView.findViewById<TextView>(R.id.emptyCommentsText)
+        val skeletonContainer = dialogView.findViewById<LinearLayout>(R.id.skeletonContainer)
+        val currentUserAvatar = dialogView.findViewById<de.hdodenhof.circleimageview.CircleImageView>(R.id.currentUserAvatar)
+        
+        titleText?.text = "Comentarios"
+        
+        // Setup RecyclerView
+        val commentsAdapter = CommentsAdapter()
+        commentsRecyclerView?.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(context)
+        commentsRecyclerView?.adapter = commentsAdapter
+        
+        // Initial State: Show Skeleton, Hide List/Empty
+        skeletonContainer?.visibility = View.VISIBLE
+        commentsRecyclerView?.visibility = View.GONE
+        emptyText?.visibility = View.GONE
+
+        // Start pulse animation on skeleton for professional look
+        val pulseAnimation = android.view.animation.AlphaAnimation(0.4f, 1.0f).apply {
+            duration = 800
+            repeatMode = android.view.animation.Animation.REVERSE
+            repeatCount = android.view.animation.Animation.INFINITE
+        }
+        skeletonContainer?.startAnimation(pulseAnimation)
+
+        // Load current user avatar
+        lifecycleScope.launch {
+            val userId = getCurrentUserId()
+            if (userId > 0) {
+                val user = syncRepository.getUsuarioByIdLocal(userId)
+                if (user != null && !user.avatar.isNullOrEmpty()) {
+                    com.bumptech.glide.Glide.with(context)
+                        .load(user.avatar)
+                        .placeholder(R.drawable.ic_profile)
+                        .into(currentUserAvatar!!)
+                }
+            }
+        }
+
+        // Show/Hide send button based on input
+        commentInput?.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                sendButton?.visibility = if (s.isNullOrBlank()) View.GONE else View.VISIBLE
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        // Setup Emoji Click Listeners
+        val emojiContainer = dialogView.findViewById<android.widget.HorizontalScrollView>(R.id.emojiScrollView)
+        if (emojiContainer != null) {
+            val linearLayout = emojiContainer.getChildAt(0) as? android.widget.LinearLayout
+            if (linearLayout != null) {
+                for (i in 0 until linearLayout.childCount) {
+                    val child = linearLayout.getChildAt(i)
+                    if (child is TextView) {
+                        child.setOnClickListener {
+                            val emoji = child.text.toString()
+                            val start = commentInput?.selectionStart ?: 0
+                            val end = commentInput?.selectionEnd ?: 0
+                            commentInput?.text?.replace(start, end, emoji)
+                            commentInput?.setSelection(start + emoji.length)
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Load comments with delay to show skeleton animation
+        lifecycleScope.launch {
+            try {
+                // Simulate network delay for skeleton effect (remove in production if not needed)
+                kotlinx.coroutines.delay(1000) 
+                
+                val comments = syncRepository.getVideoComments(videoData.id)
+                
+                skeletonContainer?.clearAnimation()
+                skeletonContainer?.visibility = View.GONE
+                
+                if (comments.isEmpty()) {
+                    emptyText?.visibility = View.VISIBLE
+                    commentsRecyclerView?.visibility = View.GONE
+                } else {
+                    emptyText?.visibility = View.GONE
+                    commentsRecyclerView?.visibility = View.VISIBLE
+                    commentsAdapter.submitList(comments)
+                }
+            } catch (e: Exception) {
+                Log.e("VideoHomeFragment", "Error loading comments", e)
+                skeletonContainer?.visibility = View.GONE
+                emptyText?.text = "Error al cargar comentarios"
+                emptyText?.visibility = View.VISIBLE
+            }
+        }
+        
+        // Send comment
+        sendButton?.setOnClickListener {
+            val commentText = commentInput?.text?.toString()?.trim()
+            if (!commentText.isNullOrEmpty()) {
+                lifecycleScope.launch {
+                    try {
+                        val userId = getCurrentUserId()
+                        if (userId > 0) {
+                            val commentId = syncRepository.addVideoComment(videoData.id, userId, commentText)
+                            if (commentId != null) {
+                                commentInput.setText("")
+                                // Reload comments
+                                val comments = syncRepository.getVideoComments(videoData.id)
+                                emptyText?.visibility = View.GONE
+                                commentsRecyclerView?.visibility = View.VISIBLE
+                                commentsAdapter.submitList(comments)
+                                Toast.makeText(context, "Comentario agregado", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            Toast.makeText(context, "Debes iniciar sesión para comentar", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        Log.e("VideoHomeFragment", "Error adding comment", e)
+                        Toast.makeText(context, "Error al agregar comentario", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+        
+        closeButton?.setOnClickListener {
+            dialog.dismiss()
+        }
+        
+        dialog.show()
+        
+        // Fix dialog width to be 95% of screen width and transparent background
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.95).toInt(),
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+    }
+    
+    /**
+     * Simple adapter for comments
+     */
+    inner class CommentsAdapter : RecyclerView.Adapter<CommentsAdapter.CommentViewHolder>() {
+        private var comments: List<com.example.tareamov.data.entity.VideoComment> = emptyList()
+        
+        fun submitList(newComments: List<com.example.tareamov.data.entity.VideoComment>) {
+            comments = newComments
+            notifyDataSetChanged()
+        }
+        
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CommentViewHolder {
+            val view = LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_comment, parent, false)
+            return CommentViewHolder(view)
+        }
+        
+        override fun onBindViewHolder(holder: CommentViewHolder, position: Int) {
+            holder.bind(comments[position])
+        }
+        
+        override fun getItemCount() = comments.size
+        
+        inner class CommentViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+            private val usernameText: TextView = itemView.findViewById(R.id.commentUsername)
+            private val commentText: TextView = itemView.findViewById(R.id.commentText)
+            private val timestampText: TextView = itemView.findViewById(R.id.commentTimestamp)
+            private val avatar: de.hdodenhof.circleimageview.CircleImageView = itemView.findViewById(R.id.commentAvatar)
+            private val likeCount: TextView = itemView.findViewById(R.id.commentLikeCount)
+            
+            fun bind(comment: com.example.tareamov.data.entity.VideoComment) {
+                commentText.text = comment.comment
+                // Simple timestamp formatting
+                timestampText.text = "Hace un momento" // Placeholder, ideally parse createdAt
+                likeCount.text = (0..10).random().toString() // Mock like count for visual fidelity
+                
+                // Load username and avatar
+                lifecycleScope.launch {
+                    try {
+                        val db = AppDatabase.getDatabase(itemView.context)
+                        val user = db.usuarioDao().getUsuarioById(comment.usuarioId)
+                        usernameText.text = user?.usuario ?: "Usuario"
+                        
+                        if (user != null && !user.avatar.isNullOrEmpty()) {
+                             com.bumptech.glide.Glide.with(itemView.context)
+                                .load(user.avatar)
+                                .placeholder(R.drawable.ic_profile)
+                                .into(avatar)
+                        } else {
+                            avatar.setImageResource(R.drawable.ic_profile)
+                        }
+                    } catch (e: Exception) {
+                        usernameText.text = "Usuario"
+                        avatar.setImageResource(R.drawable.ic_profile)
+                    }
+                }
+            }
+        }
     }
 }

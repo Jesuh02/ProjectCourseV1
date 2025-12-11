@@ -596,6 +596,12 @@ class ExploreFragment : Fragment() {
             },
             onEnrollClickListener = { course ->
                 handleEnrollmentClick(course)
+            },
+            onCreatorClickListener = { username ->
+                val bundle = Bundle().apply {
+                    putString("username", username)
+                }
+                findNavController().navigate(R.id.action_exploreFragment_to_userProfileViewFragment, bundle)
             }
         )
         coursesRecyclerView.adapter = coursesAdapter

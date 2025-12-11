@@ -29,7 +29,12 @@ class VideoAdapter(
     private val onProfileClick: ((String) -> Unit)? = null,
     private val onUsernameClick: ((VideoData) -> Unit)? = null,
     private val onSubscribeToggle: ((Long, Boolean) -> Unit)? = null,
-    private val checkSubscriptionStatus: (suspend (Long) -> Boolean)? = null
+    private val checkSubscriptionStatus: (suspend (Long) -> Boolean)? = null,
+    private val onLikeToggle: ((VideoData, Boolean) -> Unit)? = null,
+    private val onCommentClick: ((VideoData) -> Unit)? = null,
+    private val checkUserLikedVideo: (suspend (Long) -> Boolean)? = null,
+    private val getLikeCount: (suspend (Long) -> Int)? = null,
+    private val getCommentCount: (suspend (Long) -> Int)? = null
 ) : RecyclerView.Adapter<VideoAdapter.VideoViewHolder>() {
 
     private var currentUserId: Long = -1L
@@ -94,6 +99,7 @@ class VideoAdapter(
         private var overlayHandler = android.os.Handler(android.os.Looper.getMainLooper())
         private var overlayRunnable: Runnable? = null
         private var currentCreatorId: Long = -1L
+        private var currentVideoData: VideoData? = null
 
         private fun showErrorPlaceholder() {
             videoView.visibility = View.GONE
@@ -101,6 +107,7 @@ class VideoAdapter(
             errorPlaceholder.visibility = View.VISIBLE
             Log.e("VideoAdapter", "Showing error placeholder")
         }        fun bind(videoData: VideoData) {
+            currentVideoData = videoData
             descriptionText.text = videoData.description
             titleText.text = videoData.title
 
@@ -119,9 +126,30 @@ class VideoAdapter(
             updateSoundButton()
             updateSubscribeButton()
             
-            // Set random counts for demo (in production, fetch from server)
+            // Load likes and comments from Supabase
             likeCountText?.text = "0"
             commentCountText?.text = "0"
+            
+            // Fetch like count and user like status
+            CoroutineScope(Dispatchers.Main).launch {
+                try {
+                    // Get like count
+                    val likeCount = getLikeCount?.invoke(videoData.id) ?: 0
+                    likeCountText?.text = formatCount(likeCount)
+                    
+                    // Check if user has liked this video
+                    if (currentUserId > 0) {
+                        isLiked = checkUserLikedVideo?.invoke(videoData.id) ?: false
+                        updateLikeButton()
+                    }
+                    
+                    // Get comment count
+                    val commentCount = getCommentCount?.invoke(videoData.id) ?: 0
+                    commentCountText?.text = formatCount(commentCount)
+                } catch (e: Exception) {
+                    Log.e("VideoAdapter", "Error loading likes/comments for video ${videoData.id}", e)
+                }
+            }
 
             // Setup button listeners
             setupButtonListeners()
@@ -444,8 +472,17 @@ class VideoAdapter(
         private fun setupButtonListeners() {
             // Like button
             likeButton?.setOnClickListener {
+                val wasLiked = isLiked
                 isLiked = !isLiked
                 updateLikeButton()
+                
+                // Update like count locally
+                val currentCount = likeCountText?.text?.toString()?.let { 
+                    parseCount(it) 
+                } ?: 0
+                val newCount = if (isLiked) currentCount + 1 else maxOf(0, currentCount - 1)
+                likeCountText?.text = formatCount(newCount)
+                
                 // Animate the like button
                 likeButton.animate()
                     .scaleX(1.3f)
@@ -459,6 +496,11 @@ class VideoAdapter(
                             .start()
                     }
                     .start()
+                
+                // Notify callback to sync with Supabase
+                currentVideoData?.let { videoData ->
+                    onLikeToggle?.invoke(videoData, isLiked)
+                }
             }
 
             // Share button
@@ -500,7 +542,11 @@ class VideoAdapter(
             
             // Comment button
             commentButton?.setOnClickListener {
-                android.widget.Toast.makeText(itemView.context, "Comentarios próximamente", android.widget.Toast.LENGTH_SHORT).show()
+                currentVideoData?.let { videoData ->
+                    onCommentClick?.invoke(videoData)
+                } ?: run {
+                    android.widget.Toast.makeText(itemView.context, "Error al cargar comentarios", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
             
             // Follow label click
@@ -551,6 +597,18 @@ class VideoAdapter(
                 count >= 1000000 -> String.format("%.1fM", count / 1000000.0)
                 count >= 1000 -> String.format("%.1fK", count / 1000.0).replace(".0K", "K")
                 else -> count.toString()
+            }
+        }
+        
+        private fun parseCount(text: String): Int {
+            return try {
+                when {
+                    text.endsWith("M") -> (text.dropLast(1).toDouble() * 1000000).toInt()
+                    text.endsWith("K") -> (text.dropLast(1).toDouble() * 1000).toInt()
+                    else -> text.toIntOrNull() ?: 0
+                }
+            } catch (e: Exception) {
+                0
             }
         }
 

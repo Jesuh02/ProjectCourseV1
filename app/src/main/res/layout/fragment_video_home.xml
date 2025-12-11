@@ -156,7 +156,7 @@
 
                 <!-- Database Orbit Button -->
                 <ImageView
-                    android:id="@+id/databaseOrbitButton"
+                    android:id="@+id/databaseIconImageView"
                     android:layout_width="36dp"
                     android:layout_height="36dp"
                     android:layout_marginEnd="8dp"

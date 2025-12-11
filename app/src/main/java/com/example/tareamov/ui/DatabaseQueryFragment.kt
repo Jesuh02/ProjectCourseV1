@@ -36,6 +36,8 @@ import android.graphics.Rect
 import android.view.ViewTreeObserver
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeListener {
 
@@ -592,6 +594,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 
                 // Use MCP Server directly (Server-side Agent)
                 val result = processQueryWithMCPServer(query)
+                
+                // Enviar notificación por email automáticamente después de obtener la respuesta
+                sendNotificationAfterResponse(result)
 
                 Log.d("DatabaseQueryFragment", "=== FINAL RESULT LOG ===")
                 Log.d("DatabaseQueryFragment", "Result Length: ${result.length} characters")
@@ -656,6 +661,63 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
     /**
      * Detect if query is asking for Business Intelligence analysis
      */
+    /**
+     * Envía notificación push del sistema SIEMPRE que se reciba una respuesta del chat
+     * Funciona tanto en foreground como en background
+     * Utiliza Firebase Cloud Messaging via backend
+     */
+    private suspend fun sendNotificationAfterResponse(responsePreview: String) = withContext(Dispatchers.IO) {
+        try {
+            val currentUserId = sessionManager.getUserId()
+            if (currentUserId == null || currentUserId <= 0) {
+                Log.w(TAG, "⚠️ No user ID available for notification")
+                return@withContext
+            }
+            
+            Log.d(TAG, "📱 Enviando notificación push del sistema para userId $currentUserId")
+            
+            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
+                "http://10.0.2.2:3000"  // Fallback para emulador
+            }
+            
+            // Preparar datos de la notificación push del sistema
+            val notificationPayload = JSONObject().apply {
+                put("userId", currentUserId)
+                put("title", "🤖 TareaMov - Nueva respuesta")
+                put("body", "Tu consulta ha sido procesada. Toca para ver la respuesta.")
+                put("data", JSONObject().apply {
+                    put("type", "chat_response")
+                    put("userId", currentUserId)
+                    put("action", "OPEN_CHAT")
+                })
+            }
+            
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            
+            val body = notificationPayload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = okhttp3.Request.Builder()
+                .url("$baseUrl/send-push-notification")
+                .post(body)
+                .build()
+            
+            val response = client.newCall(request).execute()
+            
+            if (response.isSuccessful) {
+                Log.d(TAG, "✅ Notificación push del sistema enviada exitosamente")
+            } else {
+                Log.w(TAG, "⚠️ Push notification failed: ${response.code} - ${response.message}")
+            }
+            
+            response.close()
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error sending push notification: ${e.message}", e)
+        }
+    }
+    
     private fun isBIQuery(lowerQuery: String): Boolean {
         val biKeywords = listOf(
             "inteligencia", "kpi", "business intelligence", "indicador",
@@ -737,7 +799,7 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             else -> null
         }
     }
-
+    
     /**
      * Process query using MCP tareamov-mcp-server (default tool)
      * This uses the query_database tool from the MCP server via HTTP

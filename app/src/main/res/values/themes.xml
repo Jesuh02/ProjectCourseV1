@@ -24,4 +24,12 @@
         <item name="contentScrim">#000000</item>
         <item name="statusBarScrim">#000000</item>
     </style>
+    
+    <!-- Dialog style for comments and other dark dialogs -->
+    <style name="Theme_TareaMov_Dialog" parent="Theme.Material3.Dark.Dialog">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>

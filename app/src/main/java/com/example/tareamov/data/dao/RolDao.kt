@@ -22,6 +22,12 @@ interface RolDao {
     @Query("SELECT * FROM roles ORDER BY nivel ASC")
     suspend fun getAllRoles(): List<Rol>
     
+    @Query("SELECT * FROM roles WHERE nivel >= :minLevel ORDER BY nivel ASC")
+    suspend fun getRolesByMinLevel(minLevel: Float): List<Rol>
+    
+    @Query("SELECT * FROM roles WHERE nombre = 'docente' LIMIT 1")
+    suspend fun getDocenteRole(): Rol?
+    
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRol(rol: Rol): Long
     
@@ -36,4 +42,7 @@ interface RolDao {
     
     @Query("SELECT COUNT(*) FROM roles")
     suspend fun getRoleCount(): Int
+    
+    @Query("SELECT EXISTS(SELECT 1 FROM roles WHERE nombre = :nombre)")
+    suspend fun roleExists(nombre: String): Boolean
 }

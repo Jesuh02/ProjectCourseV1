@@ -56,9 +56,26 @@ class RolRepository(
         if (count == 0) {
             val defaultRoles = listOf(
                 Rol.createUsuarioRole(),
+                Rol.createDocenteRole(),
                 Rol.createAdminRole()
             )
             insertRoles(defaultRoles)
+        } else {
+            // Check if docente role exists, if not add it
+            val docenteRole = getRolByNombre(Rol.NOMBRE_DOCENTE)
+            if (docenteRole == null) {
+                insertRol(Rol.createDocenteRole())
+            }
         }
+    }
+    
+    suspend fun getDocenteRole(): Rol? {
+        return rolDao.getDocenteRole()
+    }
+    
+    suspend fun isUserDocente(userId: Long): Boolean {
+        val usuario = usuarioDao.getUsuarioById(userId) ?: return false
+        val rol = getRolById(usuario.rol_id) ?: return false
+        return Rol.isDocenteOrHigher(rol.nivel)
     }
 }

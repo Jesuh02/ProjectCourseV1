@@ -8,15 +8,15 @@ import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.tareamov.R
 import com.example.tareamov.databinding.FragmentNotificacionesBinding
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
-import com.example.tareamov.data.AppDatabase
-import com.example.tareamov.data.entity.Usuario
+import com.example.tareamov.data.entity.Notification
+import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.ui.adapter.NotificationAdapter
 import com.example.tareamov.util.SessionManager
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class NotificacionesFragment : Fragment() {
 
@@ -24,6 +24,7 @@ class NotificacionesFragment : Fragment() {
     private val binding get() = _binding!!
     private lateinit var bottomNavBinding: ComponentBottomNavigationBinding
     private lateinit var sessionManager: SessionManager
+    private lateinit var notificationAdapter: NotificationAdapter
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -37,23 +38,80 @@ class NotificacionesFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Initialize SessionManager
         sessionManager = SessionManager.getInstance(requireContext())
 
-        // Enlazar el binding del include manualmente
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
         bottomNavBinding = ComponentBottomNavigationBinding.bind(bottomNavView)
 
-        // Resaltar solo el icono de notificaciones (actividad) en morado
         bottomNavBinding.activityIconImageView.setColorFilter(
             androidx.core.content.ContextCompat.getColor(requireContext(), R.color.purple_500)
         )
 
-        // Setup admin button visibility and functionality
+        setupRecyclerView()
         setupAdminButton()
-
         setupNavigation()
         setupTabs()
+        
+        loadNotifications()
+    }
+
+    private fun setupRecyclerView() {
+        notificationAdapter = NotificationAdapter { notification ->
+            onNotificationClick(notification)
+        }
+        binding.notificationsRecyclerView.apply {
+            layoutManager = LinearLayoutManager(context)
+            adapter = notificationAdapter
+        }
+    }
+
+    private fun loadNotifications() {
+        val userId = sessionManager.getUserId()
+        if (userId == -1L) {
+            Log.w("NotificacionesFragment", "No user ID available")
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                val notifications = SupabaseClient.fetchNotifications(userId)
+                
+                if (notifications.isNotEmpty()) {
+                    binding.notificationsRecyclerView.visibility = View.VISIBLE
+                    binding.emptyStateLayout.visibility = View.GONE
+                    notificationAdapter.submitList(notifications)
+                    
+                    val unreadCount = notifications.count { !it.isRead }
+                    binding.notificacionesTab.text = "Notificaciones ($unreadCount)"
+                } else {
+                    binding.notificationsRecyclerView.visibility = View.GONE
+                    binding.emptyStateLayout.visibility = View.VISIBLE
+                    binding.notificacionesTab.text = "Notificaciones (0)"
+                }
+            } catch (e: Exception) {
+                Log.e("NotificacionesFragment", "Error loading notifications", e)
+                binding.notificationsRecyclerView.visibility = View.GONE
+                binding.emptyStateLayout.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    private fun onNotificationClick(notification: Notification) {
+        if (!notification.isRead) {
+            lifecycleScope.launch {
+                SupabaseClient.markNotificationAsRead(notification.id)
+                loadNotifications()
+            }
+        }
+
+        when (notification.type) {
+            Notification.TYPE_NEW_COURSE -> {
+                Log.d("Notificaciones", "Course notification clicked: ${notification.relatedId}")
+            }
+            Notification.TYPE_NEW_VIDEO -> {
+                Log.d("Notificaciones", "Video notification clicked: ${notification.relatedId}")
+            }
+        }
     }
 
     private fun setupNavigation() {
@@ -92,17 +150,14 @@ class NotificacionesFragment : Fragment() {
         if (notificacionesSelected) {
             binding.notificacionesTab.setTextColor(resources.getColor(R.color.purple_500, null))
             binding.susurrosTab.setTextColor(resources.getColor(R.color.white, null))
-            binding.tabIndicator.apply {
-                val params = layoutParams as ViewGroup.LayoutParams
-                layoutParams = params
-            }
+            binding.notificationsRecyclerView.visibility = View.VISIBLE
+            binding.emptyStateLayout.visibility = View.GONE
+            loadNotifications()
         } else {
             binding.notificacionesTab.setTextColor(resources.getColor(R.color.white, null))
             binding.susurrosTab.setTextColor(resources.getColor(R.color.purple_500, null))
-            binding.tabIndicator.apply {
-                val params = layoutParams as ViewGroup.LayoutParams
-                layoutParams = params
-            }
+            binding.notificationsRecyclerView.visibility = View.GONE
+            binding.emptyStateLayout.visibility = View.VISIBLE
         }
     }
 
