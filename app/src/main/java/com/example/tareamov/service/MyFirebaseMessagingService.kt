@@ -45,10 +45,20 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // Check if message contains a data payload.
         if (remoteMessage.data.isNotEmpty()) {
             Log.d(TAG, "Message data payload: ${remoteMessage.data}")
-            // Handle data payload if needed
+            
+            // Handle chat-specific notifications with rich UI
+            val notificationType = remoteMessage.data["type"]
+            if (notificationType == "chat_response") {
+                sendChatNotification(
+                    title = remoteMessage.notification?.title ?: "🤖 Nueva respuesta del chat",
+                    body = remoteMessage.notification?.body ?: "Tu consulta ha sido procesada",
+                    data = remoteMessage.data
+                )
+                return
+            }
         }
 
-        // Check if message contains a notification payload.
+        // Check if message contains a notification payload (default handling)
         remoteMessage.notification?.let {
             Log.d(TAG, "Message Notification Body: ${it.body}")
             sendNotification(it.title, it.body, remoteMessage.data)
@@ -122,5 +132,78 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         notificationManager.notify(0 /* ID of notification */, notificationBuilder.build())
+    }
+    
+    /**
+     * Crea y muestra notificación especial para respuestas del chat
+     * Incluye estilo expandido, acciones rápidas y deep linking
+     */
+    private fun sendChatNotification(title: String, body: String, data: Map<String, String>) {
+        // Intent para abrir el chat directamente
+        val chatIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra("openFragment", "DatabaseQueryFragment")
+            putExtra("userId", data["userId"])
+            
+            // Pass all data
+            for ((key, value) in data) {
+                putExtra(key, value)
+            }
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            System.currentTimeMillis().toInt(), // Unique request code
+            chatIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Canal de notificación específico para chat
+        val channelId = "chat_notifications"
+        val defaultSoundUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+        
+        // Construir notificación con estilo expandido
+        val notificationBuilder = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle()
+                .bigText("$body\n\n💡 Tu asistente de IA ha procesado tu consulta. Toca para ver la respuesta completa en el chat.")
+                .setBigContentTitle(title)
+            )
+            .setAutoCancel(true)
+            .setSound(defaultSoundUri)
+            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setColor(0xFF6366F1.toInt()) // Indigo color (TareaMov brand)
+            .setColorized(false)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        // Crear canal de notificaciones para chat (Android O+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "Chat y Respuestas de IA",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notificaciones de respuestas del asistente de IA en el chat"
+                enableLights(true)
+                lightColor = 0xFF6366F1.toInt()
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 250, 250, 250)
+                setShowBadge(true)
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        // Generar ID único basado en timestamp para múltiples notificaciones
+        val notificationId = System.currentTimeMillis().toInt()
+        notificationManager.notify(notificationId, notificationBuilder.build())
+        
+        Log.d(TAG, "📱 Chat notification displayed with ID: $notificationId")
     }
 }

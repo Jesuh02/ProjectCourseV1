@@ -23,6 +23,9 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
+    <!-- Notification permissions for Android 13+ (API 33+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- MANAGE_DOCUMENTS is not needed and only for system apps -->
     <!-- <uses-permission android:name="android.permission.MANAGE_DOCUMENTS" /> -->
 
@@ -56,6 +59,7 @@
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustNothing"
             android:persistableMode="persistAcrossReboots">
             <intent-filter>

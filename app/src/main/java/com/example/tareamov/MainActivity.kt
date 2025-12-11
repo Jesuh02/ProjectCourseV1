@@ -228,6 +228,18 @@ class MainActivity : AppCompatActivity() {
         } catch (t: Throwable) {
             // ignore
         }
+        
+        // 📱 NUEVO: Handle notification deep links to open specific fragments
+        try {
+            val openFragment = intent?.getStringExtra("openFragment")
+            if (openFragment == "DatabaseQueryFragment") {
+                // Navigate to DatabaseQueryFragment when notification is tapped
+                navController.navigate(R.id.databaseQueryFragment)
+                println("MainActivity: Opened DatabaseQueryFragment from notification")
+            }
+        } catch (t: Throwable) {
+            println("MainActivity: Error opening fragment from notification: ${t.message}")
+        }
 
        
         navController.addOnDestinationChangedListener { _, destination, _ ->
@@ -250,6 +262,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent) // Important: update the intent
+        
         try {
             val path = intent.getStringExtra("floating_video_path")
             if (!path.isNullOrEmpty()) {
@@ -261,6 +275,18 @@ class MainActivity : AppCompatActivity() {
                 try {
                     navController.navigate(R.id.videoHomeFragment)
                 } catch (t: Throwable) { t.printStackTrace() }
+            }
+            
+            // 📱 NUEVO: Handle notification deep links when app is already running
+            val openFragment = intent.getStringExtra("openFragment")
+            if (openFragment == "DatabaseQueryFragment") {
+                try {
+                    navController.navigate(R.id.databaseQueryFragment)
+                    println("MainActivity: Opened DatabaseQueryFragment from notification (onNewIntent)")
+                } catch (t: Throwable) { 
+                    println("MainActivity: Error navigating from notification: ${t.message}")
+                    t.printStackTrace() 
+                }
             }
         } catch (t: Throwable) {
             t.printStackTrace()
