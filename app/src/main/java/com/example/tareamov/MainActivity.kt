@@ -15,7 +15,7 @@ import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
 import com.example.tareamov.viewmodel.AuthViewModel
 import com.example.tareamov.viewmodel.PersonaViewModel
-import com.example.tareamov.viewmodel.SupabaseViewModel
+// import com.example.tareamov.viewmodel.SupabaseViewModel
 import com.example.tareamov.data.AppDatabase // Added
 import com.example.tareamov.data.sync.SyncRepository // Added
 import kotlinx.coroutines.launch
@@ -27,7 +27,6 @@ class MainActivity : AppCompatActivity() {
     lateinit var personaViewModel: PersonaViewModel
     lateinit var authViewModel: AuthViewModel
     lateinit var syncRepository: SyncRepository // Added
-    private lateinit var supabaseViewModel: SupabaseViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -64,15 +63,6 @@ class MainActivity : AppCompatActivity() {
         val recursoDao = appDb.recursoDao()
         val rolRecursoDao = appDb.rolRecursoDao()
 
-
-        // Crea el factory
-        val factory = com.example.tareamov.viewmodel.SupabaseViewModelFactory(usuarioDao, personaDao)
-
-        // Obtén el ViewModel usando el factory
-        val supabaseViewModel = androidx.lifecycle.ViewModelProvider(this, factory)
-            .get(com.example.tareamov.viewmodel.SupabaseViewModel::class.java)
-
-
         // Initialize SyncRepository
         syncRepository = SyncRepository(
             usuarioDao,
@@ -82,7 +72,7 @@ class MainActivity : AppCompatActivity() {
             taskDao,
             subscriptionDao,
             taskSubmissionDao,
-            videoDao, // <-- Pasa el videoDao aquí
+            videoDao,
             appDb.courseDao(),
             rolDao,
             recursoDao,
@@ -134,9 +124,6 @@ class MainActivity : AppCompatActivity() {
             // ignore
         }
 
-        // Trigger an initial sync to Supabase if configured. In production, call this on connectivity changes
-        // and avoid syncing large payloads on main startup. Credentials are loaded from
-        // BuildConfig which reads `local.properties` in the Gradle script; keep that file out of VCS.
         try {
             val configured = com.example.tareamov.service.SupabaseClient.isConfigured()
             if (configured) {
@@ -195,16 +182,6 @@ class MainActivity : AppCompatActivity() {
         personaViewModel = ViewModelProvider(this)[PersonaViewModel::class.java]
         authViewModel = ViewModelProvider(this)[AuthViewModel::class.java]
 
-        supabaseViewModel.loginResult.observe(this) { token ->
-            if (token != null) {
-                // Login exitoso, puedes guardar el token o navegar a otra pantalla
-                println("Login Supabase exitoso. Token: $token")
-            } else {
-                // Mostrar error de login
-                println("Error en login Supabase")
-            }
-        }
-
         // Set up Navigation - Ensure this is properly initialized
         val navHostFragment = supportFragmentManager
             .findFragmentById(R.id.nav_host_fragment) as NavHostFragment
@@ -227,7 +204,6 @@ class MainActivity : AppCompatActivity() {
             // ignore
         }
 
-       
         navController.addOnDestinationChangedListener { _, destination, _ ->
             // If we're coming from RegisterFragment and going to HomeFragment, redirect to LoginFragment
             if (destination.id == R.id.homeFragment) {
@@ -299,10 +275,6 @@ class MainActivity : AppCompatActivity() {
         println("MainActivity: Configuration changed - Orientation: ${if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) "Landscape" else "Portrait"}")
     }
 
-    /**
-     * Handle user leaving the app (Home button, Recent apps, etc.)
-     * Enter PIP mode automatically when viewing videos in VideoHomeFragment
-     */
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         
