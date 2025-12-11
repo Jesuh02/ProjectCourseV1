@@ -21,12 +21,12 @@ import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import com.example.tareamov.R
-import com.example.tareamov.util.UriPermissionManager
+// import com.example.tareamov.util.UriPermissionManager
 
 class VideoPlayerActivity : AppCompatActivity() {
 
     private lateinit var videoView: VideoView
-    private lateinit var uriPermissionManager: UriPermissionManager
+    // private lateinit var uriPermissionManager: UriPermissionManager
 
     private lateinit var controlsOverlay: FrameLayout
     private lateinit var playPauseOverlay: ImageView
@@ -84,7 +84,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         skipForwardIcon = findViewById(R.id.skipForwardIcon)
     btnFloatingMode = findViewById(R.id.btn_floating_mode)
 
-        uriPermissionManager = UriPermissionManager(this)
+        // uriPermissionManager = UriPermissionManager(this)
 
         // Read intent extras from adapter
         val pathOrUri = intent.getStringExtra("video_path")
@@ -138,10 +138,6 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
 
         Log.d("VideoPlayerActivity", "Final processed URI: $uri")
-
-        if (uri.scheme == "content" && !uriPermissionManager.hasPermissionForUri(uri)) {
-            uriPermissionManager.takePersistablePermission(uri)
-        }
 
         videoView.setVideoURI(uri)
         videoView.setOnPreparedListener { mp ->
