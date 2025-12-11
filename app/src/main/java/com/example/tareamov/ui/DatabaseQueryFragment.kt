@@ -17,10 +17,8 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.databinding.FragmentDatabaseQueryBinding
-import com.example.tareamov.service.DatabaseQueryService
-import com.example.tareamov.service.LocalLlamaService
-import com.example.tareamov.service.MCPService
-import com.example.tareamov.service.MSPClient
+
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -29,7 +27,6 @@ import androidx.work.WorkInfo
 import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import com.example.tareamov.ui.adapter.DatabaseChatAdapter
-import com.example.tareamov.service.LocalLlamaService.ModelDownloadWorker
 import com.example.tareamov.util.SessionManager
 import org.json.JSONArray
 import org.json.JSONObject
@@ -44,13 +41,12 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
 
     private var _binding: FragmentDatabaseQueryBinding? = null
     private val binding get() = _binding!!
-    private lateinit var mcpService: MCPService
+
     private lateinit var resultTextView: TextView
     private lateinit var database: AppDatabase
     private var currentChart: View? = null
-    private lateinit var localLlamaService: LocalLlamaService
     private lateinit var chatAdapter: DatabaseChatAdapter
-    private lateinit var databaseQueryService: DatabaseQueryService
+
     private lateinit var sessionManager: SessionManager
     
     // MCP HTTP Client for tareamov-mcp-server (connects via HTTP to Node.js server)
@@ -106,9 +102,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         SessionManager.addUserChangeListener(this)
         currentUser = sessionManager.getUsername()
 
-        mcpService = MCPService(requireContext())
+
         database = AppDatabase.getDatabase(requireContext())
-        databaseQueryService = DatabaseQueryService(requireContext())
+
         
         // Initialize MCP HTTP Client for tareamov-mcp-server
         mcpHttpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
@@ -135,9 +131,6 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         
         // Setup floating action buttons
         setupFloatingActionButtons()
-
-        // Initialize LocalLlamaService and trigger model download if needed
-        setupLocalLlamaService()
 
         // Register SupabaseClient request listener so we can surface the last query URL in the UI
         com.example.tareamov.service.SupabaseClient.setRequestListener { url ->
@@ -271,7 +264,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
 
     // Show the two valid roles to the user when requested
     private fun showValidRoles() {
-        val roles = com.example.tareamov.service.MSPClient.VALID_ROLES
+        val roles = listOf("admin", "usuario")
         val message = "Roles válidos en el sistema:\n" + roles.joinToString(separator = "\n") { "• $it" }
         android.app.AlertDialog.Builder(requireContext())
             .setTitle("Roles del sistema")
@@ -375,9 +368,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                     val status = if (mcpAvailable) {
                         "✓ MCP HTTP server disponible (http://10.0.2.2:3000). El LLM se puede usar a través del MCP bridge."
                     } else {
-                        // Fallback: Create MSPClient to test direct Ollama connection
-                        val mspClient = MSPClient(requireContext())
-                        mspClient.getConnectionStatus()
+                        "❌ MCP HTTP server no disponible. Asegúrate de que el servidor Node.js esté corriendo."
                     }
                     
                     withContext(Dispatchers.Main) {
@@ -475,41 +466,6 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         updateMessageCountDisplay()
     }
 
-    private fun setupLocalLlamaService() {
-        localLlamaService = LocalLlamaService(requireContext())
-        val modelFile = requireContext().filesDir.resolve("llama3-8b-q4_0.gguf")
-
-        // Update connection status based on model availability
-        if (!modelFile.exists()) {
-            updateConnectionStatus(false, "Descargando modelo...")
-            Toast.makeText(context, "Descargando modelo de IA...", Toast.LENGTH_LONG).show()
-
-            modelDownloadRequest = OneTimeWorkRequestBuilder<ModelDownloadWorker>().build()
-            WorkManager.getInstance(requireContext()).enqueue(modelDownloadRequest!!)
-            WorkManager.getInstance(requireContext()).getWorkInfoByIdLiveData(modelDownloadRequest!!.id)
-                .observe(viewLifecycleOwner) { workInfo ->
-                    when (workInfo.state) {
-                        WorkInfo.State.SUCCEEDED -> {
-                            Toast.makeText(context, "Modelo descargado exitosamente", Toast.LENGTH_LONG).show()
-                            updateConnectionStatus(true, "Modelo listo")
-                        }
-                        WorkInfo.State.FAILED -> {
-                            Toast.makeText(context, "Error descargando modelo", Toast.LENGTH_LONG).show()
-                            updateConnectionStatus(false, "Error en descarga")
-                        }
-                        WorkInfo.State.RUNNING -> {
-                            updateConnectionStatus(false, "Descargando...")
-                        }
-                        else -> { }
-                    }
-                }
-        } else {
-            updateConnectionStatus(true, "Modelo listo")
-        }
-
-        localLlamaService.downloadModelIfNeeded()
-    }
-
     private fun setupSendButton() {
         binding.sendButton.setOnClickListener {
             val userInput = binding.queryInput.text.toString().trim()
@@ -557,23 +513,12 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 if (mcpConnected) {
                     updateConnectionStatus(true, "Conectado (MCP)")
                     Log.d("DatabaseQueryFragment", "✓ MCP Server is reachable")
-                    return@launch
-                }
-
-                // Fallback: Check Ollama connection
-                val mspClient = MSPClient(requireContext())
-                val testResults = mspClient.testAllConnections()
-                val hasConnection = testResults.any { it.value }
-                
-                updateConnectionStatus(hasConnection, if (hasConnection) "Conectado (Local)" else "Desconectado")
-                
-                if (hasConnection) {
-                    Log.d("DatabaseQueryFragment", "✓ LLM server is reachable")
                 } else {
+                    updateConnectionStatus(false, "Desconectado")
                     Log.w("DatabaseQueryFragment", "⚠️ No servers reachable")
                     // Optionally show a message to the user
                     addMessageToChat("""
-                        ⚠️ No se detectó conexión con el servidor MCP ni LLM local.
+                        ⚠️ No se detectó conexión con el servidor MCP.
                         
                         Asegúrate de que el servidor Node.js esté corriendo (puerto 3000).
                         
@@ -770,36 +715,7 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         return@withContext processQueryWithMCPServer(vsCodePrompt)
     }
     
-    /**
-     * Process query using LLM with MCP tool calling capability
-     * The LLM can decide when to use MCP tools (query_database, get_database_schema)
-     */
-    private suspend fun processQueryWithLLMToolCalling(query: String): String = withContext(Dispatchers.IO) {
-        try {
-            Log.d(TAG, "🤖 Using LocalLlama with mandatory MCP tool execution for: $query")
 
-            if (!mcpHttpClient.initialize()) {
-                Log.w(TAG, "MCP client unavailable; responding without tool execution context")
-                return@withContext localLlamaService.generateResponse(
-                    prompt = query,
-                    mcpHttpClient = null,
-                    maxToolIterations = 1
-                )
-            }
-
-            // Route through LocalLlama so it forces execution of get_database_schema + query_database before answering
-            // CRITICAL: Reduced to 5 iterations to prevent 16-minute hangs
-            return@withContext localLlamaService.generateResponse(
-                prompt = query,
-                mcpHttpClient = mcpHttpClient,
-                maxToolIterations = 5
-            )
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in LLM tool calling", e)
-            return@withContext "Error: No se pudo procesar la consulta con herramientas LLM. ${e.message}"
-        }
-    }
 
     /**
      * Detect if query is requesting a graph/chart
@@ -1077,48 +993,7 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
      * 4. SupabaseClient notifica la URL usada via requestListener
      * 5. Este fragment muestra respuesta + URL de Supabase
      */
-    private suspend fun processRAGEnhancedQuery(query: String): String = withContext(Dispatchers.IO) {
-        try {
-            Log.d("DatabaseQueryFragment", "=== QUERY PROCESSING LOG ===")
-            Log.d("DatabaseQueryFragment", "Input Query: $query")
-            Log.d("DatabaseQueryFragment", "Current Conversation Context: $currentConversationContext")
-            
-            // Add query context for conversation continuity
-            currentConversationContext.add(query)
-            if (currentConversationContext.size > MAX_CONTEXT_MESSAGES) {
-                currentConversationContext.removeAt(0) // Remove first element using removeAt(0)
-            }
 
-            Log.d("DatabaseQueryFragment", "Updated Conversation Context: $currentConversationContext")
-            Log.d("DatabaseQueryFragment", "Trying DatabaseQueryService with MCP Tools...")
-
-            // Use MCP-enhanced query processing (with tools)
-            val ragResult = databaseQueryService.processQueryWithMCP(query)
-            
-            Log.d("DatabaseQueryFragment", "MCP-RAG Result Length: ${ragResult.length} characters")
-            Log.d("DatabaseQueryFragment", "MCP-RAG Result Content: $ragResult")
-            
-            if (ragResult.isNotBlank() && !ragResult.startsWith("Error")) {
-                Log.d("DatabaseQueryFragment", "MCP-RAG service provided result - SUCCESS")
-                Log.d("DatabaseQueryFragment", "===========================")
-                return@withContext ragResult
-            }
-
-            // Fallback to MCPService if RAG fails
-            Log.w("DatabaseQueryFragment", "RAG service failed, trying MCP fallback")
-            val mcpResult = mcpService.processQuery(query)
-            
-            Log.d("DatabaseQueryFragment", "MCP Result Length: ${mcpResult.length} characters")
-            Log.d("DatabaseQueryFragment", "MCP Result Content: $mcpResult")
-            Log.d("DatabaseQueryFragment", "===========================")
-            
-            return@withContext mcpResult
-            
-        } catch (e: Exception) {
-            Log.e("DatabaseQueryFragment", "Error in RAG-enhanced processing", e)
-            return@withContext "Error en el procesamiento RAG: ${e.message}"
-        }
-    }
 
     /**
      * Format RAG response for better readability
@@ -1521,19 +1396,7 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         return@withContext schemaObj.toString(2)
     }
 
-    private fun processUserQuery(userInput: String) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val response = mcpService.processQuery(userInput)
-                // Remove typing indicator
-                chatAdapter.removeTypingIndicator()
-                addMessageToChat(response, false)
-            } catch (e: Exception) {
-                chatAdapter.removeTypingIndicator()
-                addMessageToChat("Error al procesar la consulta: ${e.message}", false)
-            }
-        }
-    }
+
 
     private fun setupEnhancedUI() {
         // Set up quick action chips
@@ -1861,7 +1724,7 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
         
         addMessageToChat(helpText, false)
     // Inform about valid roles
-    val roles = com.example.tareamov.service.MSPClient.VALID_ROLES.joinToString(", ")
+    val roles = "admin, usuario"
     addMessageToChat("Roles válidos en el sistema: $roles", false)
     }
 
@@ -1998,9 +1861,7 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
                     scrollToBottom(smooth = true)
                     
                     try {
-                        val result = withContext(Dispatchers.IO) {
-                            databaseQueryService.processQuery(newText)
-                        }
+                        val result = processQueryWithMCPServer(newText)
                         
                         // Hide spinner
                         binding.loadingSpinner.visibility = View.GONE
