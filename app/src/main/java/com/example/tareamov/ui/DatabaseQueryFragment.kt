@@ -717,9 +717,11 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
      * Detect if query is asking for Business Intelligence analysis
      */
     /**
-     * Envía notificación push del sistema SIEMPRE que se reciba una respuesta del chat
-     * Funciona tanto en foreground como en background
-     * Utiliza Firebase Cloud Messaging via backend
+     * Send email notification to current user after LLM response
+     * 🔒 SEGURIDAD: NO envía la respuesta completa por email
+     * Solo notifica que hay una respuesta disponible
+     * 
+     * NUEVO: También envía notificación push si la app está en background
      */
     private suspend fun sendNotificationAfterResponse(responsePreview: String) = withContext(Dispatchers.IO) {
         try {
@@ -729,20 +731,79 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 return@withContext
             }
             
-            Log.d(TAG, "📱 Enviando notificación push del sistema para userId $currentUserId")
+            Log.d(TAG, "� Sending email notification to user $currentUserId (without sensitive data)")
             
+            // Obtener la URL base del backend
             val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
                 "http://10.0.2.2:3000"  // Fallback para emulador
             }
             
-            // Preparar datos de la notificación push del sistema
-            val notificationPayload = JSONObject().apply {
+            // 🔒 SEGURIDAD: NO enviar la respuesta completa
+            // El backend solo notifica que hay una respuesta disponible
+            val payload = JSONObject().apply {
                 put("userId", currentUserId)
-                put("title", "🤖 TareaMov - Nueva respuesta")
+                // responsePreview se ignora en el backend por seguridad
+                put("responsePreview", "")  // Vacío por seguridad
+            }
+            
+            // Hacer la petición HTTP POST al backend (email)
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            
+            val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = okhttp3.Request.Builder()
+                .url("$baseUrl/notify-chat-response")
+                .post(body)
+                .build()
+            
+            val response = client.newCall(request).execute()
+            
+            if (response.isSuccessful) {
+                Log.d(TAG, "✅ Email notification sent successfully to user $currentUserId (secure mode)")
+            } else {
+                Log.w(TAG, "⚠️ Email notification failed: ${response.code} - ${response.message}")
+            }
+            
+            response.close()
+            
+            // 📱 NUEVO: Enviar notificación push si la app está en background
+            sendPushNotification(currentUserId, responsePreview)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error sending notification: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Envía notificación push cuando la app está en background
+     * Utiliza Firebase Cloud Messaging via backend
+     */
+    private suspend fun sendPushNotification(userId: Long, responsePreview: String) = withContext(Dispatchers.IO) {
+        try {
+            // Verificar si la app está en background
+            val isInBackground = !isAppInForeground()
+            
+            if (!isInBackground) {
+                Log.d(TAG, "📱 App en foreground, skip push notification")
+                return@withContext
+            }
+            
+            Log.d(TAG, "📱 App en background, enviando push notification para userId $userId")
+            
+            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
+                "http://10.0.2.2:3000"
+            }
+            
+            // Preparar datos de la notificación
+            val notificationPayload = JSONObject().apply {
+                put("userId", userId)
+                put("title", "🤖 Nueva respuesta del chat")
                 put("body", "Tu consulta ha sido procesada. Toca para ver la respuesta.")
                 put("data", JSONObject().apply {
                     put("type", "chat_response")
-                    put("userId", currentUserId)
+                    put("userId", userId)
                     put("action", "OPEN_CHAT")
                 })
             }
@@ -761,7 +822,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             val response = client.newCall(request).execute()
             
             if (response.isSuccessful) {
-                Log.d(TAG, "✅ Notificación push del sistema enviada exitosamente")
+                Log.d(TAG, "✅ Push notification enviada exitosamente")
             } else {
                 Log.w(TAG, "⚠️ Push notification failed: ${response.code} - ${response.message}")
             }
@@ -771,6 +832,23 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error sending push notification: ${e.message}", e)
         }
+    }
+    
+    /**
+     * Detecta si la aplicación está en foreground
+     */
+    private fun isAppInForeground(): Boolean {
+        val activityManager = requireContext().getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val appProcesses = activityManager.runningAppProcesses ?: return false
+        
+        val packageName = requireContext().packageName
+        for (appProcess in appProcesses) {
+            if (appProcess.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND 
+                && appProcess.processName == packageName) {
+                return true
+            }
+        }
+        return false
     }
     
     private fun isBIQuery(lowerQuery: String): Boolean {

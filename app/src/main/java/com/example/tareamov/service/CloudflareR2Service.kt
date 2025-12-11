@@ -42,20 +42,78 @@ object CloudflareR2Service {
     private const val DEFAULT_PUBLIC_URL = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev"
     private var publicUrlBase: String? = DEFAULT_PUBLIC_URL
     
+    // OkHttp client con configuración optimizada para subidas grandes
     private val client = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(300, TimeUnit.SECONDS) // 5 min for large video files
-        .readTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(600, TimeUnit.SECONDS) // 10 min for large video files
+        .readTimeout(120, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
+    
+    /**
+     * Prueba la conectividad con R2 haciendo un HEAD request al bucket
+     */
+    suspend fun testConnection(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.e(TAG, "❌ R2 not configured for connection test")
+                return@withContext false
+            }
+            
+            val host = "$BUCKET_NAME.$ACCOUNT_ID.r2.cloudflarestorage.com"
+            val url = "https://$host/"
+            val date = getAmzDate()
+            val dateStamp = date.substring(0, 8)
+            val contentHash = sha256Hex(ByteArray(0))
+            
+            val authorization = createAuthorizationHeader(
+                method = "HEAD",
+                uri = "/",
+                host = host,
+                date = date,
+                dateStamp = dateStamp,
+                contentHash = contentHash,
+                contentType = ""
+            )
+            
+            val request = Request.Builder()
+                .url(url)
+                .head()
+                .header("Host", host)
+                .header("x-amz-date", date)
+                .header("x-amz-content-sha256", contentHash)
+                .header("Authorization", authorization)
+                .build()
+            
+            Log.d(TAG, "🔌 Testing R2 connection to: $url")
+            val response = client.newCall(request).execute()
+            val success = response.isSuccessful || response.code == 200 || response.code == 404
+            
+            Log.d(TAG, if (success) "✅ R2 connection test PASSED (${response.code})" else "❌ R2 connection test FAILED (${response.code})")
+            return@withContext success
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ R2 connection test exception: ${e.message}")
+            return@withContext false
+        }
+    }
     
     /**
      * Verifica si el servicio R2 está configurado correctamente
      */
     fun isConfigured(): Boolean {
-        val configured = ACCOUNT_ID.isNotEmpty() && 
-                        ACCESS_KEY_ID.isNotEmpty() && 
-                        SECRET_ACCESS_KEY.isNotEmpty()
-        Log.d(TAG, "R2 configured: $configured (AccountID: ${ACCOUNT_ID.take(8)}...)")
+        val accountOk = ACCOUNT_ID.isNotEmpty()
+        val accessKeyOk = ACCESS_KEY_ID.isNotEmpty()
+        val secretKeyOk = SECRET_ACCESS_KEY.isNotEmpty()
+        val configured = accountOk && accessKeyOk && secretKeyOk
+        
+        Log.d(TAG, "🔍 R2 Configuration Check:")
+        Log.d(TAG, "   ACCOUNT_ID: ${if (accountOk) "${ACCOUNT_ID.take(8)}..." else "❌ EMPTY"}")
+        Log.d(TAG, "   ACCESS_KEY_ID: ${if (accessKeyOk) "${ACCESS_KEY_ID.take(8)}..." else "❌ EMPTY"}")
+        Log.d(TAG, "   SECRET_ACCESS_KEY: ${if (secretKeyOk) "✅ SET (${SECRET_ACCESS_KEY.length} chars)" else "❌ EMPTY"}")
+        Log.d(TAG, "   BUCKET_NAME: $BUCKET_NAME")
+        Log.d(TAG, "   R2_ENDPOINT: $R2_ENDPOINT")
+        Log.d(TAG, "   Result: ${if (configured) "✅ CONFIGURED" else "❌ NOT CONFIGURED"}")
+        
         return configured
     }
     
@@ -188,19 +246,27 @@ object CloudflareR2Service {
             onProgress?.invoke(25)
             
             // Construir la solicitud con firma AWS Signature V4
-            val url = "$R2_ENDPOINT/$BUCKET_NAME/$objectKey"
+            // R2 usa el formato: https://<bucket>.<account_id>.r2.cloudflarestorage.com/<object_key>
+            // O el formato legacy: https://<account_id>.r2.cloudflarestorage.com/<bucket>/<object_key>
+            val host = "$BUCKET_NAME.$ACCOUNT_ID.r2.cloudflarestorage.com"
+            val url = "https://$host/$objectKey"
             val date = getAmzDate()
             val dateStamp = date.substring(0, 8)
-            val host = "${ACCOUNT_ID}.r2.cloudflarestorage.com"
             
             // Hash del contenido
             val contentHash = sha256Hex(bytes)
             onProgress?.invoke(35)
             
+            Log.d(TAG, "🔐 Creating AWS Signature V4...")
+            Log.d(TAG, "   Host: $host")
+            Log.d(TAG, "   URI: /$objectKey")
+            Log.d(TAG, "   Date: $date")
+            Log.d(TAG, "   Content Hash: ${contentHash.take(16)}...")
+            
             // Crear firma AWS Signature V4
             val authorization = createAuthorizationHeader(
                 method = "PUT",
-                uri = "/$BUCKET_NAME/$objectKey",
+                uri = "/$objectKey",  // Sin el bucket en la URI porque está en el host
                 host = host,
                 date = date,
                 dateStamp = dateStamp,
@@ -209,27 +275,36 @@ object CloudflareR2Service {
             )
             onProgress?.invoke(45)
             
+            Log.d(TAG, "   Authorization: ${authorization.take(80)}...")
+            
             val requestBody = bytes.toRequestBody(mimeType.toMediaType())
             val request = Request.Builder()
                 .url(url)
                 .put(requestBody)
-                .addHeader("Host", host)
-                .addHeader("x-amz-date", date)
-                .addHeader("x-amz-content-sha256", contentHash)
-                .addHeader("Content-Type", mimeType)
-                .addHeader("Authorization", authorization)
+                .header("Host", host)  // Usar header() en lugar de addHeader() para evitar duplicados
+                .header("x-amz-date", date)
+                .header("x-amz-content-sha256", contentHash)
+                .header("Content-Type", mimeType)
+                .header("Authorization", authorization)
                 .build()
             
             Log.d(TAG, "🚀 Sending request to R2...")
+            Log.d(TAG, "   URL: $url")
+            Log.d(TAG, "   Method: PUT")
+            Log.d(TAG, "   Content-Length: ${bytes.size} bytes")
             onProgress?.invoke(50)
             
             val response = client.newCall(request).execute()
             onProgress?.invoke(90)
             
+            Log.d(TAG, "📥 Response received: ${response.code} ${response.message}")
+            
             if (response.isSuccessful) {
-                // Construir URL para acceso
+                // Construir URL para acceso público
                 val accessUrl = getPublicUrl(objectKey)
-                Log.d(TAG, "✅ File uploaded successfully: $accessUrl")
+                Log.d(TAG, "✅ File uploaded successfully!")
+                Log.d(TAG, "   Access URL: $accessUrl")
+                Log.d(TAG, "   Object Key: $objectKey")
                 onProgress?.invoke(100)
                 return@withContext UploadResult.Success(
                     url = accessUrl,
@@ -240,8 +315,23 @@ object CloudflareR2Service {
                 )
             } else {
                 val errorBody = response.body?.string() ?: "Unknown error"
-                Log.e(TAG, "❌ Upload failed: ${response.code} - $errorBody")
-                return@withContext UploadResult.Error("Error ${response.code}: $errorBody")
+                Log.e(TAG, "❌ Upload failed!")
+                Log.e(TAG, "   Response Code: ${response.code}")
+                Log.e(TAG, "   Response Message: ${response.message}")
+                Log.e(TAG, "   Error Body: $errorBody")
+                
+                // Diagnóstico adicional según código de error
+                val diagnosticMsg = when (response.code) {
+                    400 -> "Bad Request - Verifica el formato de la solicitud"
+                    403 -> "Forbidden - Verifica credenciales R2 (ACCESS_KEY_ID, SECRET_ACCESS_KEY)"
+                    404 -> "Not Found - El bucket '$BUCKET_NAME' no existe o la URL está mal formada"
+                    405 -> "Method Not Allowed - El bucket puede no aceptar PUT requests"
+                    500, 502, 503 -> "Error del servidor R2 - Intenta más tarde"
+                    else -> "Error desconocido"
+                }
+                Log.e(TAG, "   Diagnóstico: $diagnosticMsg")
+                
+                return@withContext UploadResult.Error("Error ${response.code}: $diagnosticMsg. $errorBody")
             }
             
         } catch (e: Exception) {
@@ -344,15 +434,16 @@ object CloudflareR2Service {
                 return@withContext false
             }
             
-            val url = "$R2_ENDPOINT/$BUCKET_NAME/$objectKey"
+            // Usar el formato de virtual-hosted style
+            val host = "$BUCKET_NAME.$ACCOUNT_ID.r2.cloudflarestorage.com"
+            val url = "https://$host/$objectKey"
             val date = getAmzDate()
             val dateStamp = date.substring(0, 8)
-            val host = "${ACCOUNT_ID}.r2.cloudflarestorage.com"
             val contentHash = sha256Hex(ByteArray(0))
             
             val authorization = createAuthorizationHeader(
                 method = "DELETE",
-                uri = "/$BUCKET_NAME/$objectKey",
+                uri = "/$objectKey",
                 host = host,
                 date = date,
                 dateStamp = dateStamp,
@@ -363,10 +454,10 @@ object CloudflareR2Service {
             val request = Request.Builder()
                 .url(url)
                 .delete()
-                .addHeader("Host", host)
-                .addHeader("x-amz-date", date)
-                .addHeader("x-amz-content-sha256", contentHash)
-                .addHeader("Authorization", authorization)
+                .header("Host", host)
+                .header("x-amz-date", date)
+                .header("x-amz-content-sha256", contentHash)
+                .header("Authorization", authorization)
                 .build()
             
             val response = client.newCall(request).execute()
@@ -375,7 +466,7 @@ object CloudflareR2Service {
             if (success) {
                 Log.d(TAG, "✅ File deleted: $objectKey")
             } else {
-                Log.e(TAG, "❌ Delete failed: ${response.code}")
+                Log.e(TAG, "❌ Delete failed: ${response.code} - ${response.body?.string()}")
             }
             
             return@withContext success

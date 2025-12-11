@@ -217,39 +217,90 @@ class VideoDetailsFragment : Fragment() {
                 // Upload video to Cloudflare R2 if configured
                 var finalVideoUri = videoUri.toString()
                 
+                Log.d("VideoDetailsFragment", "🔍 Verificando configuración R2: isConfigured=${com.example.tareamov.service.CloudflareR2Service.isConfigured()}")
+                
                 if (com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
                     withContext(Dispatchers.Main) {
-                        progressText?.text = "Subiendo video a la nube..."
+                        progressText?.text = "Verificando conexión con la nube..."
                     }
                     
-                    val uploadResult = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.CloudflareR2Service.uploadVideo(
-                            context = requireContext(),
-                            videoUri = videoUri,
-                            customFileName = title.replace(Regex("[^a-zA-Z0-9]"), "_")
-                        ) { progress ->
-                            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
-                                progressBar?.progress = progress
-                                progressText?.text = "Subiendo video: $progress%"
-                            }
-                        }
+                    // Primero probar la conexión
+                    val connectionOk = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.CloudflareR2Service.testConnection()
                     }
                     
-                    when (uploadResult) {
-                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
-                            finalVideoUri = uploadResult.url
-                            Log.d("VideoDetailsFragment", "✅ Video uploaded to R2: $finalVideoUri")
-                            withContext(Dispatchers.Main) {
-                                progressText?.text = "Video subido, guardando datos..."
+                    if (!connectionOk) {
+                        Log.e("VideoDetailsFragment", "❌ No se pudo conectar a R2")
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                requireContext(),
+                                "No se pudo conectar a Cloudflare R2. Usando almacenamiento local.",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            progressText?.text = "Subiendo video a la nube..."
+                        }
+                        
+                        Log.d("VideoDetailsFragment", "📤 Iniciando subida a R2...")
+                        Log.d("VideoDetailsFragment", "   Video URI: $videoUri")
+                        Log.d("VideoDetailsFragment", "   Custom filename: ${title.replace(Regex("[^a-zA-Z0-9]"), "_")}")
+                        
+                        val uploadResult = withContext(Dispatchers.IO) {
+                            try {
+                                com.example.tareamov.service.CloudflareR2Service.uploadVideo(
+                                    context = requireContext(),
+                                    videoUri = videoUri,
+                                    customFileName = title.replace(Regex("[^a-zA-Z0-9]"), "_")
+                                ) { progress ->
+                                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+                                        progressBar?.progress = progress
+                                        progressText?.text = "Subiendo video: $progress%"
+                                        Log.d("VideoDetailsFragment", "📊 Upload progress: $progress%")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e("VideoDetailsFragment", "❌ Exception en uploadVideo", e)
+                                com.example.tareamov.service.CloudflareR2Service.UploadResult.Error("Exception: ${e.message}")
                             }
                         }
-                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
-                            Log.w("VideoDetailsFragment", "⚠️ R2 upload failed: ${uploadResult.message}, using local URI")
-                            // Continue with local URI if R2 upload fails
+                        
+                        when (uploadResult) {
+                            is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
+                                finalVideoUri = uploadResult.url
+                                Log.d("VideoDetailsFragment", "✅ Video uploaded to R2: $finalVideoUri")
+                                Log.d("VideoDetailsFragment", "   Object Key: ${uploadResult.objectKey}")
+                                Log.d("VideoDetailsFragment", "   File Size: ${uploadResult.fileSize} bytes")
+                                Log.d("VideoDetailsFragment", "   MIME Type: ${uploadResult.mimeType}")
+                                withContext(Dispatchers.Main) {
+                                    progressText?.text = "Video subido exitosamente, guardando datos..."
+                                    android.widget.Toast.makeText(
+                                        requireContext(),
+                                        "✅ Video subido a la nube",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                            is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
+                                Log.e("VideoDetailsFragment", "❌ R2 upload failed: ${uploadResult.message}")
+                                Log.w("VideoDetailsFragment", "⚠️ Usando URI local como fallback")
+                                withContext(Dispatchers.Main) {
+                                    android.widget.Toast.makeText(
+                                        requireContext(),
+                                        "Error subiendo a nube: ${uploadResult.message}. Usando almacenamiento local.",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
                         }
                     }
                 } else {
-                    Log.d("VideoDetailsFragment", "R2 not configured, using local URI")
+                    Log.w("VideoDetailsFragment", "⚠️ R2 no está configurado!")
+                    Log.w("VideoDetailsFragment", "   Verifica local.properties contiene:")
+                    Log.w("VideoDetailsFragment", "   - R2_ACCOUNT_ID")
+                    Log.w("VideoDetailsFragment", "   - R2_ACCESS_KEY_ID")
+                    Log.w("VideoDetailsFragment", "   - R2_SECRET_ACCESS_KEY")
                 }
 
                 // Get next available video ID (> 82)
