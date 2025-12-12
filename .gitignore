@@ -106,3 +106,4 @@ Thumbs.db
 
 # Avoid nested repositories
 ProjectCourseV1/
+distribucion_de_contexto/.env
