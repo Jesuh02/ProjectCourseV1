@@ -102,6 +102,10 @@ class VideoPlayerActivity : AppCompatActivity() {
                     Log.e("VideoPlayerActivity", "pathOrUri is null or blank")
                     null
                 }
+                pathOrUri.startsWith("http://") || pathOrUri.startsWith("https://") -> {
+                    Log.d("VideoPlayerActivity", "Processing HTTP(S) URL: $pathOrUri")
+                    Uri.parse(pathOrUri)
+                }
                 pathOrUri.startsWith("content://") -> {
                     Log.d("VideoPlayerActivity", "Processing content URI: $pathOrUri")
                     Uri.parse(pathOrUri)

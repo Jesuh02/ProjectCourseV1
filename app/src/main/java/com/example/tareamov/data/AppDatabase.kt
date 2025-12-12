@@ -45,8 +45,6 @@ import com.example.tareamov.data.entity.ProgresoEstudiante
 import com.example.tareamov.data.entity.VideoLike
 import com.example.tareamov.data.entity.UserVideoLike
 import com.example.tareamov.data.entity.VideoComment
-import com.example.tareamov.service.OllamaService
-import com.example.tareamov.service.MSPClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -167,22 +165,22 @@ abstract class AppDatabase : RoomDatabase() {
                 CoroutineScope(Dispatchers.IO).launch {
                     val rolRepository = com.example.tareamov.repository.RolRepository(instance.rolDao(), instance.usuarioDao())
                     rolRepository.initializeDefaultRoles()
-                    
+
                     // Initialize recursos and rol_recursos after roles are created
                     val recursoRepository = com.example.tareamov.repository.RecursoRepository(
-                        instance.recursoDao(), 
+                        instance.recursoDao(),
                         instance.rolRecursoDao()
                     )
-                    
+
                     // Get role IDs for initialization
                     val usuarioRole = instance.rolDao().getRolByNombre("usuario")
                     val adminRole = instance.rolDao().getRolByNombre("admin")
-                    
+
                     if (usuarioRole != null && adminRole != null) {
                         // Initialize recursos and role-resource relationships
                         val databaseInitializer = DatabaseInitializer(recursoRepository)
                         databaseInitializer.initializeDefaultData(usuarioRole.id, adminRole.id)
-                        
+
                         // Verify the initialization
                         val integrityResult = databaseInitializer.verifyDataIntegrity()
                         Log.i(TAG, "Database recursos initialization: ${integrityResult.message}")
@@ -868,14 +866,14 @@ abstract class AppDatabase : RoomDatabase() {
                     throw e
                 }
             }
-            
+
             private fun insertDefaultRecursos(db: SupportSQLiteDatabase) {
                 // Insert main navigation resource
                 db.execSQL("""
                     INSERT OR IGNORE INTO recursos (id, nombre, icono, orden, padreId, interfaz) 
                     VALUES (1, 'Navegación', 'navigation_menu', 1, NULL, 'BottomNavigation')
                 """)
-                
+
                 // Insert navigation sub-resources
                 db.execSQL("""
                     INSERT OR IGNORE INTO recursos (id, nombre, icono, orden, padreId, interfaz) VALUES
@@ -884,13 +882,13 @@ abstract class AppDatabase : RoomDatabase() {
                     (4, 'Perfil', 'profileButton', 3, 1, 'ProfileFragment'),
                     (5, 'Notificaciones', 'notificationsButton', 4, 1, 'NotificacionesFragment')
                 """)
-                
+
                 // Insert admin panel resource
                 db.execSQL("""
                     INSERT OR IGNORE INTO recursos (id, nombre, icono, orden, padreId, interfaz) 
                     VALUES (6, 'Panel de Administración', 'admin_panel', 2, NULL, 'AdminPanel')
                 """)
-                
+
                 // Insert admin sub-resources for each interface
                 db.execSQL("""
                     INSERT OR IGNORE INTO recursos (id, nombre, icono, orden, padreId, interfaz) VALUES
@@ -901,14 +899,14 @@ abstract class AppDatabase : RoomDatabase() {
                     (11, 'Botón Admin - Notificaciones', 'goToAdminButton', 5, 6, 'NotificacionesFragment'),
                     (12, 'Base de Datos', 'databaseOrbitButton', 6, 6, 'VideoHomeFragment')
                 """)
-                
+
                 // Assign resources to roles
                 // Usuario role (assuming id = 1) gets navigation resources only
                 db.execSQL("""
                     INSERT OR IGNORE INTO rol_recursos (rolId, recursoId) VALUES
                     (1, 1), (1, 2), (1, 3), (1, 4), (1, 5)
                 """)
-                
+
                 // Admin role (assuming id = 2) gets all resources
                 db.execSQL("""
                     INSERT OR IGNORE INTO rol_recursos (rolId, recursoId) VALUES
@@ -924,10 +922,10 @@ abstract class AppDatabase : RoomDatabase() {
                 try {
                     // Drop the purchases table
                     db.execSQL("DROP TABLE IF EXISTS purchases")
-                    
+
                     // Remove isPaid and price columns from videos table if they exist
                     // SQLite doesn't support DROP COLUMN directly, so we need to recreate the table
-                    
+
                     // Create new videos table without isPaid and price columns
                     db.execSQL("""
                         CREATE TABLE IF NOT EXISTS videos_new (
@@ -941,20 +939,20 @@ abstract class AppDatabase : RoomDatabase() {
                             thumbnailUri TEXT
                         )
                     """)
-                    
+
                     // Copy data from old table to new table (excluding isPaid and price columns)
                     db.execSQL("""
                         INSERT INTO videos_new (id, username, description, title, videoUriString, timestamp, localFilePath, thumbnailUri)
                         SELECT id, username, description, title, videoUriString, timestamp, localFilePath, thumbnailUri
                         FROM videos
                     """)
-                    
+
                     // Drop old table
                     db.execSQL("DROP TABLE videos")
-                    
+
                     // Rename new table to original name
                     db.execSQL("ALTER TABLE videos_new RENAME TO videos")
-                    
+
                     Log.i(TAG, "Migration 26 to 27 completed: Removed purchases table and cleaned up videos table")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 26 to 27", e)
@@ -968,7 +966,7 @@ abstract class AppDatabase : RoomDatabase() {
                 try {
                     // Update roles table to change "estudiante" to "usuario"
                     db.execSQL("UPDATE roles SET nombre = 'usuario' WHERE nombre = 'estudiante'")
-                    
+
                     Log.i(TAG, "Migration 27 to 28 completed: Updated role name from 'estudiante' to 'usuario'")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 27 to 28", e)
@@ -1008,7 +1006,7 @@ abstract class AppDatabase : RoomDatabase() {
                     db.execSQL("ALTER TABLE usuarios ADD COLUMN email TEXT")
                     // Add avatar column
                     db.execSQL("ALTER TABLE usuarios ADD COLUMN avatar TEXT")
-                    
+
                     Log.i(TAG, "Migration 29 to 30 completed: Added email and avatar columns to usuarios table")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 29 to 30", e)
@@ -1030,7 +1028,7 @@ abstract class AppDatabase : RoomDatabase() {
                         )
                     """)
                     db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_video_likes_video_id` ON `video_likes` (`video_id`)")
-                    
+
                     // Create user_video_likes table (to track which user liked which video)
                     db.execSQL("""
                         CREATE TABLE IF NOT EXISTS `user_video_likes` (
@@ -1045,7 +1043,7 @@ abstract class AppDatabase : RoomDatabase() {
                     db.execSQL("CREATE INDEX IF NOT EXISTS `index_user_video_likes_video_id` ON `user_video_likes` (`video_id`)")
                     db.execSQL("CREATE INDEX IF NOT EXISTS `index_user_video_likes_usuario_id` ON `user_video_likes` (`usuario_id`)")
                     db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_user_video_likes_video_id_usuario_id` ON `user_video_likes` (`video_id`, `usuario_id`)")
-                    
+
                     // Create video_comments table
                     db.execSQL("""
                         CREATE TABLE IF NOT EXISTS `video_comments` (
@@ -1060,7 +1058,7 @@ abstract class AppDatabase : RoomDatabase() {
                     """)
                     db.execSQL("CREATE INDEX IF NOT EXISTS `index_video_comments_video_id` ON `video_comments` (`video_id`)")
                     db.execSQL("CREATE INDEX IF NOT EXISTS `index_video_comments_usuario_id` ON `video_comments` (`usuario_id`)")
-                    
+
                     Log.i(TAG, "Migration 30 to 31 completed: Added video_likes, user_video_likes, and video_comments tables")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 30 to 31", e)
