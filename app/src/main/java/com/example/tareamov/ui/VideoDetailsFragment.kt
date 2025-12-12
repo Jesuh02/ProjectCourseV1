@@ -1,7 +1,10 @@
 package com.example.tareamov.ui
 
+import android.app.Activity
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
@@ -31,6 +34,15 @@ class VideoDetailsFragment : Fragment() {
     private lateinit var videoUri: Uri
     private lateinit var sessionManager: SessionManager
     private var videoId: Long = 0L // Store the video ID from the previous fragment
+    private var thumbnailUri: Uri? = null // URI de la miniatura seleccionada
+    private lateinit var thumbnailPickerLauncher: androidx.activity.result.ActivityResultLauncher<Intent>
+    
+    // Brain loading animator
+    private var brainLoadingAnimator: com.example.tareamov.util.BrainLoadingAnimator? = null
+    private var uploadStartTime: Long = 0L
+    
+    // Thumbnail extractor
+    private lateinit var thumbnailExtractor: com.example.tareamov.util.VideoThumbnailExtractor
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,6 +52,47 @@ class VideoDetailsFragment : Fragment() {
         }
         // Initialize SessionManager
         sessionManager = SessionManager.getInstance(requireContext())
+        
+        // Initialize thumbnail extractor
+        thumbnailExtractor = com.example.tareamov.util.VideoThumbnailExtractor(requireContext())
+        
+        // Initialize thumbnail picker launcher
+        thumbnailPickerLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                result.data?.data?.let { uri ->
+                    thumbnailUri = uri
+                    
+                    // Load thumbnail with Glide for optimized memory usage
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        try {
+                            val thumbnailPreview = view?.findViewById<android.widget.ImageView>(R.id.thumbnailPreview)
+                            val thumbnailPlaceholder = view?.findViewById<android.view.ViewGroup>(R.id.thumbnailPlaceholder)
+                            val thumbnailSelectedText = view?.findViewById<android.widget.TextView>(R.id.thumbnailSelectedText)
+                            
+                            if (thumbnailPreview != null) {
+                                // Use Glide to load with memory optimization
+                                com.bumptech.glide.Glide.with(requireContext())
+                                    .load(uri)
+                                    .override(1280, 720) // Max size
+                                    .centerCrop()
+                                    .into(thumbnailPreview)
+                                
+                                thumbnailPreview.visibility = View.VISIBLE
+                                thumbnailPlaceholder?.visibility = View.GONE
+                                thumbnailSelectedText?.visibility = View.VISIBLE
+                            }
+                            
+                            Log.d("VideoDetailsFragment", "✅ Thumbnail preview loaded: $uri")
+                        } catch (e: Exception) {
+                            Log.e("VideoDetailsFragment", "Error loading thumbnail preview", e)
+                            Toast.makeText(requireContext(), "Error cargando vista previa", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     override fun onCreateView(
@@ -92,6 +145,97 @@ class VideoDetailsFragment : Fragment() {
 
         // Set up course type selection
         setupCourseTypeSelection(view)
+        
+        // Set up thumbnail selection button
+        view.findViewById<View>(R.id.selectThumbnailButton)?.setOnClickListener {
+            openThumbnailPicker()
+        }
+    }
+    
+    /**
+     * Abre el selector de imágenes para elegir una miniatura
+     */
+    private fun openThumbnailPicker() {
+        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+            type = "image/*"
+        }
+        thumbnailPickerLauncher.launch(intent)
+    }
+    
+    /**
+     * Muestra la pantalla de carga profesional con animación de cerebro
+     */
+    private fun showProfessionalLoading(title: String = "Procesando Video", status: String = "Preparando...") {
+        view?.let { rootView ->
+            val loadingOverlay = rootView.findViewById<View>(R.id.loadingOverlay)
+            val loadingTitle = rootView.findViewById<android.widget.TextView>(R.id.loadingTitle)
+            val loadingStatus = rootView.findViewById<android.widget.TextView>(R.id.loadingStatus)
+            val brainIcon = rootView.findViewById<android.widget.ImageView>(R.id.brainIcon)
+            val pulsingCircle = rootView.findViewById<View>(R.id.pulsingCircle)
+            val particle1 = rootView.findViewById<View>(R.id.particle1)
+            val particle2 = rootView.findViewById<View>(R.id.particle2)
+            val particle3 = rootView.findViewById<View>(R.id.particle3)
+            val particle4 = rootView.findViewById<View>(R.id.particle4)
+            
+            loadingOverlay?.visibility = View.VISIBLE
+            loadingTitle?.text = title
+            loadingStatus?.text = status
+            
+            uploadStartTime = System.currentTimeMillis()
+            
+            // Iniciar animaciones
+            if (brainIcon != null && pulsingCircle != null && 
+                particle1 != null && particle2 != null && 
+                particle3 != null && particle4 != null) {
+                
+                brainLoadingAnimator = com.example.tareamov.util.BrainLoadingAnimator(
+                    brainIcon, pulsingCircle, particle1, particle2, particle3, particle4
+                )
+                brainLoadingAnimator?.startAnimations()
+            }
+        }
+    }
+    
+    /**
+     * Oculta la pantalla de carga profesional
+     */
+    private fun hideProfessionalLoading() {
+        view?.let { rootView ->
+            val loadingOverlay = rootView.findViewById<View>(R.id.loadingOverlay)
+            loadingOverlay?.visibility = View.GONE
+            
+            // Detener animaciones
+            brainLoadingAnimator?.stopAnimations()
+            brainLoadingAnimator = null
+        }
+    }
+    
+    /**
+     * Actualiza el progreso de la carga profesional
+     */
+    private fun updateLoadingProgress(
+        progress: Int,
+        status: String = "Subiendo video...",
+        showSpeed: Boolean = true
+    ) {
+        view?.let { rootView ->
+            val loadingProgressBar = rootView.findViewById<android.widget.ProgressBar>(R.id.loadingProgressBar)
+            val loadingPercentage = rootView.findViewById<android.widget.TextView>(R.id.loadingPercentage)
+            val loadingStatus = rootView.findViewById<android.widget.TextView>(R.id.loadingStatus)
+            val loadingSpeed = rootView.findViewById<android.widget.TextView>(R.id.loadingSpeed)
+            
+            loadingProgressBar?.progress = progress
+            loadingPercentage?.text = "$progress%"
+            loadingStatus?.text = status
+            
+            if (showSpeed && uploadStartTime > 0) {
+                val elapsedSeconds = (System.currentTimeMillis() - uploadStartTime) / 1000
+                if (elapsedSeconds > 0 && progress > 0) {
+                    val speedMbps = (progress.toFloat() / elapsedSeconds).toInt()
+                    loadingSpeed?.text = "${speedMbps}% /seg"
+                }
+            }
+        }
     }
 
     private fun setupCourseTypeSelection(view: View) {
@@ -172,12 +316,8 @@ class VideoDetailsFragment : Fragment() {
             return
         }
 
-        // Show upload progress
-        val progressBar = view?.findViewById<android.widget.ProgressBar>(R.id.uploadProgressBar)
-        val progressText = view?.findViewById<android.widget.TextView>(R.id.uploadProgressText)
-        progressBar?.visibility = View.VISIBLE
-        progressText?.visibility = View.VISIBLE
-        progressText?.text = "Preparando..."
+        // Show professional loading screen
+        showProfessionalLoading("Creando tu Curso", "Preparando archivos...")
 
         // Update the existing video record instead of creating a new one
         viewLifecycleOwner.lifecycleScope.launch {
@@ -188,30 +328,79 @@ class VideoDetailsFragment : Fragment() {
                 }
 
                 if (userId == null || userId <= 0) {
-                    progressBar?.visibility = View.GONE
-                    progressText?.visibility = View.GONE
+                    hideProfessionalLoading()
                     if (isAdded) context?.let { Toast.makeText(it, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show() }
                     return@launch
                 }
 
                 val activity = activity as? com.example.tareamov.MainActivity
                 if (activity == null) {
-                    progressBar?.visibility = View.GONE
-                    progressText?.visibility = View.GONE
+                    hideProfessionalLoading()
                     if (isAdded) context?.let { Toast.makeText(it, "Error: Contexto inválido", Toast.LENGTH_SHORT).show() }
                     return@launch
                 }
                 
                 // Verificar título único
+                updateLoadingProgress(5, "Verificando título...", false)
                 val duplicateNew = withContext(Dispatchers.IO) {
                     activity.syncRepository.isTitleExistsInSupabase(title)
                 }
 
                 if (duplicateNew) {
-                    progressBar?.visibility = View.GONE
-                    progressText?.visibility = View.GONE
+                    hideProfessionalLoading()
                     if (isAdded) context?.let { Toast.makeText(it, "Ya existe un video/curso con este título. Elige otro título.", Toast.LENGTH_LONG).show() }
                     return@launch
+                }
+
+                // 🎬 GENERAR MINIATURA AUTOMÁTICAMENTE si no se seleccionó una
+                if (thumbnailUri == null) {
+                    updateLoadingProgress(8, "Generando miniatura del video...", false)
+                    Log.d("VideoDetailsFragment", "🎨 No se seleccionó miniatura, generando automáticamente...")
+                    
+                    thumbnailUri = withContext(Dispatchers.IO) {
+                        try {
+                            thumbnailExtractor.extractThumbnailFromVideo(videoUri)
+                        } catch (e: Exception) {
+                            Log.e("VideoDetailsFragment", "Error extrayendo miniatura automática", e)
+                            null
+                        }
+                    }
+                    
+                    if (thumbnailUri != null) {
+                        Log.d("VideoDetailsFragment", "✅ Miniatura generada automáticamente: $thumbnailUri")
+                        
+                        // Mostrar la miniatura generada en la vista previa
+                        withContext(Dispatchers.Main) {
+                            try {
+                                val thumbnailPreview = view?.findViewById<android.widget.ImageView>(R.id.thumbnailPreview)
+                                val thumbnailPlaceholder = view?.findViewById<android.view.ViewGroup>(R.id.thumbnailPlaceholder)
+                                val thumbnailSelectedText = view?.findViewById<android.widget.TextView>(R.id.thumbnailSelectedText)
+                                
+                                if (thumbnailPreview != null) {
+                                    com.bumptech.glide.Glide.with(requireContext())
+                                        .load(thumbnailUri)
+                                        .override(1280, 720)
+                                        .centerCrop()
+                                        .into(thumbnailPreview)
+                                    
+                                    thumbnailPreview.visibility = View.VISIBLE
+                                    thumbnailPlaceholder?.visibility = View.GONE
+                                    thumbnailSelectedText?.visibility = View.VISIBLE
+                                    thumbnailSelectedText?.text = "✓ Miniatura generada automáticamente"
+                                }
+                                
+                                Toast.makeText(
+                                    requireContext(),
+                                    "📸 Miniatura generada desde el video",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } catch (e: Exception) {
+                                Log.e("VideoDetailsFragment", "Error mostrando miniatura generada", e)
+                            }
+                        }
+                    } else {
+                        Log.w("VideoDetailsFragment", "⚠️ No se pudo generar miniatura automática")
+                    }
                 }
 
                 // Upload video to Cloudflare R2 if configured
@@ -220,9 +409,7 @@ class VideoDetailsFragment : Fragment() {
                 Log.d("VideoDetailsFragment", "🔍 Verificando configuración R2: isConfigured=${com.example.tareamov.service.CloudflareR2Service.isConfigured()}")
                 
                 if (com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
-                    withContext(Dispatchers.Main) {
-                        progressText?.text = "Verificando conexión con la nube..."
-                    }
+                    updateLoadingProgress(10, "Verificando conexión con la nube...", false)
                     
                     // Primero probar la conexión
                     val connectionOk = withContext(Dispatchers.IO) {
@@ -239,9 +426,7 @@ class VideoDetailsFragment : Fragment() {
                             ).show()
                         }
                     } else {
-                        withContext(Dispatchers.Main) {
-                            progressText?.text = "Subiendo video a la nube..."
-                        }
+                        updateLoadingProgress(15, "Conectado a la nube, iniciando subida...", false)
                         
                         Log.d("VideoDetailsFragment", "📤 Iniciando subida a R2...")
                         Log.d("VideoDetailsFragment", "   Video URI: $videoUri")
@@ -255,8 +440,9 @@ class VideoDetailsFragment : Fragment() {
                                     customFileName = title.replace(Regex("[^a-zA-Z0-9]"), "_")
                                 ) { progress ->
                                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
-                                        progressBar?.progress = progress
-                                        progressText?.text = "Subiendo video: $progress%"
+                                        // Mapear progreso de 20% a 70% (reservar 70-100% para guardado)
+                                        val mappedProgress = 20 + (progress * 0.5).toInt()
+                                        updateLoadingProgress(mappedProgress, "Subiendo video: $progress%", true)
                                         Log.d("VideoDetailsFragment", "📊 Upload progress: $progress%")
                                     }
                                 }
@@ -273,8 +459,8 @@ class VideoDetailsFragment : Fragment() {
                                 Log.d("VideoDetailsFragment", "   Object Key: ${uploadResult.objectKey}")
                                 Log.d("VideoDetailsFragment", "   File Size: ${uploadResult.fileSize} bytes")
                                 Log.d("VideoDetailsFragment", "   MIME Type: ${uploadResult.mimeType}")
+                                updateLoadingProgress(70, "Video subido exitosamente ✓", false)
                                 withContext(Dispatchers.Main) {
-                                    progressText?.text = "Video subido exitosamente, guardando datos..."
                                     android.widget.Toast.makeText(
                                         requireContext(),
                                         "✅ Video subido a la nube",
@@ -285,6 +471,7 @@ class VideoDetailsFragment : Fragment() {
                             is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
                                 Log.e("VideoDetailsFragment", "❌ R2 upload failed: ${uploadResult.message}")
                                 Log.w("VideoDetailsFragment", "⚠️ Usando URI local como fallback")
+                                updateLoadingProgress(70, "Usando almacenamiento local...", false)
                                 withContext(Dispatchers.Main) {
                                     android.widget.Toast.makeText(
                                         requireContext(),
@@ -303,7 +490,58 @@ class VideoDetailsFragment : Fragment() {
                     Log.w("VideoDetailsFragment", "   - R2_SECRET_ACCESS_KEY")
                 }
 
+                // Upload thumbnail to Cloudflare R2 if selected
+                var thumbnailUrl: String? = null
+                if (thumbnailUri != null) {
+                    updateLoadingProgress(75, "Subiendo miniatura...", false)
+                    
+                    val thumbnailResult = withContext(Dispatchers.IO) {
+                        try {
+                            com.example.tareamov.service.CloudflareR2Service.uploadThumbnail(
+                                context = requireContext(),
+                                thumbnailUri = thumbnailUri!!,
+                                courseId = null // Will be set after course creation
+                            ) { progress ->
+                                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+                                    val mappedProgress = 75 + (progress * 0.1).toInt()
+                                    updateLoadingProgress(mappedProgress, "Subiendo miniatura: $progress%", false)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("VideoDetailsFragment", "Error uploading thumbnail", e)
+                            com.example.tareamov.service.CloudflareR2Service.UploadResult.Error("Error: ${e.message}")
+                        }
+                    }
+                    
+                    when (thumbnailResult) {
+                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
+                            thumbnailUrl = thumbnailResult.url
+                            Log.d("VideoDetailsFragment", "✅ Thumbnail uploaded: $thumbnailUrl")
+                            updateLoadingProgress(85, "Miniatura subida ✓", false)
+                            withContext(Dispatchers.Main) {
+                                android.widget.Toast.makeText(
+                                    requireContext(),
+                                    "✅ Miniatura subida exitosamente",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
+                            Log.e("VideoDetailsFragment", "❌ Thumbnail upload failed: ${thumbnailResult.message}")
+                            updateLoadingProgress(85, "Error en miniatura, continuando...", false)
+                            withContext(Dispatchers.Main) {
+                                android.widget.Toast.makeText(
+                                    requireContext(),
+                                    "⚠️ Error subiendo miniatura: ${thumbnailResult.message}",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                }
+                
                 // Get next available video ID (> 82)
+                updateLoadingProgress(87, "Generando identificadores...", false)
                 val nextVideoId = withContext(Dispatchers.IO) {
                     com.example.tareamov.service.SupabaseClient.getNextVideoId()
                 }
@@ -311,11 +549,13 @@ class VideoDetailsFragment : Fragment() {
                 Log.d("VideoDetailsFragment", "Creating new video with ID: $nextVideoId")
 
                 // First, create the course (will get its own auto-generated ID)
+                updateLoadingProgress(90, "Creando curso...", false)
                 val newCourse = com.example.tareamov.data.entity.Course(
                     id = 0, // Supabase auto-generates
                     title = title,
                     description = description,
                     creatorUserId = userId, // Foreign key to usuarios.id
+                    thumbnailUri = thumbnailUrl, // Miniatura subida a R2
                     videoUri = finalVideoUri, // Use R2 URL or local URI
                     isPremium = isPaidCourse,
                     price = if (isPaidCourse) 9.99 else 0.0,
@@ -330,8 +570,7 @@ class VideoDetailsFragment : Fragment() {
                 }
                 
                 if (courseRemoteId == null || courseRemoteId <= 0) {
-                    progressBar?.visibility = View.GONE
-                    progressText?.visibility = View.GONE
+                    hideProfessionalLoading()
                     if (isAdded) context?.let { Toast.makeText(it, "Error creando el curso asociado", Toast.LENGTH_SHORT).show() }
                     Log.e("VideoDetailsFragment", "Failed to create course - courseRemoteId: $courseRemoteId")
                     return@launch
@@ -340,6 +579,7 @@ class VideoDetailsFragment : Fragment() {
                 Log.d("VideoDetailsFragment", "Course created with ID: $courseRemoteId")
 
                 // Now create video with the specific ID and courseId reference
+                updateLoadingProgress(95, "Guardando video...", false)
                 // NO incluir username - se obtiene desde course_id en el backend/app
                 val videoData = VideoData(
                     id = nextVideoId,
@@ -360,8 +600,13 @@ class VideoDetailsFragment : Fragment() {
                 }
                 
                 if (remoteId != null && remoteId > 0) {
-                    progressBar?.visibility = View.GONE
-                    progressText?.visibility = View.GONE
+                    updateLoadingProgress(100, "¡Completado exitosamente! ✓", false)
+                    
+                    // Esperar un momento para que el usuario vea el 100%
+                    kotlinx.coroutines.delay(800)
+                    
+                    hideProfessionalLoading()
+                    
                     if (isAdded) {
                         context?.let { Toast.makeText(it, "✅ Video guardado con ID $remoteId, Curso ID $courseRemoteId", Toast.LENGTH_LONG).show() }
                         Log.d("VideoDetailsFragment", "Video saved successfully with ID: $remoteId, linked to course: $courseRemoteId")
@@ -374,17 +619,31 @@ class VideoDetailsFragment : Fragment() {
                         }
                     }
                 } else {
-                    progressBar?.visibility = View.GONE
-                    progressText?.visibility = View.GONE
+                    hideProfessionalLoading()
                     if (isAdded) context?.let { Toast.makeText(it, "Error guardando video en Supabase", Toast.LENGTH_SHORT).show() }
                     Log.e("VideoDetailsFragment", "Failed to insert video - remoteId: $remoteId")
                     return@launch
                 }
             } catch (e: Exception) {
                 Log.e("VideoDetailsFragment", "Error saving video details", e)
-                progressBar?.visibility = View.GONE
-                progressText?.visibility = View.GONE
+                hideProfessionalLoading()
                 if (isAdded) context?.let { Toast.makeText(it, "Error guardando video: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+    
+    override fun onDestroyView() {
+        super.onDestroyView()
+        // Limpiar animaciones
+        brainLoadingAnimator?.cleanup()
+        brainLoadingAnimator = null
+        
+        // Limpiar miniaturas antiguas del caché (async, no bloqueante)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                thumbnailExtractor.cleanOldThumbnails()
+            } catch (e: Exception) {
+                Log.w("VideoDetailsFragment", "Error limpiando miniaturas antiguas", e)
             }
         }
     }

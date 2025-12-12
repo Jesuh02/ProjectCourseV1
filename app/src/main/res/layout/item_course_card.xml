@@ -27,8 +27,7 @@
             android:layout_marginStart="0dp"
             android:layout_marginTop="0dp"
             android:layout_marginEnd="0dp"
-            android:layout_marginBottom="12dp"
-            android:background="@drawable/rounded_image_background"
+            android:layout_marginBottom="0dp"
             android:clipToOutline="true">
 
             <ImageView
@@ -36,6 +35,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:scaleType="centerCrop"
+                android:background="@android:color/transparent"
                 android:src="@drawable/bg_course_placeholder_card"
                 tools:src="@drawable/bg_course_placeholder_card" />
 

@@ -73,6 +73,7 @@ class ExploreFragment : Fragment() {
     // Variables for thumbnail change functionality
     private var currentCourseForThumbnailChange: VideoData? = null
     private lateinit var imagePickerLauncher: ActivityResultLauncher<Intent>
+    private lateinit var thumbnailExtractor: com.example.tareamov.util.VideoThumbnailExtractor
     
     // Current filter index (0=All, 1=My Created, 2=Other, 3=Premium, 4=Free, 5=Enrolled)
     private var currentFilterIndex = 0
@@ -96,6 +97,7 @@ class ExploreFragment : Fragment() {
         // Inicializar VideoManager y CourseRepository
         videoManager = VideoManager(requireContext())
         courseRepository = com.example.tareamov.repository.CourseRepository(requireContext())
+        thumbnailExtractor = com.example.tareamov.util.VideoThumbnailExtractor(requireContext())
 
         // Set up navigation back to VideoHomeFragment
         view.findViewById<ImageButton>(R.id.backButton)?.setOnClickListener {
@@ -1090,12 +1092,23 @@ class ExploreFragment : Fragment() {
                 androidx.appcompat.view.ContextThemeWrapper(requireContext(), R.style.DarkAlertDialogTheme)
             )
 
+            // Check if course has video to offer auto-generation
+            val hasVideo = !course.videoUriString.isNullOrEmpty()
+
             dialogBuilder
                 .setTitle("🖼️ Cambiar Miniatura")
-                .setMessage("¿Qué deseas hacer con la miniatura del curso \"${course.title}\"?\n\n" +
-                        "📱 Seleccionar: Elige una imagen de tu galería")
+                .setMessage(buildString {
+                    append("¿Qué deseas hacer con la miniatura del curso \"${course.title}\"?\n\n")
+                    append("📱 Seleccionar: Elige una imagen de tu galería")
+                    if (hasVideo) {
+                        append("\n🎬 Generar: Crea miniatura desde el video")
+                    }
+                })
                 .setPositiveButton("📱 Seleccionar Imagen") { _, _ ->
                     openImagePicker()
+                }
+                .setNeutralButton(if (hasVideo) "🎬 Desde Video" else null) { _, _ ->
+                    generateThumbnailFromVideo(course)
                 }
                 .setNegativeButton("❌ Cancelar") { _, _ ->
                     currentCourseForThumbnailChange = null
@@ -1130,9 +1143,43 @@ class ExploreFragment : Fragment() {
         imagePickerLauncher.launch(intent)
     }
 
-    // Regenerate thumbnail from video
-    // Regenerate thumbnail from video - REMOVED (Obsolete)
-    // private fun regenerateThumbnailFromVideo(course: VideoData) { ... }
+    /**
+     * Genera miniatura automáticamente desde el video del curso
+     */
+    private fun generateThumbnailFromVideo(course: VideoData) {
+        if (course.videoUriString.isNullOrEmpty()) {
+            Toast.makeText(requireContext(), "❌ Este curso no tiene video asociado", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                Toast.makeText(requireContext(), "🎬 Generando miniatura desde el video...", Toast.LENGTH_SHORT).show()
+                
+                // Generar miniatura desde el video
+                val videoUri = Uri.parse(course.videoUriString)
+                val thumbnailUri = withContext(Dispatchers.IO) {
+                    thumbnailExtractor.extractThumbnailFromVideo(videoUri)
+                }
+                
+                if (thumbnailUri == null) {
+                    Toast.makeText(requireContext(), "❌ No se pudo generar la miniatura", Toast.LENGTH_SHORT).show()
+                    currentCourseForThumbnailChange = null
+                    return@launch
+                }
+                
+                Log.d("ExploreFragment", "✅ Miniatura generada: $thumbnailUri")
+                
+                // Procesar la miniatura generada como si fuera seleccionada
+                handleThumbnailSelection(thumbnailUri)
+                
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error generando miniatura desde video", e)
+                Toast.makeText(requireContext(), "❌ Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                currentCourseForThumbnailChange = null
+            }
+        }
+    }
 
     private fun startSkeletonAnimation() {
         skeletonContainer.animate().cancel()
@@ -1232,6 +1279,9 @@ class ExploreFragment : Fragment() {
                         Log.w("ExploreFragment", "Empty list returned while offline. Keeping skeleton.")
                         startSkeletonAnimation()
                     }
+                    
+                    // 🎨 Generar miniaturas automáticas para cursos sin miniatura (en segundo plano)
+                    generateMissingThumbnails(allCourses)
                 }
 
             } catch (e: Exception) {
@@ -1745,6 +1795,92 @@ class ExploreFragment : Fragment() {
             activeFilterText?.text = filterName
         } else {
             activeFilterContainer?.visibility = View.GONE
+        }
+    }
+    
+    /**
+     * Genera miniaturas automáticamente para cursos que tienen video pero no miniatura
+     * Se ejecuta en segundo plano sin bloquear la UI
+     */
+    private fun generateMissingThumbnails(courses: List<Course>) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                var generatedCount = 0
+                
+                courses.forEach { course ->
+                    // Solo generar si tiene video pero no miniatura
+                    if (!course.videoUri.isNullOrEmpty() && course.thumbnailUri.isNullOrEmpty()) {
+                        try {
+                            Log.d("ExploreFragment", "🎨 Generando miniatura para curso: ${course.title}")
+                            
+                            val videoUri = Uri.parse(course.videoUri)
+                            val thumbnailUri = thumbnailExtractor.extractThumbnailFromVideo(videoUri)
+                            
+                            if (thumbnailUri != null) {
+                                // Subir a Cloudflare R2 si está configurado
+                                var finalThumbnailUri = thumbnailUri.toString()
+                                
+                                if (CloudflareR2Service.isConfigured()) {
+                                    val uploadResult = CloudflareR2Service.uploadFile(
+                                        context = requireContext(),
+                                        fileUri = thumbnailUri,
+                                        folder = "thumbnails/courses/auto",
+                                        customFileName = "auto_thumb_${course.id}_${System.currentTimeMillis()}"
+                                    )
+                                    
+                                    when (uploadResult) {
+                                        is CloudflareR2Service.UploadResult.Success -> {
+                                            finalThumbnailUri = uploadResult.url
+                                            Log.d("ExploreFragment", "☁️ Miniatura automática subida a R2: $finalThumbnailUri")
+                                        }
+                                        is CloudflareR2Service.UploadResult.Error -> {
+                                            Log.w("ExploreFragment", "⚠️ Error subiendo miniatura a R2, usando local")
+                                        }
+                                    }
+                                }
+                                
+                                // Actualizar el curso con la nueva miniatura
+                                val updatedCourse = course.copy(thumbnailUri = finalThumbnailUri)
+                                
+                                // Guardar en Supabase
+                                val success = com.example.tareamov.service.SupabaseClient.updateCourseById(
+                                    course.id,
+                                    updatedCourse
+                                )
+                                
+                                if (success) {
+                                    generatedCount++
+                                    Log.d("ExploreFragment", "✅ Miniatura automática guardada para curso ${course.id}")
+                                    
+                                    // Actualizar en las listas locales
+                                    withContext(Dispatchers.Main) {
+                                        val idxAll = allCoursesList.indexOfFirst { it.id == course.id }
+                                        if (idxAll >= 0) allCoursesList[idxAll] = updatedCourse
+                                        
+                                        val idxFiltered = coursesList.indexOfFirst { it.id == course.id }
+                                        if (idxFiltered >= 0) {
+                                            coursesList[idxFiltered] = updatedCourse
+                                            // Actualizar solo ese ítem en el adapter
+                                            coursesAdapter.notifyItemChanged(idxFiltered)
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ExploreFragment", "Error generando miniatura para curso ${course.id}", e)
+                        }
+                    }
+                }
+                
+                if (generatedCount > 0) {
+                    withContext(Dispatchers.Main) {
+                        Log.d("ExploreFragment", "✅ Generadas $generatedCount miniaturas automáticas")
+                    }
+                }
+                
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error en proceso de generación de miniaturas", e)
+            }
         }
     }
 }

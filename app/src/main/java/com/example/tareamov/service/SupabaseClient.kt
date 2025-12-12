@@ -4153,4 +4153,88 @@ object SupabaseClient {
             false
         }
     }
+
+    /**
+     * Fetch courses where the user has submitted tasks (as a student).
+     * This uses the task_submissions table to find unique course_ids for the given student.
+     */
+    suspend fun fetchCoursesWithUserSubmissions(studentId: Long): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+            
+            // Step 1: Get all submissions for this student with task/topic/course info
+            val submissionsUrl = "$baseUrl/rest/v1/task_submissions?select=task_id,tasks!inner(topic_id,topics!inner(course_id))&student_id=eq.$studentId"
+            Log.d("SupabaseClient", "🔍 Fetching submissions for student $studentId: $submissionsUrl")
+            
+            val request = Request.Builder()
+                .url(submissionsUrl)
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .build()
+            
+            val courseIds = mutableSetOf<Long>()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string()
+                    Log.e("SupabaseClient", "fetchCoursesWithUserSubmissions failed: ${response.code} - $errorBody")
+                    return@withContext emptyList()
+                }
+                
+                val body = response.body?.string() ?: return@withContext emptyList()
+                Log.d("SupabaseClient", "📊 Submissions response: ${body.take(500)}")
+                
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                for (elem in jsonArray) {
+                    try {
+                        val obj = elem.asJsonObject
+                        if (obj.has("tasks") && !obj.get("tasks").isJsonNull) {
+                            val taskObj = obj.get("tasks").asJsonObject
+                            if (taskObj.has("topics") && !taskObj.get("topics").isJsonNull) {
+                                val topicObj = taskObj.get("topics").asJsonObject
+                                if (topicObj.has("course_id") && !topicObj.get("course_id").isJsonNull) {
+                                    courseIds.add(topicObj.get("course_id").asLong)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("SupabaseClient", "Error parsing submission entry: ${e.message}")
+                    }
+                }
+            }
+            
+            Log.d("SupabaseClient", "📚 Found ${courseIds.size} unique courses with submissions: $courseIds")
+            
+            if (courseIds.isEmpty()) {
+                return@withContext emptyList()
+            }
+            
+            // Step 2: Fetch course details for these course_ids
+            val coursesUrl = "$baseUrl/rest/v1/courses?select=*&id=in.(${courseIds.joinToString(",")})"
+            Log.d("SupabaseClient", "🔍 Fetching course details: $coursesUrl")
+            
+            val coursesRequest = Request.Builder()
+                .url(coursesUrl)
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .build()
+            
+            client.newCall(coursesRequest).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e("SupabaseClient", "Failed to fetch course details: ${response.code}")
+                    return@withContext emptyList()
+                }
+                
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val courses = underscoredGson.fromJson(body, Array<Course>::class.java)
+                Log.d("SupabaseClient", "✅ Fetched ${courses.size} courses with user submissions")
+                return@withContext courses.toList()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching courses with user submissions for student $studentId", e)
+            emptyList()
+        }
+    }
 }

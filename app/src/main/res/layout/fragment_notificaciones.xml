@@ -67,6 +67,18 @@
         app:layout_constraintWidth_percent="0.5"
         app:layout_constraintTop_toBottomOf="@id/tabLayout" />
 
+    <!-- Skeleton Loader (Visible during loading) -->
+    <include
+        android:id="@+id/skeletonLayout"
+        layout="@layout/layout_notifications_skeleton"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="visible"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <!-- Notifications List (Hidden by default, visible when data exists) -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/notificationsRecyclerView"

@@ -4,107 +4,167 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
+    android:background="#0A0A0A"
     android:clipToPadding="false"
     android:clipChildren="false"
     tools:context=".ui.DatabaseQueryFragment">
 
-    <!-- Header -->
+    <!-- Modern Header - Professional and Clean -->
     <LinearLayout
         android:id="@+id/headerLayout"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="56dp"
         android:orientation="horizontal"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="10dp"
+        android:paddingHorizontal="20dp"
+        android:paddingVertical="8dp"
         android:gravity="center_vertical"
-        android:background="#000000"
+        android:background="#0D0D0D"
+        android:elevation="4dp"
         app:layout_constraintTop_toTopOf="parent">
 
-        <!-- Delete conversation button -->
+        <!-- Status Indicator -->
+        <View
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="@drawable/circle_shape"
+            android:backgroundTint="#10A37F"
+            android:layout_marginEnd="12dp" />
+
+        <!-- Title and Model Info -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/messageCounterText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Database Assistant"
+                android:textColor="#E8E8E8"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.005" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="DeepSeek-V3.2-Speciale"
+                android:textColor="#666666"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+        <!-- Action buttons -->
         <ImageButton
             android:id="@+id/deleteConversationButton"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:src="@drawable/ic_delete_minimal"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            app:tint="#666666"
+            android:layout_marginEnd="8dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Nueva conversación"
             android:padding="8dp"
-            android:contentDescription="Eliminar conversación" />
+            android:src="@drawable/ic_add"
+            app:tint="#999999" />
 
-        <!-- Message counter -->
-        <TextView
-            android:id="@+id/messageCounterText"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="0 mensajes en esta conversación"
-            android:textColor="#888888"
-            android:textSize="13sp"
-            android:gravity="center" />
-
-        <!-- Export conversation button -->
         <ImageButton
             android:id="@+id/exportConversationButton"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:src="@drawable/ic_share_minimal"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            app:tint="#666666"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Más opciones"
             android:padding="8dp"
-            android:contentDescription="Exportar conversación" />
+            android:src="@drawable/ic_more_vert"
+            app:tint="#999999" />
     </LinearLayout>
 
-    <!-- Chat Area -->
+    <!-- Subtle divider -->
+    <View
+        android:id="@+id/headerDivider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#1A1A1A"
+        app:layout_constraintTop_toBottomOf="@id/headerLayout" />
+
+    <!-- Chat Area with improved spacing -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/chatRecyclerView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:clipToPadding="false"
-        android:paddingBottom="16dp"
-        app:layout_constraintTop_toBottomOf="@id/headerLayout"
+        android:paddingTop="12dp"
+        android:paddingBottom="20dp"
+        android:scrollbars="none"
+        android:overScrollMode="never"
+        app:layout_constraintTop_toBottomOf="@id/headerDivider"
         app:layout_constraintBottom_toTopOf="@id/inputContainer" />
 
-    <!-- Empty State -->
+    <!-- Modern Empty State -->
     <LinearLayout
         android:id="@+id/emptyStateContainer"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center"
+        android:alpha="0.6"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <ImageView
-            android:id="@+id/centerBrainIcon"
-            android:layout_width="64dp"
-            android:layout_height="64dp"
-            android:src="@drawable/ic_brain"
-            app:tint="#333333" />
+        <!-- Elegant brain icon -->
+        <FrameLayout
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/circle_shape"
+            android:backgroundTint="#1A1A1A">
+
+            <ImageView
+                android:id="@+id/centerBrainIcon"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_brain"
+                app:tint="#4A4A4A" />
+        </FrameLayout>
             
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="20dp"
             android:text="Ask anything about your data"
             android:textColor="#666666"
-            android:textSize="14sp" />
+            android:textSize="15sp"
+            android:fontFamily="sans-serif"
+            android:letterSpacing="0.02" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Natural language queries powered by AI"
+            android:textColor="#4A4A4A"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif" />
     </LinearLayout>
 
-    <!-- Chart Container -->
+    <!-- Chart Container (hidden by default) -->
     <FrameLayout
         android:id="@+id/chartContainer"
         android:layout_width="match_parent"
         android:layout_height="200dp"
         android:layout_margin="16dp"
         android:visibility="gone"
+        android:background="@drawable/bg_message_user"
+        android:backgroundTint="#111111"
+        android:elevation="2dp"
         app:layout_constraintBottom_toTopOf="@id/inputContainer"
-        app:layout_constraintTop_toBottomOf="@id/headerLayout"
+        app:layout_constraintTop_toBottomOf="@id/headerDivider"
         app:layout_constraintVertical_bias="0.0" />
 
-    <!-- Chart Controls -->
+    <!-- Chart Controls (hidden by default) -->
     <LinearLayout
         android:id="@+id/chartControls"
         android:layout_width="wrap_content"
@@ -120,122 +180,135 @@
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:text="+"
-            android:backgroundTint="#333333" />
+            android:textSize="18sp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FFFFFF"
+            style="@style/Widget.Material3.Button.UnelevatedButton" />
             
         <Button
             android:id="@+id/zoomOutButton"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:layout_marginStart="8dp"
-            android:text="-"
-            android:backgroundTint="#333333" />
+            android:text="−"
+            android:textSize="18sp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FFFFFF"
+            style="@style/Widget.Material3.Button.UnelevatedButton" />
             
         <Button
             android:id="@+id/resetChartButton"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:layout_marginStart="8dp"
-            android:text="R"
-            android:backgroundTint="#333333" />
+            android:text="↻"
+            android:textSize="18sp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FFFFFF"
+            style="@style/Widget.Material3.Button.UnelevatedButton" />
     </LinearLayout>
 
-    <!-- FABs -->
+    <!-- Modern Scroll to Bottom FAB -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabScrollToBottom"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_margin="16dp"
         android:src="@drawable/ic_keyboard_arrow_down"
-        app:tint="#FFFFFF"
-        app:backgroundTint="#333333"
+        app:tint="#E0E0E0"
+        app:backgroundTint="#1A1A1A"
+        app:borderWidth="0dp"
         app:fabSize="mini"
+        app:elevation="4dp"
         android:visibility="gone"
         app:layout_constraintBottom_toTopOf="@id/inputContainer"
         app:layout_constraintEnd_toEndOf="parent" />
 
-
-
-    <!-- Input Area -->
+    <!-- Modern Input Area -->
     <LinearLayout
         android:id="@+id/inputContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="#000000"
-        android:padding="8dp"
+        android:background="#0A0A0A"
+        android:paddingHorizontal="12dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="8dp"
         app:layout_constraintBottom_toBottomOf="parent">
 
-        <LinearLayout
-            android:id="@+id/quickActionsLayout"
+        <!-- Attached files preview container -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/attachedFilesRecyclerView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingBottom="8dp"
-            android:visibility="gone">
-            
-            <com.google.android.material.chip.Chip
-                android:id="@+id/chipClearChat"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Clear"
-                android:textColor="#FFFFFF"
-                app:chipBackgroundColor="#333333" />
-                
-            <com.google.android.material.chip.Chip
-                android:id="@+id/chipHelp"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="Help"
-                android:textColor="#FFFFFF"
-                app:chipBackgroundColor="#333333" />
-                
-            <com.google.android.material.chip.Chip
-                android:id="@+id/chipExamples"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="Examples"
-                android:textColor="#FFFFFF"
-                app:chipBackgroundColor="#333333" />
-        </LinearLayout>
+            android:layout_marginBottom="8dp"
+            android:visibility="gone"
+            android:overScrollMode="never"
+            android:orientation="horizontal" />
 
+        <!-- Input row with modern design -->
         <LinearLayout
             android:id="@+id/queryInputLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="bottom">
+            android:gravity="bottom"
+            android:background="@drawable/bg_input_container_cursor"
+            android:padding="6dp">
 
-            <com.google.android.material.textfield.TextInputLayout
+            <!-- Attach file button -->
+            <FrameLayout
+                android:id="@+id/attachFileButton"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_gravity="bottom"
+                android:layout_marginEnd="6dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_attach_file"
+                    app:tint="#888888" />
+            </FrameLayout>
+
+            <!-- Input field -->
+            <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                app:boxBackgroundColor="#1A1A1A"
-                app:boxCornerRadiusTopStart="24dp"
-                app:boxCornerRadiusTopEnd="24dp"
-                app:boxCornerRadiusBottomStart="24dp"
-                app:boxCornerRadiusBottomEnd="24dp"
-                app:boxStrokeWidth="0dp"
-                app:hintEnabled="false">
+                android:orientation="vertical"
+                android:paddingHorizontal="8dp">
 
-                <com.google.android.material.textfield.TextInputEditText
+                <EditText
                     android:id="@+id/queryInput"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:hint="Message Database..."
-                    android:textColor="#FFFFFF"
-                    android:textColorHint="#666666"
-                    android:padding="16dp"
+                    android:textColor="#E0E0E0"
+                    android:textColorHint="#555555"
+                    android:textSize="15sp"
+                    android:fontFamily="sans-serif"
+                    android:paddingVertical="10dp"
+                    android:paddingHorizontal="4dp"
                     android:background="@android:color/transparent"
                     android:inputType="textMultiLine|textCapSentences"
-                    android:maxLines="4" />
-            </com.google.android.material.textfield.TextInputLayout>
+                    android:maxLines="6"
+                    android:minLines="1"
+                    android:scrollbars="vertical"
+                    android:gravity="top"
+                    android:imeOptions="actionSend" />
+            </LinearLayout>
 
+            <!-- Send button -->
             <FrameLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp">
+                android:layout_gravity="bottom"
+                android:layout_marginStart="6dp">
 
                 <com.google.android.material.floatingactionbutton.FloatingActionButton
                     android:id="@+id/sendButton"
@@ -244,8 +317,10 @@
                     android:src="@drawable/ic_send"
                     app:tint="#FFFFFF"
                     app:backgroundTint="#10A37F"
+                    app:borderWidth="0dp"
                     app:fabSize="mini"
-                    app:elevation="0dp" />
+                    app:elevation="0dp"
+                    app:pressedTranslationZ="2dp" />
 
                 <ProgressBar
                     android:id="@+id/loadingSpinner"
@@ -257,17 +332,40 @@
             </FrameLayout>
         </LinearLayout>
 
-        <!-- Powered by DeepSeek indicator -->
-        <TextView
-            android:id="@+id/poweredByTextView"
+        <!-- Modern footer with model info -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="⚡ Potenciado por DeepSeek-V3.2-Speciale"
-            android:textColor="#444444"
-            android:textSize="10sp"
+            android:orientation="horizontal"
             android:gravity="center"
-            android:paddingVertical="4dp"
-            android:background="#000000" />
+            android:paddingTop="10dp"
+            android:paddingBottom="6dp">
+
+            <View
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:background="@drawable/circle_shape"
+                android:backgroundTint="#10A37F"
+                android:layout_marginEnd="10dp" />
+
+            <TextView
+                android:id="@+id/poweredByTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="DeepSeek-V3.2-Speciale"
+                android:textColor="#4A4A4A"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.03" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=" • Advanced AI"
+                android:textColor="#3A3A3A"
+                android:textSize="10sp"
+                android:fontFamily="sans-serif" />
+        </LinearLayout>
     </LinearLayout>
 
     <!-- Hidden Views for Compatibility -->
@@ -295,5 +393,18 @@
     </LinearLayout>
     
     <TextView android:id="@+id/currentUserText" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" app:layout_constraintTop_toTopOf="parent" app:layout_constraintStart_toStartOf="parent"/>
+    
+    <!-- Hidden quick actions layout -->
+    <LinearLayout
+        android:id="@+id/quickActionsLayout"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+        <com.google.android.material.chip.Chip android:id="@+id/chipClearChat" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <com.google.android.material.chip.Chip android:id="@+id/chipHelp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <com.google.android.material.chip.Chip android:id="@+id/chipExamples" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

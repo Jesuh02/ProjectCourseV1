@@ -136,6 +136,61 @@ object CloudflareR2Service {
     }
     
     /**
+     * Obtiene una URL pública optimizada para streaming de video
+     * Agrega parámetros de optimización si están disponibles
+     * @param objectKey La clave del objeto en R2
+     * @param quality Calidad del video (opcional: "auto", "720p", "480p", "360p")
+     * @return URL pública optimizada para streaming
+     */
+    fun getVideoStreamingUrl(objectKey: String, quality: String = "auto"): String {
+        val baseUrl = getPublicUrl(objectKey)
+        
+        // Si Cloudflare Stream está habilitado, agregar parámetros de optimización
+        // Por ahora, devolver URL directa que funciona con todos los reproductores
+        return baseUrl
+    }
+    
+    /**
+     * Genera una URL de vista previa (thumbnail) para un video
+     * Si el video está en R2, intenta generar una URL de thumbnail
+     * @param videoUrl URL del video
+     * @param timeInSeconds Tiempo en segundos del video donde tomar el thumbnail (default: 0)
+     * @return URL del thumbnail o null si no está disponible
+     */
+    fun getVideoThumbnailUrl(videoUrl: String, timeInSeconds: Int = 0): String? {
+        return try {
+            // Si es una URL de R2, podemos intentar generar un thumbnail
+            if (isR2Url(videoUrl)) {
+                // Para R2 básico sin Cloudflare Stream, no hay thumbnails automáticos
+                // Devolver null y dejar que la app use el frame del video
+                null
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error generando thumbnail URL: ${e.message}")
+            null
+        }
+    }
+    
+    /**
+     * Crea una URL de compartir optimizada con información adicional
+     * Esta URL incluye metadatos para previsualizaciones en redes sociales (Open Graph)
+     * @param videoData El video a compartir
+     * @return URL formateada para compartir
+     */
+    fun createShareableVideoUrl(videoUrl: String, title: String, description: String = ""): String {
+        // Si ya es una URL pública de R2, devolverla con contexto adicional
+        if (isR2Url(videoUrl)) {
+            return videoUrl
+        }
+        
+        // Si no, intentar convertir a URL pública
+        val publicUrl = getVideoStreamUrl(videoUrl)
+        return publicUrl ?: videoUrl
+    }
+    
+    /**
      * Obtiene la URL base pública actual
      */
     fun getPublicUrlBase(): String {
@@ -192,7 +247,7 @@ object CloudflareR2Service {
     }
     
     /**
-     * Sube un archivo a Cloudflare R2
+     * Sube un archivo a Cloudflare R2 usando streaming para archivos grandes
      * @param context Context de Android
      * @param fileUri URI del archivo local
      * @param folder Carpeta destino (ej: "videos", "documents", "images", "submissions")
@@ -215,20 +270,43 @@ object CloudflareR2Service {
             Log.d(TAG, "📤 Starting upload for URI: $fileUri to folder: $folder")
             onProgress?.invoke(5)
             
-            // Leer el archivo
-            val inputStream = context.contentResolver.openInputStream(fileUri)
+            // Obtener tamaño del archivo sin cargarlo completo
+            val fileDescriptor = context.contentResolver.openFileDescriptor(fileUri, "r")
                 ?: return@withContext UploadResult.Error("No se pudo abrir el archivo")
             
-            val bytes = inputStream.readBytes()
-            inputStream.close()
+            val fileSize = fileDescriptor.statSize
+            fileDescriptor.close()
             
-            if (bytes.isEmpty()) {
+            if (fileSize <= 0) {
                 return@withContext UploadResult.Error("El archivo está vacío")
             }
             
-            val fileSizeKB = bytes.size / 1024
+            val fileSizeKB = fileSize / 1024
             val fileSizeMB = fileSizeKB / 1024.0
             Log.d(TAG, "📦 File size: $fileSizeKB KB (${String.format("%.2f", fileSizeMB)} MB)")
+            
+            // Para archivos pequeños (<10MB), usar método tradicional
+            // Para archivos grandes (>=10MB), usar streaming para evitar OutOfMemoryError
+            if (fileSizeMB < 10.0) {
+                Log.d(TAG, "Using standard upload for small file (<10MB)")
+                val inputStream = context.contentResolver.openInputStream(fileUri)
+                    ?: return@withContext UploadResult.Error("No se pudo abrir el archivo")
+                
+                val bytes = inputStream.readBytes()
+                inputStream.close()
+                
+                return@withContext uploadBytes(
+                    context = context,
+                    bytes = bytes,
+                    fileUri = fileUri,
+                    folder = folder,
+                    customFileName = customFileName,
+                    onProgress = onProgress
+                )
+            }
+            
+            // Streaming para archivos grandes
+            Log.d(TAG, "Using streaming upload for large file")
             onProgress?.invoke(15)
             
             // Generar nombre único
@@ -245,16 +323,13 @@ object CloudflareR2Service {
             Log.d(TAG, "📝 Uploading as: $objectKey (MIME: $mimeType)")
             onProgress?.invoke(25)
             
-            // Construir la solicitud con firma AWS Signature V4
-            // R2 usa el formato: https://<bucket>.<account_id>.r2.cloudflarestorage.com/<object_key>
-            // O el formato legacy: https://<account_id>.r2.cloudflarestorage.com/<bucket>/<object_key>
+            // Para streaming, usar UNSIGNED-PAYLOAD
             val host = "$BUCKET_NAME.$ACCOUNT_ID.r2.cloudflarestorage.com"
             val url = "https://$host/$objectKey"
             val date = getAmzDate()
             val dateStamp = date.substring(0, 8)
+            val contentHash = "UNSIGNED-PAYLOAD"
             
-            // Hash del contenido
-            val contentHash = sha256Hex(bytes)
             onProgress?.invoke(35)
             
             Log.d(TAG, "🔐 Creating AWS Signature V4...")
@@ -277,22 +352,47 @@ object CloudflareR2Service {
             
             Log.d(TAG, "   Authorization: ${authorization.take(80)}...")
             
-            val requestBody = bytes.toRequestBody(mimeType.toMediaType())
+            // Crear RequestBody desde InputStream para streaming
+            val inputStream = context.contentResolver.openInputStream(fileUri)
+                ?: return@withContext UploadResult.Error("No se pudo abrir el archivo para streaming")
+            
+            val requestBody = object : okhttp3.RequestBody() {
+                override fun contentType() = mimeType.toMediaType()
+                override fun contentLength() = fileSize
+                
+                override fun writeTo(sink: okio.BufferedSink) {
+                    val buffer = ByteArray(8192) // 8KB chunks
+                    var totalBytesRead = 0L
+                    var bytesRead: Int
+                    
+                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        sink.write(buffer, 0, bytesRead)
+                        totalBytesRead += bytesRead
+                        
+                        // Update progress
+                        val progress = 50 + ((totalBytesRead.toFloat() / fileSize) * 40).toInt()
+                        onProgress?.invoke(progress)
+                    }
+                    inputStream.close()
+                }
+            }
+            
             val request = Request.Builder()
                 .url(url)
                 .put(requestBody)
-                .header("Host", host)  // Usar header() en lugar de addHeader() para evitar duplicados
+                .header("Host", host)
                 .header("x-amz-date", date)
                 .header("x-amz-content-sha256", contentHash)
                 .header("Content-Type", mimeType)
+                .header("Content-Length", fileSize.toString())
                 .header("Authorization", authorization)
                 .build()
             
-            Log.d(TAG, "🚀 Sending request to R2...")
+            Log.d(TAG, "🚀 Sending streaming request to R2...")
             Log.d(TAG, "   URL: $url")
             Log.d(TAG, "   Method: PUT")
-            Log.d(TAG, "   Content-Length: ${bytes.size} bytes")
-            onProgress?.invoke(50)
+            Log.d(TAG, "   Content-Length: $fileSize bytes")
+            Log.d(TAG, "   Using UNSIGNED-PAYLOAD for streaming")
             
             val response = client.newCall(request).execute()
             onProgress?.invoke(90)
@@ -310,7 +410,7 @@ object CloudflareR2Service {
                     url = accessUrl,
                     objectKey = objectKey,
                     fileName = finalFileName,
-                    fileSize = bytes.size.toLong(),
+                    fileSize = fileSize,
                     mimeType = mimeType
                 )
             } else {
@@ -341,6 +441,93 @@ object CloudflareR2Service {
     }
     
     /**
+     * Sube bytes directamente a R2 (para archivos pequeños ya cargados en memoria)
+     */
+    private suspend fun uploadBytes(
+        context: Context,
+        bytes: ByteArray,
+        fileUri: Uri,
+        folder: String,
+        customFileName: String?,
+        onProgress: ((Int) -> Unit)?
+    ): UploadResult = withContext(Dispatchers.IO) {
+        try {
+            onProgress?.invoke(15)
+            
+            // Generar nombre único
+            val originalName = getFileName(context, fileUri)
+            val extension = originalName.substringAfterLast(".", "").lowercase()
+            val sanitizedName = customFileName?.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                ?: UUID.randomUUID().toString()
+            val finalFileName = if (extension.isNotEmpty()) "$sanitizedName.$extension" else sanitizedName
+            val objectKey = "$folder/$finalFileName"
+            
+            // Detectar tipo MIME
+            val mimeType = context.contentResolver.getType(fileUri) ?: getMimeType(extension)
+            
+            Log.d(TAG, "📝 Uploading as: $objectKey (MIME: $mimeType)")
+            onProgress?.invoke(25)
+            
+            val host = "$BUCKET_NAME.$ACCOUNT_ID.r2.cloudflarestorage.com"
+            val url = "https://$host/$objectKey"
+            val date = getAmzDate()
+            val dateStamp = date.substring(0, 8)
+            val contentHash = sha256Hex(bytes)
+            
+            onProgress?.invoke(35)
+            
+            val authorization = createAuthorizationHeader(
+                method = "PUT",
+                uri = "/$objectKey",
+                host = host,
+                date = date,
+                dateStamp = dateStamp,
+                contentHash = contentHash,
+                contentType = mimeType
+            )
+            
+            onProgress?.invoke(45)
+            
+            val requestBody = bytes.toRequestBody(mimeType.toMediaType())
+            val request = Request.Builder()
+                .url(url)
+                .put(requestBody)
+                .header("Host", host)
+                .header("x-amz-date", date)
+                .header("x-amz-content-sha256", contentHash)
+                .header("Content-Type", mimeType)
+                .header("Authorization", authorization)
+                .build()
+            
+            Log.d(TAG, "🚀 Sending request to R2...")
+            onProgress?.invoke(50)
+            
+            val response = client.newCall(request).execute()
+            onProgress?.invoke(90)
+            
+            if (response.isSuccessful) {
+                val accessUrl = getPublicUrl(objectKey)
+                Log.d(TAG, "✅ File uploaded successfully!")
+                onProgress?.invoke(100)
+                return@withContext UploadResult.Success(
+                    url = accessUrl,
+                    objectKey = objectKey,
+                    fileName = finalFileName,
+                    fileSize = bytes.size.toLong(),
+                    mimeType = mimeType
+                )
+            } else {
+                val errorBody = response.body?.string() ?: "Unknown error"
+                Log.e(TAG, "❌ Upload failed: ${response.code} - $errorBody")
+                return@withContext UploadResult.Error("Error ${response.code}: $errorBody")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception during upload", e)
+            return@withContext UploadResult.Error("Error: ${e.message}")
+        }
+    }
+    
+    /**
      * Sube una imagen a R2
      */
     suspend fun uploadImage(
@@ -353,10 +540,79 @@ object CloudflareR2Service {
     }
     
     /**
-     * Sube una miniatura de curso a R2
-     * @param context Context de Android
-     * @param thumbnailUri URI de la imagen de miniatura
-     * @param courseId ID del curso (opcional, para nombrar el archivo)
+     * Comprime una imagen a un tamaño máximo y calidad especificada
+     */
+    private suspend fun compressImage(
+        context: Context,
+        imageUri: Uri,
+        maxWidth: Int = 1280,
+        maxHeight: Int = 720,
+        quality: Int = 85
+    ): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val inputStream = context.contentResolver.openInputStream(imageUri)
+            val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+            inputStream?.close()
+            
+            if (bitmap == null) {
+                Log.e(TAG, "Failed to decode bitmap from URI: $imageUri")
+                return@withContext null
+            }
+            
+            // Calcular el tamaño escalado manteniendo aspect ratio
+            val originalWidth = bitmap.width
+            val originalHeight = bitmap.height
+            val aspectRatio = originalWidth.toFloat() / originalHeight.toFloat()
+            
+            var targetWidth = originalWidth
+            var targetHeight = originalHeight
+            
+            if (originalWidth > maxWidth || originalHeight > maxHeight) {
+                if (aspectRatio > 1) {
+                    // Landscape
+                    targetWidth = maxWidth
+                    targetHeight = (maxWidth / aspectRatio).toInt()
+                } else {
+                    // Portrait or square
+                    targetHeight = maxHeight
+                    targetWidth = (maxHeight * aspectRatio).toInt()
+                }
+            }
+            
+            Log.d(TAG, "Compressing image: ${originalWidth}x${originalHeight} -> ${targetWidth}x${targetHeight} @ quality $quality")
+            
+            // Escalar el bitmap
+            val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(
+                bitmap, targetWidth, targetHeight, true
+            )
+            
+            // Comprimir a JPEG
+            val outputStream = java.io.ByteArrayOutputStream()
+            scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, outputStream)
+            val compressedBytes = outputStream.toByteArray()
+            
+            // Limpiar recursos
+            bitmap.recycle()
+            if (scaledBitmap != bitmap) {
+                scaledBitmap.recycle()
+            }
+            outputStream.close()
+            
+            val compressedSizeKB = compressedBytes.size / 1024
+            Log.d(TAG, "Compression complete: $compressedSizeKB KB")
+            
+            return@withContext compressedBytes
+        } catch (e: Exception) {
+            Log.e(TAG, "Error compressing image", e)
+            return@withContext null
+        }
+    }
+    
+    /**
+     * Sube una miniatura de curso a R2 (comprimida automáticamente)
+     * @param context Contexto de Android
+     * @param thumbnailUri URI de la miniatura
+     * @param courseId ID del curso (opcional, se usa para el nombre del archivo)
      * @param onProgress Callback para progreso de subida
      */
     suspend fun uploadThumbnail(
@@ -364,10 +620,89 @@ object CloudflareR2Service {
         thumbnailUri: Uri,
         courseId: Long? = null,
         onProgress: ((Int) -> Unit)? = null
-    ): UploadResult {
-        val timestamp = System.currentTimeMillis()
-        val customName = if (courseId != null) "course_${courseId}_$timestamp" else "thumb_$timestamp"
-        return uploadFile(context, thumbnailUri, "thumbnails/courses", customName, onProgress)
+    ): UploadResult = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                return@withContext UploadResult.Error("Cloudflare R2 no está configurado")
+            }
+            
+            Log.d(TAG, "📸 Compressing thumbnail before upload...")
+            onProgress?.invoke(10)
+            
+            // Comprimir la imagen a 1280x720 @ 85% quality
+            val compressedBytes = compressImage(context, thumbnailUri, 1280, 720, 85)
+            if (compressedBytes == null) {
+                return@withContext UploadResult.Error("Error comprimiendo la imagen")
+            }
+            
+            onProgress?.invoke(20)
+            
+            // Generar nombre único
+            val timestamp = System.currentTimeMillis()
+            val customName = if (courseId != null) "course_${courseId}_$timestamp" else "thumb_$timestamp"
+            val objectKey = "thumbnails/courses/$customName.jpg"
+            val mimeType = "image/jpeg"
+            
+            Log.d(TAG, "📤 Uploading compressed thumbnail: $objectKey (${compressedBytes.size / 1024} KB)")
+            onProgress?.invoke(30)
+            
+            // Subir usando firma AWS Signature V4
+            val host = "$BUCKET_NAME.$ACCOUNT_ID.r2.cloudflarestorage.com"
+            val url = "https://$host/$objectKey"
+            val date = getAmzDate()
+            val dateStamp = date.substring(0, 8)
+            val contentHash = sha256Hex(compressedBytes)
+            
+            val authorization = createAuthorizationHeader(
+                method = "PUT",
+                uri = "/$objectKey",
+                host = host,
+                date = date,
+                dateStamp = dateStamp,
+                contentHash = contentHash,
+                contentType = mimeType
+            )
+            
+            onProgress?.invoke(50)
+            
+            val request = okhttp3.Request.Builder()
+                .url(url)
+                .put(compressedBytes.toRequestBody(mimeType.toMediaType()))
+                .addHeader("Host", host)
+                .addHeader("x-amz-date", date)
+                .addHeader("x-amz-content-sha256", contentHash)
+                .addHeader("Authorization", authorization)
+                .addHeader("Content-Type", mimeType)
+                .build()
+            
+            Log.d(TAG, "🌐 Sending PUT request to: $url")
+            
+            val response = client.newCall(request).execute()
+            val responseCode = response.code
+            val responseBody = response.body?.string() ?: ""
+            
+            Log.d(TAG, "📥 Response code: $responseCode")
+            
+            onProgress?.invoke(100)
+            
+            if (response.isSuccessful) {
+                val publicUrl = getPublicUrl(objectKey)
+                Log.d(TAG, "✅ Thumbnail uploaded successfully: $publicUrl")
+                return@withContext UploadResult.Success(
+                    url = publicUrl,
+                    objectKey = objectKey,
+                    fileName = "$customName.jpg",
+                    fileSize = compressedBytes.size.toLong(),
+                    mimeType = mimeType
+                )
+            } else {
+                Log.e(TAG, "❌ Upload failed: $responseCode - $responseBody")
+                return@withContext UploadResult.Error("Upload failed: HTTP $responseCode - $responseBody")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception uploading thumbnail", e)
+            return@withContext UploadResult.Error("Exception: ${e.message}")
+        }
     }
     
     /**

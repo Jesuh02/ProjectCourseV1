@@ -41,6 +41,7 @@ class CourseCreationFragment : Fragment() {
     private var selectedThumbnailUri: Uri? = null
     private var isEditing = false
     private var isPaidCourse = false // Track payment status
+    private lateinit var thumbnailExtractor: com.example.tareamov.util.VideoThumbnailExtractor
 
     companion object {
         private const val REQUEST_THUMBNAIL_PICK = 1001
@@ -81,6 +82,7 @@ class CourseCreationFragment : Fragment() {
 
         videoManager = VideoManager(requireContext())
         sessionManager = SessionManager.getInstance(requireContext())
+        thumbnailExtractor = com.example.tareamov.util.VideoThumbnailExtractor(requireContext())
 
         // Set up back button
         val backButton = view.findViewById<ImageButton>(R.id.backButton)

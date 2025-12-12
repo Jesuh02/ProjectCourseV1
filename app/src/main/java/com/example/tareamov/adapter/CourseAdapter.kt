@@ -276,21 +276,7 @@ class CourseAdapter(
         }
 
         // Load thumbnail image
-        if (!course.thumbnailUri.isNullOrEmpty()) {
-            // Hide overlay text when real thumbnail is available
-            holder.overlayText.visibility = View.GONE
-            Glide.with(context)
-                .load(course.thumbnailUri)
-                .apply(RequestOptions().transform(RoundedCorners(16)))
-                .placeholder(R.drawable.bg_course_placeholder_card)
-                .error(R.drawable.bg_course_placeholder_card)
-                .centerCrop()
-                .into(holder.thumbnailImageView)
-        } else {
-            // Show placeholder image when no thumbnail is available (YouTube style)
-            holder.overlayText.visibility = View.GONE
-            holder.thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
-        }
+        loadCourseThumbnail(holder, course)
 
         // Apply dark mode colors to text views
         applyDarkModeTextColors(holder)
@@ -656,5 +642,35 @@ class CourseAdapter(
         holder.priceTextView.setTextColor(accentColor)
         // Subscription elements already have colors defined in layout
         holder.subscriberCountTextView.setTextColor(ContextCompat.getColor(context, R.color.purple_500))
+    }
+    
+    /**
+     * Load course thumbnail image using Glide
+     */
+    private fun loadCourseThumbnail(holder: CourseViewHolder, course: Course) {
+        // Set placeholder immediately
+        holder.thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
+        
+        val thumbnailUri = course.thumbnailUri
+        if (!thumbnailUri.isNullOrEmpty()) {
+            val requestOptions = RequestOptions()
+                .placeholder(R.drawable.bg_course_placeholder_card)
+                .error(R.drawable.bg_course_placeholder_card)
+                .centerCrop()
+                .transform(RoundedCorners(dpToPx(16)))
+            
+            Glide.with(context)
+                .load(thumbnailUri)
+                .apply(requestOptions)
+                .into(holder.thumbnailImageView)
+        }
+    }
+    
+    /**
+     * Convert dp to pixels for Glide rounded corners
+     */
+    private fun dpToPx(dp: Int): Int {
+        val density = context.resources.displayMetrics.density
+        return (dp * density).toInt()
     }
 }

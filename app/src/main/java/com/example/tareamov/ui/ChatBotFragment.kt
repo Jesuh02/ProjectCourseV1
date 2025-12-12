@@ -97,6 +97,7 @@ class ChatBotFragment : Fragment() {
     private lateinit var loadingProgressBar: ProgressBar
     private lateinit var activeContextValue: TextView
     private lateinit var activeContextIcon: ImageView
+    private lateinit var fabScrollToBottom: com.google.android.material.floatingactionbutton.FloatingActionButton
 
     private lateinit var chatAdapter: ChatMessageAdapter
     private lateinit var database: AppDatabase
@@ -431,13 +432,13 @@ class ChatBotFragment : Fragment() {
     }
 
     private fun initializeViews(view: View) {
-        // Handle TopBar Insets for status bar only
+        // Handle TopBar Insets for status bar only - with minimal padding
         val topBar = view.findViewById<LinearLayout>(R.id.topBar)
-        val originalTopPadding = topBar.paddingTop
         
         ViewCompat.setOnApplyWindowInsetsListener(topBar) { v, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            v.setPadding(v.paddingLeft, statusBars.top + originalTopPadding, v.paddingRight, v.paddingBottom)
+            // Solo agregar el padding de la barra de estado, sin padding adicional
+            v.setPadding(v.paddingLeft, statusBars.top, v.paddingRight, v.paddingBottom)
             insets
         }
         
@@ -455,6 +456,7 @@ class ChatBotFragment : Fragment() {
         loadingProgressBar = view.findViewById(R.id.loadingProgressBar)
         activeContextValue = view.findViewById(R.id.activeContextValue)
         activeContextIcon = view.findViewById(R.id.activeContextIcon)
+        fabScrollToBottom = view.findViewById(R.id.fabScrollToBottom)
         
         // Initialize task overlay components
         taskListOverlay = view.findViewById(R.id.taskListOverlay)
@@ -724,6 +726,26 @@ class ChatBotFragment : Fragment() {
                     }, 100)
                 }
             }
+            
+            // Listener para mostrar/ocultar FAB según posición del scroll
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    super.onScrolled(recyclerView, dx, dy)
+                    
+                    val layoutManager = recyclerView.layoutManager as? LinearLayoutManager
+                    if (layoutManager != null && chatAdapter.itemCount > 0) {
+                        val lastVisiblePosition = layoutManager.findLastCompletelyVisibleItemPosition()
+                        val lastItemPosition = chatAdapter.itemCount - 1
+                        
+                        // Mostrar FAB si no estamos en el último mensaje
+                        if (lastVisiblePosition < lastItemPosition) {
+                            showScrollToBottomFab()
+                        } else {
+                            hideScrollToBottomFab()
+                        }
+                    }
+                }
+            })
         }
 
         // Fix for keyboard covering content using WindowInsets
@@ -754,6 +776,10 @@ class ChatBotFragment : Fragment() {
 
         clearChatButton.setOnClickListener {
             clearChat()
+        }
+        
+        fabScrollToBottom.setOnClickListener {
+            scrollToBottomSmooth()
         }
 
         closeTaskListButton.setOnClickListener {
@@ -808,6 +834,11 @@ class ChatBotFragment : Fragment() {
                     // Scroll to bottom when new messages are added
                     if (messages.isNotEmpty()) {
                         messagesRecyclerView.smoothScrollToPosition(messages.size - 1)
+                        
+                        // Ocultar FAB cuando hay scroll automático al final
+                        messagesRecyclerView.postDelayed({
+                            hideScrollToBottomFab()
+                        }, 300)
                     }
                 }
             }
@@ -2630,7 +2661,7 @@ class ChatBotFragment : Fragment() {
     }
 
     /**
-     * Carga TODOS los cursos del usuario (creador)
+     * Carga solo los cursos donde el usuario ha enviado tareas (submissions)
      */
     private suspend fun loadAllUserCourses(): List<TaskItem> {
         return withContext(Dispatchers.IO) {
@@ -2641,20 +2672,50 @@ class ChatBotFragment : Fragment() {
             }
             
             try {
-                // Primero intentar desde Supabase para datos actualizados
+                // Fetch courses where the user has submitted tasks
                 val supabaseClient = com.example.tareamov.service.SupabaseClient
                 val courses = if (supabaseClient.isConfigured()) {
                     try {
-                        supabaseClient.fetchCoursesByCreator(userId)
+                        supabaseClient.fetchCoursesWithUserSubmissions(userId)
                     } catch (e: Exception) {
-                        Log.w("ChatBotFragment", "Error fetching from Supabase, using local: ${e.message}")
-                        database.courseDao().getCoursesByCreator(userId)
+                        Log.w("ChatBotFragment", "Error fetching courses with submissions from Supabase: ${e.message}")
+                        // Fallback: get courses from local submissions
+                        val localSubmissions = database.taskSubmissionDao().getSubmissionsByStudent(userId)
+                        val taskIds = localSubmissions.map { it.taskId }.distinct()
+                        val courseIdsFromLocal = mutableSetOf<Long>()
+                        for (taskId in taskIds) {
+                            val task = database.taskDao().getTaskById(taskId)
+                            if (task != null) {
+                                val topic = database.topicDao().getTopicById(task.topicId)
+                                if (topic != null) {
+                                    courseIdsFromLocal.add(topic.courseId)
+                                }
+                            }
+                        }
+                        courseIdsFromLocal.mapNotNull { courseId ->
+                            database.courseDao().getCourseById(courseId)
+                        }
                     }
                 } else {
-                    database.courseDao().getCoursesByCreator(userId)
+                    // Local fallback when Supabase is not configured
+                    val localSubmissions = database.taskSubmissionDao().getSubmissionsByStudent(userId)
+                    val taskIds = localSubmissions.map { it.taskId }.distinct()
+                    val courseIdsFromLocal = mutableSetOf<Long>()
+                    for (taskId in taskIds) {
+                        val task = database.taskDao().getTaskById(taskId)
+                        if (task != null) {
+                            val topic = database.topicDao().getTopicById(task.topicId)
+                            if (topic != null) {
+                                courseIdsFromLocal.add(topic.courseId)
+                            }
+                        }
+                    }
+                    courseIdsFromLocal.mapNotNull { courseId ->
+                        database.courseDao().getCourseById(courseId)
+                    }
                 }
                 
-                Log.d("ChatBotFragment", "Loaded ${courses.size} courses for user $userId")
+                Log.d("ChatBotFragment", "Loaded ${courses.size} courses with submissions for user $userId")
                 
                 courses.mapIndexed { index, course ->
                     TaskItem(
@@ -2666,7 +2727,7 @@ class ChatBotFragment : Fragment() {
                     )
                 }
             } catch (e: Exception) {
-                Log.e("ChatBotFragment", "Error loading user courses", e)
+                Log.e("ChatBotFragment", "Error loading courses with submissions", e)
                 emptyList()
             }
         }
@@ -3650,6 +3711,73 @@ class ChatBotFragment : Fragment() {
         }
         
         return false
+    }
+    
+    /**
+     * Muestra el FAB de scroll con animación suave
+     */
+    private fun showScrollToBottomFab() {
+        if (fabScrollToBottom.visibility != View.VISIBLE) {
+            fabScrollToBottom.visibility = View.VISIBLE
+            fabScrollToBottom.alpha = 0f
+            fabScrollToBottom.scaleX = 0.5f
+            fabScrollToBottom.scaleY = 0.5f
+            
+            fabScrollToBottom.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(200)
+                .setInterpolator(android.view.animation.DecelerateInterpolator())
+                .start()
+        }
+    }
+    
+    /**
+     * Oculta el FAB de scroll con animación suave
+     */
+    private fun hideScrollToBottomFab() {
+        if (fabScrollToBottom.visibility == View.VISIBLE) {
+            fabScrollToBottom.animate()
+                .alpha(0f)
+                .scaleX(0.5f)
+                .scaleY(0.5f)
+                .setDuration(150)
+                .setInterpolator(android.view.animation.AccelerateInterpolator())
+                .withEndAction {
+                    fabScrollToBottom.visibility = View.GONE
+                }
+                .start()
+        }
+    }
+    
+    /**
+     * Hace scroll suave hasta el último mensaje
+     */
+    private fun scrollToBottomSmooth() {
+        if (chatAdapter.itemCount > 0) {
+            // Animación de pulso en el FAB
+            fabScrollToBottom.animate()
+                .scaleX(0.85f)
+                .scaleY(0.85f)
+                .setDuration(100)
+                .withEndAction {
+                    fabScrollToBottom.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(100)
+                        .start()
+                }
+                .start()
+            
+            // Scroll suave al último mensaje
+            messagesRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)
+            
+            // Ocultar el FAB después de hacer scroll
+            messagesRecyclerView.postDelayed({
+                hideScrollToBottomFab()
+            }, 400)
+        }
     }
     
     /**

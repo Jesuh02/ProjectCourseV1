@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/skeletonContainer"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212"
+    android:stateListAnimator="@animator/skeleton_shimmer">
+
+    <!-- Title Skeleton -->
+    <View
+        android:id="@+id/skeletonTitle"
+        android:layout_width="120dp"
+        android:layout_height="24dp"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/bg_skeleton_shape"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Tab Layout Skeleton -->
+    <LinearLayout
+        android:id="@+id/skeletonTabLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:orientation="horizontal"
+        android:gravity="center"
+        app:layout_constraintTop_toBottomOf="@id/skeletonTitle">
+
+        <View
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="16dp"
+            android:layout_marginHorizontal="32dp"
+            android:background="@drawable/bg_skeleton_shape" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="16dp"
+            android:layout_marginHorizontal="32dp"
+            android:background="@drawable/bg_skeleton_shape" />
+    </LinearLayout>
+
+    <!-- Tab Indicator Skeleton -->
+    <View
+        android:id="@+id/skeletonTabIndicator"
+        android:layout_width="0dp"
+        android:layout_height="2dp"
+        android:background="#9C27B0"
+        android:alpha="0.3"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintWidth_percent="0.5"
+        app:layout_constraintTop_toBottomOf="@id/skeletonTabLayout" />
+
+    <!-- Notification Items Skeleton -->
+    <LinearLayout
+        android:id="@+id/skeletonNotificationsList"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:orientation="vertical"
+        android:paddingTop="8dp"
+        app:layout_constraintTop_toBottomOf="@id/skeletonTabIndicator"
+        app:layout_constraintBottom_toTopOf="@id/skeletonBottomNav">
+
+        <include layout="@layout/item_notification_skeleton" />
+        <include layout="@layout/item_notification_skeleton" />
+        <include layout="@layout/item_notification_skeleton" />
+        <include layout="@layout/item_notification_skeleton" />
+        <include layout="@layout/item_notification_skeleton" />
+        <include layout="@layout/item_notification_skeleton" />
+
+    </LinearLayout>
+
+    <!-- Bottom Navigation Skeleton -->
+    <LinearLayout
+        android:id="@+id/skeletonBottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="#000000"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="16dp"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="24dp"
+            android:layout_weight="1"
+            android:layout_margin="12dp"
+            android:background="@drawable/bg_skeleton_shape" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="24dp"
+            android:layout_weight="1"
+            android:layout_margin="12dp"
+            android:background="@drawable/bg_skeleton_shape" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:layout_margin="8dp"
+            android:background="@drawable/bg_skeleton_shape" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="24dp"
+            android:layout_weight="1"
+            android:layout_margin="12dp"
+            android:background="@drawable/bg_skeleton_shape" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="24dp"
+            android:layout_weight="1"
+            android:layout_margin="12dp"
+            android:background="@drawable/bg_skeleton_shape" />
+
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+

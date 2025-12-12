@@ -2758,12 +2758,35 @@ class CourseDetailFragment : Fragment() {
     private fun startSkeletonAnimation() {
         skeletonLayout.visibility = View.VISIBLE
         skeletonLayout.alpha = 1f
+        
+        // Iniciar animación shimmer continua
+        val shimmerAnimation = android.animation.ObjectAnimator.ofFloat(
+            skeletonLayout, 
+            "alpha", 
+            0.3f, 
+            1.0f
+        ).apply {
+            duration = 1200
+            repeatCount = android.animation.ObjectAnimator.INFINITE
+            repeatMode = android.animation.ObjectAnimator.REVERSE
+            interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+        }
+        shimmerAnimation.start()
+        
+        // Guardar referencia para detenerla después
+        skeletonLayout.setTag(R.id.skeletonLayout, shimmerAnimation)
     }
 
     private fun stopSkeletonAnimation() {
+        // Detener la animación shimmer
+        val shimmerAnimation = skeletonLayout.getTag(R.id.skeletonLayout) as? android.animation.ObjectAnimator
+        shimmerAnimation?.cancel()
+        
+        // Animar salida con fade out
         skeletonLayout.animate()
             .alpha(0f)
             .setDuration(300)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
             .withEndAction {
                 skeletonLayout.visibility = View.GONE
             }

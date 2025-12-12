@@ -52,6 +52,80 @@
                     android:shadowRadius="2"/>
             </androidx.cardview.widget.CardView>
 
+            <!-- Thumbnail Selection -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Miniatura del curso"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"/>
+
+            <androidx.cardview.widget.CardView
+                android:id="@+id/selectThumbnailButton"
+                android:layout_width="match_parent"
+                android:layout_height="160dp"
+                app:cardCornerRadius="12dp"
+                app:cardBackgroundColor="#18181b"
+                app:cardElevation="0dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                android:layout_marginBottom="8dp">
+
+                <ImageView
+                    android:id="@+id/thumbnailPreview"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scaleType="centerCrop"
+                    android:contentDescription="Vista previa de miniatura"
+                    android:visibility="gone"/>
+
+                <LinearLayout
+                    android:id="@+id/thumbnailPlaceholder"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical"
+                    android:gravity="center">
+
+                    <ImageView
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:src="@android:drawable/ic_menu_gallery"
+                        app:tint="#71717a"
+                        android:layout_marginBottom="12dp"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Seleccionar miniatura"
+                        android:textColor="#FFFFFF"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="4dp"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Recomendado: 1280x720"
+                        android:textColor="#71717a"
+                        android:textSize="12sp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <TextView
+                android:id="@+id/thumbnailSelectedText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="✓ Miniatura seleccionada"
+                android:textColor="#22c55e"
+                android:textSize="13sp"
+                android:drawablePadding="4dp"
+                android:layout_gravity="start"
+                android:layout_marginBottom="24dp"
+                android:visibility="gone"/>
+
             <!-- Title -->
             <TextView
                 android:layout_width="wrap_content"
@@ -367,5 +441,11 @@
 
         </androidx.constraintlayout.widget.ConstraintLayout>
     </eightbitlab.com.blurview.BlurView>
+
+    <!-- Professional Loading Overlay with Brain Animation -->
+    <include
+        layout="@layout/loading_overlay_brain"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"/>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -146,6 +146,13 @@ class VideoHomeFragment : Fragment() {
         val videoId = arguments?.getLong("videoId", -1L) ?: -1L
         val videoTitle = arguments?.getString("videoTitle")
         val videoUsername = arguments?.getString("videoUsername")
+        
+        if (videoId != -1L) {
+            Log.d("VideoHomeFragment", "📹 Video specific navigation requested:")
+            Log.d("VideoHomeFragment", "  - videoId: $videoId")
+            Log.d("VideoHomeFragment", "  - videoTitle: $videoTitle")
+            Log.d("VideoHomeFragment", "  - videoUsername: $videoUsername")
+        }
 
         // Initialize views
         profileAvatars = view.findViewById(R.id.profileAvatars)
@@ -269,14 +276,18 @@ class VideoHomeFragment : Fragment() {
         // Function to update admin UI elements
         fun updateAdminUi(isAdmin: Boolean) {
             if (isAdmin) {
-                // Admin: Show database icon
+                // Admin: Show database icon with animated drawable
                 databaseIconImageView.visibility = View.VISIBLE
+                databaseIconImageView.setImageResource(R.drawable.ic_database_orbit_animated_anim)
+                
+                // Start animation automatically
+                val drawable = databaseIconImageView.drawable
+                if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
+                    drawable.start()
+                }
+                
                 databaseIconImageView.setOnClickListener {
                     findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
-                    val drawable = databaseIconImageView.drawable
-                    if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
-                        drawable.start()
-                    }
                 }
                 
                 // Admin: Show admin slot and button
@@ -326,15 +337,60 @@ class VideoHomeFragment : Fragment() {
                 if (act is com.example.tareamov.MainActivity) {
                     val repo = act.syncRepository
                     try {
+                        // First fetch all videos
                         val supaVideos = repo.fetchVideosFromSupabase()
+                        
+                        // If a specific video is requested, try to find it
+                        var targetVideo: VideoData? = null
+                        var targetIndex = -1
+                        
+                        if (videoId != -1L) {
+                            Log.d("VideoHomeFragment", "🔍 Looking for video ID: $videoId")
+                            
+                            // First try to find in the fetched list
+                            targetIndex = supaVideos.indexOfFirst { it.id == videoId }
+                            if (targetIndex >= 0) {
+                                targetVideo = supaVideos[targetIndex]
+                                Log.d("VideoHomeFragment", "✅ Video found in list at index $targetIndex: ${targetVideo.title}")
+                            } else {
+                                // Not in list, try to fetch directly from Supabase
+                                Log.d("VideoHomeFragment", "⚠️ Video not in list, fetching directly...")
+                                targetVideo = withContext(Dispatchers.IO) {
+                                    com.example.tareamov.service.SupabaseClient.fetchVideoById(videoId)
+                                }
+                                if (targetVideo != null) {
+                                    Log.d("VideoHomeFragment", "📹 Video fetched directly: ${targetVideo.title}")
+                                } else {
+                                    Log.w("VideoHomeFragment", "❌ Video ID $videoId not found anywhere")
+                                }
+                            }
+                        }
+                        
                         // Replace adapter data on main thread
                         withContext(Dispatchers.Main) {
-                            videoAdapter.updateVideos(supaVideos)
+                            // Update videoList with fetched videos
+                            videoList.clear()
+                            
+                            // If we have a target video that was NOT in the original list, add it first
+                            if (targetVideo != null && targetIndex < 0) {
+                                videoList.add(targetVideo)
+                                videoList.addAll(supaVideos)
+                                Log.d("VideoHomeFragment", "✅ Target video added at index 0 (was not in list)")
+                            } else {
+                                videoList.addAll(supaVideos)
+                            }
+                            
+                            videoAdapter.updateVideos(videoList)
                             isVideosLoaded = true
-                            // If caller requested a specific video, navigate to it
-                            if (videoId != -1L) {
-                                val idx = videoList.indexOfFirst { it.id == videoId }
-                                if (idx >= 0) navigateToVideoIndex(idx)
+                            
+                            // Navigate to the target video position
+                            if (videoId != -1L && targetVideo != null) {
+                                val finalIndex = if (targetIndex >= 0) targetIndex else 0
+                                Log.d("VideoHomeFragment", "🎯 Scrolling to video at index $finalIndex")
+                                view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.setCurrentItem(finalIndex, false)
+                            } else if (videoId != -1L) {
+                                Log.w("VideoHomeFragment", "⚠️ Target video ID $videoId could not be found")
+                                Toast.makeText(requireContext(), "Video no encontrado", Toast.LENGTH_SHORT).show()
                             }
                             // Hide skeleton after successful load
                             stopSkeletonAnimation()
@@ -1071,11 +1127,35 @@ class VideoHomeFragment : Fragment() {
 
     private fun navigateToVideoIndex(index: Int) {
         try {
+            if (index < 0 || index >= videoList.size) {
+                Log.e("VideoHomeFragment", "❌ Invalid video index: $index (list size: ${videoList.size})")
+                return
+            }
+            
+            val videoData = videoList[index]
+            Log.d("VideoHomeFragment", "🎯 Navigating to video at index $index:")
+            Log.d("VideoHomeFragment", "  - Title: ${videoData.title}")
+            Log.d("VideoHomeFragment", "  - ID: ${videoData.id}")
+            Log.d("VideoHomeFragment", "  - Username: ${videoData.username}")
+            
             val viewPager = view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
-            viewPager?.setCurrentItem(index, false) // false para navegación inmediata sin animación
-            displayVideo(videoList[index])
+            if (viewPager != null) {
+                viewPager.setCurrentItem(index, false) // false para navegación inmediata sin animación
+                currentVideoIndex = index
+                Log.d("VideoHomeFragment", "✅ ViewPager updated to position $index")
+                
+                // Forzar actualización del video
+                viewPager.post {
+                    val recyclerView = viewPager.getChildAt(0) as? RecyclerView
+                    val viewHolder = recyclerView?.findViewHolderForAdapterPosition(index) as? VideoAdapter.VideoViewHolder
+                    viewHolder?.playVideo()
+                    viewHolder?.setMuteState(isMuted)
+                }
+            } else {
+                Log.e("VideoHomeFragment", "❌ ViewPager is null, cannot navigate to video")
+            }
         } catch (e: Exception) {
-            Log.e("VideoHomeFragment", "Error navigating to video index $index", e)
+            Log.e("VideoHomeFragment", "❌ Error navigating to video index $index: ${e.message}", e)
         }
     }
     
@@ -1335,6 +1415,105 @@ class VideoHomeFragment : Fragment() {
     private fun hideKeyboard(view: View) {
         val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(view.windowToken, 0)
+    }
+    
+    /**
+     * Comparte un video usando la URL pública de Cloudflare R2 si está disponible
+     * Esta función puede ser llamada desde cualquier parte del fragmento
+     */
+    private fun shareVideoFromFragment(videoData: VideoData) {
+        try {
+            val context = requireContext()
+            
+            // ESTRATEGIA 1: Intentar obtener URL pública de Cloudflare R2
+            val r2PublicUrl = com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(videoData.videoUriString)
+            
+            if (r2PublicUrl != null && (r2PublicUrl.startsWith("http://") || r2PublicUrl.startsWith("https://"))) {
+                // Compartir usando URL pública - MÉTODO PREFERIDO
+                Log.d("VideoHomeFragment", "📤 Compartiendo video usando URL pública de R2: $r2PublicUrl")
+                
+                // Copiar URL al portapapeles
+                try {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    val clip = android.content.ClipData.newPlainText("URL del video", r2PublicUrl)
+                    clipboard.setPrimaryClip(clip)
+                    Log.d("VideoHomeFragment", "📋 URL copiada al portapapeles")
+                } catch (e: Exception) {
+                    Log.w("VideoHomeFragment", "⚠️ No se pudo copiar al portapapeles: ${e.message}")
+                }
+                
+                val shareText = buildString {
+                    appendLine("🎥 ${videoData.title}")
+                    appendLine()
+                    if (!videoData.description.isNullOrEmpty()) {
+                        appendLine(videoData.description)
+                        appendLine()
+                    }
+                    appendLine("👤 Por: ${videoData.username ?: "Anónimo"}")
+                    appendLine()
+                    appendLine("🔗 Ver video:")
+                    appendLine(r2PublicUrl)
+                    appendLine()
+                    appendLine("📱 Compartido desde TareaMov")
+                }
+                
+                val sendIntent = Intent().apply {
+                    action = Intent.ACTION_SEND
+                    putExtra(Intent.EXTRA_TEXT, shareText)
+                    putExtra(Intent.EXTRA_SUBJECT, "🎥 ${videoData.title}")
+                    type = "text/plain"
+                }
+                
+                val shareIntent = Intent.createChooser(sendIntent, "Compartir video vía")
+                startActivity(shareIntent)
+                
+                Toast.makeText(
+                    context,
+                    "✅ Enlace listo para compartir\n📋 URL copiada al portapapeles",
+                    Toast.LENGTH_SHORT
+                ).show()
+                
+                Log.d("VideoHomeFragment", "✅ Video compartido con URL pública")
+                return
+            }
+            
+            // ESTRATEGIA 2: Compartir información del video si no hay URL pública
+            Log.d("VideoHomeFragment", "⚠️ No hay URL pública disponible, compartiendo información")
+            
+            val shareText = buildString {
+                appendLine("🎥 ${videoData.title}")
+                appendLine()
+                if (!videoData.description.isNullOrEmpty()) {
+                    appendLine(videoData.description)
+                    appendLine()
+                }
+                appendLine("👤 Por: ${videoData.username ?: "Anónimo"}")
+                appendLine()
+                appendLine("📱 Video de TareaMov")
+                appendLine()
+                appendLine("⚠️ Para ver el video completo, descarga la app TareaMov")
+            }
+            
+            val sendIntent = Intent().apply {
+                action = Intent.ACTION_SEND
+                putExtra(Intent.EXTRA_TEXT, shareText)
+                putExtra(Intent.EXTRA_SUBJECT, videoData.title)
+                type = "text/plain"
+            }
+            
+            val shareIntent = Intent.createChooser(sendIntent, "Compartir información del video")
+            startActivity(shareIntent)
+            
+            Toast.makeText(
+                context,
+                "ℹ️ Se compartió la información del video\n⚠️ El video no está disponible públicamente",
+                Toast.LENGTH_LONG
+            ).show()
+            
+        } catch (e: Exception) {
+            Log.e("VideoHomeFragment", "❌ Error compartiendo video: ${e.message}", e)
+            Toast.makeText(context, "Error al compartir video: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
     
     /**

@@ -38,6 +38,21 @@
         android:name="com.example.tareamov.ui.VideoHomeFragment"
         android:label="Video Home"
         tools:layout="@layout/fragment_video_home">
+        <!-- Arguments for navigating to a specific video -->
+        <argument
+            android:name="videoId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="videoTitle"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
+        <argument
+            android:name="videoUsername"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
         <action
             android:id="@+id/action_videoHomeFragment_to_homeFragment"
             app:destination="@id/homeFragment" />
