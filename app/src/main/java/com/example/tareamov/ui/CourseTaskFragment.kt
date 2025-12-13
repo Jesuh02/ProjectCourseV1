@@ -25,13 +25,14 @@ import com.example.tareamov.util.UriPermissionManager
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.viewmodel.CourseCreationViewModel
 import com.example.tareamov.service.CloudflareR2Service
-import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.io.File
 import java.io.FileOutputStream
+import android.widget.ImageView
 
 class CourseTaskFragment : Fragment() {
 
@@ -116,7 +117,7 @@ class CourseTaskFragment : Fragment() {
 
     // Método para manejar documentos y subirlos a R2
     private fun handleSelectedDocumentUri(uri: Uri) {
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 var finalUri: Uri = uri
                 var r2Url: String? = null
@@ -124,26 +125,34 @@ class CourseTaskFragment : Fragment() {
                 // Subir a Cloudflare R2 si está configurado
                 if (CloudflareR2Service.isConfigured()) {
                     Log.d("CourseTaskFragment", "☁️ Uploading document to Cloudflare R2: $uri")
-                    Toast.makeText(context, "Subiendo documento a la nube...", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "Subiendo documento a la nube...", Toast.LENGTH_SHORT).show()
+                    }
                     
-                    val result = CloudflareR2Service.uploadDocument(
-                        context = requireContext(),
-                        documentUri = uri,
-                        onProgress = { progress ->
-                            Log.d("CourseTaskFragment", "Document upload progress: $progress%")
-                        }
-                    )
+                    val result = withContext(Dispatchers.IO) {
+                        CloudflareR2Service.uploadDocument(
+                            context = requireContext(),
+                            documentUri = uri,
+                            onProgress = { progress ->
+                                Log.d("CourseTaskFragment", "Document upload progress: $progress%")
+                            }
+                        )
+                    }
                     
                     when (result) {
                         is CloudflareR2Service.UploadResult.Success -> {
                             r2Url = result.url
                             finalUri = Uri.parse(r2Url)
                             Log.d("CourseTaskFragment", "✅ R2 Document Upload successful: $r2Url")
-                            Toast.makeText(context, "Documento subido a la nube ✓", Toast.LENGTH_SHORT).show()
+                            if (isAdded && context != null) {
+                                Toast.makeText(requireContext(), "Documento subido a la nube ✓", Toast.LENGTH_SHORT).show()
+                            }
                         }
                         is CloudflareR2Service.UploadResult.Error -> {
                             Log.e("CourseTaskFragment", "❌ R2 Document Upload failed: ${result.message}")
-                            Toast.makeText(context, "Error subiendo documento a nube, usando copia local", Toast.LENGTH_SHORT).show()
+                            if (isAdded && context != null) {
+                                Toast.makeText(requireContext(), "Error subiendo documento a nube, usando copia local", Toast.LENGTH_SHORT).show()
+                            }
                             // Fallback: guardar localmente
                             val localUri = withContext(Dispatchers.IO) {
                                 copyUriToLocalStorage(uri, "document")
@@ -164,7 +173,9 @@ class CourseTaskFragment : Fragment() {
                 addContentItemView(finalUri, "document", r2Url = r2Url)
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error processing document", e)
-                Toast.makeText(context, "Error al procesar el documento", Toast.LENGTH_SHORT).show()
+                if (isAdded && context != null) {
+                    Toast.makeText(requireContext(), "Error al procesar el documento", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -277,7 +288,7 @@ class CourseTaskFragment : Fragment() {
     val contentItemDao = AppDatabase.getDatabase(requireContext()).contentItemDao()
     val topicDao = AppDatabase.getDatabase(requireContext()).topicDao()
 
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             existingTask = withContext(Dispatchers.IO) { taskDao.getTaskById(taskId) }
                 if (existingTask == null) {
                 Log.w("CourseTaskFragment", "Local task with ID $taskId not found, attempting Supabase fallback.")
@@ -363,11 +374,177 @@ class CourseTaskFragment : Fragment() {
             taskDescriptionEditText.setText(task.description ?: "")
             topicId = task.topicId // Ensure topicId is set from the loaded task
 
-            // Load content items
-            val contentItems = withContext(Dispatchers.IO) { contentItemDao.getContentItemsByTaskId(taskId) }
-            for (contentItem in contentItems) {
-                addContentItemView(Uri.parse(contentItem.uriString), contentItem.contentType)
+            // Load content items for the task - try Supabase first, then local DB
+            Log.d("CourseTaskFragment", "📚 Loading content items for taskId=$taskId")
+            var contentItems: List<ContentItem> = emptyList()
+            
+            try {
+                if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    // Fetch from Supabase
+                    contentItems = withContext(Dispatchers.IO) { 
+                        syncRepository.fetchContentItemsByTaskIdFromSupabase(taskId) 
+                    }
+                    Log.d("CourseTaskFragment", "📦 Loaded ${contentItems.size} content items from Supabase for task")
+                }
+            } catch (e: Exception) {
+                Log.w("CourseTaskFragment", "Failed to load content from Supabase, falling back to local DB", e)
             }
+            
+            // Fallback to local DB if Supabase returned empty or failed
+            if (contentItems.isEmpty()) {
+                contentItems = withContext(Dispatchers.IO) { contentItemDao.getContentItemsByTaskId(taskId) }
+                Log.d("CourseTaskFragment", "📦 Loaded ${contentItems.size} content items from local DB for task")
+            }
+            
+            // Add content items to the UI
+            for (contentItem in contentItems) {
+                val r2Url = if (CloudflareR2Service.isR2Url(contentItem.uriString)) contentItem.uriString else null
+                addContentItemView(
+                    Uri.parse(contentItem.uriString), 
+                    contentItem.contentType, 
+                    contentItem.name,
+                    contentItem.id,
+                    r2Url
+                )
+            }
+            
+            // Also load Topic content items if we have a valid topicId
+            if (topicId > 0) {
+                Log.d("CourseTaskFragment", "📖 Loading Topic content items for topicId=$topicId")
+                var topicContentItems: List<ContentItem> = emptyList()
+                
+                try {
+                    if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        val allTopicItems = withContext(Dispatchers.IO) { 
+                            syncRepository.fetchContentItemsByTopicIdsFromSupabase(listOf(topicId)) 
+                        }
+                        // Filter: only include topic-level content (taskId == null), not task content
+                        topicContentItems = allTopicItems.filter { it.taskId == null || it.taskId == 0L }
+                        Log.d("CourseTaskFragment", "📚 Loaded ${allTopicItems.size} content items from Supabase for topic, ${topicContentItems.size} topic-level")
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseTaskFragment", "Failed to load topic content from Supabase", e)
+                }
+                
+                // Fallback to local DB
+                if (topicContentItems.isEmpty()) {
+                    val localItems = withContext(Dispatchers.IO) { contentItemDao.getContentItemsByTopicId(topicId) }
+                    // Filter: only include topic-level content
+                    topicContentItems = localItems.filter { it.taskId == null || it.taskId == 0L }
+                    Log.d("CourseTaskFragment", "📚 Loaded ${localItems.size} content items from local DB for topic, ${topicContentItems.size} topic-level")
+                }
+                
+                // Show topic content in a separate section if available
+                if (topicContentItems.isNotEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        showTopicContentSection(topicContentItems)
+                    }
+                }
+            }
+        }
+    }
+    
+    // Show topic content items in a separate section
+    private fun showTopicContentSection(topicContentItems: List<ContentItem>) {
+        val topicContentSection = view?.findViewById<LinearLayout>(R.id.topicContentSection)
+        if (topicContentSection == null) {
+            Log.w("CourseTaskFragment", "topicContentSection not found in layout")
+            return
+        }
+        
+        topicContentSection.visibility = View.VISIBLE
+        val topicContentContainer = view?.findViewById<LinearLayout>(R.id.topicContentContainer)
+        topicContentContainer?.removeAllViews()
+        
+        Log.d("CourseTaskFragment", "📄 Displaying ${topicContentItems.size} topic content items")
+        for (item in topicContentItems.sortedBy { it.orderIndex }) {
+            addTopicContentItemView(item, topicContentContainer)
+        }
+    }
+    
+    // Add a read-only view for topic content items
+    private fun addTopicContentItemView(item: ContentItem, container: LinearLayout?) {
+        if (container == null) return
+        
+        val inflater = LayoutInflater.from(context)
+        val contentView = inflater.inflate(R.layout.item_content_mini, container, false)
+
+        val iconView = contentView.findViewById<ImageView>(R.id.contentIconView)
+        val nameView = contentView.findViewById<TextView>(R.id.contentNameView)
+        val typeView = contentView.findViewById<TextView>(R.id.contentTypeView)
+
+        // Show cloud icon if it's an R2 URL
+        val displayName = if (CloudflareR2Service.isR2Url(item.uriString)) {
+            "☁️ ${item.name ?: "Archivo adjunto"}"
+        } else {
+            item.name ?: "Archivo adjunto"
+        }
+        nameView?.text = displayName
+
+        // Set icon and type based on content type
+        when (item.contentType.lowercase()) {
+            "video" -> {
+                iconView?.setImageResource(android.R.drawable.ic_media_play)
+                typeView?.text = "Video"
+            }
+            "pdf" -> {
+                iconView?.setImageResource(android.R.drawable.ic_menu_agenda)
+                typeView?.text = "PDF"
+            }
+            "document" -> {
+                iconView?.setImageResource(android.R.drawable.ic_menu_edit)
+                typeView?.text = "Documento"
+            }
+            else -> {
+                iconView?.setImageResource(android.R.drawable.ic_menu_help)
+                typeView?.text = "Archivo"
+            }
+        }
+
+        // Make the whole item clickable to open content
+        contentView.setOnClickListener {
+            openContentItem(item)
+        }
+
+        container.addView(contentView)
+        Log.d("CourseTaskFragment", "📄 Added topic content view: ${item.name}")
+    }
+    
+    // Open a content item (video or document)
+    private fun openContentItem(item: ContentItem) {
+        try {
+            Log.d("CourseTaskFragment", "🎬 Opening content: ${item.name}, Type: ${item.contentType}, URI: ${item.uriString}")
+            
+            if (item.contentType.lowercase() == "video") {
+                // Open video in VideoPlayerActivity
+                val intent = Intent(requireContext(), VideoPlayerActivity::class.java)
+                intent.putExtra("video_path", item.uriString)
+                intent.putExtra("video_title", item.name ?: "Video")
+                intent.putExtra("video_description", "")
+                intent.putExtra("username", sessionManager.getUsername() ?: "")
+                
+                if (!item.uriString.startsWith("http://") && !item.uriString.startsWith("https://")) {
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                
+                startActivity(intent)
+            } else {
+                // For documents and other content types
+                val uri = if (CloudflareR2Service.isR2Url(item.uriString) || 
+                             item.uriString.startsWith("http://") || 
+                             item.uriString.startsWith("https://")) {
+                    Uri.parse(item.uriString)
+                } else {
+                    Uri.parse(item.uriString)
+                }
+                
+                val intent = Intent(Intent.ACTION_VIEW, uri)
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                startActivity(intent)
+            }
+        } catch (e: Exception) {
+            Log.e("CourseTaskFragment", "Error opening content: ${e.message}", e)
+            Toast.makeText(context, "No se puede abrir el contenido: ${item.name}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -389,7 +566,7 @@ class CourseTaskFragment : Fragment() {
         val contentItemDao = AppDatabase.getDatabase(requireContext()).contentItemDao()
         val videoDao = AppDatabase.getDatabase(requireContext()).videoDao()
 
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 // If courseId is not provided but we have a topicId, fetch the course from the topic
                 if (courseId <= 0 && topicId > 0) {
@@ -689,7 +866,7 @@ class CourseTaskFragment : Fragment() {
 
     // Improved method to handle video URIs
     private fun handleSelectedVideoUri(uri: Uri) {
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 // First try to take persistable permission
                 try {
@@ -705,26 +882,34 @@ class CourseTaskFragment : Fragment() {
                 // Subir a Cloudflare R2 si está configurado
                 if (CloudflareR2Service.isConfigured()) {
                     Log.d("CourseTaskFragment", "☁️ Uploading video to Cloudflare R2: $uri")
-                    Toast.makeText(context, "Subiendo video a la nube...", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "Subiendo video a la nube...", Toast.LENGTH_SHORT).show()
+                    }
                     
-                    val result = CloudflareR2Service.uploadVideo(
-                        context = requireContext(),
-                        videoUri = uri,
-                        onProgress = { progress ->
-                            Log.d("CourseTaskFragment", "Video upload progress: $progress%")
-                        }
-                    )
+                    val result = withContext(Dispatchers.IO) {
+                        CloudflareR2Service.uploadVideo(
+                            context = requireContext(),
+                            videoUri = uri,
+                            onProgress = { progress ->
+                                Log.d("CourseTaskFragment", "Video upload progress: $progress%")
+                            }
+                        )
+                    }
                     
                     when (result) {
                         is CloudflareR2Service.UploadResult.Success -> {
                             r2Url = result.url
                             finalUri = Uri.parse(r2Url)
                             Log.d("CourseTaskFragment", "✅ R2 Video Upload successful: $r2Url")
-                            Toast.makeText(context, "Video subido a la nube ✓", Toast.LENGTH_SHORT).show()
+                            if (isAdded && context != null) {
+                                Toast.makeText(requireContext(), "Video subido a la nube ✓", Toast.LENGTH_SHORT).show()
+                            }
                         }
                         is CloudflareR2Service.UploadResult.Error -> {
                             Log.e("CourseTaskFragment", "❌ R2 Video Upload failed: ${result.message}")
-                            Toast.makeText(context, "Error subiendo video a nube, usando copia local", Toast.LENGTH_SHORT).show()
+                            if (isAdded && context != null) {
+                                Toast.makeText(requireContext(), "Error subiendo video a nube, usando copia local", Toast.LENGTH_SHORT).show()
+                            }
                             // Fallback: guardar localmente
                             val localUri = withContext(Dispatchers.IO) {
                                 copyUriToLocalStorage(uri, "video")
@@ -747,7 +932,9 @@ class CourseTaskFragment : Fragment() {
                 addContentItemView(finalUri, "video", r2Url = r2Url)
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error processing video", e)
-                Toast.makeText(context, "Error al procesar el video", Toast.LENGTH_SHORT).show()
+                if (isAdded && context != null) {
+                    Toast.makeText(requireContext(), "Error al procesar el video", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -877,7 +1064,7 @@ class CourseTaskFragment : Fragment() {
             contentContainer.removeView(contentView)
             // Si es URL de R2, eliminar del servidor
             if (r2Url != null) {
-                CoroutineScope(Dispatchers.IO).launch {
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     try {
                         CloudflareR2Service.deleteFile(r2Url)
                         Log.d("CourseTaskFragment", "🗑️ Deleted from R2: $r2Url")
@@ -891,18 +1078,42 @@ class CourseTaskFragment : Fragment() {
         // Make the content item clickable to preview
         contentView.setOnClickListener {
             try {
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, when (type) {
-                        "video" -> "video/*"
-                        else -> requireContext().contentResolver.getType(uri) ?: "*/*"
-                    })
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-
-                if (intent.resolveActivity(requireActivity().packageManager) != null) {
-                    startActivity(intent)
+                // Check if it's an R2/HTTP URL
+                val uriString = r2Url ?: uri.toString()
+                if (CloudflareR2Service.isR2Url(uriString) || 
+                    uriString.startsWith("http://") || 
+                    uriString.startsWith("https://")) {
+                    
+                    Log.d("CourseTaskFragment", "🎬 Opening remote content: $uriString, type=$type")
+                    
+                    if (type == "video") {
+                        // Use VideoPlayerActivity for videos
+                        val intent = Intent(requireContext(), VideoPlayerActivity::class.java)
+                        intent.putExtra("video_path", uriString)
+                        intent.putExtra("video_title", baseName)
+                        intent.putExtra("video_description", "")
+                        intent.putExtra("username", sessionManager.getUsername() ?: "")
+                        startActivity(intent)
+                    } else {
+                        // Open documents/other files in browser
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uriString))
+                        startActivity(intent)
+                    }
                 } else {
-                    Toast.makeText(context, "No hay aplicación para abrir este tipo de archivo", Toast.LENGTH_SHORT).show()
+                    // Handle local content
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, when (type) {
+                            "video" -> "video/*"
+                            else -> requireContext().contentResolver.getType(uri) ?: "*/*"
+                        })
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+
+                    if (intent.resolveActivity(requireActivity().packageManager) != null) {
+                        startActivity(intent)
+                    } else {
+                        Toast.makeText(context, "No hay aplicación para abrir este tipo de archivo", Toast.LENGTH_SHORT).show()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error opening content", e)

@@ -38,6 +38,29 @@ class VideoThumbnailExtractor(private val context: Context) {
             Log.d(TAG, "🎬 Extrayendo miniatura del video: $videoUri")
             Log.d(TAG, "   Frame time: ${frameTimeMs}ms")
             
+            // Verificar si es un archivo local que no existe
+            if (videoUri.scheme == "file" || videoUri.scheme == null) {
+                val filePath = videoUri.path ?: videoUri.toString()
+                val file = File(filePath)
+                if (!file.exists()) {
+                    Log.w(TAG, "⚠️ Archivo de video local no existe, omitiendo: $filePath")
+                    return null
+                }
+            }
+            
+            // Verificar si es una ruta de caché que puede haber sido eliminada
+            val uriString = videoUri.toString()
+            if (uriString.contains("/cache/") || uriString.contains("/data/user/")) {
+                val filePath = if (videoUri.path != null) videoUri.path else uriString.removePrefix("file://")
+                if (filePath != null) {
+                    val file = File(filePath)
+                    if (!file.exists()) {
+                        Log.w(TAG, "⚠️ Archivo de video en caché no existe, omitiendo: $filePath")
+                        return null
+                    }
+                }
+            }
+            
             retriever = MediaMetadataRetriever()
             
             // Configurar el retriever según el tipo de URI
@@ -46,13 +69,33 @@ class VideoThumbnailExtractor(private val context: Context) {
                     retriever.setDataSource(context, videoUri)
                 }
                 videoUri.scheme == "file" -> {
-                    retriever.setDataSource(videoUri.path)
+                    val path = videoUri.path
+                    if (path != null && File(path).exists()) {
+                        retriever.setDataSource(path)
+                    } else {
+                        Log.w(TAG, "⚠️ Archivo no existe: $path")
+                        return null
+                    }
                 }
                 videoUri.scheme == "http" || videoUri.scheme == "https" -> {
-                    retriever.setDataSource(videoUri.toString(), HashMap())
+                    // Para URLs remotas, usar setDataSource con headers vacíos
+                    try {
+                        retriever.setDataSource(videoUri.toString(), HashMap())
+                    } catch (e: Exception) {
+                        Log.w(TAG, "⚠️ No se puede extraer miniatura de URL remota: ${e.message}")
+                        return null
+                    }
                 }
                 else -> {
-                    retriever.setDataSource(context, videoUri)
+                    // Para URIs sin esquema, verificar si es un path de archivo
+                    val path = videoUri.toString()
+                    val file = File(path)
+                    if (file.exists()) {
+                        retriever.setDataSource(path)
+                    } else {
+                        Log.w(TAG, "⚠️ Archivo no existe: $path")
+                        return null
+                    }
                 }
             }
             

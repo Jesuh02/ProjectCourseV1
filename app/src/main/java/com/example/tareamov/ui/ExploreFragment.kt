@@ -1811,10 +1811,21 @@ class ExploreFragment : Fragment() {
                     // Solo generar si tiene video pero no miniatura
                     if (!course.videoUri.isNullOrEmpty() && course.thumbnailUri.isNullOrEmpty()) {
                         try {
+                            val videoUri = course.videoUri!!
+                            
+                            // Omitir videos con rutas de caché local que pueden no existir
+                            if (videoUri.contains("/cache/") || videoUri.contains("/data/user/")) {
+                                val file = java.io.File(videoUri.removePrefix("file://"))
+                                if (!file.exists()) {
+                                    Log.d("ExploreFragment", "⏭️ Omitiendo video con caché eliminada: ${course.title}")
+                                    return@forEach
+                                }
+                            }
+                            
                             Log.d("ExploreFragment", "🎨 Generando miniatura para curso: ${course.title}")
                             
-                            val videoUri = Uri.parse(course.videoUri)
-                            val thumbnailUri = thumbnailExtractor.extractThumbnailFromVideo(videoUri)
+                            val parsedUri = Uri.parse(videoUri)
+                            val thumbnailUri = thumbnailExtractor.extractThumbnailFromVideo(parsedUri)
                             
                             if (thumbnailUri != null) {
                                 // Subir a Cloudflare R2 si está configurado

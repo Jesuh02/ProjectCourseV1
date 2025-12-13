@@ -37,12 +37,12 @@ import com.google.gson.annotations.SerializedName
 )
 data class ContentItem(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val topicId: Long = 0,
-    val taskId: Long? = null,
+    @SerializedName("topic_id") val topicId: Long = 0,
+    @SerializedName("task_id") val taskId: Long? = null,
     @SerializedName("title") val name: String? = null,
     @SerializedName("body") val uriString: String = "",
-    val contentType: String = "",
-    val orderIndex: Int? = 0,
+    @SerializedName("content_type") val contentType: String = "",
+    @SerializedName("order_index") val orderIndex: Int? = 0,
     val creator_usuario_id: Long? = null,  // ID del usuario creador (FK a usuarios)
     val creator_username: String? = null,  // Username del creador (para búsquedas rápidas)
     val created_at: Long? = System.currentTimeMillis()

@@ -66,13 +66,15 @@ class NotificacionesFragment : Fragment() {
     }
 
     private fun showSkeleton() {
-        binding.skeletonLayout.root.visibility = View.VISIBLE
-        binding.notificationsRecyclerView.visibility = View.GONE
-        binding.emptyStateLayout.visibility = View.GONE
+        _binding?.let { binding ->
+            binding.skeletonLayout.root.visibility = View.VISIBLE
+            binding.notificationsRecyclerView.visibility = View.GONE
+            binding.emptyStateLayout.visibility = View.GONE
+        }
     }
 
     private fun hideSkeleton() {
-        binding.skeletonLayout.root.visibility = View.GONE
+        _binding?.skeletonLayout?.root?.visibility = View.GONE
     }
 
     private fun loadNotifications() {
@@ -80,16 +82,19 @@ class NotificacionesFragment : Fragment() {
         if (userId == -1L) {
             Log.w("NotificacionesFragment", "No user ID available")
             hideSkeleton()
-            binding.emptyStateLayout.visibility = View.VISIBLE
+            _binding?.emptyStateLayout?.visibility = View.VISIBLE
             return
         }
 
         // Mostrar skeleton mientras se cargan los datos
         showSkeleton()
 
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val notifications = SupabaseClient.fetchNotifications(userId)
+                
+                // Verificar que el binding aún existe antes de actualizar la UI
+                val binding = _binding ?: return@launch
                 
                 // Ocultar skeleton cuando los datos estén listos
                 hideSkeleton()
@@ -109,26 +114,51 @@ class NotificacionesFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e("NotificacionesFragment", "Error loading notifications", e)
                 hideSkeleton()
-                binding.notificationsRecyclerView.visibility = View.GONE
-                binding.emptyStateLayout.visibility = View.VISIBLE
+                _binding?.notificationsRecyclerView?.visibility = View.GONE
+                _binding?.emptyStateLayout?.visibility = View.VISIBLE
             }
         }
     }
 
     private fun onNotificationClick(notification: Notification) {
         if (!notification.isRead) {
-            lifecycleScope.launch {
+            viewLifecycleOwner.lifecycleScope.launch {
                 SupabaseClient.markNotificationAsRead(notification.id)
-                loadNotifications()
+                // Solo recargar si el binding aún existe (vista no destruida)
+                if (_binding != null) {
+                    loadNotifications()
+                }
             }
         }
 
         when (notification.type) {
             Notification.TYPE_NEW_COURSE -> {
                 Log.d("Notificaciones", "Course notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { courseId ->
+                    // Navigate to course detail
+                    val bundle = Bundle().apply {
+                        putLong("courseId", courseId)
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_courseDetailFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to course detail", e)
+                    }
+                }
             }
             Notification.TYPE_NEW_VIDEO -> {
                 Log.d("Notificaciones", "Video notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { videoId ->
+                    // Navigate to video detail
+                    val bundle = Bundle().apply {
+                        putLong("videoId", videoId)
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_videoDetailsFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to video detail", e)
+                    }
+                }
             }
         }
     }
@@ -166,6 +196,7 @@ class NotificacionesFragment : Fragment() {
     }
 
     private fun updateTabSelection(notificacionesSelected: Boolean) {
+        val binding = _binding ?: return
         if (notificacionesSelected) {
             binding.notificacionesTab.setTextColor(resources.getColor(R.color.purple_500, null))
             binding.susurrosTab.setTextColor(resources.getColor(R.color.white, null))

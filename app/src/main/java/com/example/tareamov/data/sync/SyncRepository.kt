@@ -577,11 +577,17 @@ class SyncRepository(
 
     // New wrappers that use SupabaseClient server-side filters when available
     suspend fun fetchTopicsByCourseFromSupabase(courseId: Long): List<Topic> {
+        Log.d("SyncRepository", "📚 fetchTopicsByCourseFromSupabase called for courseId=$courseId")
         return try {
-            if (!supabaseClient.isConfigured()) return emptyList()
-            withContext(Dispatchers.IO) { supabaseClient.fetchTopicsByCourse(courseId) }
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "⚠️ Supabase not configured!")
+                return emptyList()
+            }
+            val topics = withContext(Dispatchers.IO) { supabaseClient.fetchTopicsByCourse(courseId) }
+            Log.d("SyncRepository", "📚 fetchTopicsByCourseFromSupabase: returned ${topics.size} topics for courseId=$courseId")
+            topics
         } catch (e: Exception) {
-            Log.w("SyncRepository", "fetchTopicsByCourseFromSupabase failed for courseId=$courseId", e)
+            Log.w("SyncRepository", "❌ fetchTopicsByCourseFromSupabase failed for courseId=$courseId", e)
             emptyList()
         }
     }
@@ -608,11 +614,21 @@ class SyncRepository(
     }
 
     suspend fun fetchContentItemsByTopicIdsFromSupabase(topicIds: List<Long>): List<ContentItem> {
+        Log.d("SyncRepository", "📚 fetchContentItemsByTopicIdsFromSupabase called with topicIds=$topicIds")
         return try {
-            if (!supabaseClient.isConfigured() || topicIds.isEmpty()) return emptyList()
-            withContext(Dispatchers.IO) { supabaseClient.fetchContentItemsByTopicIds(topicIds) }
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "⚠️ Supabase not configured!")
+                return emptyList()
+            }
+            if (topicIds.isEmpty()) {
+                Log.w("SyncRepository", "⚠️ Empty topicIds list!")
+                return emptyList()
+            }
+            val result = withContext(Dispatchers.IO) { supabaseClient.fetchContentItemsByTopicIds(topicIds) }
+            Log.d("SyncRepository", "📚 fetchContentItemsByTopicIdsFromSupabase returned ${result.size} items")
+            result
         } catch (e: Exception) {
-            Log.w("SyncRepository", "fetchContentItemsByTopicIdsFromSupabase failed for topicIds=$topicIds", e)
+            Log.e("SyncRepository", "❌ fetchContentItemsByTopicIdsFromSupabase failed for topicIds=$topicIds", e)
             emptyList()
         }
     }
@@ -2761,6 +2777,57 @@ class SyncRepository(
     // Helper to get user by ID locally
     suspend fun getUsuarioByIdLocal(userId: Long): Usuario? {
         return usuarioDao.getUsuarioById(userId)
+    }
+
+    /**
+     * Notify all subscribers of a creator about a new course
+     * This should be called after a course is successfully created/published
+     * @param course The newly created course
+     * @return Number of subscribers notified
+     */
+    suspend fun notifySubscribersOfNewCourse(course: Course): Int = withContext(Dispatchers.IO) {
+        try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "Supabase not configured, cannot notify subscribers")
+                return@withContext 0
+            }
+
+            val creatorUserId = course.creatorUserId
+            if (creatorUserId <= 0) {
+                Log.w("SyncRepository", "Invalid creator user ID for course ${course.id}")
+                return@withContext 0
+            }
+
+            // Get creator info
+            val creatorUsername = supabaseClient.getUsernameFromUserId(creatorUserId) ?: "Usuario"
+            val creatorAvatarUrl = supabaseClient.getUserAvatarUrl(creatorUserId)
+
+            // Call the notification method
+            val notifiedCount = supabaseClient.notifySubscribersOfNewCourse(
+                creatorUserId = creatorUserId,
+                creatorUsername = creatorUsername,
+                creatorAvatarUrl = creatorAvatarUrl,
+                courseId = course.id,
+                courseTitle = course.title ?: "Nuevo curso",
+                courseThumbnailUrl = course.thumbnailUri
+            )
+
+            Log.d("SyncRepository", "Notified $notifiedCount subscribers about new course '${course.title}'")
+            return@withContext notifiedCount
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error notifying subscribers of new course", e)
+            0
+        }
+    }
+
+    /**
+     * Fire-and-forget version of notifySubscribersOfNewCourse
+     * Launches in background scope
+     */
+    fun notifySubscribersOfNewCourseAsync(course: Course) {
+        syncScope.launch {
+            notifySubscribersOfNewCourse(course)
+        }
     }
 
 }

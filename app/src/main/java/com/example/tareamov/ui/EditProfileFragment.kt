@@ -12,8 +12,11 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.ProgressBar
 import android.widget.TextView // Import added
 import android.widget.Toast
+import android.util.Log
+import com.example.tareamov.service.CloudflareR2Service
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -45,6 +48,8 @@ class EditProfileFragment : Fragment() {
     private var selectedImageUri: Uri? = null
     private var currentUser: Usuario? = null
     private var currentPersona: Persona? = null
+    private var uploadProgressBar: ProgressBar? = null
+    private var isUploading = false
 
     private val pickImageLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -80,6 +85,7 @@ class EditProfileFragment : Fragment() {
         saveButton = view.findViewById(R.id.doneButton) // Was saveButton
         changePhotoButton = view.findViewById(R.id.changePhotoButton)
         backButton = view.findViewById(R.id.cancelButton) // Was backButton
+        uploadProgressBar = view.findViewById(R.id.uploadProgressBar)
 
         // Load current user data
         loadUserData()
@@ -208,6 +214,11 @@ class EditProfileFragment : Fragment() {
             return
         }
 
+        if (isUploading) {
+            Toast.makeText(requireContext(), "Espera a que termine la subida", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         lifecycleScope.launch {
             try {
                 val db = AppDatabase.getDatabase(requireContext())
@@ -230,10 +241,14 @@ class EditProfileFragment : Fragment() {
                     }
                 }
 
-                // Save new avatar if selected
-                var avatarPath: String? = null // currentPersona?.avatar // TODO: Fetch from Usuario
+                // Upload avatar to Cloudflare R2 if selected
+                var avatarUrl: String? = currentUser?.avatar // Keep existing avatar if no new one selected
                 if (selectedImageUri != null) {
-                    avatarPath = saveImageToInternalStorage(selectedImageUri!!)
+                    avatarUrl = uploadAvatarToR2(selectedImageUri!!)
+                    if (avatarUrl == null) {
+                        Toast.makeText(requireContext(), "Error al subir la imagen. Intenta de nuevo.", Toast.LENGTH_SHORT).show()
+                        return@launch
+                    }
                 }
 
                 // Update persona with new information
@@ -252,31 +267,32 @@ class EditProfileFragment : Fragment() {
                                     identificacion = currentPersona!!.identificacion,
                                     nombres = displayName,
                                     apellidos = currentPersona!!.apellidos,
-                                    // email = currentPersona!!.email, // Removed
                                     telefono = currentPersona!!.telefono,
                                     direccion = currentPersona!!.direccion,
                                     fechaNacimiento = currentPersona!!.fechaNacimiento
-                                    // avatar = avatarPath, // Removed
-                                    // esUsuario = currentPersona!!.esUsuario // Removed
                                 )
                                 val updated = com.example.tareamov.service.SupabaseClient.updatePersona(remotePersona)
-                                android.util.Log.d("EditProfileFragment", "Supabase updatePersona result: $updated")
+                                Log.d("EditProfileFragment", "Supabase updatePersona result: $updated")
                             }
                         } catch (e: Exception) {
-                            android.util.Log.w("EditProfileFragment", "Failed to update persona on Supabase", e)
+                            Log.w("EditProfileFragment", "Failed to update persona on Supabase", e)
                         }
                         Unit
                     }
                 }
 
-                // Update usuario with new username
+                // Update usuario with new username and avatar URL
                 if (currentUser != null) {
                     withContext(Dispatchers.IO) {
-                        usuarioRepository.updateUserProfile(
-                            currentUser!!.id,
-                            newUsername
+                        // Update local Room database with avatar URL
+                        val updatedUsuario = currentUser!!.copy(
+                            usuario = newUsername,
+                            avatar = avatarUrl
                         )
-                        // Also try to update remote Usuario in Supabase
+                        usuarioDao.updateUsuario(updatedUsuario)
+                        Log.d("EditProfileFragment", "Updated local user with avatar: $avatarUrl")
+                        
+                        // Also try to update remote Usuario in Supabase with avatar URL
                         try {
                             if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
                                 val remoteUsuario = com.example.tareamov.data.entity.Usuario(
@@ -284,13 +300,19 @@ class EditProfileFragment : Fragment() {
                                     usuario = newUsername,
                                     contrasena = currentUser!!.contrasena,
                                     persona_id = currentUser!!.persona_id,
-                                    rol_id = currentUser!!.rol_id
+                                    rol_id = currentUser!!.rol_id,
+                                    email = currentUser!!.email,
+                                    avatar = avatarUrl, // Include R2 avatar URL
+                                    isActive = currentUser!!.isActive,
+                                    emailVerified = currentUser!!.emailVerified,
+                                    lastLogin = currentUser!!.lastLogin,
+                                    createdAt = currentUser!!.createdAt
                                 )
                                 val updatedU = com.example.tareamov.service.SupabaseClient.updateUsuario(remoteUsuario)
-                                android.util.Log.d("EditProfileFragment", "Supabase updateUsuario result: $updatedU")
+                                Log.d("EditProfileFragment", "Supabase updateUsuario result: $updatedU, avatar: $avatarUrl")
                             }
                         } catch (e: Exception) {
-                            android.util.Log.w("EditProfileFragment", "Failed to update usuario on Supabase", e)
+                            Log.w("EditProfileFragment", "Failed to update usuario on Supabase", e)
                         }
                         Unit
                     }
@@ -299,13 +321,12 @@ class EditProfileFragment : Fragment() {
                 // Update session and shared preferences to signal profile update
                 val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
                 // If username changed or avatar changed, update session stored values
-                val updatedAvatar = avatarPath ?: sessionManager.getUserAvatar()
                 sessionManager.createLoginSession(
                     newUsername,
                     sessionManager.getUserId(),
                     sessionManager.getPersonaId(),
                     sessionManager.getUserRole() ?: "user",
-                    updatedAvatar
+                    avatarUrl // Use the R2 URL
                 )
 
                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
@@ -321,6 +342,81 @@ class EditProfileFragment : Fragment() {
         }
     }
 
+    /**
+     * Upload avatar image to Cloudflare R2 and return the public URL
+     */
+    private suspend fun uploadAvatarToR2(uri: Uri): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Check if R2 is configured
+                if (!CloudflareR2Service.isConfigured()) {
+                    Log.e("EditProfileFragment", "Cloudflare R2 not configured")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "Servicio de almacenamiento no configurado", Toast.LENGTH_SHORT).show()
+                    }
+                    return@withContext null
+                }
+
+                // Show progress
+                withContext(Dispatchers.Main) {
+                    isUploading = true
+                    uploadProgressBar?.visibility = View.VISIBLE
+                    saveButton.isEnabled = false
+                }
+
+                // Generate unique filename for avatar
+                val userId = currentUser?.id ?: System.currentTimeMillis()
+                val fileName = "avatar_${userId}_${System.currentTimeMillis()}.jpg"
+                
+                Log.d("EditProfileFragment", "Uploading avatar to R2: $fileName")
+                
+                // Upload image to R2 using the existing uploadImage function
+                val result = CloudflareR2Service.uploadImage(
+                    context = requireContext(),
+                    imageUri = uri,
+                    customFileName = "avatars/$fileName"
+                ) { progress ->
+                    // Update progress on main thread
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        uploadProgressBar?.progress = progress
+                    }
+                }
+
+                // Hide progress
+                withContext(Dispatchers.Main) {
+                    isUploading = false
+                    uploadProgressBar?.visibility = View.GONE
+                    saveButton.isEnabled = true
+                }
+
+                when (result) {
+                    is CloudflareR2Service.UploadResult.Success -> {
+                        Log.d("EditProfileFragment", "Avatar uploaded successfully: ${result.url}")
+                        result.url
+                    }
+                    is CloudflareR2Service.UploadResult.Error -> {
+                        Log.e("EditProfileFragment", "Avatar upload failed: ${result.message}")
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "Error: ${result.message}", Toast.LENGTH_SHORT).show()
+                        }
+                        null
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("EditProfileFragment", "Exception uploading avatar", e)
+                withContext(Dispatchers.Main) {
+                    isUploading = false
+                    uploadProgressBar?.visibility = View.GONE
+                    saveButton.isEnabled = true
+                }
+                null
+            }
+        }
+    }
+
+    /**
+     * Fallback: Save image to internal storage (used if R2 upload fails)
+     */
     private fun saveImageToInternalStorage(uri: Uri): String {
         val inputStream = requireContext().contentResolver.openInputStream(uri)
         val fileName = "avatar_${UUID.randomUUID()}.jpg"

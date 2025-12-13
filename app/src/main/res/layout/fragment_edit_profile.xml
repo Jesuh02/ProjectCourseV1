@@ -111,6 +111,18 @@
                     android:layout_marginTop="12dp"
                     android:padding="8dp"
                     android:background="?attr/selectableItemBackground" />
+
+                <!-- Upload Progress Indicator -->
+                <ProgressBar
+                    android:id="@+id/uploadProgressBar"
+                    style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+                    android:layout_width="200dp"
+                    android:layout_height="4dp"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone"
+                    android:progressTint="#0A84FF"
+                    android:progressBackgroundTint="#3A3A3C"
+                    android:max="100" />
             </LinearLayout>
 
             <!-- Info Section Group -->

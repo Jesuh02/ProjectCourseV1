@@ -130,6 +130,12 @@
         <action
             android:id="@+id/action_notificacionesFragment_to_homeFragment"
             app:destination="@id/homeFragment" />
+        <action
+            android:id="@+id/action_notificacionesFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment" />
+        <action
+            android:id="@+id/action_notificacionesFragment_to_videoDetailsFragment"
+            app:destination="@id/videoDetailsFragment" />
     </fragment>
 
     <!-- Single registerFragment definition -->

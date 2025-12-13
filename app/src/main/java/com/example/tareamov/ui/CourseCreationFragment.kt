@@ -368,6 +368,10 @@ class CourseCreationFragment : Fragment() {
                         courseSaved = true
                         Toast.makeText(context, "Curso guardado exitosamente", Toast.LENGTH_SHORT).show()
                         
+                        // Notify subscribers about the new course
+                        val createdCourse = courseData.copy(id = remoteId)
+                        activity.syncRepository.notifySubscribersOfNewCourseAsync(createdCourse)
+                        
                         val bundle = Bundle().apply {
                             putLong("courseId", remoteId)
                             putString("courseName", courseName)
@@ -488,6 +492,10 @@ class CourseCreationFragment : Fragment() {
                         currentCourseId = savedCourseId
                         courseSaved = true
                         topicCount++
+
+                        // Notify subscribers about the new course
+                        val createdCourse = courseData.copy(id = savedCourseId)
+                        activity.syncRepository.notifySubscribersOfNewCourseAsync(createdCourse)
 
                         val bundle = Bundle()
                         bundle.putInt("topicNumber", topicCount)

@@ -36,6 +36,7 @@ import com.example.tareamov.data.entity.Subscription
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.viewmodel.CourseViewModel
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
+import com.example.tareamov.service.CloudflareR2Service
 import de.hdodenhof.circleimageview.CircleImageView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1058,8 +1059,13 @@ class CourseDetailFragment : Fragment() {
                     try {
                         // Use effectiveCourseId (may have been remapped by title lookup)
                         val lookupId = effectiveCourseId
+                        Log.d("CourseDetailFragment", "🔍 Fetching topics for courseId=$lookupId from Supabase...")
                         topics = withContext(Dispatchers.IO) { syncRepository.fetchTopicsByCourseFromSupabase(lookupId) }
-                        Log.d("CourseDetailFragment", "Loaded remote topics=${topics.size} for courseId=$lookupId via SyncRepository")
+                        Log.d("CourseDetailFragment", "✅ Loaded ${topics.size} remote topics for courseId=$lookupId")
+                        // Log each topic for debugging
+                        topics.forEachIndexed { index, topic ->
+                            Log.d("CourseDetailFragment", "   📘 Topic[$index]: id=${topic.id}, name='${topic.name}', courseId=${topic.courseId}")
+                        }
                     } catch (e: Exception) {
                         Log.w("CourseDetailFragment", "Remote topics fetch failed, falling back to local DAO", e)
                         topics = withContext(Dispatchers.IO) { topicDao.getTopicsByCourse(courseId) }
@@ -1068,7 +1074,22 @@ class CourseDetailFragment : Fragment() {
                     topics = withContext(Dispatchers.IO) { topicDao.getTopicsByCourse(courseId) }
                 }
 
-                Log.d("CourseDetailFragment", "Found ${topics.size} topics for courseId: $courseId")
+                Log.d("CourseDetailFragment", "📚 Total topics found: ${topics.size} for courseId: $courseId")
+                
+                // DEBUG: Fetch ALL content items to see what's in Supabase
+                if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    try {
+                        val allContentItems = withContext(Dispatchers.IO) { 
+                            com.example.tareamov.service.SupabaseClient.debugFetchAllContentItems() 
+                        }
+                        Log.d("CourseDetailFragment", "🔍 DEBUG: ALL content_items in Supabase: ${allContentItems.size} items")
+                        allContentItems.forEach { item ->
+                            Log.d("CourseDetailFragment", "   📦 ContentItem: id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, name='${item.name}', type=${item.contentType}")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "DEBUG fetch failed", e)
+                    }
+                }
 
                 if (topics.isEmpty()) {
                     Log.d("CourseDetailFragment", "No topics found for course ID: $courseId")
@@ -1101,6 +1122,9 @@ class CourseDetailFragment : Fragment() {
 
                     // Prepare tasks grouped by topicId when viewing tasks
                     var tasksByTopic: Map<Long, List<Task>> = emptyMap()
+                    // Prepare content items grouped by topicId when viewing documentos
+                    var contentByTopic: Map<Long, List<ContentItem>> = emptyMap()
+                    
                     if (currentTab == "tareas") {
                         try {
                             val topicIds = sortedTopics.map { it.id }
@@ -1125,6 +1149,85 @@ class CourseDetailFragment : Fragment() {
                             }
                             tasksByTopic = map
                         }
+                    } else {
+                        // currentTab == "documentos" - fetch content items for topics
+                        try {
+                            val topicIds = sortedTopics.map { it.id }
+                            Log.d("CourseDetailFragment", "")
+                            Log.d("CourseDetailFragment", "📚 ╔══════════════════════════════════════════════════╗")
+                            Log.d("CourseDetailFragment", "📚 ║        CONTENT LOADING DEBUG                    ║")
+                            Log.d("CourseDetailFragment", "📚 ╠══════════════════════════════════════════════════╣")
+                            Log.d("CourseDetailFragment", "📚 ║ Course ID: $resolvedCourseId")
+                            Log.d("CourseDetailFragment", "📚 ║ Course Name: $courseName")
+                            Log.d("CourseDetailFragment", "📚 ║ Total topics to render: ${sortedTopics.size}")
+                            Log.d("CourseDetailFragment", "📚 ║ Topic IDs: $topicIds")
+                            Log.d("CourseDetailFragment", "📚 ╚══════════════════════════════════════════════════╝")
+                            
+                            if (topicIds.isNotEmpty()) {
+                                Log.d("CourseDetailFragment", "📚 Querying Supabase for content with topic_ids IN (${topicIds.joinToString(",")})")
+                                if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                    val fetched = withContext(Dispatchers.IO) { syncRepository.fetchContentItemsByTopicIdsFromSupabase(topicIds) }
+                                    
+                                    Log.d("CourseDetailFragment", "📦 ========== FETCHED CONTENT ITEMS ==========")
+                                    Log.d("CourseDetailFragment", "📦 Total items returned: ${fetched.size}")
+                                    
+                                    if (fetched.isEmpty()) {
+                                        Log.w("CourseDetailFragment", "⚠️ WARNING: No content items returned from Supabase!")
+                                        Log.w("CourseDetailFragment", "⚠️ Possible issues:")
+                                        Log.w("CourseDetailFragment", "⚠️   1. No content_items exist with topic_id IN $topicIds")
+                                        Log.w("CourseDetailFragment", "⚠️   2. Content items may have different topic_ids")
+                                        Log.w("CourseDetailFragment", "⚠️   3. Network/API issue")
+                                    } else {
+                                        fetched.forEachIndexed { index, item ->
+                                            Log.d("CourseDetailFragment", "📄 [$index] id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, type=${item.contentType}")
+                                            Log.d("CourseDetailFragment", "       name='${item.name}'")
+                                            Log.d("CourseDetailFragment", "       uri='${item.uriString.take(80)}...'")
+                                        }
+                                    }
+                                    
+                                    // Filter: only include topic-level content (taskId == null)
+                                    // Content with taskId != null belongs to tasks, not topics
+                                    val topicLevelContent = fetched.filter { it.taskId == null || it.taskId == 0L }
+                                    Log.d("CourseDetailFragment", "📊 Filtered to ${topicLevelContent.size} topic-level content items (excluding task content)")
+                                    
+                                    contentByTopic = topicLevelContent.groupBy { it.topicId }
+                                    
+                                    Log.d("CourseDetailFragment", "📊 Content grouped by topic:")
+                                    for (topicId in topicIds) {
+                                        val items = contentByTopic[topicId] ?: emptyList()
+                                        Log.d("CourseDetailFragment", "   📖 TopicId=$topicId -> ${items.size} items")
+                                        items.forEach { item ->
+                                            Log.d("CourseDetailFragment", "      📄 id=${item.id}, name='${item.name}', type=${item.contentType}")
+                                        }
+                                    }
+                                    Log.d("CourseDetailFragment", "📦 =============================================")
+                                } else {
+                                    Log.w("CourseDetailFragment", "⚠️ Supabase not configured, using local DB")
+                                    val localItems = withContext(Dispatchers.IO) { 
+                                        AppDatabase.getDatabase(requireContext()).contentItemDao().getContentItemsByTopicIds(topicIds) 
+                                    }
+                                    // Filter: only include topic-level content (taskId == null)
+                                    val topicLevelLocalItems = localItems.filter { it.taskId == null || it.taskId == 0L }
+                                    contentByTopic = topicLevelLocalItems.groupBy { it.topicId }
+                                    Log.d("CourseDetailFragment", "📚 Fetched ${localItems.size} content items from local DB, ${topicLevelLocalItems.size} topic-level")
+                                }
+                            } else {
+                                Log.w("CourseDetailFragment", "⚠️ No topicIds to fetch content for!")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("CourseDetailFragment", "❌ Failed to fetch content items for topics", e)
+                            // Best-effort fallback: fetch per-topic from DAO
+                            val map = mutableMapOf<Long, List<ContentItem>>()
+                            for (t in sortedTopics) {
+                                try {
+                                    val list = withContext(Dispatchers.IO) { 
+                                        AppDatabase.getDatabase(requireContext()).contentItemDao().getContentItemsByTopicId(t.id) 
+                                    }
+                                    map[t.id] = list
+                                } catch (_: Exception) { map[t.id] = emptyList() }
+                            }
+                            contentByTopic = map
+                        }
                     }
 
                     // If viewing tasks, filter out topics that have no tasks
@@ -1136,8 +1239,9 @@ class CourseDetailFragment : Fragment() {
 
                     for (topic in topicsToRender) {
                         val tasksForTopic = tasksByTopic[topic.id] ?: emptyList()
-                        // content items are intentionally not fetched here for performance
-                        addTopicView(topic, emptyList(), tasksForTopic)
+                        val contentForTopic = contentByTopic[topic.id] ?: emptyList()
+                        Log.d("CourseDetailFragment", "📖 Topic '${topic.name}' (id=${topic.id}): ${contentForTopic.size} content items, ${tasksForTopic.size} tasks")
+                        addTopicView(topic, contentForTopic, tasksForTopic)
                     }
 
                     // Ensure container visible even if empty; show a top-level message per tab
@@ -1677,13 +1781,26 @@ class CourseDetailFragment : Fragment() {
             topicContentContainer.removeAllViews() // Clear before adding
             topicContentContainer.addView(contentHeader) // Add header (Now defined)
 
-            val sortedContent = contentItems.sortedBy { it.orderIndex }
+            Log.d("CourseDetailFragment", "📄 addTopicView for topic '${topic.name}' (id=${topic.id}): received ${contentItems.size} content items")
+            
+            // Double-check: filter to ensure only topic-level content (taskId null/0)
+            val topicOnlyContent = contentItems.filter { it.taskId == null || it.taskId == 0L }
+            Log.d("CourseDetailFragment", "📄 After filtering taskId: ${topicOnlyContent.size} topic-level content items")
+            
+            val sortedContent = topicOnlyContent.sortedBy { it.orderIndex }
             if (sortedContent.isNotEmpty()) {
+                Log.d("CourseDetailFragment", "📄 ✅ Showing ${sortedContent.size} content items for topic ${topic.id}")
                 for (item in sortedContent) {
+                    Log.d("CourseDetailFragment", "   📦 Content: id=${item.id}, name='${item.name}', uri='${item.uriString.take(60)}...', type=${item.contentType}")
                     addContentView(item, topicContentContainer)
                 }
             } else {
-                val noContentMsg = TextView(context).apply { text = "Sin contenido para este tema" }
+                Log.w("CourseDetailFragment", "⚠️ No topic-level content items for topic ${topic.id} ('${topic.name}')")
+                val noContentMsg = TextView(context).apply { 
+                    text = "Sin contenido para este tema" 
+                    setTextColor(resources.getColor(android.R.color.darker_gray, null))
+                    setPadding(0, 8, 0, 8)
+                }
                 topicContentContainer.addView(noContentMsg)
             }
 
@@ -1805,32 +1922,22 @@ class CourseDetailFragment : Fragment() {
             try {
                 Log.d("CourseDetailFragment", "Loading content items for taskId=${task.id}")
                 
-                // First, try to sync from Supabase
-                val remoteContentItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                // Fetch content items from Supabase (don't save to local Room to avoid FK errors)
+                var contentItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
                     syncRepository.fetchContentItemsByTaskIdFromSupabase(task.id)
                 }
                 
-                // Save remote items to local database
-                if (remoteContentItems.isNotEmpty()) {
-                    withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        val contentItemDao = AppDatabase.getDatabase(requireContext()).contentItemDao()
-                        remoteContentItems.forEach { item ->
-                            try {
-                                contentItemDao.insertContentItem(item)
-                                Log.d("CourseDetailFragment", "Saved content item to Room: ${item.name}")
-                            } catch (e: Exception) {
-                                Log.w("CourseDetailFragment", "Failed to save content item", e)
-                            }
-                        }
+                // Fallback to local database only if Supabase returned empty
+                if (contentItems.isEmpty()) {
+                    contentItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        AppDatabase.getDatabase(requireContext()).contentItemDao().getContentItemsByTaskId(task.id)
                     }
+                    Log.d("CourseDetailFragment", "Loaded ${contentItems.size} content items from local DB for taskId=${task.id}")
+                } else {
+                    Log.d("CourseDetailFragment", "Loaded ${contentItems.size} content items from Supabase for taskId=${task.id}")
                 }
                 
-                // Now load from local database (which should have the synced data)
-                val contentItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    AppDatabase.getDatabase(requireContext()).contentItemDao().getContentItemsByTaskId(task.id)
-                }
-                
-                Log.d("CourseDetailFragment", "Found ${contentItems.size} content items for taskId=${task.id} (${remoteContentItems.size} from Supabase)")
+                Log.d("CourseDetailFragment", "Found ${contentItems.size} content items for taskId=${task.id}")
                 
                 // Always show the container section for better UX
                 taskContentContainer?.removeAllViews()
@@ -1840,7 +1947,7 @@ class CourseDetailFragment : Fragment() {
                 
                 if (contentItems.isNotEmpty()) {
                     for (contentItem in contentItems) {
-                        Log.d("CourseDetailFragment", "Adding content item: name=${contentItem.name}, type=${contentItem.contentType}, uri=${contentItem.uriString}")
+                        Log.d("CourseDetailFragment", "Adding content item: name=${contentItem.name}, type=${contentItem.contentType}, uri=${contentItem.uriString}, isR2=${CloudflareR2Service.isR2Url(contentItem.uriString)}")
                         
                         val contentItemView = LayoutInflater.from(context).inflate(
                             R.layout.item_content_mini,
@@ -1852,7 +1959,13 @@ class CourseDetailFragment : Fragment() {
                         val nameView = contentItemView.findViewById<TextView>(R.id.contentNameView)
                         val typeView = contentItemView.findViewById<TextView>(R.id.contentTypeView)
                         
-                        nameView?.text = contentItem.name ?: "Archivo adjunto"
+                        // Show cloud emoji if it's an R2 URL
+                        val displayName = if (CloudflareR2Service.isR2Url(contentItem.uriString)) {
+                            "☁️ ${contentItem.name ?: "Archivo adjunto"}"
+                        } else {
+                            contentItem.name ?: "Archivo adjunto"
+                        }
+                        nameView?.text = displayName
                         
                         // Set icon and type based on content type
                         when (contentItem.contentType.lowercase()) {
@@ -1965,7 +2078,10 @@ class CourseDetailFragment : Fragment() {
                 val sortedTopics = topics.sortedBy { it.orderIndex }
 
                 // If the tasks tab is selected, fetch tasks for these topics from Supabase (or local DAO)
+                // Prepare content items grouped by topicId when viewing documentos
+                var contentByTopic: Map<Long, List<ContentItem>> = emptyMap()
                 var tasksByTopic: Map<Long, List<Task>> = emptyMap()
+                
                 if (currentTab == "tareas") {
                     try {
                         val topicIds = sortedTopics.map { it.id }
@@ -1981,6 +2097,31 @@ class CourseDetailFragment : Fragment() {
                     } catch (e: Exception) {
                         Log.w("CourseDetailFragment", "refreshTopics: failed fetching tasks for topics", e)
                     }
+                } else {
+                    // currentTab == "documentos" - fetch content items for topics
+                    try {
+                        val topicIds = sortedTopics.map { it.id }
+                        if (topicIds.isNotEmpty()) {
+                            Log.d("CourseDetailFragment", "📚 [Refresh] Fetching content items for ${topicIds.size} topics")
+                            if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                                val fetched = withContext(Dispatchers.IO) { act.syncRepository.fetchContentItemsByTopicIdsFromSupabase(topicIds) }
+                                // Filter: only include topic-level content (taskId == null)
+                                val topicLevelContent = fetched.filter { it.taskId == null || it.taskId == 0L }
+                                contentByTopic = topicLevelContent.groupBy { it.topicId }
+                                Log.d("CourseDetailFragment", "📚 [Refresh] Fetched ${fetched.size} content items from Supabase, ${topicLevelContent.size} topic-level")
+                            } else {
+                                val localItems = withContext(Dispatchers.IO) { 
+                                    AppDatabase.getDatabase(requireContext()).contentItemDao().getContentItemsByTopicIds(topicIds) 
+                                }
+                                // Filter: only include topic-level content (taskId == null)
+                                val topicLevelLocalItems = localItems.filter { it.taskId == null || it.taskId == 0L }
+                                contentByTopic = topicLevelLocalItems.groupBy { it.topicId }
+                                Log.d("CourseDetailFragment", "📚 [Refresh] Fetched ${localItems.size} content items from local DB, ${topicLevelLocalItems.size} topic-level")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "refreshTopics: failed fetching content items for topics", e)
+                    }
                 }
 
                 // If viewing tasks, filter out topics without tasks
@@ -1992,7 +2133,9 @@ class CourseDetailFragment : Fragment() {
 
                 for (topic in topicsToRender) {
                     val tasks = tasksByTopic[topic.id] ?: emptyList()
-                    addTopicView(topic, emptyList(), tasks)
+                    val contentForTopic = contentByTopic[topic.id] ?: emptyList()
+                    Log.d("CourseDetailFragment", "📖 [Refresh] Topic '${topic.name}' (id=${topic.id}): ${contentForTopic.size} content items, ${tasks.size} tasks")
+                    addTopicView(topic, contentForTopic, tasks)
                 }
                 
                 // IMPORTANTE: Recalcular progreso de estudiantes después de refrescar
@@ -2014,23 +2157,23 @@ class CourseDetailFragment : Fragment() {
     if (userId <= 0L) return
 
     CoroutineScope(Dispatchers.Main).launch {
+        try {
+            // Always fetch submission from Supabase (task_submissions are remote-authoritative)
+            var submission: com.example.tareamov.data.entity.TaskSubmission? = null
             try {
-                // Always fetch submission from Supabase (task_submissions are remote-authoritative)
-                var submission: com.example.tareamov.data.entity.TaskSubmission? = null
-                    try {
-                        val act = requireActivity()
-                        if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                            submission = withContext(Dispatchers.IO) { act.syncRepository.fetchUserSubmissionForTaskFromSupabase(taskId, username ?: "") }
-                            Log.d("CourseDetailFragment", "Supabase fetch for taskId=$taskId username=$username -> submission=${submission}")
-                        } else {
-                            // If Supabase not configured or MainActivity not available, attempt the local DAO as a last resort
-                            val db = AppDatabase.getDatabase(requireContext())
-                            submission = withContext(Dispatchers.IO) { db.taskSubmissionDao().getUserSubmissionForTask(taskId, userId) }
-                            Log.d("CourseDetailFragment", "Local fallback fetch for taskId=$taskId userId=$userId -> submission=${submission}")
-                        }
-                } catch (e: Exception) {
-                    Log.w("CourseDetailFragment", "Error fetching submission for taskId=$taskId username=$username", e)
+                val act = requireActivity()
+                if (act is MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                    submission = withContext(Dispatchers.IO) { act.syncRepository.fetchUserSubmissionForTaskFromSupabase(taskId, username ?: "") }
+                    Log.d("CourseDetailFragment", "Supabase fetch for taskId=$taskId username=$username -> submission=${submission}")
+                } else {
+                    // If Supabase not configured or MainActivity not available, attempt the local DAO as a last resort
+                    val db = AppDatabase.getDatabase(requireContext())
+                    submission = withContext(Dispatchers.IO) { db.taskSubmissionDao().getUserSubmissionForTask(taskId, userId) }
+                    Log.d("CourseDetailFragment", "Local fallback fetch for taskId=$taskId userId=$userId -> submission=${submission}")
                 }
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Error fetching submission for taskId=$taskId username=$username", e)
+            }
 
                 if (submission != null) {
                     if (submission.grade != null) {
@@ -2056,7 +2199,7 @@ class CourseDetailFragment : Fragment() {
         Log.d("CourseDetailFragment", "loadTaskContentItems: Container removed from layout")
     }// Modify addContentView to use item_content_mini.xml for consistent display
     private fun addContentView(item: ContentItem, container: LinearLayout, isTaskContent: Boolean = false) {
-        Log.d("CourseDetailFragment", "Adding content view - Name: ${item.name}, Type: ${item.contentType}, URI: ${item.uriString}")
+        Log.d("CourseDetailFragment", "📄 Adding content view - Name: ${item.name}, Type: ${item.contentType}, URI: ${item.uriString}")
         
         val inflater = LayoutInflater.from(context)
         val contentView = inflater.inflate(R.layout.item_content_mini, container, false)
@@ -2065,7 +2208,13 @@ class CourseDetailFragment : Fragment() {
         val nameView = contentView.findViewById<TextView>(R.id.contentNameView)
         val typeView = contentView.findViewById<TextView>(R.id.contentTypeView)
 
-        nameView?.text = item.name ?: "Archivo adjunto"
+        // Show cloud icon if it's an R2 URL
+        val displayName = if (CloudflareR2Service.isR2Url(item.uriString)) {
+            "☁️ ${item.name ?: "Archivo adjunto"}"
+        } else {
+            item.name ?: "Archivo adjunto"
+        }
+        nameView?.text = displayName
 
         // Set icon and type based on content type
         when (item.contentType.lowercase()) {
@@ -2077,9 +2226,13 @@ class CourseDetailFragment : Fragment() {
                 iconView?.setImageResource(android.R.drawable.ic_menu_agenda)
                 typeView?.text = "PDF"
             }
+            "document" -> {
+                iconView?.setImageResource(android.R.drawable.ic_menu_edit)
+                typeView?.text = "Documento"
+            }
             else -> {
                 iconView?.setImageResource(android.R.drawable.ic_menu_help)
-                typeView?.text = "Documento"
+                typeView?.text = "Archivo"
             }
         }
 
@@ -2096,6 +2249,8 @@ class CourseDetailFragment : Fragment() {
         }
         contentView.layoutParams = params
         container.addView(contentView)
+        
+        Log.d("CourseDetailFragment", "✅ Content view added successfully for: ${item.name}")
     }
 
     // Helper method to get content type description
@@ -2308,6 +2463,12 @@ class CourseDetailFragment : Fragment() {
     // Make sure we're properly handling content item clicks
     private fun openContent(item: ContentItem) {
         try {
+            Log.d("CourseDetailFragment", "🎬 openContent called:")
+            Log.d("CourseDetailFragment", "   - Name: ${item.name}")
+            Log.d("CourseDetailFragment", "   - Type: ${item.contentType}")
+            Log.d("CourseDetailFragment", "   - URI: ${item.uriString}")
+            Log.d("CourseDetailFragment", "   - Is R2 URL: ${CloudflareR2Service.isR2Url(item.uriString)}")
+            
             // For videos, use our custom VideoPlayerActivity
             if (item.contentType == "video") {
                 Log.d("CourseDetailFragment", "Opening video content: ${item.name}, URI: ${item.uriString}")
@@ -2317,8 +2478,15 @@ class CourseDetailFragment : Fragment() {
                 
                 // Handle different URI formats
                 if (processedUri.isNotEmpty()) {
+                    // Check if it's a Cloudflare R2 URL (HTTP/HTTPS remote URL)
+                    if (CloudflareR2Service.isR2Url(processedUri) || 
+                        processedUri.startsWith("http://") || 
+                        processedUri.startsWith("https://")) {
+                        // Remote URL - use directly
+                        Log.d("CourseDetailFragment", "☁️ Opening remote video from R2/URL: $processedUri")
+                    }
                     // If it's a file path without scheme, add file:// prefix
-                    if (!processedUri.startsWith("content://") && !processedUri.startsWith("file://") && !processedUri.startsWith("android.resource://")) {
+                    else if (!processedUri.startsWith("content://") && !processedUri.startsWith("file://") && !processedUri.startsWith("android.resource://")) {
                         val file = File(processedUri)
                         if (file.exists()) {
                             try {
@@ -2354,9 +2522,11 @@ class CourseDetailFragment : Fragment() {
                 intent.putExtra("video_description", "")  // ContentItem doesn't have description
                 intent.putExtra("username", currentUsername ?: "")
 
-                // Add flags to grant permissions
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                // Add flags to grant permissions (only needed for local files)
+                if (!processedUri.startsWith("http://") && !processedUri.startsWith("https://")) {
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                }
 
                 try {
                     startActivity(intent)
@@ -2368,8 +2538,28 @@ class CourseDetailFragment : Fragment() {
                 return
             }
 
-            // For other content types, use the standard approach
-            val contentUri = Uri.parse(item.uriString)
+            // For other content types (documents), handle remote URLs
+            val uriString = item.uriString
+            
+            // Check if it's a remote URL (R2 or other HTTP/HTTPS)
+            if (CloudflareR2Service.isR2Url(uriString) || 
+                uriString.startsWith("http://") || 
+                uriString.startsWith("https://")) {
+                Log.d("CourseDetailFragment", "☁️ Opening remote document from R2/URL: $uriString")
+                
+                // Open remote URL in browser or appropriate app
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uriString))
+                try {
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e("CourseDetailFragment", "Error opening remote document: ${e.message}", e)
+                    Toast.makeText(context, "No se puede abrir el documento: ${item.name}", Toast.LENGTH_SHORT).show()
+                }
+                return
+            }
+            
+            // For local content, use the standard approach
+            val contentUri = Uri.parse(uriString)
             val file = File(contentUri.path ?: "")
 
             // Create a content URI using FileProvider
@@ -2412,7 +2602,14 @@ class CourseDetailFragment : Fragment() {
         try {
             var processedUri = item.uriString ?: ""
             if (processedUri.isNotEmpty()) {
-                if (!processedUri.startsWith("content://") && !processedUri.startsWith("file://") && !processedUri.startsWith("android.resource://")) {
+                // Check if it's a remote URL (R2 or HTTP/HTTPS) - use directly
+                if (CloudflareR2Service.isR2Url(processedUri) || 
+                    processedUri.startsWith("http://") || 
+                    processedUri.startsWith("https://")) {
+                    Log.d("CourseDetailFragment", "☁️ Opening remote video in floating player: $processedUri")
+                    // Remote URL - use directly, no processing needed
+                }
+                else if (!processedUri.startsWith("content://") && !processedUri.startsWith("file://") && !processedUri.startsWith("android.resource://")) {
                     val file = java.io.File(processedUri)
                     if (file.exists()) {
                         try {
@@ -2427,6 +2624,7 @@ class CourseDetailFragment : Fragment() {
                         }
                     } else {
                         // leave as-is (may be a remote URL)
+                        Log.d("CourseDetailFragment", "File not found locally, assuming remote URL: $processedUri")
                     }
                 }
             } else {

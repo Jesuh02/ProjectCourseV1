@@ -42,6 +42,10 @@ interface ContentItemDao {
     @Query("SELECT * FROM content_items WHERE topicId IN (:topicIds)")
     suspend fun getContentItemsByTopicIds(topicIds: List<Long>): List<ContentItem>
 
+    // Get content items by single topic ID
+    @Query("SELECT * FROM content_items WHERE topicId = :topicId ORDER BY orderIndex ASC")
+    suspend fun getContentItemsByTopicId(topicId: Long): List<ContentItem>
+
     // Add method to get content items by task ID
     @Query("SELECT * FROM content_items WHERE taskId = :taskId ORDER BY orderIndex ASC")
     suspend fun getContentItemsByTaskId(taskId: Long): List<ContentItem>

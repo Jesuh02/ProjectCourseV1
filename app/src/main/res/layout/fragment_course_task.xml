@@ -168,6 +168,42 @@
                     android:layout_marginTop="12dp"
                     android:orientation="vertical" />
 
+                <!-- Topic Content Section (read-only, shows content from the associated topic) -->
+                <LinearLayout
+                    android:id="@+id/topicContentSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="24dp"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="📚 Contenido del Tema"
+                        android:textColor="#B8C0FF"
+                        android:textSize="14sp"
+                        android:fontFamily="@font/sf_pro_display_semibold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="(Material de referencia del tema asociado)"
+                        android:textColor="#8890AF"
+                        android:textSize="12sp"
+                        android:fontFamily="@font/sf_pro_display_regular" />
+
+                    <LinearLayout
+                        android:id="@+id/topicContentContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:orientation="vertical"
+                        android:background="@drawable/bg_input_glass"
+                        android:padding="12dp" />
+                </LinearLayout>
+
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
