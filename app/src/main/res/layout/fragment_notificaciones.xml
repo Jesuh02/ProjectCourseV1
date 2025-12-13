@@ -13,59 +13,13 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="Actividad"
+        android:text="Notificaciones"
         android:textColor="#FFFFFF"
         android:textSize="24sp"
         android:textStyle="bold"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
-
-    <!-- Tab Layout - Changed to ConstraintLayout -->
-    <androidx.constraintlayout.widget.ConstraintLayout
-        android:id="@+id/tabLayout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        app:layout_constraintTop_toBottomOf="@id/titleText">
-
-        <TextView
-            android:id="@+id/notificacionesTab"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:paddingVertical="8dp"
-            android:text="Notificaciones (0)"
-            android:textColor="#9C27B0"
-            android:textSize="16sp"
-            app:layout_constraintEnd_toStartOf="@+id/susurrosTab"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent" />
-
-        <TextView
-            android:id="@+id/susurrosTab"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:paddingVertical="8dp"
-            android:text="Susurros (0)"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toEndOf="@+id/notificacionesTab"
-            app:layout_constraintTop_toTopOf="parent" />
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
-    <!-- Tab Indicator - Now properly constrained -->
-    <View
-        android:id="@+id/tabIndicator"
-        android:layout_width="0dp"
-        android:layout_height="2dp"
-        android:background="#9C27B0"
-        app:layout_constraintEnd_toEndOf="@id/tabLayout"
-        app:layout_constraintStart_toStartOf="@id/tabLayout"
-        app:layout_constraintWidth_percent="0.5"
-        app:layout_constraintTop_toBottomOf="@id/tabLayout" />
 
     <!-- Skeleton Loader (Visible during loading) -->
     <include
@@ -88,7 +42,8 @@
         android:padding="8dp"
         android:clipToPadding="false"
         app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
-        app:layout_constraintTop_toBottomOf="@id/tabIndicator"
+        app:layout_constraintTop_toBottomOf="@id/titleText"
+        android:layout_marginTop="16dp"
         tools:listitem="@layout/item_notification" />
 
     <!-- Empty State Content -->
@@ -99,7 +54,8 @@
         android:gravity="center"
         android:orientation="vertical"
         app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
-        app:layout_constraintTop_toBottomOf="@id/tabIndicator">
+        app:layout_constraintTop_toBottomOf="@id/titleText"
+        android:layout_marginTop="16dp">
 
         <!-- Rest of the content remains unchanged -->
         <ImageView
