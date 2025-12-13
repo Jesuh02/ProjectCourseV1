@@ -658,22 +658,10 @@ class ChatBotFragment : Fragment() {
                         sessionId = sessionId
                     )
                 } else {
-                    // Preparar información del contexto de la tarea si está disponible
-                    val contextInfo = if (!currentFileContext!!.contentSummary.isNullOrBlank()) {
-                        "\n📝 Contexto: ${currentFileContext!!.contentSummary}"
-                    } else if (taskName.isNotEmpty()) {
-                        "\n📝 Tarea: $taskName"
-                    } else {
-                        ""
-                    }
-
+                    // Mostrar solo el nombre del archivo sin el contenido
                     ChatMessage(
-                        message = "📁 **Archivo cargado exitosamente**\n\n" +
-                                "📄 Nombre: ${currentFileContext!!.fileName}\n" +
-                                "🔧 Tipo: ${currentFileContext!!.fileType}\n" +
-                                "📊 Contenido: ${currentFileContext!!.fileContent.length} caracteres" +
-                                contextInfo + "\n\n" +
-                                "✅ Puedes hacerme preguntas sobre este archivo y te ayudaré con el análisis.",
+                        message = "📁 **Archivo cargado:** ${currentFileContext!!.fileName}\n\n" +
+                                "✅ Puedes hacerme preguntas sobre este archivo.",
                         isFromUser = false,
                         sessionId = sessionId
                     )
