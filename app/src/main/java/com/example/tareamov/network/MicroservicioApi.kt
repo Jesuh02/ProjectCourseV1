@@ -50,6 +50,9 @@ data class MicroservicioPromptRequest(
 // Data class para la respuesta procesarPrompt
 data class MicroservicioPromptResponse(
     val respuesta_texto: String?,
+    val nota: Float? = null,
+    val esCalificacion: Boolean? = null,
+    val contenidoVacio: Boolean? = null,
     val aviso: String? = null,
     val error: String? = null,
     val detalle: String? = null

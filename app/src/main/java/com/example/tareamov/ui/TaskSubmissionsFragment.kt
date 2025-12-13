@@ -463,18 +463,12 @@ class TaskSubmissionsFragment : Fragment() {
                     else
                         "Tarea entregada, pendiente de calificación"
 
-<<<<<<< HEAD
-                    // Disable submit buttons (file and GitHub)
+                    // Disable submit buttons (file and GitHub) - no permitir duplicados
                     view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
                     view?.findViewById<Button>(R.id.submitFileButton)?.text = "Ya enviado"
                     view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = false
                     view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Ya enviado"
                     view?.findViewById<Button>(R.id.selectFileButton)?.isEnabled = false
-=======
-                    // Allow resubmission: enable submit button and offer to re-send
-                    view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = true
-                    view?.findViewById<Button>(R.id.submitFileButton)?.text = "Reenviar"
->>>>>>> 15e6e0adabdfa840eefaf85ca110c6f441c271b5
                 } else {
                     // User hasn't submitted yet
                     hasUserSubmitted = false
@@ -512,7 +506,6 @@ class TaskSubmissionsFragment : Fragment() {
                         } catch (e: Exception) {
                             android.util.Log.w("TaskSubmissionsFragment", "Failed to serialize sample submissions to JSON", e)
                         }
-<<<<<<< HEAD
                         
                         // Obtener el ID del creador del curso para excluirlo de la lista
                         val creatorUserId = try {
@@ -522,15 +515,6 @@ class TaskSubmissionsFragment : Fragment() {
                         } catch (e: Exception) {
                             android.util.Log.w("TaskSubmissionsFragment", "Could not get creator user ID", e)
                             null
-=======
-                        // If the current user is the course creator, show submissions for grading
-                        // but exclude the creator's own submissions (they should not appear in pending lists)
-                        val currentUserId = sessionManager.getUserId()
-                        if (isCourseCreator) {
-                            if (currentUserId != -1L) all.filter { it.studentId != currentUserId } else all
-                        } else {
-                            if (currentUserId != -1L) all.filter { it.studentId == currentUserId } else emptyList()
->>>>>>> 15e6e0adabdfa840eefaf85ca110c6f441c271b5
                         }
                         
                         // Filtrar: excluir al creador del curso Y eliminar duplicados por studentId
@@ -951,7 +935,15 @@ class TaskSubmissionsFragment : Fragment() {
         
         CoroutineScope(Dispatchers.Main).launch {
             try {
-<<<<<<< HEAD
+                // Control para evitar doble tap
+                if (isSubmitting) {
+                    Toast.makeText(context, "Ya se está enviando una entrega, espera por favor...", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                isSubmitting = true
+                // disable button to avoid duplicate taps
+                view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
+                
                 // VERIFICACIÓN ADICIONAL EN SUPABASE: Asegurar que no existe entrega duplicada
                 val existingSubmission = withContext(Dispatchers.IO) {
                     try {
@@ -970,20 +962,11 @@ class TaskSubmissionsFragment : Fragment() {
                     progressSection.visibility = View.GONE
                     hasUserSubmitted = true
                     userSubmission = existingSubmission
-                    view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
+                    isSubmitting = false
                     view?.findViewById<Button>(R.id.submitFileButton)?.text = "Ya enviado"
                     return@launch
                 }
                 
-=======
-                if (isSubmitting) {
-                    Toast.makeText(context, "Ya se está enviando una entrega, espera por favor...", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                isSubmitting = true
-                // disable button to avoid duplicate taps
-                view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
->>>>>>> 15e6e0adabdfa840eefaf85ca110c6f441c271b5
                 // PASO 0: Subir archivo a Cloudflare R2 si está configurado
                 var cloudFileUri = finalUri.toString()
                 val currentUsername = sessionManager.getUsername() ?: "unknown"
@@ -1049,8 +1032,8 @@ class TaskSubmissionsFragment : Fragment() {
                 
                 progressBar.progress = 40
 
-                // Check if user already has a submission for this task; if so, update it instead of inserting a new one
-                val existingSubmission = withContext(Dispatchers.IO) {
+                // Check if user already has a submission for this task in LOCAL DB; if so, update it instead of inserting a new one
+                val existingLocalSubmission = withContext(Dispatchers.IO) {
                     try {
                         database.taskSubmissionDao().getUserSubmissionForTask(taskId, currentUserId)
                     } catch (e: Exception) {
@@ -1059,9 +1042,9 @@ class TaskSubmissionsFragment : Fragment() {
                     }
                 }
 
-                val created: com.example.tareamov.data.entity.TaskSubmission? = if (existingSubmission != null) {
+                val created: com.example.tareamov.data.entity.TaskSubmission? = if (existingLocalSubmission != null) {
                     // Update existing submission locally
-                    val updated = existingSubmission.copy(
+                    val updated = existingLocalSubmission.copy(
                         fileUri = cloudFileUri,
                         fileName = fileName,
                         submissionDate = System.currentTimeMillis(),
