@@ -25,7 +25,6 @@ import com.example.tareamov.service.CloudflareR2Service
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
-import com.example.tareamov.util.UriPermissionManager
 
 class CourseTopicFragment : Fragment() {
 
