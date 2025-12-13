@@ -50,7 +50,6 @@ class NotificacionesFragment : Fragment() {
         setupRecyclerView()
         setupAdminButton()
         setupNavigation()
-        setupTabs()
         
         loadNotifications()
     }
@@ -103,13 +102,9 @@ class NotificacionesFragment : Fragment() {
                     binding.notificationsRecyclerView.visibility = View.VISIBLE
                     binding.emptyStateLayout.visibility = View.GONE
                     notificationAdapter.submitList(notifications)
-                    
-                    val unreadCount = notifications.count { !it.isRead }
-                    binding.notificacionesTab.text = "Notificaciones ($unreadCount)"
                 } else {
                     binding.notificationsRecyclerView.visibility = View.GONE
                     binding.emptyStateLayout.visibility = View.VISIBLE
-                    binding.notificacionesTab.text = "Notificaciones (0)"
                 }
             } catch (e: Exception) {
                 Log.e("NotificacionesFragment", "Error loading notifications", e)
@@ -228,31 +223,6 @@ class NotificacionesFragment : Fragment() {
 
         bottomNavBinding.profileNavButton.setOnClickListener {
             findNavController().navigate(R.id.action_notificacionesFragment_to_profileFragment)
-        }
-    }
-
-    private fun setupTabs() {
-        binding.notificacionesTab.setOnClickListener {
-            updateTabSelection(true)
-        }
-
-        binding.susurrosTab.setOnClickListener {
-            updateTabSelection(false)
-        }
-    }
-
-    private fun updateTabSelection(notificacionesSelected: Boolean) {
-        val binding = _binding ?: return
-        if (notificacionesSelected) {
-            binding.notificacionesTab.setTextColor(resources.getColor(R.color.purple_500, null))
-            binding.susurrosTab.setTextColor(resources.getColor(R.color.white, null))
-            loadNotifications()
-        } else {
-            binding.notificacionesTab.setTextColor(resources.getColor(R.color.white, null))
-            binding.susurrosTab.setTextColor(resources.getColor(R.color.purple_500, null))
-            hideSkeleton()
-            binding.notificationsRecyclerView.visibility = View.GONE
-            binding.emptyStateLayout.visibility = View.VISIBLE
         }
     }
 
