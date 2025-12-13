@@ -19,7 +19,7 @@ import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.ChatMessage
 import com.example.tareamov.data.entity.FileContext
 import com.example.tareamov.data.entity.TaskSubmission
-import com.example.tareamov.service.AIAnalysisService
+
 import com.example.tareamov.service.FileAnalysisService
 import com.example.tareamov.ui.adapter.ChatMessageAdapter
 import com.example.tareamov.adapter.TaskOverlayAdapter
@@ -100,7 +100,7 @@ class ChatBotFragment : Fragment() {
 
     private lateinit var chatAdapter: ChatMessageAdapter
     private lateinit var database: AppDatabase
-    private lateinit var aiAnalysisService: AIAnalysisService
+
     private lateinit var fileAnalysisService: FileAnalysisService
     private lateinit var sessionManager: com.example.tareamov.util.SessionManager
     private lateinit var syncRepository: com.example.tareamov.data.sync.SyncRepository
@@ -337,7 +337,7 @@ class ChatBotFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         database = AppDatabase.getDatabase(requireContext())
-        aiAnalysisService = AIAnalysisService(requireContext())
+
         fileAnalysisService = FileAnalysisService(requireContext())
         sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
         syncRepository = com.example.tareamov.data.sync.SyncRepository(
@@ -365,8 +365,7 @@ class ChatBotFragment : Fragment() {
         loadMessages()
         loadFileContextFromArguments()
 
-        // Probar conexión con Ollama al iniciar
-        testOllamaConnectionOnStart()
+
         
         // Inicializar monitoreo del cursor para mostrar lista de tareas
         cursorCheckHandler.post(cursorCheckRunnable)
@@ -1549,139 +1548,9 @@ class ChatBotFragment : Fragment() {
         }
     }
 
-    private fun testOllamaConnectionOnStart() {
-        lifecycleScope.launch {
-            try {
-                // Test de conectividad con el microservicio PRIMERO
-                Log.d("ChatBotFragment", "🔗 Probando conectividad con microservicio...")
-                val microserviceAvailable = withContext(Dispatchers.IO) {
-                    try {
-                        val okHttpClient = okhttp3.OkHttpClient.Builder()
-                            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                            .build()
-                        val request = okhttp3.Request.Builder()
-                            .url(getMicroserviceBaseUrl())
-                            .build()
-                        val response = okHttpClient.newCall(request).execute()
-                        val body = response.body?.string()
-                        Log.d("ChatBotFragment", "✅ Microservicio responde: $body")
-                        response.isSuccessful
-                    } catch (e: Exception) {
-                        Log.e("ChatBotFragment", "❌ Error conectando con microservicio: ${e.message}")
-                        false
-                    }
-                }
-                
-                if (!microserviceAvailable) {
-                    // Mostrar mensaje de error en el chat
-                    val errorMessage = ChatMessage(
-                        message = "⚠️ **Advertencia de Conectividad**\n\n" +
-                                "❌ No se puede conectar con el microservicio de IA\n" +
-                                "🌐 URL: ${getMicroserviceBaseUrl()}\n" +
-                                "💡 Verifica que el microservicio esté ejecutándose\n\n" +
-                                "El chat funcionará en modo básico.",
-                        isFromUser = false,
-                        sessionId = sessionId
-                    )
-                    withContext(Dispatchers.IO) {
-                        database.chatMessageDao().insertMessage(errorMessage)
-                    }
-                } else {
-                    Log.d("ChatBotFragment", "✅ Microservicio está disponible")
-                }
 
-                Log.d("ChatBotFragment", "🔍 Iniciando prueba de conexión con Ollama...")
 
-                // Limpiar cache para forzar nuevos intentos
-                aiAnalysisService.clearEndpointCache()
 
-                // Obtener endpoints detectados para mostrar información
-                val detectedEndpoints = aiAnalysisService.getDetectedEndpoints()
-                Log.d("ChatBotFragment", "📡 Endpoints detectados: ${detectedEndpoints.size}")
-
-                val connectionResult = withContext(Dispatchers.IO) {
-                    aiAnalysisService.testOllamaConnection()
-                }
-                val (serverConnected, graniteAvailable) = connectionResult
-
-                // Ya no se agrega el mensaje de 'Asistente de IA Activado' al chat
-
-            } catch (e: Exception) {
-                Log.e("ChatBotFragment", "❌ Error probando conexión con Ollama", e)
-
-                val errorMessage = ChatMessage(
-                    message = "🤖 **Error de Conexión**\n\n" +
-                            "❌ Error al conectar con el servicio de IA\n" +
-                            "📝 Funcionando en modo básico\n" +
-                            "🔧 Revisa la configuración de red\n\n" +
-                            "Error: ${e.message}",
-                    isFromUser = false,
-                    sessionId = sessionId
-                )
-
-                withContext(Dispatchers.IO) {
-                    database.chatMessageDao().insertMessage(errorMessage)
-                }
-            }
-        }
-    }
-
-    /**
-     * Intenta generar una respuesta utilizando diferentes modelos de Ollama en caso de error
-     */
-    /**
-     * Intenta generar una respuesta con múltiples modelos de IA, fallback en caso de error
-     */
-    private suspend fun tryMultipleModels(userMessage: String, fileContext: FileContext? = null): String {
-        // Verificar primero si Granite está disponible, si no, mostrar mensaje de instalación
-        val (serverConnected, graniteAvailable) = aiAnalysisService.testOllamaConnection()
-
-        if (!serverConnected) {
-            return "⚠️ **Error de conexión con Ollama**\n\n" +
-                    "No se pudo conectar al servidor Ollama. Por favor verifica que:\n\n" +
-                    "1. El servidor Ollama esté ejecutándose\n" +
-                    "2. El puerto 11435 esté abierto y accesible\n" +
-                    "3. La conexión de red entre la app y el servidor funcione correctamente\n\n" +
-                    "Ejecuta el siguiente comando para iniciar Ollama:\n" +
-                    "```\nollama serve\n```"
-        }
-
-        if (!graniteAvailable) {
-            return "⚠️ **Modelo Granite no encontrado**\n\n" +
-                    "El modelo requerido '**granite-code**' no está instalado.\n\n" +
-                    "Por favor instálalo con el siguiente comando:\n" +
-                    "```\nollama run granite-code\n```\n\n" +
-                    "Esta aplicación está diseñada para funcionar óptimamente con el modelo Granite y no " +
-                    "utilizará otros modelos como alternativa."
-        }
-
-        // Si Granite está disponible, intentar usarlo
-        try {
-            Log.d("ChatBotFragment", "Usando el modelo Granite")
-            // Siempre analizar con el modelo, independientemente de si es una consulta sobre archivos o no
-            return aiAnalysisService.analyzeWithContext(
-                userMessage = userMessage,
-                fileContext = fileContext,
-                model = "granite-code"
-            )
-        } catch (e: Exception) {
-            Log.e("ChatBotFragment", "Error con modelo Granite: ${e.message}")
-
-            // Si el error es específicamente "modelo no encontrado", mostrar mensaje de instalación
-            if (e.message?.contains("not found") == true || e.message?.contains("404") == true) {
-                return "⚠️ **Modelo Granite no encontrado**\n\n" +
-                        "El modelo '**granite-code**' no está disponible en el servidor Ollama.\n\n" +
-                        "Por favor instálalo con el siguiente comando:\n" +
-                        "```\nollama run granite-code\n```\n\n" +
-                        "Esta aplicación está diseñada para funcionar exclusivamente con este modelo."
-            }
-
-            // Para otros errores, generar respuesta de fallback
-            return "Lo siento, tuve un problema al procesar tu mensaje. Error: ${e.message}\n\n" +
-                    generateFallbackResponse(userMessage)
-        }
-    }
 
     /**
      * Detecta si el mensaje del usuario solicita calificación y si la respuesta del bot contiene una calificación

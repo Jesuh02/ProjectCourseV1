@@ -45,8 +45,6 @@ import com.example.tareamov.data.entity.ProgresoEstudiante
 import com.example.tareamov.data.entity.VideoLike
 import com.example.tareamov.data.entity.UserVideoLike
 import com.example.tareamov.data.entity.VideoComment
-import com.example.tareamov.service.OllamaService
-import com.example.tareamov.service.MSPClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch

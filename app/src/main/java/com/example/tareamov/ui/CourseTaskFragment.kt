@@ -21,7 +21,6 @@ import com.example.tareamov.data.entity.ContentItem
 import com.example.tareamov.data.entity.Task
 import com.example.tareamov.data.entity.TaskSubmission
 import com.example.tareamov.util.SessionManager
-import com.example.tareamov.util.UriPermissionManager
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.viewmodel.CourseCreationViewModel
 import com.example.tareamov.service.CloudflareR2Service
@@ -64,7 +63,6 @@ class CourseTaskFragment : Fragment() {
     private lateinit var taskNameEditText: EditText
     private lateinit var taskDescriptionEditText: EditText
     private lateinit var contentContainer: LinearLayout
-    private lateinit var uriPermissionManager: UriPermissionManager
     private lateinit var videoManager: VideoManager
 
     // Use the shared ViewModel
@@ -83,7 +81,6 @@ class CourseTaskFragment : Fragment() {
             isTemporary = it.getBoolean("isTemporary", false)
             Log.d("CourseTaskFragment", "Received topicId: $topicId, taskId: $taskId, isTemporary: $isTemporary")
         }
-        uriPermissionManager = UriPermissionManager(requireContext())
         videoManager = VideoManager(requireContext())
 
         sessionManager = SessionManager.getInstance(requireContext())
@@ -100,13 +97,6 @@ class CourseTaskFragment : Fragment() {
         documentPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
-                    try {
-                        // Take persistable permission if possible
-                        uriPermissionManager.takePersistablePermission(uri)
-                    } catch (e: SecurityException) {
-                        Log.e("CourseTaskFragment", "Could not take persistable permission: ${e.message}")
-                    }
-
                     // Subir documento a Cloudflare R2
                     handleSelectedDocumentUri(uri)
                 }
@@ -691,14 +681,6 @@ class CourseTaskFragment : Fragment() {
     private fun handleSelectedVideoUri(uri: Uri) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                // First try to take persistable permission
-                try {
-                    uriPermissionManager.takePersistablePermission(uri)
-                    Log.d("CourseTaskFragment", "Successfully took persistable permission for: $uri")
-                } catch (e: SecurityException) {
-                    Log.w("CourseTaskFragment", "Could not take persistable permission: ${e.message}")
-                }
-
                 var finalUri: Uri = uri
                 var r2Url: String? = null
 
