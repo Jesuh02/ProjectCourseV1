@@ -794,6 +794,22 @@ class CourseTaskFragment : Fragment() {
                         syncRepo.createDefaultSubmissionsForTask(savedTaskId, courseId)
                     }
                     Log.i("CourseTaskFragment", "Created $createdCount default submissions with grade 0")
+                    
+                    // NOTIFICAR a los estudiantes inscritos sobre la nueva tarea
+                    val currentUsername = sessionManager.getUsername() ?: "Instructor"
+                    val currentUserId = sessionManager.getUserId()
+                    val currentAvatarUrl = sessionManager.getUserAvatar()
+                    
+                    Log.d("CourseTaskFragment", "📢 Notifying enrolled students about new task '$taskName' in course '$courseName'")
+                    (requireActivity() as? com.example.tareamov.MainActivity)?.syncRepository?.notifyEnrolledStudentsOfNewTaskAsync(
+                        taskId = savedTaskId,
+                        taskName = taskName,
+                        courseId = courseId,
+                        courseName = courseName ?: "Curso",
+                        creatorUserId = currentUserId,
+                        creatorUsername = currentUsername,
+                        creatorAvatarUrl = currentAvatarUrl
+                    )
                 }
                 
                 // IMPORTANTE: Recalcular progreso de todos los estudiantes después de agregar/editar tarea

@@ -858,6 +858,17 @@ object SupabaseClient {
             }
             
             // Do NOT send local 'id' to server - let Postgres sequence generate primary key
+            // Defensive check: avoid creating duplicate task submissions for same (taskId, studentId)
+            try {
+                val existing = fetchTaskSubmissionByTaskId(submission.taskId, submission.studentId)
+                if (existing != null) {
+                    android.util.Log.i("SupabaseClient", "🔎 Found existing remote submission for task=${submission.taskId} student=${submission.studentId} id=${existing.id} - skipping insert")
+                    return@withContext existing.id
+                }
+            } catch (t: Exception) {
+                android.util.Log.w("SupabaseClient", "Warning: failed to check existing submission before insert: ${t.message}")
+            }
+
             val map = mutableMapOf<String, Any?>()
             if (submission.id != null && submission.id != 0L) {
                 android.util.Log.w("SupabaseClient", "Not sending local id=${submission.id} to server for task_submissions (will let DB assign id)")
@@ -3501,6 +3512,51 @@ object SupabaseClient {
         }
     }
 
+    /**
+     * Actualiza la URL del certificado en progreso_estudiante
+     */
+    suspend fun updateCertificateUrl(
+        studentUserId: Long,
+        courseId: Long,
+        certificateUrl: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.e("SupabaseClient", "Supabase not configured, cannot update certificate URL")
+                return@withContext false
+            }
+            
+            val map = mapOf("certificado_url" to certificateUrl)
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            
+            // PATCH usando composite key en query params
+            val url = "$baseUrl/rest/v1/progreso_estudiante?usuario_estudiante=eq.$studentUserId&curso_id=eq.$courseId"
+            
+            val request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+            
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val bodyStr = resp.body?.string() ?: ""
+                    Log.e("SupabaseClient", "Failed to update certificate URL: ${resp.code} $bodyStr")
+                    return@withContext false
+                }
+                
+                Log.i("SupabaseClient", "✅ Certificate URL updated for userId=$studentUserId in course $courseId: $certificateUrl")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Exception updating certificate URL", e)
+            return@withContext false
+        }
+    }
+
     // Check if a user is enrolled in a course (exists in progreso_estudiante)
     suspend fun isUserEnrolled(userId: Long, courseId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -4379,6 +4435,50 @@ object SupabaseClient {
     }
 
     /**
+     * Count unread notifications for a specific user
+     * Returns the count of notifications where is_read = false
+     */
+    suspend fun countUnreadNotifications(userId: Long): Int = withContext(Dispatchers.IO) {
+        try {
+            val path = "notifications?user_id=eq.$userId&is_read=eq.false&select=id"
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/$path")
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Prefer", "count=exact")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "Failed to count unread notifications: ${response.code}")
+                    return@withContext 0
+                }
+                
+                // El header Content-Range contiene el count: "0-X/TOTAL"
+                val contentRange = response.header("Content-Range")
+                if (contentRange != null) {
+                    val count = contentRange.substringAfter("/").toIntOrNull() ?: 0
+                    Log.d("SupabaseClient", "🔔 Unread notifications for user $userId: $count")
+                    return@withContext count
+                }
+                
+                // Fallback: contar los elementos del array
+                val body = response.body?.string()
+                if (!body.isNullOrEmpty()) {
+                    val array = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    return@withContext array.size()
+                }
+                
+                0
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error counting unread notifications for user $userId", e)
+            0
+        }
+    }
+
+    /**
      * Fetch courses where the user has submitted tasks (as a student).
      * This uses the task_submissions table to find unique course_ids for the given student.
      */
@@ -4612,5 +4712,325 @@ object SupabaseClient {
             Log.e("SupabaseClient", "Error notifying subscribers of new course", e)
             0
         }
+    }
+
+    /**
+     * Notify all enrolled students of a course about a new task
+     * Creates notifications for each enrolled student (excluding the creator)
+     */
+    suspend fun notifyEnrolledStudentsOfNewTask(
+        courseId: Long,
+        creatorUserId: Long,
+        creatorUsername: String,
+        creatorAvatarUrl: String?,
+        taskId: Long,
+        taskName: String,
+        courseName: String
+    ): Int = withContext(Dispatchers.IO) {
+        try {
+            // Fetch all enrolled students from progreso_estudiante table
+            val progresos = fetchProgresosByCurso(courseId)
+            if (progresos.isEmpty()) {
+                Log.d("SupabaseClient", "No enrolled students to notify for course $courseId")
+                return@withContext 0
+            }
+
+            // Get student IDs, excluding the course creator
+            val studentIds = progresos.map { it.usuarioEstudiante }.filter { it != creatorUserId }
+            if (studentIds.isEmpty()) {
+                Log.d("SupabaseClient", "No students (other than creator) to notify")
+                return@withContext 0
+            }
+
+            var notifiedCount = 0
+            for (studentId in studentIds) {
+                val notification = com.example.tareamov.data.entity.Notification(
+                    userId = studentId,
+                    type = com.example.tareamov.data.entity.Notification.TYPE_NEW_TASK,
+                    title = "Nueva tarea en $courseName",
+                    message = "$creatorUsername ha creado una nueva tarea: \"$taskName\"",
+                    senderUsername = creatorUsername,
+                    senderAvatarUrl = creatorAvatarUrl,
+                    thumbnailUrl = null,
+                    relatedId = taskId,
+                    isRead = false
+                )
+                val result = insertNotification(notification)
+                if (result != null) {
+                    notifiedCount++
+                }
+            }
+
+            Log.d("SupabaseClient", "✅ Notified $notifiedCount enrolled students about new task '$taskName' in course '$courseName'")
+            return@withContext notifiedCount
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error notifying enrolled students of new task", e)
+            0
+        }
+    }
+
+    /**
+     * Notify the course creator when a student submits a task
+     * Creates a notification for the course creator
+     */
+    suspend fun notifyCourseCreatorOfSubmission(
+        taskId: Long,
+        taskName: String,
+        studentUsername: String,
+        studentAvatarUrl: String?
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Fetch task to get topic_id
+            val task = fetchTaskById(taskId)
+            if (task == null) {
+                Log.w("SupabaseClient", "Task not found for notification: $taskId")
+                return@withContext false
+            }
+
+            // Fetch topic to get course_id
+            val topicId = task.topicId
+            if (topicId == null) {
+                Log.w("SupabaseClient", "Topic ID not found for task: $taskId")
+                return@withContext false
+            }
+
+            val topic = fetchTopics().firstOrNull { it.id == topicId }
+            if (topic == null) {
+                Log.w("SupabaseClient", "Topic not found: $topicId")
+                return@withContext false
+            }
+
+            // Fetch course to get creator_user_id
+            val courseId = topic.courseId
+            val course = fetchCourseById(courseId)
+            if (course == null) {
+                Log.w("SupabaseClient", "Course not found: $courseId")
+                return@withContext false
+            }
+
+            val creatorUserId = course.creatorUserId
+            
+            // Create notification for the course creator
+            val notification = com.example.tareamov.data.entity.Notification(
+                userId = creatorUserId,
+                type = com.example.tareamov.data.entity.Notification.TYPE_TASK_SUBMISSION,
+                title = "Nueva entrega de tarea",
+                message = "$studentUsername ha entregado la tarea \"$taskName\" en tu curso \"${course.title}\"",
+                senderUsername = studentUsername,
+                senderAvatarUrl = studentAvatarUrl,
+                thumbnailUrl = course.thumbnailUri,
+                relatedId = taskId,
+                isRead = false
+            )
+
+            val result = insertNotification(notification)
+            if (result != null) {
+                Log.d("SupabaseClient", "✅ Course creator (userId=$creatorUserId) notified about submission from $studentUsername for task '$taskName'")
+                return@withContext true
+            } else {
+                Log.w("SupabaseClient", "Failed to insert submission notification")
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error notifying course creator of submission", e)
+            false
+        }
+    }
+
+    /**
+     * Fetch FCM tokens for a list of user IDs
+     * Returns a map of userId to list of FCM tokens (users may have multiple devices)
+     */
+    suspend fun fetchFcmTokensByUserIds(userIds: List<Long>): Map<Long, List<String>> = withContext(Dispatchers.IO) {
+        if (userIds.isEmpty()) return@withContext emptyMap()
+        
+        try {
+            val userIdsParam = userIds.joinToString(",") { "($it)" }
+            val url = "$baseUrl/rest/v1/user_fcm_tokens?user_id=in.$userIdsParam&select=user_id,token"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                if (!response.isSuccessful || body.isNullOrEmpty()) {
+                    Log.e("SupabaseClient", "Error fetching FCM tokens: ${response.code}")
+                    return@withContext emptyMap()
+                }
+
+                val tokenMap = mutableMapOf<Long, MutableList<String>>()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                for (elem in jsonArray) {
+                    val obj = elem.asJsonObject
+                    val userId = obj.get("user_id")?.asLong ?: continue
+                    val token = obj.get("token")?.asString ?: continue
+                    tokenMap.getOrPut(userId) { mutableListOf() }.add(token)
+                }
+                Log.d("SupabaseClient", "✅ Fetched FCM tokens for ${tokenMap.size} users")
+                return@withContext tokenMap
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching FCM tokens", e)
+            emptyMap()
+        }
+    }
+
+    /**
+     * Send push notification to subscribers when a new course is created
+     * Uses FCM HTTP v1 API via a server-side function or direct call
+     */
+    suspend fun sendPushNotificationsToSubscribers(
+        creatorUserId: Long,
+        creatorUsername: String,
+        courseId: Long,
+        courseTitle: String,
+        courseThumbnailUrl: String?
+    ): Int = withContext(Dispatchers.IO) {
+        try {
+            // 1. Fetch subscriber IDs
+            val subscriberIds = fetchSubscriberIdsByCreatorId(creatorUserId)
+            if (subscriberIds.isEmpty()) {
+                Log.d("SupabaseClient", "No subscribers to send push notifications to")
+                return@withContext 0
+            }
+
+            // 2. Fetch FCM tokens for subscribers
+            val tokenMap = fetchFcmTokensByUserIds(subscriberIds)
+            if (tokenMap.isEmpty()) {
+                Log.d("SupabaseClient", "No FCM tokens found for subscribers")
+                return@withContext 0
+            }
+
+            // 3. Collect all tokens
+            val allTokens = tokenMap.values.flatten()
+            Log.d("SupabaseClient", "Found ${allTokens.size} FCM tokens for ${tokenMap.size} subscribers")
+
+            // 4. Send push notifications using FCM legacy HTTP API
+            var sentCount = 0
+            for (token in allTokens) {
+                val success = sendFcmPushNotification(
+                    token = token,
+                    title = "📚 Nuevo curso de $creatorUsername",
+                    body = "¡$creatorUsername ha publicado: \"$courseTitle\"!",
+                    data = mapOf(
+                        "type" to "new_course",
+                        "course_id" to courseId.toString(),
+                        "creator_username" to creatorUsername,
+                        "thumbnail_url" to (courseThumbnailUrl ?: "")
+                    )
+                )
+                if (success) sentCount++
+            }
+
+            Log.d("SupabaseClient", "✅ Sent $sentCount push notifications for new course '$courseTitle'")
+            return@withContext sentCount
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error sending push notifications to subscribers", e)
+            0
+        }
+    }
+
+    /**
+     * Send a single FCM push notification using legacy HTTP API
+     * Note: For production, consider using FCM HTTP v1 API with OAuth2
+     */
+    private suspend fun sendFcmPushNotification(
+        token: String,
+        title: String,
+        body: String,
+        data: Map<String, String> = emptyMap()
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // FCM Legacy HTTP API endpoint
+            val fcmUrl = "https://fcm.googleapis.com/fcm/send"
+            
+            // FCM Server Key - should be stored securely
+            // For now, we'll call a Supabase Edge Function that handles FCM sending
+            // This is more secure as it keeps the server key on the server side
+            
+            val payload = mapOf(
+                "to" to token,
+                "notification" to mapOf(
+                    "title" to title,
+                    "body" to body,
+                    "sound" to "default",
+                    "click_action" to "OPEN_COURSE_DETAIL"
+                ),
+                "data" to data,
+                "priority" to "high"
+            )
+
+            // Call Supabase Edge Function to send FCM notification
+            val edgeFunctionUrl = "$baseUrl/functions/v1/send-fcm-notification"
+            val requestBody = gson.toJson(payload).toRequestBody(jsonMedia)
+            val key = effectiveApiKey()
+
+            val request = Request.Builder()
+                .url(edgeFunctionUrl)
+                .post(requestBody)
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Content-Type", "application/json")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    Log.d("SupabaseClient", "✅ FCM notification sent to token: ${token.take(20)}...")
+                    return@withContext true
+                } else {
+                    val errorBody = response.body?.string()
+                    Log.e("SupabaseClient", "Error sending FCM notification: ${response.code} - $errorBody")
+                    
+                    // If edge function doesn't exist, try direct FCM call (requires server key in client - not recommended for production)
+                    if (response.code == 404) {
+                        Log.w("SupabaseClient", "Edge function not found, FCM notification not sent")
+                    }
+                    return@withContext false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Exception sending FCM notification", e)
+            false
+        }
+    }
+
+    /**
+     * Combined method: Notify subscribers with both in-app notifications AND push notifications
+     */
+    suspend fun notifySubscribersOfNewCourseWithPush(
+        creatorUserId: Long,
+        creatorUsername: String,
+        creatorAvatarUrl: String?,
+        courseId: Long,
+        courseTitle: String,
+        courseThumbnailUrl: String?
+    ): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        // Send in-app notifications
+        val inAppCount = notifySubscribersOfNewCourse(
+            creatorUserId = creatorUserId,
+            creatorUsername = creatorUsername,
+            creatorAvatarUrl = creatorAvatarUrl,
+            courseId = courseId,
+            courseTitle = courseTitle,
+            courseThumbnailUrl = courseThumbnailUrl
+        )
+
+        // Send push notifications
+        val pushCount = sendPushNotificationsToSubscribers(
+            creatorUserId = creatorUserId,
+            creatorUsername = creatorUsername,
+            courseId = courseId,
+            courseTitle = courseTitle,
+            courseThumbnailUrl = courseThumbnailUrl
+        )
+
+        Log.d("SupabaseClient", "✅ Total notifications: $inAppCount in-app, $pushCount push")
+        return@withContext Pair(inAppCount, pushCount)
     }
 }

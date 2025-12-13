@@ -136,6 +136,9 @@
         <action
             android:id="@+id/action_notificacionesFragment_to_videoDetailsFragment"
             app:destination="@id/videoDetailsFragment" />
+        <action
+            android:id="@+id/action_notificacionesFragment_to_taskSubmissionFragment"
+            app:destination="@id/taskSubmissionFragment" />
     </fragment>
 
     <!-- Single registerFragment definition -->

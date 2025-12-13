@@ -32,6 +32,7 @@ data class ProgresoEstudiante(
     val estado: String? = null, // "Ganado" o "Perdido"
     val ultimaCalculadaEn: Long = System.currentTimeMillis(),
     val certificadoEmitidoEn: Long? = null,
+    val certificadoUrl: String? = null, // URL del certificado en Cloudflare R2
     val creadoEn: Long = System.currentTimeMillis()
 ) {
     /**

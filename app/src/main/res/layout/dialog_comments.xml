@@ -4,37 +4,40 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@drawable/bg_rounded_card"
-    android:padding="16dp"
-    android:minHeight="400dp"
-    android:maxHeight="600dp">
+    android:background="@drawable/bg_comments_bottom_sheet"
+    android:minHeight="450dp"
+    android:maxHeight="650dp">
+
+    <!-- Handle Bar -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="16dp"
+        android:background="@drawable/bg_handle_bar" />
 
     <!-- Header -->
-    <RelativeLayout
+    <TextView
+        android:id="@+id/commentsTitleText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="12dp">
+        android:gravity="center"
+        android:text="Comentarios"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="@color/white"
+        android:layout_marginBottom="16dp" />
 
-        <TextView
-            android:id="@+id/commentsTitleText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_centerHorizontal="true"
-            android:text="Comentarios"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/white" />
-
-        <ImageButton
-            android:id="@+id/closeCommentsButton"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:layout_alignParentEnd="true"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_close"
-            android:contentDescription="Cerrar"
-            app:tint="@color/white" />
-    </RelativeLayout>
+    <!-- Close Button (hidden by default, swipe down to close) -->
+    <ImageButton
+        android:id="@+id/closeCommentsButton"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        android:background="@null"
+        android:src="@drawable/ic_close"
+        android:contentDescription="Cerrar" />
 
     <!-- Skeleton Loading State -->
     <LinearLayout
@@ -43,6 +46,8 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
         android:visibility="visible">
         
         <include layout="@layout/item_comment_skeleton" />
@@ -60,27 +65,51 @@
         android:layout_weight="1"
         android:clipToPadding="false"
         android:paddingBottom="8dp"
+        android:overScrollMode="never"
         android:visibility="gone" />
 
     <!-- Empty State -->
-    <TextView
+    <LinearLayout
         android:id="@+id/emptyCommentsText"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:gravity="center"
-        android:text="No hay comentarios aún.\n¡Sé el primero en comentar!"
-        android:textColor="#888888"
-        android:textSize="14sp"
-        android:visibility="gone" />
+        android:orientation="vertical"
+        android:visibility="gone">
+        
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="No hay comentarios aún"
+            android:textColor="#888888"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+            
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="¡Sé el primero en comentar!"
+            android:textColor="#666666"
+            android:textSize="13sp" />
+    </LinearLayout>
 
-    <!-- Reaction Bar -->
+    <!-- Divider -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="#333333" />
+
+    <!-- Reaction Emoji Bar -->
     <HorizontalScrollView
         android:id="@+id/emojiScrollView"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:scrollbars="none"
-        android:layout_marginBottom="12dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="8dp"
+        android:background="#1A1A1A"
         android:fadingEdge="horizontal"
         android:requiresFadingEdge="horizontal">
         
@@ -88,17 +117,105 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp">
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:gravity="center_vertical">
             
-            <TextView android:text="❤️" android:textSize="22sp" android:padding="10dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="?attr/selectableItemBackgroundBorderless"/>
-            <TextView android:text="🙌" android:textSize="22sp" android:padding="10dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="?attr/selectableItemBackgroundBorderless"/>
-            <TextView android:text="🔥" android:textSize="22sp" android:padding="10dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="?attr/selectableItemBackgroundBorderless"/>
-            <TextView android:text="👏" android:textSize="22sp" android:padding="10dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="?attr/selectableItemBackgroundBorderless"/>
-            <TextView android:text="😢" android:textSize="22sp" android:padding="10dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="?attr/selectableItemBackgroundBorderless"/>
-            <TextView android:text="😍" android:textSize="22sp" android:padding="10dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="?attr/selectableItemBackgroundBorderless"/>
-            <TextView android:text="😮" android:textSize="22sp" android:padding="10dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="?attr/selectableItemBackgroundBorderless"/>
-            <TextView android:text="😂" android:textSize="22sp" android:padding="10dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="?attr/selectableItemBackgroundBorderless"/>
+            <TextView 
+                android:id="@+id/emoji_heart"
+                android:text="❤️" 
+                android:textSize="26sp" 
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:layout_width="wrap_content" 
+                android:layout_height="wrap_content" 
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+            
+            <TextView 
+                android:id="@+id/emoji_hands"
+                android:text="🙌" 
+                android:textSize="26sp" 
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:layout_width="wrap_content" 
+                android:layout_height="wrap_content" 
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+            
+            <TextView 
+                android:id="@+id/emoji_fire"
+                android:text="🔥" 
+                android:textSize="26sp" 
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:layout_width="wrap_content" 
+                android:layout_height="wrap_content" 
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+            
+            <TextView 
+                android:id="@+id/emoji_clap"
+                android:text="👏" 
+                android:textSize="26sp" 
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:layout_width="wrap_content" 
+                android:layout_height="wrap_content" 
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+            
+            <TextView 
+                android:id="@+id/emoji_sad"
+                android:text="😢" 
+                android:textSize="26sp" 
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:layout_width="wrap_content" 
+                android:layout_height="wrap_content" 
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+            
+            <TextView 
+                android:id="@+id/emoji_love"
+                android:text="😍" 
+                android:textSize="26sp" 
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:layout_width="wrap_content" 
+                android:layout_height="wrap_content" 
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+            
+            <TextView 
+                android:id="@+id/emoji_surprised"
+                android:text="😮" 
+                android:textSize="26sp" 
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:layout_width="wrap_content" 
+                android:layout_height="wrap_content" 
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+            
+            <TextView 
+                android:id="@+id/emoji_laugh"
+                android:text="😂" 
+                android:textSize="26sp" 
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:layout_width="wrap_content" 
+                android:layout_height="wrap_content" 
+                android:background="?attr/selectableItemBackgroundBorderless"/>
             
         </LinearLayout>
     </HorizontalScrollView>
@@ -109,26 +226,31 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingTop="4dp">
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="16dp"
+        android:background="#1A1A1A">
 
         <de.hdodenhof.circleimageview.CircleImageView
             android:id="@+id/currentUserAvatar"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:src="@drawable/ic_profile"
-            android:layout_marginEnd="8dp" />
+            app:civ_border_width="0dp" />
 
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:layout_marginStart="12dp"
             android:orientation="horizontal"
-            android:background="@drawable/bg_rounded_input"
+            android:background="@drawable/bg_comment_input"
             android:gravity="center_vertical"
-            android:paddingStart="12dp"
-            android:paddingEnd="8dp"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp">
+            android:paddingStart="16dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp">
 
             <EditText
                 android:id="@+id/commentInput"
@@ -136,24 +258,35 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:background="@null"
-                android:hint="¿Qué opinas sobre esto?"
-                android:textColorHint="#888888"
+                android:hint="Agrega un comentario..."
+                android:textColorHint="#666666"
                 android:textColor="@color/white"
                 android:textSize="14sp"
                 android:maxLines="3"
-                android:inputType="textMultiLine" />
+                android:inputType="textMultiLine|textCapSentences" />
                 
-             <ImageButton
-                android:id="@+id/sendCommentButton"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_send_minimal"
-                android:contentDescription="Enviar"
+            <ImageButton
+                android:id="@+id/emojiButton"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:layout_marginStart="8dp"
-                android:visibility="gone"/>
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_emoji_smile"
+                android:contentDescription="Emojis"
+                app:tint="#888888" />
 
         </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/sendCommentButton"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_send_minimal"
+            android:contentDescription="Enviar"
+            app:tint="#888888"
+            android:visibility="gone" />
 
     </LinearLayout>
 

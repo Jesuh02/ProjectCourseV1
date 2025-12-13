@@ -160,6 +160,52 @@ class NotificacionesFragment : Fragment() {
                     }
                 }
             }
+            Notification.TYPE_NEW_TASK -> {
+                Log.d("Notificaciones", "New task notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { taskId ->
+                    // Navigate to task submissions to see/submit the new task
+                    val bundle = Bundle().apply {
+                        putLong("taskId", taskId)
+                        putString("taskName", notification.message.substringAfter("\"").substringBefore("\""))
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to task submissions", e)
+                    }
+                }
+            }
+            Notification.TYPE_TASK_SUBMISSION -> {
+                Log.d("Notificaciones", "Task submission notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { taskId ->
+                    // Navigate to task submissions to see the submission (for course creator)
+                    val bundle = Bundle().apply {
+                        putLong("taskId", taskId)
+                        putString("taskName", notification.message.substringAfter("\"").substringBefore("\""))
+                        putString("courseCreatorUsername", sessionManager.getUsername())
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to task submissions", e)
+                    }
+                }
+            }
+            Notification.TYPE_TASK_GRADED -> {
+                Log.d("Notificaciones", "Task graded notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { taskId ->
+                    // Navigate to task submissions for the student to see their grade
+                    val bundle = Bundle().apply {
+                        putLong("taskId", taskId)
+                        putString("taskName", notification.title.substringAfter("en ").trim())
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to task submissions", e)
+                    }
+                }
+            }
         }
     }
 

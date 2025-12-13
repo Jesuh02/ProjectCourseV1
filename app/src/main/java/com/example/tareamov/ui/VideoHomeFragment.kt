@@ -69,6 +69,7 @@ class VideoHomeFragment : Fragment() {
     private lateinit var activityIconImageView: ImageView
     private lateinit var profileIconImageView: ImageView
     private lateinit var databaseIconImageView: ImageView // New database icon for admins
+    private var notificationBadge: TextView? = null // Badge de notificaciones
 
     private var isLiked = false
     private var isMuted = false
@@ -164,9 +165,13 @@ class VideoHomeFragment : Fragment() {
         activityIconImageView = view.findViewById(R.id.activityIconImageView)
         profileIconImageView = view.findViewById(R.id.profileIconImageView)
         databaseIconImageView = view.findViewById(R.id.databaseIconImageView) // Initialize new icon
+        notificationBadge = view.findViewById(R.id.notificationBadge) // Badge de notificaciones
 
         // Setup initial colors for bottom navigation icons
         setupBottomNavigationIconColors()
+        
+        // Actualizar badge de notificaciones
+        updateNotificationBadge()
         
         // Setup search functionality
         setupSearchBar(view)
@@ -497,6 +502,37 @@ class VideoHomeFragment : Fragment() {
         exploreIconImageView.setColorFilter(inactiveColor, PorterDuff.Mode.SRC_IN)
         activityIconImageView.setColorFilter(inactiveColor, PorterDuff.Mode.SRC_IN)
         profileIconImageView.setColorFilter(inactiveColor, PorterDuff.Mode.SRC_IN)
+    }
+
+    /**
+     * Actualiza el badge de notificaciones no leídas
+     */
+    private fun updateNotificationBadge() {
+        val userId = sessionManager.getUserId()
+        if (userId == -1L) {
+            notificationBadge?.visibility = View.GONE
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                val unreadCount = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.countUnreadNotifications(userId)
+                }
+                
+                notificationBadge?.let { badge ->
+                    if (unreadCount > 0) {
+                        badge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
+                        badge.visibility = View.VISIBLE
+                    } else {
+                        badge.visibility = View.GONE
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("VideoHomeFragment", "Error updating notification badge", e)
+                notificationBadge?.visibility = View.GONE
+            }
+        }
     }
 
     private fun setupVideoViewPager(view: View) {
@@ -1522,17 +1558,29 @@ class VideoHomeFragment : Fragment() {
     private fun showCommentsDialog(videoData: com.example.tareamov.data.entity.VideoData) {
         val context = context ?: return
         
+        // Use BottomSheetDialog for Instagram/TikTok style from bottom
+        val bottomSheetDialog = com.google.android.material.bottomsheet.BottomSheetDialog(context, R.style.Theme_TareaMov_BottomSheet)
         val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_comments, null)
-        val dialog = android.app.AlertDialog.Builder(context, R.style.Theme_TareaMov_Dialog)
-            .setView(dialogView)
-            .create()
+        bottomSheetDialog.setContentView(dialogView)
+        
+        // Configure bottom sheet behavior
+        val bottomSheet = bottomSheetDialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+        bottomSheet?.let {
+            val behavior = com.google.android.material.bottomsheet.BottomSheetBehavior.from(it)
+            behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+            behavior.skipCollapsed = true
+            behavior.isDraggable = true
+            // Set peek height to 60% of screen height
+            behavior.peekHeight = (resources.displayMetrics.heightPixels * 0.6).toInt()
+            it.setBackgroundResource(android.R.color.transparent)
+        }
         
         val commentsRecyclerView = dialogView.findViewById<RecyclerView>(R.id.commentsRecyclerView)
         val commentInput = dialogView.findViewById<EditText>(R.id.commentInput)
         val sendButton = dialogView.findViewById<ImageButton>(R.id.sendCommentButton)
         val closeButton = dialogView.findViewById<ImageButton>(R.id.closeCommentsButton)
         val titleText = dialogView.findViewById<TextView>(R.id.commentsTitleText)
-        val emptyText = dialogView.findViewById<TextView>(R.id.emptyCommentsText)
+        val emptyText = dialogView.findViewById<View>(R.id.emptyCommentsText)
         val skeletonContainer = dialogView.findViewById<LinearLayout>(R.id.skeletonContainer)
         val currentUserAvatar = dialogView.findViewById<de.hdodenhof.circleimageview.CircleImageView>(R.id.currentUserAvatar)
         
@@ -1621,7 +1669,6 @@ class VideoHomeFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e("VideoHomeFragment", "Error loading comments", e)
                 skeletonContainer?.visibility = View.GONE
-                emptyText?.text = "Error al cargar comentarios"
                 emptyText?.visibility = View.VISIBLE
             }
         }
@@ -1656,17 +1703,10 @@ class VideoHomeFragment : Fragment() {
         }
         
         closeButton?.setOnClickListener {
-            dialog.dismiss()
+            bottomSheetDialog.dismiss()
         }
         
-        dialog.show()
-        
-        // Fix dialog width to be 95% of screen width and transparent background
-        dialog.window?.setLayout(
-            (resources.displayMetrics.widthPixels * 0.95).toInt(),
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        bottomSheetDialog.show()
     }
     
     /**
