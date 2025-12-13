@@ -823,6 +823,16 @@ object SupabaseClient {
                 return@withContext null
             }
             
+            // ⚠️ VERIFICAR SI YA EXISTE UNA ENTREGA PARA ESTE ESTUDIANTE Y TAREA
+            // Esto evita duplicados en la base de datos
+            val existingSubmissions = fetchTaskSubmissionsByTaskAndStudentId(submission.taskId, submission.studentId)
+            if (existingSubmissions.isNotEmpty()) {
+                android.util.Log.w("SupabaseClient", "⚠️ Ya existe una entrega para taskId=${submission.taskId} y studentId=${submission.studentId}. Retornando ID existente.")
+                val existingId = existingSubmissions.first().id
+                android.util.Log.i("SupabaseClient", "📋 Usando entrega existente con id=$existingId")
+                return@withContext existingId
+            }
+            
             // Do NOT send local 'id' to server - let Postgres sequence generate primary key
             val map = mutableMapOf<String, Any?>()
             if (submission.id != null && submission.id != 0L) {

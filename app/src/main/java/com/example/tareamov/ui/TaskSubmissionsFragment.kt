@@ -461,9 +461,12 @@ class TaskSubmissionsFragment : Fragment() {
                     else
                         "Tarea entregada, pendiente de calificación"
 
-                    // Disable submit button
+                    // Disable submit buttons (file and GitHub)
                     view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
                     view?.findViewById<Button>(R.id.submitFileButton)?.text = "Ya enviado"
+                    view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = false
+                    view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Ya enviado"
+                    view?.findViewById<Button>(R.id.selectFileButton)?.isEnabled = false
                 } else {
                     // User hasn't submitted yet
                     hasUserSubmitted = false
@@ -501,11 +504,39 @@ class TaskSubmissionsFragment : Fragment() {
                         } catch (e: Exception) {
                             android.util.Log.w("TaskSubmissionsFragment", "Failed to serialize sample submissions to JSON", e)
                         }
-                        if (isCourseCreator) all
-                        else {
-                            val userId = sessionManager.getUserId()
-                            if (userId != -1L) all.filter { it.studentId == userId } else emptyList()
+                        
+                        // Obtener el ID del creador del curso para excluirlo de la lista
+                        val creatorUserId = try {
+                            if (!courseCreatorUsername.isNullOrBlank()) {
+                                SupabaseClient.getUserIdFromUsername(courseCreatorUsername!!)
+                            } else null
+                        } catch (e: Exception) {
+                            android.util.Log.w("TaskSubmissionsFragment", "Could not get creator user ID", e)
+                            null
                         }
+                        
+                        // Filtrar: excluir al creador del curso Y eliminar duplicados por studentId
+                        val filtered = if (isCourseCreator) {
+                            // Para el creador: mostrar todas las entregas EXCEPTO las propias
+                            // Y eliminar duplicados (quedarse con la más reciente por studentId)
+                            all.filter { submission -> 
+                                creatorUserId == null || submission.studentId != creatorUserId 
+                            }.groupBy { it.studentId }.mapValues { entry ->
+                                // Quedarse con la entrega más reciente de cada estudiante
+                                entry.value.maxByOrNull { it.submissionDate ?: 0L } ?: entry.value.first()
+                            }.values.toList()
+                        } else {
+                            val userId = sessionManager.getUserId()
+                            if (userId != -1L) {
+                                // Para estudiantes: mostrar solo su propia entrega más reciente
+                                all.filter { it.studentId == userId }
+                                    .maxByOrNull { it.submissionDate ?: 0L }
+                                    ?.let { listOf(it) } ?: emptyList()
+                            } else emptyList()
+                        }
+                        
+                        android.util.Log.d("TaskSubmissionsFragment", "After filtering: ${filtered.size} submissions (creatorId=$creatorUserId excluded)")
+                        filtered
                     } catch (e: Exception) {
                         Log.e("TaskSubmissionsFragment", "Error fetching submissions from Supabase", e)
                         emptyList<com.example.tareamov.data.entity.TaskSubmission>()
@@ -754,6 +785,13 @@ class TaskSubmissionsFragment : Fragment() {
             return
         }
 
+        // RESTRICCIÓN: Verificar si el usuario ya entregó esta tarea
+        if (hasUserSubmitted) {
+            Toast.makeText(context, "⚠️ Ya has entregado esta tarea. Solo se permite una entrega por tarea.", Toast.LENGTH_LONG).show()
+            Log.w("TaskSubmissionsFragment", "🚫 Intento de entrega duplicada bloqueado para userId=$currentUserId, taskId=$taskId")
+            return
+        }
+
         // Usar getFileName() para obtener el nombre real del archivo con extensión
         val fileName = getFileName(uri) ?: uri.lastPathSegment ?: "archivo_tarea"
         Log.d("TaskSubmissionsFragment", "📎 Nombre del archivo obtenido: $fileName")
@@ -786,6 +824,29 @@ class TaskSubmissionsFragment : Fragment() {
         
         CoroutineScope(Dispatchers.Main).launch {
             try {
+                // VERIFICACIÓN ADICIONAL EN SUPABASE: Asegurar que no existe entrega duplicada
+                val existingSubmission = withContext(Dispatchers.IO) {
+                    try {
+                        SupabaseClient.fetchTaskSubmissions().firstOrNull { 
+                            it.taskId == taskId && it.studentId == currentUserId 
+                        }
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error verificando entrega existente", e)
+                        null
+                    }
+                }
+                
+                if (existingSubmission != null) {
+                    Log.w("TaskSubmissionsFragment", "🚫 Entrega duplicada detectada en Supabase - submissionId=${existingSubmission.id}")
+                    Toast.makeText(context, "⚠️ Ya existe una entrega registrada para esta tarea. No se permiten entregas duplicadas.", Toast.LENGTH_LONG).show()
+                    progressSection.visibility = View.GONE
+                    hasUserSubmitted = true
+                    userSubmission = existingSubmission
+                    view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
+                    view?.findViewById<Button>(R.id.submitFileButton)?.text = "Ya enviado"
+                    return@launch
+                }
+                
                 // PASO 0: Subir archivo a Cloudflare R2 si está configurado
                 var cloudFileUri = finalUri.toString()
                 val currentUsername = sessionManager.getUsername() ?: "unknown"
@@ -1875,6 +1936,13 @@ class TaskSubmissionsFragment : Fragment() {
             return
         }
         
+        // RESTRICCIÓN: Verificar si el usuario ya entregó esta tarea
+        if (hasUserSubmitted) {
+            Toast.makeText(context, "⚠️ Ya has entregado esta tarea. Solo se permite una entrega por tarea.", Toast.LENGTH_LONG).show()
+            Log.w("TaskSubmissionsFragment", "🚫 Intento de entrega duplicada de GitHub bloqueado para userId=$currentUserId, taskId=$taskId")
+            return
+        }
+        
         // Mostrar progreso
         progressSection.visibility = View.VISIBLE
         progressBar.isIndeterminate = true
@@ -1884,6 +1952,29 @@ class TaskSubmissionsFragment : Fragment() {
         
         CoroutineScope(Dispatchers.Main).launch {
             try {
+                // VERIFICACIÓN ADICIONAL EN SUPABASE: Asegurar que no existe entrega duplicada
+                val existingSubmission = withContext(Dispatchers.IO) {
+                    try {
+                        SupabaseClient.fetchTaskSubmissions().firstOrNull { 
+                            it.taskId == taskId && it.studentId == currentUserId 
+                        }
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error verificando entrega existente de GitHub", e)
+                        null
+                    }
+                }
+                
+                if (existingSubmission != null) {
+                    Log.w("TaskSubmissionsFragment", "🚫 Entrega duplicada de GitHub detectada - submissionId=${existingSubmission.id}")
+                    Toast.makeText(context, "⚠️ Ya existe una entrega registrada para esta tarea. No se permiten entregas duplicadas.", Toast.LENGTH_LONG).show()
+                    progressSection.visibility = View.GONE
+                    hasUserSubmitted = true
+                    userSubmission = existingSubmission
+                    view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = false
+                    view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Ya enviado"
+                    return@launch
+                }
+                
                 // Crear la entrega de tarea con la URL
                 val fileName = "github_${extractRepoName(repoUrl)}"
                 val submission = TaskSubmission(

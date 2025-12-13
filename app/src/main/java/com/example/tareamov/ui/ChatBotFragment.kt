@@ -1394,6 +1394,14 @@ class ChatBotFragment : Fragment() {
             try {
                 val response = withContext(Dispatchers.IO) {
                     try {
+                        // Obtener información de la submission para que el backend pueda buscar el contenido desde R2
+                        val currentSubmissionId = currentFileContext?.submissionId
+                        // 🔥 IMPORTANTE: Extraer el taskId real del contexto del archivo
+                        // El submissionId en FileContext está asociado a un task_id en task_submissions
+                        // Si no tenemos submissionId, podemos intentar buscar por userId
+                        val currentTaskIdForRequest = currentSubmissionId // El backend usará submissionId para encontrar taskId
+                        val currentStudentId = sessionManager.getUserId()
+                        
                         val body = com.example.tareamov.network.MicroservicioPromptRequest(
                             prompt = messageText,
                             ollamaUrl = getOllamaUrl(),
@@ -1402,7 +1410,12 @@ class ChatBotFragment : Fragment() {
                             fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else "",
                             jsonContent = if (effectiveJsonContent.isNotEmpty()) effectiveJsonContent else null,
                             metadata = if (effectiveMetadata.isNotEmpty()) effectiveMetadata else null,
-                            userId = sessionManager.getUserId()
+                            userId = sessionManager.getUserId(),
+                            // 🔥 NUEVO: Enviar información para que el backend obtenga contenido desde R2/Supabase
+                            submissionId = currentSubmissionId,
+                            taskId = currentTaskIdForRequest,
+                            studentId = currentStudentId,
+                            fileUri = null // El backend lo obtiene de task_submissions si es necesario
                         )   
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📤 ENVIANDO AL MICROSERVICIO:")
@@ -1413,6 +1426,9 @@ class ChatBotFragment : Fragment() {
                         Log.d("ChatBotFragment", "fileContent (archivo): ${effectiveFileContent.length} caracteres")
                         Log.d("ChatBotFragment", "jsonContent (JSON estructurado): ${effectiveJsonContent.length} caracteres")
                         Log.d("ChatBotFragment", "metadata (metadatos): ${effectiveMetadata.length} caracteres")
+                        Log.d("ChatBotFragment", "submissionId: $currentSubmissionId")
+                        Log.d("ChatBotFragment", "taskId: $currentTaskIdForRequest")
+                        Log.d("ChatBotFragment", "studentId: $currentStudentId")
                         Log.d("ChatBotFragment", "==============================================")
                         
                         // Usar suspend function en lugar de .execute() para mejor manejo de timeouts
@@ -1430,7 +1446,31 @@ class ChatBotFragment : Fragment() {
                         Log.d("ChatBotFragment", "==============================================")
                         
                         // Devolver la respuesta COMPLETA tal como la envía el modelo, incluyendo formato
-                        res.respuesta_texto ?: "El modelo no devolvió una respuesta válida"
+                        // Si la respuesta es nula y el fileContent está vacío, dar mensaje específico
+                        if (res.respuesta_texto.isNullOrBlank()) {
+                            // Verificar si el contenido del archivo estaba vacío
+                            if (effectiveFileContent.isBlank() || effectiveFileContent.length < 50) {
+                                """📊 **CALIFICACIÓN: 0/100**
+
+❌ **RESULTADO:** No aprobado
+
+⚠️ **MOTIVO:** La entrega no contiene contenido que pueda ser evaluado.
+
+El archivo enviado está vacío o no se pudo leer su contenido.
+
+💡 **PARA MEJORAR TU CALIFICACIÓN:**
+1. Asegúrate de que el archivo contenga tu trabajo completo
+2. Verifica que el contenido sea visible y legible
+3. Si usaste un formato especial, conviértelo a PDF o TXT
+4. Vuelve a subir la tarea con el contenido completo
+
+📝 **Feedback:** Una entrega vacía siempre recibe nota 0."""
+                            } else {
+                                "Hubo un problema al procesar tu solicitud. Por favor, intenta nuevamente."
+                            }
+                        } else {
+                            res.respuesta_texto
+                        }
                     } catch (e: HttpException) {
                         Log.e("ChatBotFragment", "❌ HttpException: ${e.message()}")
                         Log.e("ChatBotFragment", "❌ HTTP Code: ${e.code()}")
