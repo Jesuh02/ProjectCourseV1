@@ -18,6 +18,19 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- Loading Spinner -->
+    <ProgressBar
+        android:id="@+id/loadingSpinner"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:indeterminate="true"
+        android:indeterminateTint="#FFFFFF"
+        android:visibility="visible"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <!-- Tap surface to toggle controls -->
     <FrameLayout
         android:id="@+id/controlsOverlay"

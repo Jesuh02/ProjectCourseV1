@@ -41,6 +41,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private lateinit var skipBackIcon: ImageView
     private lateinit var skipForwardIcon: ImageView
     private lateinit var btnFloatingMode: ImageView
+    private lateinit var loadingSpinner: android.widget.ProgressBar
 
     private var mediaPlayer: MediaPlayer? = null
     private var mediaPlayerPrepared: Boolean = false
@@ -82,7 +83,8 @@ class VideoPlayerActivity : AppCompatActivity() {
         titleText = findViewById(R.id.titleText)
         skipBackIcon = findViewById(R.id.skipBackIcon)
         skipForwardIcon = findViewById(R.id.skipForwardIcon)
-    btnFloatingMode = findViewById(R.id.btn_floating_mode)
+        btnFloatingMode = findViewById(R.id.btn_floating_mode)
+        loadingSpinner = findViewById(R.id.loadingSpinner)
 
         // uriPermissionManager = UriPermissionManager(this)
 
@@ -143,6 +145,9 @@ class VideoPlayerActivity : AppCompatActivity() {
 
         Log.d("VideoPlayerActivity", "Final processed URI: $uri")
 
+        // Mostrar spinner mientras se carga el video
+        loadingSpinner.visibility = View.VISIBLE
+
         videoView.setVideoURI(uri)
         videoView.setOnPreparedListener { mp ->
             mediaPlayer = mp
@@ -150,6 +155,9 @@ class VideoPlayerActivity : AppCompatActivity() {
             mp.isLooping = true
             totalTime.text = formatTime(mp.duration)
             seekBar.max = mp.duration
+
+            // Ocultar spinner cuando el video esté listo
+            loadingSpinner.visibility = View.GONE
 
             // Ajuste explícito de aspecto para modo visualización (sin tocar)
             try {
@@ -193,11 +201,32 @@ class VideoPlayerActivity : AppCompatActivity() {
                     }
                 }
             } catch (_: Exception) { }
+
+            // Listener para buffering (muestra spinner mientras se carga más contenido)
+            try {
+                mp.setOnInfoListener { _, what, _ ->
+                    when (what) {
+                        MediaPlayer.MEDIA_INFO_BUFFERING_START -> {
+                            // Video está buffeando, mostrar spinner
+                            loadingSpinner.visibility = View.VISIBLE
+                            Log.d("VideoPlayerActivity", "Buffering started")
+                        }
+                        MediaPlayer.MEDIA_INFO_BUFFERING_END -> {
+                            // Buffering terminado, ocultar spinner
+                            loadingSpinner.visibility = View.GONE
+                            Log.d("VideoPlayerActivity", "Buffering ended")
+                        }
+                    }
+                    false
+                }
+            } catch (_: Exception) { }
         }
 
         videoView.setOnErrorListener { _, what, extra ->
             Log.e("VideoPlayerActivity", "Error playing video: what=$what, extra=$extra")
             mediaPlayerPrepared = false
+            // Ocultar spinner si hay error
+            loadingSpinner.visibility = View.GONE
             Toast.makeText(this, "Error al reproducir el video", Toast.LENGTH_SHORT).show()
             finish()
             true

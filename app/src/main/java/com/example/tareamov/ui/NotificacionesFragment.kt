@@ -65,16 +65,39 @@ class NotificacionesFragment : Fragment() {
         }
     }
 
+    private fun showSkeleton() {
+        _binding?.let { binding ->
+            binding.skeletonLayout.root.visibility = View.VISIBLE
+            binding.notificationsRecyclerView.visibility = View.GONE
+            binding.emptyStateLayout.visibility = View.GONE
+        }
+    }
+
+    private fun hideSkeleton() {
+        _binding?.skeletonLayout?.root?.visibility = View.GONE
+    }
+
     private fun loadNotifications() {
         val userId = sessionManager.getUserId()
         if (userId == -1L) {
             Log.w("NotificacionesFragment", "No user ID available")
+            hideSkeleton()
+            _binding?.emptyStateLayout?.visibility = View.VISIBLE
             return
         }
 
-        lifecycleScope.launch {
+        // Mostrar skeleton mientras se cargan los datos
+        showSkeleton()
+
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val notifications = SupabaseClient.fetchNotifications(userId)
+                
+                // Verificar que el binding aún existe antes de actualizar la UI
+                val binding = _binding ?: return@launch
+                
+                // Ocultar skeleton cuando los datos estén listos
+                hideSkeleton()
                 
                 if (notifications.isNotEmpty()) {
                     binding.notificationsRecyclerView.visibility = View.VISIBLE
@@ -90,26 +113,98 @@ class NotificacionesFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 Log.e("NotificacionesFragment", "Error loading notifications", e)
-                binding.notificationsRecyclerView.visibility = View.GONE
-                binding.emptyStateLayout.visibility = View.VISIBLE
+                hideSkeleton()
+                _binding?.notificationsRecyclerView?.visibility = View.GONE
+                _binding?.emptyStateLayout?.visibility = View.VISIBLE
             }
         }
     }
 
     private fun onNotificationClick(notification: Notification) {
         if (!notification.isRead) {
-            lifecycleScope.launch {
+            viewLifecycleOwner.lifecycleScope.launch {
                 SupabaseClient.markNotificationAsRead(notification.id)
-                loadNotifications()
+                // Solo recargar si el binding aún existe (vista no destruida)
+                if (_binding != null) {
+                    loadNotifications()
+                }
             }
         }
 
         when (notification.type) {
             Notification.TYPE_NEW_COURSE -> {
                 Log.d("Notificaciones", "Course notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { courseId ->
+                    // Navigate to course detail
+                    val bundle = Bundle().apply {
+                        putLong("courseId", courseId)
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_courseDetailFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to course detail", e)
+                    }
+                }
             }
             Notification.TYPE_NEW_VIDEO -> {
                 Log.d("Notificaciones", "Video notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { videoId ->
+                    // Navigate to video detail
+                    val bundle = Bundle().apply {
+                        putLong("videoId", videoId)
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_videoDetailsFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to video detail", e)
+                    }
+                }
+            }
+            Notification.TYPE_NEW_TASK -> {
+                Log.d("Notificaciones", "New task notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { taskId ->
+                    // Navigate to task submissions to see/submit the new task
+                    val bundle = Bundle().apply {
+                        putLong("taskId", taskId)
+                        putString("taskName", notification.message.substringAfter("\"").substringBefore("\""))
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to task submissions", e)
+                    }
+                }
+            }
+            Notification.TYPE_TASK_SUBMISSION -> {
+                Log.d("Notificaciones", "Task submission notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { taskId ->
+                    // Navigate to task submissions to see the submission (for course creator)
+                    val bundle = Bundle().apply {
+                        putLong("taskId", taskId)
+                        putString("taskName", notification.message.substringAfter("\"").substringBefore("\""))
+                        putString("courseCreatorUsername", sessionManager.getUsername())
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to task submissions", e)
+                    }
+                }
+            }
+            Notification.TYPE_TASK_GRADED -> {
+                Log.d("Notificaciones", "Task graded notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { taskId ->
+                    // Navigate to task submissions for the student to see their grade
+                    val bundle = Bundle().apply {
+                        putLong("taskId", taskId)
+                        putString("taskName", notification.title.substringAfter("en ").trim())
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to task submissions", e)
+                    }
+                }
             }
         }
     }
@@ -147,15 +242,15 @@ class NotificacionesFragment : Fragment() {
     }
 
     private fun updateTabSelection(notificacionesSelected: Boolean) {
+        val binding = _binding ?: return
         if (notificacionesSelected) {
             binding.notificacionesTab.setTextColor(resources.getColor(R.color.purple_500, null))
             binding.susurrosTab.setTextColor(resources.getColor(R.color.white, null))
-            binding.notificationsRecyclerView.visibility = View.VISIBLE
-            binding.emptyStateLayout.visibility = View.GONE
             loadNotifications()
         } else {
             binding.notificacionesTab.setTextColor(resources.getColor(R.color.white, null))
             binding.susurrosTab.setTextColor(resources.getColor(R.color.purple_500, null))
+            hideSkeleton()
             binding.notificationsRecyclerView.visibility = View.GONE
             binding.emptyStateLayout.visibility = View.VISIBLE
         }

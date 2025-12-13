@@ -429,18 +429,10 @@ class UserProfileViewFragment : Fragment() {
             contentRecyclerView.apply {
                 layoutManager = LinearLayoutManager(context)
                 adapter = contentAdapter // Iniciar con adaptador de cursos
-
-                // Agregar ScrollListener para optimizar la reproducción (similar a ExploreFragment)
-                addOnScrollListener(object : RecyclerView.OnScrollListener() {
-                    override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                        super.onScrollStateChanged(recyclerView, newState)
-                        if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-                            // Cuando el scroll se detiene, asegurar que las miniaturas estén cargadas
-                            Log.d("UserProfileView", "Scroll stopped, refreshing thumbnails")
-                            ensureThumbnailsLoaded()
-                        }
-                    }
-                })
+                
+                // RecyclerView optimizations
+                setHasFixedSize(true)
+                setItemViewCacheSize(10)
             }
         } catch (e: Exception) {
             Log.e("UserProfileViewFragment", "Error setting up RecyclerView: ${e.message}")
@@ -837,9 +829,6 @@ class UserProfileViewFragment : Fragment() {
                 if (::contentAdapter.isInitialized) {
                     contentAdapter.updateCourses(allCourses)
                 }
-
-                // Asegurar que las miniaturas se carguen correctamente
-                ensureThumbnailsLoaded()
                 
                 Log.d("UserProfileView", "Loaded content for user: $username - Courses: ${userCoursesList.size}, Videos: ${userVideosList.size}")
             }
@@ -1281,13 +1270,31 @@ class UserProfileViewFragment : Fragment() {
     }
 
     private fun handleVideoClick(video: VideoData) {
-        // Navegar al VideoHomeFragment con el video específico
-        val bundle = Bundle().apply {
-            putLong("videoId", video.id)
-            putString("videoTitle", video.title)
-            putString("videoUsername", video.username)
+        try {
+            Log.d("UserProfileView", "📹 Video clicked: ${video.title} (ID: ${video.id})")
+            Log.d("UserProfileView", "  - Navigating to VideoHomeFragment with videoId: ${video.id}")
+            Log.d("UserProfileView", "  - Username: ${video.username}")
+            
+            // Navegar al VideoHomeFragment con el video específico
+            val bundle = Bundle().apply {
+                putLong("videoId", video.id)
+                putString("videoTitle", video.title)
+                putString("videoUsername", video.username)
+            }
+            
+            // Verificar que estamos en el destino correcto antes de navegar
+            val navController = findNavController()
+            if (navController.currentDestination?.id == R.id.userProfileViewFragment) {
+                navController.navigate(R.id.action_userProfileViewFragment_to_videoHomeFragment, bundle)
+                Log.d("UserProfileView", "✅ Navigation to VideoHomeFragment initiated")
+            } else {
+                Log.w("UserProfileView", "⚠️ Not in userProfileViewFragment, current destination: ${navController.currentDestination?.id}")
+                Toast.makeText(requireContext(), "No se pudo navegar al video", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e("UserProfileView", "❌ Error navigating to video: ${e.message}", e)
+            Toast.makeText(requireContext(), "Error al abrir el video", Toast.LENGTH_SHORT).show()
         }
-        findNavController().navigate(R.id.action_userProfileViewFragment_to_videoHomeFragment, bundle)
     }
 
     override fun onResume() {
@@ -1370,20 +1377,8 @@ class UserProfileViewFragment : Fragment() {
         username?.let { loadUserData(it) }
     }
     
-    // Método para asegurar que se carguen las miniaturas correctamente en ambos adaptadores
-    private fun ensureThumbnailsLoaded() {
-        Log.d("UserProfileView", "Ensuring thumbnails are loaded correctly")
-        
-        // Actualizar el adapter si está inicializado y hay contenido disponible
-        if (::contentAdapter.isInitialized && allContent.isNotEmpty()) {
-            contentAdapter.notifyDataSetChanged()
-            contentRecyclerView.adapter?.notifyDataSetChanged()
-        }
-        
-        if (::videoAdapter.isInitialized && allVideos.isNotEmpty()) {
-            videoAdapter.notifyDataSetChanged()
-        }
-    }
+    // ensureThumbnailsLoaded removed - DiffUtil in adapters handles efficient updates
+    // Calling notifyDataSetChanged() on scroll was causing performance issues
     
     // Método auxiliar para verificar la validez de las URIs (como en CreatedCourseAdapter)
     private fun isValidUri(uriString: String?): Boolean {

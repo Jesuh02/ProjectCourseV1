@@ -41,6 +41,7 @@ class CourseCreationFragment : Fragment() {
     private var selectedThumbnailUri: Uri? = null
     private var isEditing = false
     private var isPaidCourse = false // Track payment status
+    private lateinit var thumbnailExtractor: com.example.tareamov.util.VideoThumbnailExtractor
 
     companion object {
         private const val REQUEST_THUMBNAIL_PICK = 1001
@@ -81,6 +82,7 @@ class CourseCreationFragment : Fragment() {
 
         videoManager = VideoManager(requireContext())
         sessionManager = SessionManager.getInstance(requireContext())
+        thumbnailExtractor = com.example.tareamov.util.VideoThumbnailExtractor(requireContext())
 
         // Set up back button
         val backButton = view.findViewById<ImageButton>(R.id.backButton)
@@ -366,6 +368,10 @@ class CourseCreationFragment : Fragment() {
                         courseSaved = true
                         Toast.makeText(context, "Curso guardado exitosamente", Toast.LENGTH_SHORT).show()
                         
+                        // Notify subscribers about the new course
+                        val createdCourse = courseData.copy(id = remoteId)
+                        activity.syncRepository.notifySubscribersOfNewCourseAsync(createdCourse)
+                        
                         val bundle = Bundle().apply {
                             putLong("courseId", remoteId)
                             putString("courseName", courseName)
@@ -486,6 +492,10 @@ class CourseCreationFragment : Fragment() {
                         currentCourseId = savedCourseId
                         courseSaved = true
                         topicCount++
+
+                        // Notify subscribers about the new course
+                        val createdCourse = courseData.copy(id = savedCourseId)
+                        activity.syncRepository.notifySubscribersOfNewCourseAsync(createdCourse)
 
                         val bundle = Bundle()
                         bundle.putInt("topicNumber", topicCount)

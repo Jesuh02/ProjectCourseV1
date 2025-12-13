@@ -43,5 +43,7 @@ data class Notification(
         const val TYPE_TASK_GRADED = "task_graded"
         const val TYPE_COMMENT = "comment"
         const val TYPE_LIKE = "like"
+        const val TYPE_NEW_TASK = "new_task"
+        const val TYPE_TASK_SUBMISSION = "task_submission"
     }
 }

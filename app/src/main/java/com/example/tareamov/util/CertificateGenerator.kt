@@ -4,14 +4,19 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
+import android.net.Uri
 import android.os.Environment
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.service.CloudflareR2Service
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -21,9 +26,36 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 object CertificateGenerator {
     private const val TAG = "CertificateGenerator"
+    
+    // Colores del tema CourseV (neón rosa/púrpura)
+    private val NEON_PINK = Color.parseColor("#FF69B4")
+    private val NEON_MAGENTA = Color.parseColor("#FF00FF")
+    private val DARK_PURPLE = Color.parseColor("#1A0A2E")
+    private val MEDIUM_PURPLE = Color.parseColor("#2D1B4E")
+    private val LIGHT_PURPLE = Color.parseColor("#4A2C7A")
+    private val WHITE = Color.WHITE
+    private val GRAY_TEXT = Color.parseColor("#B0B0B0")
+
+    /**
+     * Datos del certificado para generar
+     */
+    data class CertificateData(
+        val studentName: String,
+        val studentUsername: String,
+        val courseName: String,
+        val creatorName: String,
+        val creatorUsername: String,
+        val grade: Float,
+        val tasksCompleted: Int,
+        val totalTasks: Int,
+        val progress: Float,
+        val status: String,
+        val courseId: Long
+    )
 
     fun generateCertificate(
         context: Context,
@@ -46,8 +78,7 @@ object CertificateGenerator {
                     val user = db.usuarioDao().getUsuarioByUsername(studentUsername)
                     if (user != null) {
                         val persona = db.personaDao().getPersonaById(user.personaId)
-                        // Use the correct field names: nombres and apellidos
-                        "${persona?.nombres ?: ""} ${persona?.apellidos ?: ""}"
+                        "${persona?.nombres ?: ""} ${persona?.apellidos ?: ""}".trim().ifEmpty { studentUsername }
                     } else {
                         studentUsername
                     }
@@ -57,14 +88,35 @@ object CertificateGenerator {
                     val user = db.usuarioDao().getUsuarioByUsername(creatorUsername)
                     if (user != null) {
                         val persona = db.personaDao().getPersonaById(user.personaId)
-                        // Use the correct field names: nombres and apellidos
-                        "${persona?.nombres ?: ""} ${persona?.apellidos ?: ""}".trim()
+                        "${persona?.nombres ?: ""} ${persona?.apellidos ?: ""}".trim().ifEmpty { creatorUsername }
                     } else {
                         creatorUsername
                     }
                 }
 
-                // Try to get a more authoritative/display name from Supabase (Persona attached to Usuario)
+                // Get progress data for stats
+                val userId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(studentUsername)
+                }
+                
+                val progreso = if (userId != null) {
+                    // Prefer remote progreso from Supabase when available, otherwise fallback to local Room
+                    var remotePro: com.example.tareamov.data.entity.ProgresoEstudiante? = null
+                    if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                        try {
+                            remotePro = withContext(Dispatchers.IO) {
+                                com.example.tareamov.service.SupabaseClient.fetchProgresoEstudiante(userId, courseId)
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to fetch progreso from Supabase", e)
+                        }
+                    }
+
+                    if (remotePro != null) remotePro
+                    else withContext(Dispatchers.IO) { db.progresoEstudianteDao().getProgresoByUsuarioAndCurso(userId, courseId) }
+                } else null
+
+                // Try to get creator name from Supabase
                 try {
                     if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
                         val remoteUser = withContext(Dispatchers.IO) {
@@ -84,27 +136,37 @@ object CertificateGenerator {
                         }
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to fetch creator real name from Supabase, falling back to local DB", e)
+                    Log.w(TAG, "Failed to fetch creator real name from Supabase", e)
                 }
 
-                // Create PDF document
+                // Build certificate data
+                val gradeFloat = grade.toFloatOrNull() ?: 0f
+                val certData = CertificateData(
+                    studentName = studentName,
+                    studentUsername = studentUsername,
+                    courseName = courseName,
+                    creatorName = creatorName,
+                    creatorUsername = creatorUsername,
+                    grade = gradeFloat,
+                    tasksCompleted = progreso?.tareasCompletadas ?: 0,
+                    totalTasks = progreso?.tareasTotales ?: 0,
+                    progress = progreso?.porcentajeProgreso ?: 100f,
+                    status = progreso?.estado ?: "APROBADO",
+                    courseId = courseId
+                )
+
+                // Generate certificate ID
+                val certificateId = "CERT-${UUID.randomUUID().toString().take(5).uppercase()}-${UUID.randomUUID().toString().take(5).uppercase()}"
+
+                // Create PDF document (portrait orientation like the image)
                 val pdfDocument = PdfDocument()
-                val pageInfo = PdfDocument.PageInfo.Builder(842, 595, 1).create() // A4 landscape
+                val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4 portrait
                 val page = pdfDocument.startPage(pageInfo)
                 val canvas = page.canvas
 
-                // Draw certificate background
+                // Draw certificate
                 drawCertificateBackground(canvas)
-
-                // Draw certificate content
-                drawCertificateContent(
-                    canvas,
-                    studentName,
-                    courseName,
-                    courseTopic,
-                    creatorName,
-                    grade
-                )
+                drawCertificateContent(canvas, certData, certificateId)
 
                 pdfDocument.finishPage(page)
 
@@ -123,14 +185,48 @@ object CertificateGenerator {
 
                 pdfDocument.close()
 
-                // Update certificate issued date in Supabase
-                updateCertificateIssuedDate(context, studentUsername, courseId)
+                // Upload to Cloudflare R2
+                var certificateUrl: String? = null
+                if (CloudflareR2Service.isConfigured()) {
+                    // Ensure public URL base points to the desired domain so uploaded files
+                    // are exposed under https://yisuscompany.com/<objectKey>
+                    try {
+                        CloudflareR2Service.setPublicUrlBase("https://yisuscompany.com")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not set R2 public URL base", e)
+                    }
+                    Toast.makeText(context, "Subiendo certificado a la nube...", Toast.LENGTH_SHORT).show()
+                    
+                    val uploadResult = withContext(Dispatchers.IO) {
+                        CloudflareR2Service.uploadFile(
+                            context = context,
+                            fileUri = Uri.fromFile(file),
+                            folder = "certificates",
+                            customFileName = "cert_${studentUsername}_${courseId}_${System.currentTimeMillis()}"
+                        )
+                    }
+                    
+                    if (uploadResult is CloudflareR2Service.UploadResult.Success) {
+                        certificateUrl = uploadResult.url
+                        Log.i(TAG, "✅ Certificado subido a R2: $certificateUrl")
+                    } else {
+                        Log.w(TAG, "⚠️ No se pudo subir certificado a R2: ${(uploadResult as? CloudflareR2Service.UploadResult.Error)?.message}")
+                    }
+                }
+
+                // Update certificate issued date and URL in Supabase
+                updateCertificateIssuedDate(context, studentUsername, courseId, certificateUrl)
 
                 // Share the PDF
                 sharePdf(context, file)
 
                 // Show success toast
-                Toast.makeText(context, "Certificado generado con éxito", Toast.LENGTH_SHORT).show()
+                val successMsg = if (certificateUrl != null) {
+                    "Certificado generado y guardado en la nube"
+                } else {
+                    "Certificado generado con éxito"
+                }
+                Toast.makeText(context, successMsg, Toast.LENGTH_SHORT).show()
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error generating certificate", e)
@@ -144,12 +240,13 @@ object CertificateGenerator {
     }
     
     /**
-     * Actualiza la fecha de emisión del certificado en Supabase y localmente
+     * Actualiza la fecha de emisión del certificado y la URL en Supabase y localmente
      */
     fun updateCertificateIssuedDate(
         context: Context,
         studentUsername: String,
-        courseId: Long
+        courseId: Long,
+        certificateUrl: String? = null
     ) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -195,7 +292,7 @@ object CertificateGenerator {
                 }
                 
                 // ✨ IMPORTANTE: Solo actualizar la fecha si es la primera vez (certificadoEmitidoEn es null)
-                if (progreso.certificadoEmitidoEn != null) {
+                if (progreso.certificadoEmitidoEn != null && certificateUrl == null) {
                     Log.i(TAG, "ℹ️ El certificado ya fue emitido previamente para $studentUsername en curso $courseId")
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
@@ -217,19 +314,32 @@ object CertificateGenerator {
                 val syncSuccess = com.example.tareamov.service.SupabaseClient.upsertProgresoEstudiante(updated)
                 
                 if (syncSuccess) {
-                    Log.i(TAG, "✅ Certificado sincronizado a Supabase para $studentUsername en curso $courseId (primera vez)")
+                    Log.i(TAG, "✅ Certificado sincronizado a Supabase para $studentUsername en curso $courseId")
                 } else {
-                    Log.w(TAG, "⚠️ No se pudo sincronizar certificado a Supabase (el registro local fue actualizado)")
+                    Log.w(TAG, "⚠️ No se pudo sincronizar certificado a Supabase")
                 }
 
+                // Actualizar fecha remota
                 val remoteUpdated = com.example.tareamov.service.SupabaseClient.updateCertificateIssuedDate(
                     userId,
                     courseId
                 )
                 if (remoteUpdated) {
-                    Log.i(TAG, "✅ Fecha de certificado actualizada en Supabase para userId=$userId curso=$courseId")
-                } else {
-                    Log.w(TAG, "⚠️ No se pudo actualizar la fecha del certificado en Supabase para userId=$userId curso=$courseId")
+                    Log.i(TAG, "✅ Fecha de certificado actualizada en Supabase")
+                }
+                
+                // Si hay URL del certificado, guardarla en Supabase
+                if (certificateUrl != null) {
+                    val urlUpdated = com.example.tareamov.service.SupabaseClient.updateCertificateUrl(
+                        userId,
+                        courseId,
+                        certificateUrl
+                    )
+                    if (urlUpdated) {
+                        Log.i(TAG, "✅ URL del certificado guardada en Supabase: $certificateUrl")
+                    } else {
+                        Log.w(TAG, "⚠️ No se pudo guardar la URL del certificado en Supabase")
+                    }
                 }
                 
             } catch (e: Exception) {
@@ -239,275 +349,416 @@ object CertificateGenerator {
     }
     
     private fun drawCertificateBackground(canvas: Canvas) {
-        val paint = Paint()
-        // Solid dark purple background, similar to the image
-        paint.color = Color.parseColor("#3A1F5F") // A deep purple, adjust if needed
-        canvas.drawRect(0f, 0f, 842f, 595f, paint)
-
-        // Draw main decorative border
+        val width = 595f
+        val height = 842f
+        
+        // Fondo degradado oscuro púrpura (como la imagen)
+        val backgroundPaint = Paint()
+        backgroundPaint.shader = LinearGradient(
+            0f, 0f, 0f, height,
+            DARK_PURPLE, MEDIUM_PURPLE,
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(0f, 0f, width, height, backgroundPaint)
+        
+        // Borde neón rosa/magenta con glow effect
         val borderPaint = Paint().apply {
-            color = Color.parseColor("#D4AF37") // Gold border
+            color = NEON_PINK
             style = Paint.Style.STROKE
-            strokeWidth = 7f // A prominent border line
+            strokeWidth = 3f
             isAntiAlias = true
         }
-        // Inset border to make space for corner laurels within the page dimensions
-        val borderMargin = 30f
-        val borderRect = android.graphics.RectF(borderMargin, borderMargin, 842f - borderMargin, 595f - borderMargin)
-        canvas.drawRoundRect(borderRect, 25f, 25f, borderPaint) // Rounded corners for the border
-
-        // Draw corner decorations (laurels and stars)
-        drawCornerDecorations(canvas)
+        
+        // Borde exterior con esquinas redondeadas
+        val margin = 20f
+        val borderRect = RectF(margin, margin, width - margin, height - margin)
+        canvas.drawRoundRect(borderRect, 15f, 15f, borderPaint)
+        
+        // Segundo borde interior más sutil
+        val innerBorderPaint = Paint().apply {
+            color = Color.parseColor("#80FF69B4") // Rosa semi-transparente
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f
+            isAntiAlias = true
+        }
+        val innerMargin = 25f
+        val innerRect = RectF(innerMargin, innerMargin, width - innerMargin, height - innerMargin)
+        canvas.drawRoundRect(innerRect, 12f, 12f, innerBorderPaint)
+        
+        // Estrellas decorativas en las esquinas
+        drawDecorativeStars(canvas, width, height)
+    }
+    
+    private fun drawDecorativeStars(canvas: Canvas, width: Float, height: Float) {
+        val starColor = NEON_PINK
+        
+        // Esquinas superiores
+        drawStar(canvas, 45f, 45f, 6f, starColor)
+        drawStar(canvas, width - 45f, 45f, 6f, starColor)
+        
+        // Esquinas inferiores
+        drawStar(canvas, 45f, height - 45f, 6f, starColor)
+        drawStar(canvas, width - 45f, height - 45f, 6f, starColor)
+        
+        // Estrellas pequeñas adicionales
+        drawStar(canvas, 70f, 70f, 3f, starColor)
+        drawStar(canvas, width - 70f, 70f, 3f, starColor)
+        drawStar(canvas, 70f, height - 70f, 3f, starColor)
+        drawStar(canvas, width - 70f, height - 70f, 3f, starColor)
     }
 
     private fun drawCornerLaurelElement(canvas: Canvas, x: Float, y: Float, size: Float, paint: Paint, cornerType: String) {
-        canvas.save()
-        // x, y is the reference corner point for the laurel's bounding box (size x size)
-        // The drawing is done as if for TL, then transformed.
-        canvas.translate(x, y);        when (cornerType) {
-            "TL" -> { /* Default: draws from (0,0) to (size,size) */ }
-            "TR" -> { canvas.scale(-1f, 1f); canvas.translate(-size, 0f) }
-            "BL" -> { canvas.scale(1f, -1f); canvas.translate(0f, -size) }
-            "BR" -> { canvas.scale(-1f, -1f); canvas.translate(-size, -size) }
-        }
-
-        val stemPaint = Paint(paint).apply { style = Paint.Style.STROKE; strokeWidth = size * 0.06f; isAntiAlias = true }
-        val leafPaint = Paint(paint).apply { style = Paint.Style.FILL; isAntiAlias = true }
-
-        // Stem: A gentle curve within the 'size x size' box
-        val stemPath = android.graphics.Path()
-        stemPath.moveTo(size * 0.15f, size * 0.15f) // Start near the corner
-        stemPath.quadTo(size * 0.25f, size * 0.6f, size * 0.8f, size * 0.8f) // Curve inwards
-        canvas.drawPath(stemPath, stemPaint)
-
-        val numLeaves = 3
-        val leafLength = size * 0.30f
-        val leafWidth = size * 0.10f
-
-        for (i in 0..numLeaves) {
-            val t = (i.toFloat() + 0.5f) / (numLeaves + 1f)
-
-            val p0x = size*0.15f; val p0y = size*0.15f
-            val p1x = size*0.25f; val p1y = size*0.6f
-            val p2x = size*0.8f; val p2y = size*0.8f
-            val omt = 1f - t
-            val posX = omt * omt * p0x + 2f * omt * t * p1x + t * t * p2x
-            val posY = omt * omt * p0y + 2f * omt * t * p1y + t * t * p2y
-
-            val dx = 2f * omt * (p1x - p0x) + 2f * t * (p2x - p1x)
-            val dy = 2f * omt * (p1y - p0y) + 2f * t * (p2y - p1y)
-            val angleDegrees = Math.toDegrees(Math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
-
-            canvas.save()
-            canvas.translate(posX, posY)
-            canvas.rotate(angleDegrees)
-
-            canvas.save()
-            canvas.rotate(40f) // Leaf angle from stem
-            canvas.drawOval(-leafLength / 2f, -leafWidth / 2f, leafLength / 2f, leafWidth / 2f, leafPaint)
-            canvas.restore()
-
-            canvas.save()
-            canvas.rotate(-40f) // Mirrored leaf
-            canvas.drawOval(-leafLength / 2f, -leafWidth / 2f, leafLength / 2f, leafWidth / 2f, leafPaint)
-            canvas.restore()
-
-            canvas.restore()
-        }
-        canvas.restore()
+        // Simplificado - no se usa en el nuevo diseño
     }
 
     private fun drawCornerDecorations(canvas: Canvas) {
-        val goldPaint = Paint().apply {
-            color = Color.parseColor("#D4AF37") // Gold
-            style = Paint.Style.FILL
-            isAntiAlias = true
-        }
-        val laurelSize = 70f // Size of the laurel element's bounding box
-        val laurelOffset = 35f // Offset from page edge to laurel anchor
-
-        // Draw laurels in each corner
-        drawCornerLaurelElement(canvas, laurelOffset, laurelOffset, laurelSize, goldPaint, "TL")
-        drawCornerLaurelElement(canvas, 842f - laurelOffset, laurelOffset, laurelSize, goldPaint, "TR")
-        drawCornerLaurelElement(canvas, laurelOffset, 595f - laurelOffset, laurelSize, goldPaint, "BL")
-        drawCornerLaurelElement(canvas, 842f - laurelOffset, 595f - laurelOffset, laurelSize, goldPaint, "BR")
-
-        val starColor = Color.parseColor("#D4AF37")
-        // Stars near corners, adjusted to be pleasing with laurels
-        drawStar(canvas, laurelOffset + laurelSize * 0.5f, laurelOffset + laurelSize * 1.2f, 8f, starColor)
-        drawStar(canvas, laurelOffset + laurelSize * 1.2f, laurelOffset + laurelSize * 0.5f, 6f, starColor)
-
-        drawStar(canvas, 842f - (laurelOffset + laurelSize * 0.5f), laurelOffset + laurelSize * 1.2f, 8f, starColor)
-        drawStar(canvas, 842f - (laurelOffset + laurelSize * 1.2f), laurelOffset + laurelSize * 0.5f, 6f, starColor)
-
-        drawStar(canvas, laurelOffset + laurelSize * 0.5f, 595f - (laurelOffset + laurelSize * 1.2f), 8f, starColor)
-        drawStar(canvas, laurelOffset + laurelSize * 1.2f, 595f - (laurelOffset + laurelSize * 0.5f), 6f, starColor)
-
-        drawStar(canvas, 842f - (laurelOffset + laurelSize * 0.5f), 595f - (laurelOffset + laurelSize * 1.2f), 8f, starColor)
-        drawStar(canvas, 842f - (laurelOffset + laurelSize * 1.2f), 595f - (laurelOffset + laurelSize * 0.5f), 6f, starColor)
-
-        // Smaller stars/sparkles as seen in the image
-        drawStar(canvas, 200f, 275f, 5f, starColor) // Left of student name area
-        drawStar(canvas, 842f - 200f, 275f, 5f, starColor) // Right of student name area
-        drawStar(canvas, 230f, 430f, 5f, starColor) // Left of topic area
-        drawStar(canvas, 842f - 230f, 430f, 5f, starColor) // Right of topic area
-    }    private fun drawCertificateContent(
+        // Simplificado - reemplazado por drawDecorativeStars
+    }
+    
+    private fun drawCertificateContent(
         canvas: Canvas,
-        studentName: String,
-        courseName: String,
-        courseTopic: String,
-        creatorName: String,
-        grade: String
+        data: CertificateData,
+        certificateId: String
     ) {
-        val width = 842f
-        val height = 595f
+        val width = 595f
+        val height = 842f
         val centerX = width / 2
-        val contentMargin = 60f // Margin for text content from the border
-
-        // Helper to fit text within a max width by reducing text size
-        fun fitText(
-            text: String,
-            paint: Paint,
-            maxWidth: Float,
-            minSize: Float = 18f
-        ): Float {
-            var textSize = paint.textSize
-            paint.textSize = textSize
-            while (paint.measureText(text) > maxWidth && textSize > minSize) {
-                textSize -= 1f // Finer adjustment for better fitting
-                paint.textSize = textSize
-            }
-            return textSize
-        }
-
-        // Define colors matching the image
-        val goldColor = Color.parseColor("#D4AF37")
-        val lightGoldColor = Color.parseColor("#F0E0A8") // A lighter, softer gold for some text
-
-        // Grade text (top left, as per image)
-        val gradeTextPaint = Paint().apply {
-            color = goldColor
-            textSize = 26f
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL) // Changed font for clarity
-            textAlign = Paint.Align.LEFT
-            isAntiAlias = true
-        }
-        canvas.drawText("Calificación: $grade/10", contentMargin + 20f, contentMargin + 40f, gradeTextPaint)
-
-        // Main title - CERTIFICADO
+        
+        var yPos = 55f
+        
+        // ===== HEADER: Icono de certificado + "CERTIFICADO" =====
+        // Dibujar icono de diploma/certificado más elaborado
+        drawCertificateIcon(canvas, centerX - 80f, yPos + 5f, 20f)
+        
+        // Título "CERTIFICADO" con efecto neón rosa brillante
         val titlePaint = Paint().apply {
-            color = goldColor
-            textSize = 68f // Slightly adjusted size
-            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            color = NEON_PINK
+            textSize = 32f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
             isAntiAlias = true
-            letterSpacing = 0.08f // Adjusted letter spacing
+            letterSpacing = 0.12f
         }
-        canvas.drawText("CERTIFICADO", centerX, 150f, titlePaint)
-
-        // Subtitle - DE FINALIZACIÓN
-        val subtitlePaint = Paint().apply {
-            color = goldColor
-            textSize = 40f // Slightly adjusted size
-            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+        canvas.drawText("CERTIFICADO", centerX + 15f, yPos + 20f, titlePaint)
+        
+        yPos += 65f
+        
+        // ===== LOGO: "CourseV" grande con estilo neón magenta =====
+        val logoPaint = Paint().apply {
+            color = NEON_MAGENTA
+            textSize = 52f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
             isAntiAlias = true
-            letterSpacing = 0.04f // Adjusted letter spacing
         }
-        canvas.drawText("DE FINALIZACIÓN", centerX, 200f, subtitlePaint)
-
-        // "Se otorga a" text (in italic, lighter gold)
-        val awardTextPaint = Paint().apply {
-            color = lightGoldColor
-            textSize = 26f // Adjusted size
+        canvas.drawText("CourseV", centerX, yPos, logoPaint)
+        
+        yPos += 50f
+        
+        // ===== Símbolo { </> } estilizado con llaves grandes =====
+        // Dibujar las llaves y el símbolo de código como en la imagen
+        drawCodeSymbol(canvas, centerX, yPos)
+        
+        yPos += 70f
+        
+        // ===== TEXTO: "Se certifica que" =====
+        val labelPaint = Paint().apply {
+            color = GRAY_TEXT
+            textSize = 15f
             typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
             textAlign = Paint.Align.CENTER
             isAntiAlias = true
         }
-        canvas.drawText("Se otorga a", centerX, 255f, awardTextPaint)
-
-        // Student name (large, prominent, gold)
+        canvas.drawText("Se certifica que", centerX, yPos, labelPaint)
+        canvas.drawText("ha completado exitosamente el curso", centerX, yPos + 20f, labelPaint)
+        
+        yPos += 55f
+        
+        // ===== NOMBRE DEL ESTUDIANTE =====
+        // Línea decorativa superior magenta
+        drawNeonLine(canvas, centerX - 160f, yPos - 5f, centerX + 160f, yPos - 5f)
+        
         val studentNamePaint = Paint().apply {
-            color = goldColor
-            textSize = 48f // Adjusted size
-            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            color = NEON_MAGENTA
+            textSize = 26f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD_ITALIC)
             textAlign = Paint.Align.CENTER
             isAntiAlias = true
         }
-        val maxNameWidth = width - (2 * contentMargin) - 40f // Max width for student name
-        fitText(studentName.uppercase(), studentNamePaint, maxNameWidth, 30f)
-        canvas.drawText(studentName.uppercase(), centerX, 305f, studentNamePaint)
-
-        // "por haber completado con éxito" text (lighter gold, italic)
-        val completionTextPaint = Paint().apply {
-            color = lightGoldColor
-            textSize = 22f // Adjusted size
-            typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
-            textAlign = Paint.Align.CENTER
-            isAntiAlias = true
-        }
-        canvas.drawText("por haber completado con éxito", centerX, 345f, completionTextPaint)
-
-        // Course name (prominent, gold)
+        fitTextToWidth(data.studentName, studentNamePaint, 420f)
+        canvas.drawText(data.studentName, centerX, yPos + 25f, studentNamePaint)
+        
+        // Línea decorativa inferior
+        drawNeonLine(canvas, centerX - 160f, yPos + 38f, centerX + 160f, yPos + 38f)
+        
+        yPos += 75f
+        
+        // ===== NOMBRE DEL CURSO =====
+        drawNeonLine(canvas, centerX - 180f, yPos - 5f, centerX + 180f, yPos - 5f)
+        
         val courseNamePaint = Paint().apply {
-            color = goldColor
-            textSize = 40f // Adjusted size
-            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            color = NEON_MAGENTA
+            textSize = 22f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD_ITALIC)
             textAlign = Paint.Align.CENTER
             isAntiAlias = true
         }
-        fitText(courseName.uppercase(), courseNamePaint, maxNameWidth, 26f)
-        canvas.drawText(courseName.uppercase(), centerX, 385f, courseNamePaint)
-
-
-        // Date format
-        val dateFormat = SimpleDateFormat("dd 'de' MMMM 'de' yyyy", Locale("es", "ES"))
-        val currentDate = dateFormat.format(Date())
-
-        // Bottom section with date and signature
-        val bottomTextY = height - 70f
-        val bottomLabelY = height - 50f
-        val lineY = height - 85f
-        val signatureLineWidth = 150f
-
-        val bottomTextPaint = Paint().apply {
-            color = lightGoldColor // Lighter gold for date/signature text
-            textSize = 18f
+        fitTextToWidth(data.courseName, courseNamePaint, 450f)
+        canvas.drawText(data.courseName, centerX, yPos + 22f, courseNamePaint)
+        
+        drawNeonLine(canvas, centerX - 180f, yPos + 35f, centerX + 180f, yPos + 35f)
+        
+        yPos += 65f
+        
+        // ===== CALIFICACIÓN =====
+        val gradeLabel = Paint().apply {
+            color = WHITE
+            textSize = 15f
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
             textAlign = Paint.Align.CENTER
             isAntiAlias = true
         }
-
-        val labelPaint = Paint().apply {
-            color = goldColor // Gold for labels
-            textSize = 14f
+        canvas.drawText("con una calificación de", centerX, yPos, gradeLabel)
+        
+        yPos += 40f
+        
+        // Estrellas y calificación en formato [ X.X/10 ]
+        val gradeText = String.format("%.1f/10", data.grade)
+        
+        // Estrella izquierda (outline)
+        drawStarOutline(canvas, centerX - 85f, yPos - 8f, 14f, NEON_PINK)
+        
+        val gradePaint = Paint().apply {
+            color = WHITE
+            textSize = 32f
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
             isAntiAlias = true
-            letterSpacing = 0.1f
         }
-
+        canvas.drawText("[$gradeText]", centerX, yPos + 5f, gradePaint)
+        
+        // Estrella derecha (outline)
+        drawStarOutline(canvas, centerX + 85f, yPos - 8f, 14f, NEON_PINK)
+        
+        yPos += 45f
+        
+        // ===== CAJA DE ESTADÍSTICAS =====
+        drawStatsBox(canvas, centerX, yPos, data)
+        
+        yPos += 115f
+        
+        // ===== INFORMACIÓN DEL CREADOR =====
+        val creatorLabelPaint = Paint().apply {
+            color = GRAY_TEXT
+            textSize = 13f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            textAlign = Paint.Align.CENTER
+            isAntiAlias = true
+        }
+        canvas.drawText("Impartido por: ${data.creatorName}", centerX, yPos, creatorLabelPaint)
+        
+        val usernamePaint = Paint().apply {
+            color = NEON_PINK
+            textSize = 13f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            textAlign = Paint.Align.CENTER
+            isAntiAlias = true
+        }
+        canvas.drawText("@${data.creatorUsername}", centerX, yPos + 18f, usernamePaint)
+        
+        // ===== FOOTER: Fecha e ID =====
+        val footerY = height - 45f
+        
+        val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+        val currentDate = dateFormat.format(Date())
+        
+        val footerPaint = Paint().apply {
+            color = GRAY_TEXT
+            textSize = 11f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            textAlign = Paint.Align.LEFT
+            isAntiAlias = true
+        }
+        canvas.drawText("Fecha emisión: $currentDate", 35f, footerY, footerPaint)
+        
+        footerPaint.textAlign = Paint.Align.RIGHT
+        canvas.drawText("ID del certificado: $certificateId", width - 35f, footerY, footerPaint)
+    }
+    
+    /**
+     * Dibuja el símbolo { </> } estilizado como en la imagen
+     */
+    private fun drawCodeSymbol(canvas: Canvas, centerX: Float, y: Float) {
+        val symbolPaint = Paint().apply {
+            color = NEON_MAGENTA
+            textSize = 55f
+            typeface = Typeface.MONOSPACE
+            textAlign = Paint.Align.CENTER
+            isAntiAlias = true
+            strokeWidth = 2f
+        }
+        
+        // Dibujar { </> } con estilo neón
+        // Las llaves más grandes y separadas
+        val bracePaint = Paint().apply {
+            color = NEON_MAGENTA
+            textSize = 70f
+            typeface = Typeface.MONOSPACE
+            textAlign = Paint.Align.CENTER
+            isAntiAlias = true
+        }
+        
+        // Llave izquierda {
+        canvas.drawText("{", centerX - 65f, y + 10f, bracePaint)
+        
+        // Símbolo </> en el centro
+        val codePaint = Paint().apply {
+            color = NEON_MAGENTA
+            textSize = 45f
+            typeface = Typeface.MONOSPACE
+            textAlign = Paint.Align.CENTER
+            isAntiAlias = true
+        }
+        canvas.drawText("</>", centerX, y + 5f, codePaint)
+        
+        // Llave derecha }
+        canvas.drawText("}", centerX + 65f, y + 10f, bracePaint)
+    }
+    
+    private fun drawCertificateIcon(canvas: Canvas, x: Float, y: Float, size: Float) {
+        val paint = Paint().apply {
+            color = NEON_PINK
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
+            isAntiAlias = true
+        }
+        
+        // Dibujar un diploma/scroll más elaborado
+        // Rectángulo principal del diploma
+        val rect = RectF(x - size/2, y - size/2, x + size/2, y + size/2)
+        canvas.drawRoundRect(rect, 3f, 3f, paint)
+        
+        // Líneas decorativas dentro del diploma
+        canvas.drawLine(x - size/3, y - size/4, x + size/3, y - size/4, paint)
+        canvas.drawLine(x - size/3, y, x + size/3, y, paint)
+        canvas.drawLine(x - size/3, y + size/4, x + size/3, y + size/4, paint)
+    }
+    
+    private fun drawNeonLine(canvas: Canvas, x1: Float, y1: Float, x2: Float, y2: Float) {
         val linePaint = Paint().apply {
-            color = goldColor
+            color = NEON_MAGENTA
+            strokeWidth = 1.5f
+            isAntiAlias = true
+        }
+        canvas.drawLine(x1, y1, x2, y2, linePaint)
+    }
+    
+    private fun drawStatsBox(canvas: Canvas, centerX: Float, y: Float, data: CertificateData) {
+        val boxWidth = 280f
+        val boxHeight = 85f
+        val boxLeft = centerX - boxWidth / 2
+        val boxTop = y
+        
+        // Fondo de la caja (más oscuro con borde neón)
+        val boxBgPaint = Paint().apply {
+            color = Color.parseColor("#15081F")
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val boxRect = RectF(boxLeft, boxTop, boxLeft + boxWidth, boxTop + boxHeight)
+        canvas.drawRoundRect(boxRect, 10f, 10f, boxBgPaint)
+        
+        // Borde neón de la caja
+        val boxBorderPaint = Paint().apply {
+            color = NEON_MAGENTA
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
+            isAntiAlias = true
+        }
+        canvas.drawRoundRect(boxRect, 10f, 10f, boxBorderPaint)
+        
+        // Contenido de la caja
+        val statsPaint = Paint().apply {
+            color = WHITE
+            textSize = 14f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            textAlign = Paint.Align.LEFT
+            isAntiAlias = true
+        }
+        
+        val iconPaint = Paint().apply {
+            color = NEON_PINK
+            textSize = 14f
+            isAntiAlias = true
+        }
+        
+        var statY = boxTop + 25f
+        val statX = boxLeft + 20f
+        
+        // Tareas completadas
+        canvas.drawText("📊", statX, statY, iconPaint)
+        canvas.drawText("Tareas completadas: ${data.tasksCompleted}/${data.totalTasks}", statX + 25f, statY, statsPaint)
+        
+        statY += 25f
+        
+        // Progreso
+        canvas.drawText("📈", statX, statY, iconPaint)
+        canvas.drawText("Progreso: ${String.format("%.0f", data.progress)}%", statX + 25f, statY, statsPaint)
+        
+        statY += 25f
+        
+        // Estado
+        val statusText = if (data.status.equals("Ganado", ignoreCase = true)) "APROBADO" else data.status.uppercase()
+        canvas.drawText("🏆", statX, statY, iconPaint)
+        canvas.drawText("Estado: $statusText", statX + 25f, statY, statsPaint)
+    }
+    
+    private fun fitTextToWidth(text: String, paint: Paint, maxWidth: Float) {
+        while (paint.measureText(text) > maxWidth && paint.textSize > 12f) {
+            paint.textSize = paint.textSize - 1f
+        }
+    }
+    
+    // Dibujar estrella con solo contorno (outline) para calificación
+    private fun drawStarOutline(canvas: Canvas, cx: Float, cy: Float, radius: Float, color: Int) {
+        val paint = Paint().apply {
+            this.color = color
             style = Paint.Style.STROKE
             strokeWidth = 1.5f
+            isAntiAlias = true
         }
 
-        // Date (left side)
-        val dateX = width * 0.30f // Adjusted position
-        canvas.drawText(currentDate, dateX, bottomTextY, bottomTextPaint)
-        canvas.drawLine(dateX - signatureLineWidth / 2, lineY, dateX + signatureLineWidth / 2, lineY, linePaint)
-        canvas.drawText("FECHA", dateX, bottomLabelY, labelPaint)
+        val path = android.graphics.Path()
+        val outerRadius = radius
+        val innerRadius = radius * 0.4f
 
-        // Creator signature (right side)
-        val signatureX = width * 0.70f // Adjusted position
-        // Fit creator name if too long
-        fitText(creatorName, bottomTextPaint, signatureLineWidth, 14f)
-        canvas.drawText(creatorName, signatureX, bottomTextY, bottomTextPaint)
-        canvas.drawLine(signatureX - signatureLineWidth / 2, lineY, signatureX + signatureLineWidth / 2, lineY, linePaint)
-        canvas.drawText("FIRMA", signatureX, bottomLabelY, labelPaint)
+        var currentAngle = -Math.PI / 2
+        val angleIncrement = Math.PI / 5
+
+        path.moveTo(
+            cx + (outerRadius * Math.cos(currentAngle)).toFloat(),
+            cy + (outerRadius * Math.sin(currentAngle)).toFloat()
+        )
+
+        for (i in 0 until 5) {
+            currentAngle += angleIncrement
+            path.lineTo(
+                cx + (innerRadius * Math.cos(currentAngle)).toFloat(),
+                cy + (innerRadius * Math.sin(currentAngle)).toFloat()
+            )
+
+            currentAngle += angleIncrement
+            path.lineTo(
+                cx + (outerRadius * Math.cos(currentAngle)).toFloat(),
+                cy + (outerRadius * Math.sin(currentAngle)).toFloat()
+            )
+        }
+
+        path.close()
+        canvas.drawPath(path, paint)
     }
-      // Add a method to draw a star (keeping the existing implementation)
+    
+    // Dibujar estrella rellena
     private fun drawStar(canvas: Canvas, cx: Float, cy: Float, radius: Float, color: Int) {
         val paint = Paint().apply {
             this.color = color
@@ -543,10 +794,13 @@ object CertificateGenerator {
 
         path.close()
         canvas.drawPath(path, paint)
-    }private fun sharePdf(context: Context, file: File) {
-        try {            val uri = FileProvider.getUriForFile(
+    }
+    
+    private fun sharePdf(context: Context, file: File) {
+        try {
+            val uri = FileProvider.getUriForFile(
                 context,
-                "${context.packageName}.service.provider",
+                "${context.packageName}.fileprovider",
                 file
             )
 

@@ -151,17 +151,8 @@
                     android:layout_width="4dp"
                     android:layout_height="4dp"
                     android:layout_marginStart="8dp"
-                    android:layout_marginEnd="8dp"
                     android:background="@drawable/circle_shape"
-                    android:backgroundTint="#4CAF50" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="RAG"
-                    android:textColor="#4CAF50"
-                    android:textSize="10sp"
-                    android:textStyle="bold" />
+                    android:backgroundTint="#10A37F" />
             </LinearLayout>
 
             <TextView

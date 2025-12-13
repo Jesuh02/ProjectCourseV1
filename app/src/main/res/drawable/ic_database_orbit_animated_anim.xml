@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-vector
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_database_orbit_animated">
+
+    <!-- Rotate orbit group (dots) -->
+    <target
+        android:name="orbit_group"
+        android:animation="@anim/database_orbit_rotation" />
+
+    <!-- Pulse glow effect -->
+    <target
+        android:name="glow"
+        android:animation="@anim/database_glow_pulse" />
+
+    <!-- Float particles up and down -->
+    <target
+        android:name="float1"
+        android:animation="@anim/database_float_1" />
+    
+    <target
+        android:name="float2"
+        android:animation="@anim/database_float_2" />
+    
+    <target
+        android:name="float3"
+        android:animation="@anim/database_float_3" />
+    
+    <target
+        android:name="float4"
+        android:animation="@anim/database_float_4" />
+
+    <!-- Animate data lines -->
+    <target
+        android:name="line1"
+        android:animation="@anim/database_data_flow_1" />
+    
+    <target
+        android:name="line2"
+        android:animation="@anim/database_data_flow_2" />
+    
+    <target
+        android:name="line3"
+        android:animation="@anim/database_data_flow_3" />
+
+</animated-vector>

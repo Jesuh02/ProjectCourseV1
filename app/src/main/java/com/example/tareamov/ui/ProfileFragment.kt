@@ -66,6 +66,9 @@ class ProfileFragment : Fragment() {
 
         // Set up admin button with database verification
         setupAdminButton(bottomNavBinding)
+        
+        // Actualizar badge de notificaciones
+        updateNotificationBadge(bottomNavBinding)
 
         // Resaltar solo el icono de perfil en morado
         bottomNavBinding.profileIconImageView.setColorFilter(
@@ -434,6 +437,36 @@ class ProfileFragment : Fragment() {
             activeNetwork.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> true
             activeNetwork.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> true
             else -> false
+        }
+    }
+
+    /**
+     * Actualiza el badge de notificaciones no leídas
+     */
+    private fun updateNotificationBadge(bottomNavBinding: ComponentBottomNavigationBinding) {
+        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        val userId = sessionManager.getUserId()
+        if (userId == -1L) {
+            bottomNavBinding.notificationBadge.visibility = View.GONE
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val unreadCount = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.countUnreadNotifications(userId)
+                }
+                
+                if (unreadCount > 0) {
+                    bottomNavBinding.notificationBadge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
+                    bottomNavBinding.notificationBadge.visibility = View.VISIBLE
+                } else {
+                    bottomNavBinding.notificationBadge.visibility = View.GONE
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("ProfileFragment", "Error updating notification badge", e)
+                bottomNavBinding.notificationBadge.visibility = View.GONE
+            }
         }
     }
 }

@@ -30,6 +30,7 @@ class DatabaseChatAdapter(
     
     private val messages = mutableListOf<ChatMessage>()
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private val animatedPositions = mutableSetOf<Int>() // Track already animated positions
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
         val view = LayoutInflater.from(parent.context)
@@ -38,14 +39,26 @@ class DatabaseChatAdapter(
     }
 
     override fun onBindViewHolder(holder: MessageViewHolder, position: Int) {
-        holder.bind(messages[position])
+        holder.bind(messages[position], shouldAnimate = !animatedPositions.contains(position))
+        animatedPositions.add(position) // Mark as animated after first bind
+    }
+    
+    override fun onBindViewHolder(holder: MessageViewHolder, position: Int, payloads: MutableList<Any>) {
+        if (payloads.isEmpty()) {
+            super.onBindViewHolder(holder, position, payloads)
+        } else {
+            // Update without animation when payload is present
+            holder.bind(messages[position], shouldAnimate = false)
+        }
     }
 
     override fun getItemCount() = messages.size
 
     fun addMessage(message: ChatMessage) {
         messages.add(message)
-        notifyItemInserted(messages.size - 1)
+        val position = messages.size - 1
+        animatedPositions.add(position) // Mark as already animated
+        notifyItemInserted(position)
     }
 
     fun updateMessage(messageId: String, newText: String) {
@@ -53,7 +66,8 @@ class DatabaseChatAdapter(
         if (index != -1) {
             val oldMessage = messages[index]
             messages[index] = oldMessage.copy(text = newText)
-            notifyItemChanged(index)
+            // Keep the position in animatedPositions to prevent re-animation
+            notifyItemChanged(index, "NO_ANIMATION") // Use payload to skip animation
         }
     }
 
@@ -62,7 +76,8 @@ class DatabaseChatAdapter(
             val lastIndex = messages.size - 1
             val lastMessage = messages[lastIndex]
             messages[lastIndex] = lastMessage.copy(text = newText)
-            notifyItemChanged(lastIndex)
+            // Use payload to skip animation on update
+            notifyItemChanged(lastIndex, "NO_ANIMATION")
         }
     }
 
@@ -70,6 +85,16 @@ class DatabaseChatAdapter(
         val typingIndex = messages.indexOfFirst { it.isTyping }
         if (typingIndex != -1) {
             messages.removeAt(typingIndex)
+            // Rebuild animated positions set after removal
+            val newAnimatedPositions = mutableSetOf<Int>()
+            animatedPositions.forEach { pos ->
+                when {
+                    pos < typingIndex -> newAnimatedPositions.add(pos)
+                    pos > typingIndex -> newAnimatedPositions.add(pos - 1)
+                }
+            }
+            animatedPositions.clear()
+            animatedPositions.addAll(newAnimatedPositions)
             notifyItemRemoved(typingIndex)
         }
     }
@@ -78,7 +103,9 @@ class DatabaseChatAdapter(
         removeTypingIndicator()
         val typingMessage = ChatMessage.createTypingIndicator()
         messages.add(typingMessage)
-        notifyItemInserted(messages.size - 1)
+        val position = messages.size - 1
+        animatedPositions.add(position) // Mark as already animated
+        notifyItemInserted(position)
     }
 
     fun getMessages(): List<ChatMessage> = messages.toList()
@@ -86,12 +113,18 @@ class DatabaseChatAdapter(
     fun restoreMessages(savedMessages: List<ChatMessage>) {
         messages.clear()
         messages.addAll(savedMessages)
+        animatedPositions.clear() // Reset animation tracking
+        // Mark all restored messages as already animated to prevent re-animation
+        for (i in savedMessages.indices) {
+            animatedPositions.add(i)
+        }
         notifyDataSetChanged()
     }
 
     fun clear() {
         val size = messages.size
         messages.clear()
+        animatedPositions.clear() // Reset animation tracking
         notifyItemRangeRemoved(0, size)
     }
 
@@ -99,6 +132,17 @@ class DatabaseChatAdapter(
         val index = messages.indexOfFirst { it.messageId == messageId }
         if (index != -1) {
             messages.removeAt(index)
+            // Rebuild animated positions set after removal
+            val newAnimatedPositions = mutableSetOf<Int>()
+            animatedPositions.forEach { pos ->
+                when {
+                    pos < index -> newAnimatedPositions.add(pos)
+                    pos > index -> newAnimatedPositions.add(pos - 1)
+                    // Skip pos == index (the removed item)
+                }
+            }
+            animatedPositions.clear()
+            animatedPositions.addAll(newAnimatedPositions)
             notifyItemRemoved(index)
         }
     }
@@ -115,10 +159,17 @@ class DatabaseChatAdapter(
         private val shareButton: ImageButton = itemView.findViewById(R.id.shareButton)
         private val copyButtonUser: ImageButton = itemView.findViewById(R.id.copyButtonUser)
         private val shareButtonUser: ImageButton = itemView.findViewById(R.id.shareButtonUser)
+        private val editButtonUser: ImageButton = itemView.findViewById(R.id.editButtonUser)
 
-        fun bind(message: ChatMessage) {
-            // Animate the message appearance
-            animateMessage(itemView)
+        fun bind(message: ChatMessage, shouldAnimate: Boolean = true) {
+            // Only animate new messages, not updates
+            if (shouldAnimate) {
+                animateMessage(itemView)
+            } else {
+                // Reset view state for updates without animation
+                itemView.alpha = 1f
+                itemView.translationY = 0f
+            }
             
             if (message.isUser) {
                 // Show user message
@@ -197,6 +248,7 @@ class DatabaseChatAdapter(
             // Use minimal icons for user actions too
             copyButtonUser.setImageResource(R.drawable.ic_copy_minimal)
             shareButtonUser.setImageResource(R.drawable.ic_share_minimal)
+            editButtonUser.setImageResource(R.drawable.ic_edit_minimal)
 
             copyButtonUser.setOnClickListener {
                 copyToClipboard(message.text)
@@ -204,6 +256,10 @@ class DatabaseChatAdapter(
             
             shareButtonUser.setOnClickListener {
                 shareMessage(message.text)
+            }
+            
+            editButtonUser.setOnClickListener {
+                onEditUserMessageClick(message)
             }
         }
         

@@ -24,6 +24,7 @@ import com.example.tareamov.R
 import com.example.tareamov.data.repository.SupabaseRepository
 import com.example.tareamov.data.entity.TaskSubmission
 import com.example.tareamov.data.entity.FileContext
+import com.example.tareamov.data.entity.Notification
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.service.FileAnalysisService
 import com.example.tareamov.service.FileConverterService
@@ -57,6 +58,7 @@ class TaskSubmissionsFragment : Fragment() {
     private var selectedFileUri: Uri? = null
     private var hasUserSubmitted = false
     private var userSubmission: TaskSubmission? = null
+    private var isSubmitting: Boolean = false
     
     // Información de la tarea, tema y curso
     private var taskDescription: String = ""
@@ -461,12 +463,18 @@ class TaskSubmissionsFragment : Fragment() {
                     else
                         "Tarea entregada, pendiente de calificación"
 
+<<<<<<< HEAD
                     // Disable submit buttons (file and GitHub)
                     view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
                     view?.findViewById<Button>(R.id.submitFileButton)?.text = "Ya enviado"
                     view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = false
                     view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Ya enviado"
                     view?.findViewById<Button>(R.id.selectFileButton)?.isEnabled = false
+=======
+                    // Allow resubmission: enable submit button and offer to re-send
+                    view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = true
+                    view?.findViewById<Button>(R.id.submitFileButton)?.text = "Reenviar"
+>>>>>>> 15e6e0adabdfa840eefaf85ca110c6f441c271b5
                 } else {
                     // User hasn't submitted yet
                     hasUserSubmitted = false
@@ -504,6 +512,7 @@ class TaskSubmissionsFragment : Fragment() {
                         } catch (e: Exception) {
                             android.util.Log.w("TaskSubmissionsFragment", "Failed to serialize sample submissions to JSON", e)
                         }
+<<<<<<< HEAD
                         
                         // Obtener el ID del creador del curso para excluirlo de la lista
                         val creatorUserId = try {
@@ -513,6 +522,15 @@ class TaskSubmissionsFragment : Fragment() {
                         } catch (e: Exception) {
                             android.util.Log.w("TaskSubmissionsFragment", "Could not get creator user ID", e)
                             null
+=======
+                        // If the current user is the course creator, show submissions for grading
+                        // but exclude the creator's own submissions (they should not appear in pending lists)
+                        val currentUserId = sessionManager.getUserId()
+                        if (isCourseCreator) {
+                            if (currentUserId != -1L) all.filter { it.studentId != currentUserId } else all
+                        } else {
+                            if (currentUserId != -1L) all.filter { it.studentId == currentUserId } else emptyList()
+>>>>>>> 15e6e0adabdfa840eefaf85ca110c6f441c271b5
                         }
                         
                         // Filtrar: excluir al creador del curso Y eliminar duplicados por studentId
@@ -573,6 +591,9 @@ class TaskSubmissionsFragment : Fragment() {
                         Log.i("TaskSubmissionsFragment", "✅ Updated submission pushed to Supabase.")
                         Toast.makeText(context, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
                         
+                        // Enviar notificación al estudiante sobre la calificación
+                        sendGradeNotificationToStudent(submission, grade, feedback)
+                        
                         // Trigger progress update event for the graded student
                         triggerProgressUpdateEvent(submission.studentId, taskId)
                         
@@ -595,6 +616,112 @@ class TaskSubmissionsFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "Error updating grade", e)
                 Toast.makeText(context, "Error al guardar calificación: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * Envía una notificación al estudiante cuando su tarea ha sido calificada o modificada
+     */
+    private fun sendGradeNotificationToStudent(submission: TaskSubmission, grade: Float, feedback: String) {
+        lifecycleScope.launch {
+            try {
+                Log.d("TaskSubmissionsFragment", "📬 Enviando notificación de calificación al estudiante...")
+                
+                // Detectar si es una modificación de nota (ya tenía calificación previa)
+                val isModification = submission.grade != null && submission.grade > 0f
+                
+                // Obtener información de la tarea y curso
+                val task = withContext(Dispatchers.IO) {
+                    SupabaseClient.fetchTaskById(taskId)
+                }
+                if (task == null) {
+                    Log.w("TaskSubmissionsFragment", "No se pudo obtener información de la tarea")
+                    return@launch
+                }
+                
+                // Obtener información del tema y curso
+                val topic = withContext(Dispatchers.IO) {
+                    task.topicId?.let { tid ->
+                        SupabaseClient.fetchTopics().firstOrNull { it.id == tid }
+                    }
+                }
+                val courseId = topic?.courseId
+                val course = if (courseId != null) {
+                    withContext(Dispatchers.IO) { SupabaseClient.fetchCourseById(courseId) }
+                } else null
+                
+                // Obtener el ID del estudiante (destinatario de la notificación)
+                val studentUserId = submission.studentId
+                if (studentUserId <= 0) {
+                    Log.w("TaskSubmissionsFragment", "ID de estudiante inválido: $studentUserId")
+                    return@launch
+                }
+                
+                // No enviar notificación si el estudiante es el creador del curso
+                val currentUserId = sessionManager.getUserId()
+                if (studentUserId == currentUserId) {
+                    Log.d("TaskSubmissionsFragment", "El estudiante calificó su propia tarea, no se envía notificación")
+                    return@launch
+                }
+                
+                // Obtener avatar del creador (quien califica)
+                val creatorUsername = sessionManager.getUsername()
+                val creatorAvatarUrl = withContext(Dispatchers.IO) {
+                    SupabaseClient.getUserAvatarUrl(currentUserId)
+                }
+                
+                // Formatear la nota para mostrar
+                val gradeText = String.format("%.1f", grade)
+                val courseName = course?.title ?: "curso"
+                
+                // Crear título y mensaje según si es nueva calificación o modificación
+                val notificationTitle = if (isModification) {
+                    "Nota modificada en $courseName"
+                } else {
+                    "Tarea calificada en $courseName"
+                }
+                
+                val notificationMessage = if (isModification) {
+                    if (feedback.isNotBlank()) {
+                        "$creatorUsername ha modificado tu nota a $gradeText en \"${task.name ?: "tarea"}\": \"$feedback\""
+                    } else {
+                        "$creatorUsername ha modificado tu nota a $gradeText en \"${task.name ?: "tarea"}\""
+                    }
+                } else {
+                    if (feedback.isNotBlank()) {
+                        "$creatorUsername te ha calificado con $gradeText en \"${task.name ?: "tarea"}\": \"$feedback\""
+                    } else {
+                        "$creatorUsername te ha calificado con $gradeText en \"${task.name ?: "tarea"}\""
+                    }
+                }
+                
+                // Crear la notificación
+                val notification = Notification(
+                    userId = studentUserId,
+                    type = Notification.TYPE_TASK_GRADED,
+                    title = notificationTitle,
+                    message = notificationMessage,
+                    senderUsername = creatorUsername,
+                    senderAvatarUrl = creatorAvatarUrl,
+                    thumbnailUrl = course?.thumbnailUri,
+                    relatedId = taskId,
+                    isRead = false
+                )
+                
+                val notificationId = withContext(Dispatchers.IO) {
+                    SupabaseClient.insertNotification(notification)
+                }
+                
+                if (notificationId != null) {
+                    val actionType = if (isModification) "modificación de nota" else "calificación"
+                    Log.d("TaskSubmissionsFragment", "✅ Notificación de $actionType enviada al estudiante (id=$notificationId)")
+                } else {
+                    Log.w("TaskSubmissionsFragment", "⚠️ No se pudo enviar la notificación al estudiante")
+                }
+                
+            } catch (e: Exception) {
+                Log.e("TaskSubmissionsFragment", "Error enviando notificación al estudiante", e)
             }
         }
     }
@@ -824,6 +951,7 @@ class TaskSubmissionsFragment : Fragment() {
         
         CoroutineScope(Dispatchers.Main).launch {
             try {
+<<<<<<< HEAD
                 // VERIFICACIÓN ADICIONAL EN SUPABASE: Asegurar que no existe entrega duplicada
                 val existingSubmission = withContext(Dispatchers.IO) {
                     try {
@@ -847,6 +975,15 @@ class TaskSubmissionsFragment : Fragment() {
                     return@launch
                 }
                 
+=======
+                if (isSubmitting) {
+                    Toast.makeText(context, "Ya se está enviando una entrega, espera por favor...", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                isSubmitting = true
+                // disable button to avoid duplicate taps
+                view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
+>>>>>>> 15e6e0adabdfa840eefaf85ca110c6f441c271b5
                 // PASO 0: Subir archivo a Cloudflare R2 si está configurado
                 var cloudFileUri = finalUri.toString()
                 val currentUsername = sessionManager.getUsername() ?: "unknown"
@@ -854,45 +991,172 @@ class TaskSubmissionsFragment : Fragment() {
                 if (com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
                     progressTextView.text = "Subiendo archivo a la nube..."
                     progressBar.progress = 10
-                    
-                    val uploadResult = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.CloudflareR2Service.uploadSubmission(
-                            context = requireContext(),
-                            fileUri = finalUri,
-                            taskId = taskId,
-                            username = currentUsername
-                        ) { progress ->
-                            CoroutineScope(Dispatchers.Main).launch {
-                                progressBar.progress = 10 + (progress * 0.3).toInt() // 10-40%
-                                progressTextView.text = "Subiendo archivo: $progress%"
+
+                    // Preferir el content:// URI original cuando sea posible — evita problemas con contentResolver y file://
+                    val uploadUri = if (uri.scheme == "content") uri else finalUri
+
+                    var uploadResult = try {
+                        withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.CloudflareR2Service.uploadSubmission(
+                                context = requireContext(),
+                                fileUri = uploadUri,
+                                taskId = taskId,
+                                username = currentUsername
+                            ) { progress ->
+                                CoroutineScope(Dispatchers.Main).launch {
+                                    progressBar.progress = 10 + (progress * 0.3).toInt() // 10-40%
+                                    progressTextView.text = "Subiendo archivo: $progress%"
+                                }
                             }
                         }
+                    } catch (e: Exception) {
+                        Log.w("TaskSubmissionsFragment", "Primera subida a R2 falló con uri=$uploadUri: ${e.message}", e)
+                        null
                     }
-                    
-                    when (uploadResult) {
-                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
-                            cloudFileUri = uploadResult.url
-                            Log.d("TaskSubmissionsFragment", "✅ Archivo subido a R2: $cloudFileUri")
-                            progressTextView.text = "Archivo subido, procesando..."
+
+                    // Si el intento con el content uri falló y teníamos un file://, intentar con finalUri como fallback
+                    if (uploadResult == null && finalUri != uploadUri) {
+                        try {
+                            uploadResult = withContext(Dispatchers.IO) {
+                                com.example.tareamov.service.CloudflareR2Service.uploadSubmission(
+                                    context = requireContext(),
+                                    fileUri = finalUri,
+                                    taskId = taskId,
+                                    username = currentUsername
+                                ) { progress ->
+                                    CoroutineScope(Dispatchers.Main).launch {
+                                        progressBar.progress = 10 + (progress * 0.3).toInt()
+                                        progressTextView.text = "Subiendo archivo (fallback): $progress%"
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("TaskSubmissionsFragment", "Fallback upload a R2 falló con finalUri=$finalUri: ${e.message}", e)
+                            uploadResult = null
                         }
-                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
-                            Log.w("TaskSubmissionsFragment", "⚠️ R2 upload failed: ${uploadResult.message}")
-                            // Continuar con URI local si falla R2
-                        }
+                    }
+
+                    if (uploadResult is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success) {
+                        cloudFileUri = uploadResult.url
+                        Log.d("TaskSubmissionsFragment", "✅ Archivo subido a R2: $cloudFileUri")
+                        progressTextView.text = "Archivo subido, procesando..."
+                    } else if (uploadResult is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error) {
+                        Log.w("TaskSubmissionsFragment", "⚠️ R2 upload failed: ${uploadResult.message}")
+                    } else {
+                        Log.w("TaskSubmissionsFragment", "⚠️ No se pudo subir el archivo a R2, se usará URI local")
                     }
                 }
                 
                 progressBar.progress = 40
-                
-                val submission = TaskSubmission(
-                    taskId = taskId,
-                    studentId = currentUserId,
-                    fileUri = cloudFileUri, // Usar URL de R2 o local
-                    fileName = fileName,
-                    submissionDate = System.currentTimeMillis(),
-                    grade = 0.0f,
-                    feedback = null
-                )
+
+                // Check if user already has a submission for this task; if so, update it instead of inserting a new one
+                val existingSubmission = withContext(Dispatchers.IO) {
+                    try {
+                        database.taskSubmissionDao().getUserSubmissionForTask(taskId, currentUserId)
+                    } catch (e: Exception) {
+                        Log.w("TaskSubmissionsFragment", "Error checking existing submission: ${e.message}")
+                        null
+                    }
+                }
+
+                val created: com.example.tareamov.data.entity.TaskSubmission? = if (existingSubmission != null) {
+                    // Update existing submission locally
+                    val updated = existingSubmission.copy(
+                        fileUri = cloudFileUri,
+                        fileName = fileName,
+                        submissionDate = System.currentTimeMillis(),
+                        grade = 0.0f,
+                        feedback = null
+                    )
+
+                    try {
+                        withContext(Dispatchers.IO) {
+                            database.taskSubmissionDao().updateSubmission(updated)
+                        }
+                        Log.i("TaskSubmissionsFragment", "✅ Updated local submission id=${updated.id}")
+                    } catch (e: Exception) {
+                        Log.w("TaskSubmissionsFragment", "Error updating local submission: ${e.message}")
+                    }
+
+                    // Try to update remote submission; do not fail the user flow if remote update fails
+                    try {
+                        val remoteOk = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.updateTaskSubmissionRemote(updated)
+                        }
+                        Log.i("TaskSubmissionsFragment", "Remote update result for id=${updated.id}: $remoteOk")
+                    } catch (e: Exception) {
+                        Log.w("TaskSubmissionsFragment", "Error updating remote submission: ${e.message}")
+                    }
+
+                    // Provide feedback and continue using the updated local submission as 'created'
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Entrega actualizada", Toast.LENGTH_SHORT).show()
+                        view?.findViewById<Button>(R.id.submitFileButton)?.text = "Actualizar entrega"
+                    }
+
+                    updated
+                } else {
+                    // No existing submission: create a new one and insert remotely
+                    val submission = com.example.tareamov.data.entity.TaskSubmission(
+                        taskId = taskId,
+                        studentId = currentUserId,
+                        fileUri = cloudFileUri, // Usar URL de R2 o local
+                        fileName = fileName,
+                        submissionDate = System.currentTimeMillis(),
+                        grade = 0.0f,
+                        feedback = null
+                    )
+
+                    // Insert remotely
+                    try {
+                        Log.d("TaskSubmissionsFragment", "📤 Intentando insertar TaskSubmission en Supabase...")
+                        val remoteId = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.insertTaskSubmission(submission)
+                        }
+                        if (remoteId != null) {
+                            Log.i("TaskSubmissionsFragment", "✅ Supabase insertTaskSubmission returned remote id=$remoteId")
+                            Toast.makeText(context, "Tarea subida a servidor (id=$remoteId)", Toast.LENGTH_SHORT).show()
+
+                            // Trigger progress update event and notify creator
+                            triggerProgressUpdateEvent(currentUserId, taskId)
+                            notifyCourseCreatorOfSubmission(taskId, taskName, currentUsername)
+
+                            // Poll Supabase for created record
+                            val found = withContext(Dispatchers.IO) {
+                                var foundLocal: com.example.tareamov.data.entity.TaskSubmission? = null
+                                repeat(6) { attempt ->
+                                    try {
+                                        val all = com.example.tareamov.service.SupabaseClient.fetchTaskSubmissions()
+                                        foundLocal = all.firstOrNull { it.id == remoteId }
+                                        if (foundLocal != null) return@withContext foundLocal
+                                    } catch (e: Exception) {
+                                        Log.w("TaskSubmissionsFragment", "Attempt ${attempt + 1} fetch created submission failed: ${e.message}")
+                                    }
+                                    kotlinx.coroutines.delay(500)
+                                }
+                                foundLocal
+                            }
+
+                            found
+                        } else {
+                            Log.w("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned null")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "❌ Exception en insertTaskSubmission: ${e.message}", e)
+                    }
+
+                    // If remote insert failed or returned null, fall back to inserting locally and returning that
+                    try {
+                        val localId = withContext(Dispatchers.IO) {
+                            database.taskSubmissionDao().insertSubmission(submission)
+                        }
+                        Log.i("TaskSubmissionsFragment", "Inserted local submission id=$localId as fallback")
+                        submission.copy(id = localId)
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Failed to insert local fallback submission: ${e.message}", e)
+                        null
+                    }
+                }
 
                 // PASO 1: Extraer el contenido del archivo ANTES de subirlo
                 progressTextView.text = "Analizando contenido del archivo..."
@@ -929,117 +1193,83 @@ class TaskSubmissionsFragment : Fragment() {
                     ).show()
                 }
 
-                progressTextView.text = "Subiendo tarea al servidor..."
-                progressBar.progress = 60
-                
-                try {
-                    // Directly insert submission to Supabase
-                    Log.d("TaskSubmissionsFragment", "📤 Intentando insertar TaskSubmission en Supabase...")
-                    Log.d("TaskSubmissionsFragment", "📤 Datos: taskId=$taskId, studentId=$currentUserId, fileName=$fileName")
-                    
-                    val remoteId = withContext(Dispatchers.IO) {
-                        SupabaseClient.insertTaskSubmission(submission)
-                    }
-                    if (remoteId != null) {
-                        Log.i("TaskSubmissionsFragment", "✅ Supabase insertTaskSubmission returned remote id=$remoteId")
-                        Toast.makeText(context, "Tarea subida a servidor (id=$remoteId)", Toast.LENGTH_SHORT).show()
+                // Use the previously computed `created` submission (either updated or newly created)
+                progressTextView.text = "Guardando contexto del archivo..."
+                progressBar.progress = 80
 
-                        // Trigger progress update event after successful submission
-                        triggerProgressUpdateEvent(currentUserId, taskId)
-
-                        // Poll Supabase for the newly created submission (the backend may be eventually consistent)
-                        val created = withContext(Dispatchers.IO) {
-                            var found: com.example.tareamov.data.entity.TaskSubmission? = null
-                            repeat(6) { attempt ->
-                                try {
-                                    val all = SupabaseClient.fetchTaskSubmissions()
-                                    found = all.firstOrNull { it.id == remoteId }
-                                    if (found != null) return@withContext found
-                                } catch (e: Exception) {
-                                    val attemptNum = attempt + 1
-                                    Log.w("TaskSubmissionsFragment", "Attempt $attemptNum fetch created submission failed: ${e.message}")
-                                }
-                                kotlinx.coroutines.delay(500)
-                            }
-                            found
+                if (created != null) {
+                    val createdSubmissionId = created.id
+                    val taskDescription = withContext(Dispatchers.IO) {
+                        try {
+                            val task = SupabaseClient.fetchTaskById(taskId)
+                            task?.description ?: "Tarea: ${task?.name ?: "Sin nombre"}"
+                        } catch (e: Exception) {
+                            Log.e("TaskSubmissionsFragment", "Error obteniendo descripción de tarea", e)
+                            "Tarea sin descripción"
                         }
-
-                        if (created != null) {
-                            // PASO 2: Crear el FileContext con el contenido extraído
-                            progressTextView.text = "Guardando contexto del archivo..."
-                            progressBar.progress = 80
-                            
-                            val createdSubmissionId = created.id
-                            val taskDescription = withContext(Dispatchers.IO) {
-                                try {
-                                    val task = SupabaseClient.fetchTaskById(taskId)
-                                    task?.description ?: "Tarea: ${task?.name ?: "Sin nombre"}"
-                                } catch (e: Exception) {
-                                    Log.e("TaskSubmissionsFragment", "Error obteniendo descripción de tarea", e)
-                                    "Tarea sin descripción"
-                                }
-                            }
-
-                            val fileContext = buildFileContextForSubmission(
-                                submissionId = createdSubmissionId,
-                                originalFileName = fileName,
-                                structuredContext = structuredFileContext,
-                                analysisResult = analysisResult,
-                                taskDescription = taskDescription
-                            )
-
-                            Log.d(
-                                "TaskSubmissionsFragment",
-                                "📦 FileContext final -> nombre=${fileContext.fileName}, tipo=${fileContext.fileType}, longitud=${fileContext.fileContent.length}"
-                            )
-                            
-                            // Guardar FileContext en la base de datos local Y en Supabase
-                            withContext(Dispatchers.IO) {
-                                try {
-                                    // 1. Guardar en base de datos local
-                                    database.fileContextDao().insertFileContext(fileContext)
-                                    Log.d("TaskSubmissionsFragment", "✅ FileContext guardado en BD local para submission $createdSubmissionId")
-                                    
-                                    // 2. Enviar a Supabase
-                                    Log.d("TaskSubmissionsFragment", "📤 Intentando insertar FileContext en Supabase...")
-                                    Log.d("TaskSubmissionsFragment", "📤 Datos: submissionId=$createdSubmissionId, fileName=${fileContext.fileName}, contentLength=${fileContext.fileContent.length}")
-                                    
-                                    val remoteFileContextId = SupabaseClient.insertFileContext(fileContext)
-                                    if (remoteFileContextId != null) {
-                                        Log.d("TaskSubmissionsFragment", "✅ FileContext enviado a Supabase con ID remoto: ${remoteFileContextId}")
-                                    } else {
-                                        Log.w("TaskSubmissionsFragment", "⚠️ FileContext no pudo ser enviado a Supabase (quedó solo en BD local)")
-                                        Log.w("TaskSubmissionsFragment", "⚠️ Esto puede causar que el contexto no esté disponible al seleccionar la tarea con #")
-                                    }
-                                } catch (e: Exception) {
-                                    Log.e("TaskSubmissionsFragment", "❌ Error guardando/enviando FileContext", e)
-                                }
-                            }
-                            
-                            progressTextView.text = "¡Tarea enviada exitosamente!"
-                            progressBar.progress = 100
-                            
-                            // IMPORTANTE: Recalcular y sincronizar progreso del estudiante
-                            recalculateAndSyncStudentProgress(currentUserId)
-                            
-                            // Refresh the submissions list from Supabase to ensure frontend data comes from server
-                            loadSubmissions()
-                        } else {
-                            // If not found after retries, still refresh as a best-effort
-                            Log.w("TaskSubmissionsFragment", "Created submission not found on Supabase after retries; refreshing list")
-                            loadSubmissions()
-                        }
-                    } else {
-                        Log.w("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned null")
-                        Toast.makeText(context, "Tarea enviada (pendiente de confirmación en servidor)", Toast.LENGTH_SHORT).show()
-                        // Try to reload once in case it appears shortly
-                        loadSubmissions()
                     }
-                } catch (e: Exception) {
-                    Log.e("TaskSubmissionsFragment", "Error sending submission to Supabase", e)
-                    Toast.makeText(context, "Error al enviar tarea al servidor: ${e.message}", Toast.LENGTH_SHORT).show()
-                    progressSection.visibility = View.GONE
+
+                    val fileContext = buildFileContextForSubmission(
+                        submissionId = createdSubmissionId,
+                        originalFileName = fileName,
+                        structuredContext = structuredFileContext,
+                        analysisResult = analysisResult,
+                        taskDescription = taskDescription
+                    )
+
+                    Log.d(
+                        "TaskSubmissionsFragment",
+                        "📦 FileContext final -> nombre=${fileContext.fileName}, tipo=${fileContext.fileType}, longitud=${fileContext.fileContent.length}"
+                    )
+
+                    // Guardar FileContext en la base de datos local Y en Supabase (evitar duplicados locales)
+                    withContext(Dispatchers.IO) {
+                        try {
+                            val existingFc = database.fileContextDao().getFileContextBySubmission(createdSubmissionId)
+                            if (existingFc != null) {
+                                // Update existing file context instead of inserting a duplicate
+                                val toUpdate = fileContext.copy(id = existingFc.id)
+                                database.fileContextDao().updateFileContext(toUpdate)
+                                Log.d("TaskSubmissionsFragment", "🔁 FileContext actualizado localmente para submission $createdSubmissionId (id=${existingFc.id})")
+                            } else {
+                                database.fileContextDao().insertFileContext(fileContext)
+                                Log.d("TaskSubmissionsFragment", "✅ FileContext guardado en BD local para submission $createdSubmissionId")
+                            }
+
+                            // Enviar a Supabase (si falla, no bloquea la experiencia)
+                            Log.d("TaskSubmissionsFragment", "📤 Intentando insertar FileContext en Supabase...")
+                            Log.d("TaskSubmissionsFragment", "📤 Datos: submissionId=$createdSubmissionId, fileName=${fileContext.fileName}, contentLength=${fileContext.fileContent.length}")
+                            val remoteFileContextId = try {
+                                SupabaseClient.insertFileContext(fileContext)
+                            } catch (e: Exception) {
+                                Log.w("TaskSubmissionsFragment", "Error enviando FileContext a Supabase: ${e.message}")
+                                null
+                            }
+                            if (remoteFileContextId != null) {
+                                Log.d("TaskSubmissionsFragment", "✅ FileContext enviado a Supabase con ID remoto: ${remoteFileContextId}")
+                            } else {
+                                Log.w("TaskSubmissionsFragment", "⚠️ FileContext no pudo ser enviado a Supabase (quedó solo en BD local)")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("TaskSubmissionsFragment", "❌ Error guardando/enviando FileContext", e)
+                        }
+                    }
+
+                    progressTextView.text = "¡Tarea enviada exitosamente!"
+                    progressBar.progress = 100
+
+                    // IMPORTANTE: Recalcular y sincronizar progreso del estudiante
+                    recalculateAndSyncStudentProgress(currentUserId)
+
+                    // Refresh the submissions list from Supabase to ensure frontend data comes from server
+                    loadSubmissions()
+                } else {
+                    Log.w("TaskSubmissionsFragment", "No se pudo crear/actualizar la entrega, refrescando lista")
+                    Toast.makeText(context, "Tarea enviada (pendiente de confirmación en servidor)", Toast.LENGTH_SHORT).show()
+                    loadSubmissions()
                 }
+
+                // Final UI updates
                 selectedFileUri = null
                 view?.findViewById<TextView>(R.id.selectedFileNameTextView)?.text = "Ningún archivo seleccionado"
 
@@ -1055,22 +1285,31 @@ class TaskSubmissionsFragment : Fragment() {
                 // Update progress after submission - ocultar barra después de 2 segundos
                 kotlinx.coroutines.delay(2000)
                 progressSection.visibility = View.GONE
-                
+
                 // Reset progress bar for next submission
                 progressBar.max = 100
                 progressBar.progress = 0
                 progressBar.isIndeterminate = false
                 progressTextView.text = "0% completado"
 
-                // Disable submit button
-                view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
-                view?.findViewById<Button>(R.id.submitFileButton)?.text = "Ya enviado"
+                // Allow resubmission: keep submit button enabled for updates
+                view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = true
+                view?.findViewById<Button>(R.id.submitFileButton)?.text = "Actualizar entrega"
 
                 // Reload submissions to show the new one
                 loadSubmissions()
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "Error submitting task", e)
                 Toast.makeText(context, "Error al enviar tarea: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                // Always reset submitting flag and re-enable button
+                isSubmitting = false
+                view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = true
+                // Ensure progress section hidden if something failed
+                try {
+                    progressSection.visibility = View.GONE
+                } catch (ignored: Exception) {
+                }
             }
         }
     }
@@ -1255,6 +1494,46 @@ class TaskSubmissionsFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "❌ Error in progress update event", e)
+            }
+        }
+    }
+
+    /**
+     * Notifies the course creator when a student submits a task
+     * This runs asynchronously to not block the submission flow
+     */
+    private fun notifyCourseCreatorOfSubmission(taskId: Long, taskName: String, studentUsername: String) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.d("TaskSubmissionsFragment", "📢 Notifying course creator about submission for task $taskId")
+                
+                // Get student avatar URL if available
+                val studentAvatarUrl = sessionManager.getUserId().let { userId ->
+                    if (userId != -1L) {
+                        try {
+                            val user = SupabaseClient.fetchUsuarios().firstOrNull { it.id == userId }
+                            user?.avatar
+                        } catch (e: Exception) {
+                            Log.w("TaskSubmissionsFragment", "Could not fetch student avatar", e)
+                            null
+                        }
+                    } else null
+                }
+                
+                val success = SupabaseClient.notifyCourseCreatorOfSubmission(
+                    taskId = taskId,
+                    taskName = taskName,
+                    studentUsername = studentUsername,
+                    studentAvatarUrl = studentAvatarUrl
+                )
+                
+                if (success) {
+                    Log.i("TaskSubmissionsFragment", "✅ Course creator notified about submission")
+                } else {
+                    Log.w("TaskSubmissionsFragment", "⚠️ Failed to notify course creator")
+                }
+            } catch (e: Exception) {
+                Log.e("TaskSubmissionsFragment", "❌ Error notifying course creator", e)
             }
         }
     }
@@ -2005,6 +2284,9 @@ class TaskSubmissionsFragment : Fragment() {
                     
                     // Trigger progress update event
                     triggerProgressUpdateEvent(currentUserId, taskId)
+                    
+                    // Notify the course creator about the new submission
+                    notifyCourseCreatorOfSubmission(taskId, taskName, sessionManager.getUsername() ?: "unknown")
                     
                     // Limpiar el campo de texto
                     githubUrlEditText.text?.clear()

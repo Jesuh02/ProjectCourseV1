@@ -11,9 +11,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.example.tareamov.R
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -188,11 +188,13 @@ class CourseTopicFragment : Fragment() {
 
         Log.d("CourseTopicFragment", "Saving topic for courseId: $courseId before adding task")
 
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val activity = requireActivity()
                 if (activity !is com.example.tareamov.MainActivity) {
-                    Toast.makeText(context, "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
+                    }
                     return@launch
                 }
 
@@ -208,7 +210,9 @@ class CourseTopicFragment : Fragment() {
                 }
 
                 if (validCourseId <= 0) {
-                    Toast.makeText(context, "Error: Curso no encontrado", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "Error: Curso no encontrado", Toast.LENGTH_SHORT).show()
+                    }
                     return@launch
                 }
 
@@ -243,12 +247,16 @@ class CourseTopicFragment : Fragment() {
                     }
                     findNavController().navigate(R.id.action_courseTopicFragment_to_courseTaskFragment, bundle)
                 } else {
-                    Toast.makeText(context, "Error al crear el tema en Supabase", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "Error al crear el tema en Supabase", Toast.LENGTH_SHORT).show()
+                    }
                 }
 
             } catch (e: Exception) {
                 Log.e("CourseTopicFragment", "Error al guardar el tema para crear tarea", e)
-                Toast.makeText(context, "Error al guardar el tema: ${e.message}", Toast.LENGTH_SHORT).show()
+                if (isAdded && context != null) {
+                    Toast.makeText(requireContext(), "Error al guardar el tema: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -299,8 +307,8 @@ class CourseTopicFragment : Fragment() {
     }
 
     private fun addContentToList(contentUri: Uri, contentType: String) {
-        // Subir a Cloudflare R2 en segundo plano
-        CoroutineScope(Dispatchers.Main).launch {
+        // Subir a Cloudflare R2 en segundo plano usando lifecycleScope para evitar crashes
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 var finalUri = contentUri
                 var r2Url: String? = null
@@ -308,28 +316,36 @@ class CourseTopicFragment : Fragment() {
                 // Subir a Cloudflare R2 si está configurado
                 if (CloudflareR2Service.isConfigured()) {
                     Log.d("CourseTopicFragment", "☁️ Uploading to Cloudflare R2: $contentUri")
-                    Toast.makeText(context, "Subiendo archivo a la nube...", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "Subiendo archivo a la nube...", Toast.LENGTH_SHORT).show()
+                    }
                     
                     val folder = if (contentType == "video") "videos" else "documents"
-                    val result = CloudflareR2Service.uploadFile(
-                        context = requireContext(),
-                        fileUri = contentUri,
-                        folder = "topics/$folder",
-                        onProgress = { progress ->
-                            Log.d("CourseTopicFragment", "Upload progress: $progress%")
-                        }
-                    )
+                    val result = withContext(Dispatchers.IO) {
+                        CloudflareR2Service.uploadFile(
+                            context = requireContext(),
+                            fileUri = contentUri,
+                            folder = "topics/$folder",
+                            onProgress = { progress ->
+                                Log.d("CourseTopicFragment", "Upload progress: $progress%")
+                            }
+                        )
+                    }
                     
                     when (result) {
                         is CloudflareR2Service.UploadResult.Success -> {
                             r2Url = result.url
                             finalUri = Uri.parse(r2Url)
                             Log.d("CourseTopicFragment", "✅ R2 Upload successful: $r2Url")
-                            Toast.makeText(context, "Archivo subido a la nube ✓", Toast.LENGTH_SHORT).show()
+                            if (isAdded && context != null) {
+                                Toast.makeText(requireContext(), "Archivo subido a la nube ✓", Toast.LENGTH_SHORT).show()
+                            }
                         }
                         is CloudflareR2Service.UploadResult.Error -> {
                             Log.e("CourseTopicFragment", "❌ R2 Upload failed: ${result.message}")
-                            Toast.makeText(context, "Error subiendo a nube, usando copia local", Toast.LENGTH_SHORT).show()
+                            if (isAdded && context != null) {
+                                Toast.makeText(requireContext(), "Error subiendo a nube, usando copia local", Toast.LENGTH_SHORT).show()
+                            }
                             // Fallback: guardar localmente
                             if (contentType == "video") {
                                 finalUri = saveVideoLocally(contentUri) ?: contentUri
@@ -379,7 +395,7 @@ class CourseTopicFragment : Fragment() {
                         contentContainer.removeView(contentView)
                         // Si es URL de R2, podríamos eliminar del servidor (opcional)
                         if (r2Url != null) {
-                            CoroutineScope(Dispatchers.IO).launch {
+                            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                                 CloudflareR2Service.deleteFile(r2Url!!)
                             }
                         }
@@ -396,7 +412,9 @@ class CourseTopicFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 Log.e("CourseTopicFragment", "Error adding content to list", e)
-                Toast.makeText(context, "Error al agregar contenido: ${e.message}", Toast.LENGTH_SHORT).show()
+                if (isAdded && context != null) {
+                    Toast.makeText(requireContext(), "Error al agregar contenido: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -484,11 +502,13 @@ class CourseTopicFragment : Fragment() {
 
         Log.d("CourseTopicFragment", "Saving topic with initial courseId: $courseId")
 
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val activity = requireActivity()
                 if (activity !is com.example.tareamov.MainActivity) {
-                    Toast.makeText(context, "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
+                    }
                     return@launch
                 }
 
@@ -504,7 +524,9 @@ class CourseTopicFragment : Fragment() {
                 }
 
                 if (validCourseId <= 0) {
-                    Toast.makeText(context, "Error: Curso no encontrado", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "Error: Curso no encontrado", Toast.LENGTH_SHORT).show()
+                    }
                     return@launch
                 }
 
@@ -532,7 +554,9 @@ class CourseTopicFragment : Fragment() {
                 }
 
                 if (savedTopicId == null || savedTopicId <= 0) {
-                    Toast.makeText(context, "Error al guardar el tema en Supabase", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "Error al guardar el tema en Supabase", Toast.LENGTH_SHORT).show()
+                    }
                     return@launch
                 }
 
@@ -556,33 +580,57 @@ class CourseTopicFragment : Fragment() {
                 // Save content items to Supabase
                 val contentContainer = view?.findViewById<LinearLayout>(R.id.contentContainer)
                 if (contentContainer != null) {
+                    val itemCount = contentContainer.childCount
+                    Log.d("CourseTopicFragment", "📤 Preparing to save $itemCount content items for topicId=$savedTopicId (courseId=$validCourseId)")
+                    
+                    if (itemCount == 0) {
+                        Log.w("CourseTopicFragment", "⚠️ No content items in container to save!")
+                    }
+                    
                     // Save new content items
-                    for (i in 0 until contentContainer.childCount) {
+                    for (i in 0 until itemCount) {
                         val contentView = contentContainer.getChildAt(i)
                         val contentUri = contentView.tag as? Uri
                         val contentType = contentView.getTag(R.id.content_type_tag) as? String
                         val contentName = contentView.findViewById<TextView>(R.id.contentNameView)?.text.toString()
+                            ?.removePrefix("☁️ ") // Remove cloud emoji prefix for clean name
+
+                        Log.d("CourseTopicFragment", "📦 Processing content item $i: uri=$contentUri, type=$contentType, name=$contentName")
 
                         if (contentUri != null && contentType != null) {
+                            Log.d("CourseTopicFragment", "📦 Saving ContentItem: topicId=$savedTopicId, name='$contentName', type='$contentType', uri='${contentUri}'")
+                            
                             val contentItem = com.example.tareamov.data.entity.ContentItem(
                                 id = 0, // Supabase will auto-generate
                                 topicId = savedTopicId,
-                                taskId = null, // Not associated with a task
+                                taskId = null, // Not associated with a task - THIS IS IMPORTANT
                                 name = contentName,
                                 uriString = contentUri.toString(),
                                 contentType = contentType,
                                 orderIndex = i
                             )
 
-                            withContext(Dispatchers.IO) {
+                            val savedId = withContext(Dispatchers.IO) {
                                 activity.syncRepository.insertContentItemRemote(contentItem)
                             }
+                            
+                            if (savedId != null && savedId > 0) {
+                                Log.d("CourseTopicFragment", "✅ ContentItem saved successfully with id=$savedId for topicId=$savedTopicId")
+                            } else {
+                                Log.e("CourseTopicFragment", "❌ Failed to save ContentItem for topicId=$savedTopicId")
+                            }
+                        } else {
+                            Log.w("CourseTopicFragment", "⚠️ Skipping content item $i: uri=$contentUri, type=$contentType (missing data)")
                         }
                     }
+                } else {
+                    Log.e("CourseTopicFragment", "❌ contentContainer is null! Cannot save content items")
                 }
 
                 // Show success message and navigate back
-                Toast.makeText(context, "Tema guardado correctamente en Supabase", Toast.LENGTH_SHORT).show()
+                if (isAdded && context != null) {
+                    Toast.makeText(requireContext(), "Tema guardado correctamente en Supabase", Toast.LENGTH_SHORT).show()
+                }
 
                 // Notify CourseDetailFragment to refresh from Supabase and force reload
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("topic_created", savedTopicId)
@@ -594,7 +642,9 @@ class CourseTopicFragment : Fragment() {
 
             } catch (e: Exception) {
                 Log.e("CourseTopicFragment", "Error al guardar el tema", e)
-                Toast.makeText(context, "Error al guardar el tema: ${e.message}", Toast.LENGTH_SHORT).show()
+                if (isAdded && context != null) {
+                    Toast.makeText(requireContext(), "Error al guardar el tema: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

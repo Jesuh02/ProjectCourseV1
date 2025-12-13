@@ -133,7 +133,8 @@
             android:text="📦 Enviar Repositorio"
             android:layout_marginTop="8dp"
             android:layout_marginBottom="16dp"
-            android:backgroundTint="#FF9800"/>
+            android:backgroundTint="#FFB74D"
+            android:textColor="#FFFFFF"/>
 
         <!-- OR Divider -->
         <LinearLayout
@@ -191,7 +192,8 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Seleccionar archivo"
-                android:backgroundTint="#3F51B5"/>
+                android:backgroundTint="#5C6BC0"
+                android:textColor="#FFFFFF"/>
 
             <Button
                 android:id="@+id/submitFileButton"
@@ -199,7 +201,8 @@
                 android:layout_height="wrap_content"
                 android:text="Enviar tarea"
                 android:layout_marginStart="8dp"
-                android:backgroundTint="#4CAF50"/>
+                android:backgroundTint="#81C784"
+                android:textColor="#FFFFFF"/>
         </LinearLayout>
 
         <TextView

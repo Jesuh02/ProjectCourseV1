@@ -354,6 +354,16 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
             testLLMConnection()
             true
         }
+        
+        // Delete/New conversation button (create new chat)
+        binding.deleteConversationButton.setOnClickListener {
+            showClearHistoryDialog()
+        }
+        
+        // Export/More options button (show options menu)
+        binding.exportConversationButton.setOnClickListener {
+            showChatHistoryDialog()
+        }
     }
     
     private fun testLLMConnection() {

@@ -671,15 +671,32 @@ object SupabaseClient {
     // Insert a ContentItem (belongs to a Task/Topic)
     suspend fun insertContentItem(contentItem: com.example.tareamov.data.entity.ContentItem): Long? = withContext(Dispatchers.IO) {
         try {
+            Log.d("SupabaseClient", "📤 ========== INSERT CONTENT ITEM ==========")
+            Log.d("SupabaseClient", "📤 Input ContentItem:")
+            Log.d("SupabaseClient", "📤   - topicId: ${contentItem.topicId}")
+            Log.d("SupabaseClient", "📤   - taskId: ${contentItem.taskId}")
+            Log.d("SupabaseClient", "📤   - name: '${contentItem.name}'")
+            Log.d("SupabaseClient", "📤   - uriString: '${contentItem.uriString}'")
+            Log.d("SupabaseClient", "📤   - contentType: '${contentItem.contentType}'")
+            Log.d("SupabaseClient", "📤   - orderIndex: ${contentItem.orderIndex}")
+            
             // Map local ContentItem fields to Supabase content_items columns (title/body)
-            val map = mutableMapOf(
+            val map = mutableMapOf<String, Any?>(
                 "topic_id" to contentItem.topicId,
-                "task_id" to contentItem.taskId,
                 "title" to (contentItem.name ?: ""),
                 "body" to contentItem.uriString,
                 "content_type" to contentItem.contentType,
                 "order_index" to (contentItem.orderIndex ?: 0)
             )
+            
+            // Only include task_id if it's not null and greater than 0
+            if (contentItem.taskId != null && contentItem.taskId!! > 0) {
+                map["task_id"] = contentItem.taskId!!
+                Log.d("SupabaseClient", "📤 Including task_id=${contentItem.taskId}")
+            } else {
+                // Don't include task_id at all for topic content (let DB use default null)
+                Log.d("SupabaseClient", "📤 NOT including task_id (topic content)")
+            }
             
             // Add creator fields if available
             if (contentItem.creator_usuario_id != null && contentItem.creator_usuario_id!! > 0) {
@@ -689,14 +706,19 @@ object SupabaseClient {
                 map["creator_username"] = contentItem.creator_username!!
             }
 
-            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val jsonPayload = gson.toJson(map)
+            Log.d("SupabaseClient", "📤 JSON payload: $jsonPayload")
+            
+            val body = jsonPayload.toRequestBody(jsonMedia)
             val url = "$baseUrl/rest/v1/content_items"
+            
+            Log.d("SupabaseClient", "📤 Sending POST to: $url")
 
             val request = Request.Builder()
                 .url(url)
                 .post(body)
-                .addHeader("apikey", apiKey)
-                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Prefer", "return=representation")
@@ -704,28 +726,40 @@ object SupabaseClient {
 
             client.newCall(request).execute().use { resp ->
                 val respBody = resp.body?.string()
+                Log.d("SupabaseClient", "📤 Response code: ${resp.code}, message: ${resp.message}")
+                Log.d("SupabaseClient", "📤 Response body: $respBody")
+                
                 if (!resp.isSuccessful) {
-                    val bodyStr = respBody ?: ""
-                    Log.w("SupabaseClient", "insertContentItem failed: ${'$'}{resp.code} ${'$'}{resp.message} body=$bodyStr")
+                    Log.e("SupabaseClient", "❌ insertContentItem failed: ${resp.code} ${resp.message} body=$respBody")
                     return@withContext null
                 }
 
-                if (respBody.isNullOrEmpty()) return@withContext null
+                if (respBody.isNullOrEmpty()) {
+                    Log.e("SupabaseClient", "❌ insertContentItem: Empty response body")
+                    return@withContext null
+                }
 
                 try {
                     val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
                     if (jsonArray.size() > 0) {
-                        val idElem = jsonArray[0].asJsonObject.get("id")
-                        return@withContext idElem?.asLong
+                        val insertedObj = jsonArray[0].asJsonObject
+                        val idElem = insertedObj.get("id")?.asLong
+                        val insertedTopicId = insertedObj.get("topic_id")?.asLong
+                        Log.d("SupabaseClient", "✅ ContentItem inserted successfully!")
+                        Log.d("SupabaseClient", "✅   - Returned id: $idElem")
+                        Log.d("SupabaseClient", "✅   - Returned topic_id: $insertedTopicId")
+                        Log.d("SupabaseClient", "📤 ========== END INSERT ==========")
+                        return@withContext idElem
                     }
                 } catch (e: Exception) {
-                    Log.e("SupabaseClient","insertContentItem parse error", e)
+                    Log.e("SupabaseClient","❌ insertContentItem parse error", e)
                 }
 
+                Log.d("SupabaseClient", "📤 ========== END INSERT ==========")
                 return@withContext null
             }
         } catch (e: Exception) {
-            Log.e("SupabaseClient","insertContentItem error", e)
+            Log.e("SupabaseClient","❌ insertContentItem error", e)
             return@withContext null
         }
     }
@@ -834,6 +868,17 @@ object SupabaseClient {
             }
             
             // Do NOT send local 'id' to server - let Postgres sequence generate primary key
+            // Defensive check: avoid creating duplicate task submissions for same (taskId, studentId)
+            try {
+                val existing = fetchTaskSubmissionByTaskId(submission.taskId, submission.studentId)
+                if (existing != null) {
+                    android.util.Log.i("SupabaseClient", "🔎 Found existing remote submission for task=${submission.taskId} student=${submission.studentId} id=${existing.id} - skipping insert")
+                    return@withContext existing.id
+                }
+            } catch (t: Exception) {
+                android.util.Log.w("SupabaseClient", "Warning: failed to check existing submission before insert: ${t.message}")
+            }
+
             val map = mutableMapOf<String, Any?>()
             if (submission.id != null && submission.id != 0L) {
                 android.util.Log.w("SupabaseClient", "Not sending local id=${submission.id} to server for task_submissions (will let DB assign id)")
@@ -1761,7 +1806,36 @@ object SupabaseClient {
             return@withContext null
         }
     }
-    suspend fun fetchContentItems(): List<ContentItem> = fetchList("content_items", Array<ContentItem>::class.java)
+    
+    // Fetch all content items using manual parsing to ensure 'body' maps to 'uriString'
+    suspend fun fetchContentItems(): List<ContentItem> = withContext(Dispatchers.IO) {
+        try {
+            val path = "content_items"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchContentItems failed status=${resp.code}")
+                    return@withContext emptyList()
+                }
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                val items = mutableListOf<ContentItem>()
+                
+                jsonArray.forEach { element ->
+                    val item = parseContentItemFromJson(element.asJsonObject)
+                    items.add(item)
+                }
+                
+                Log.d("SupabaseClient", "fetchContentItems: Found ${items.size} items")
+                return@withContext items
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchContentItems exception", e)
+            emptyList()
+        }
+    }
+    
     suspend fun fetchTasks(): List<Task> = fetchList("tasks", Array<Task>::class.java)
     // Fetch a single task by id using server-side filter
     suspend fun fetchTaskById(id: Long): Task? = withContext(Dispatchers.IO) {
@@ -2204,39 +2278,169 @@ object SupabaseClient {
     suspend fun fetchTopicsByCourse(courseId: Long): List<Topic> = withContext(Dispatchers.IO) {
         try {
             val path = "topics?course_id=eq.$courseId&order=order_index.asc"
+            Log.d("SupabaseClient", "📚 fetchTopicsByCourse: Querying topics for courseId=$courseId")
+            Log.d("SupabaseClient", "📚 fetchTopicsByCourse: URL=$baseUrl/rest/v1/$path")
             val req = buildGetRequest(path)
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
-                    Log.w("SupabaseClient", "fetchTopicsByCourse failed status=${resp.code}")
+                    Log.w("SupabaseClient", "❌ fetchTopicsByCourse failed status=${resp.code}")
                     return@withContext emptyList()
                 }
                 val body = resp.body?.string() ?: return@withContext emptyList()
+                Log.d("SupabaseClient", "📚 fetchTopicsByCourse: Response body length=${body.length}")
                 val arr = underscoredGson.fromJson(body, Array<Topic>::class.java)
-                return@withContext arr.toList()
+                val topics = arr.toList()
+                Log.d("SupabaseClient", "✅ fetchTopicsByCourse: Found ${topics.size} topics for courseId=$courseId")
+                topics.forEachIndexed { index, topic ->
+                    Log.d("SupabaseClient", "   📘 Topic[$index]: id=${topic.id}, name='${topic.name}', courseId=${topic.courseId}")
+                }
+                return@withContext topics
             }
         } catch (e: Exception) {
-            Log.w("SupabaseClient", "fetchTopicsByCourse exception", e)
+            Log.w("SupabaseClient", "❌ fetchTopicsByCourse exception", e)
             emptyList()
         }
     }
     // Fetch content items for a list of topic IDs using server-side 'in' filter
     suspend fun fetchContentItemsByTopicIds(topicIds: List<Long>): List<ContentItem> = withContext(Dispatchers.IO) {
-        if (topicIds.isEmpty()) return@withContext emptyList()
+        if (topicIds.isEmpty()) {
+            Log.w("SupabaseClient", "🔍 fetchContentItemsByTopicIds: Empty topicIds list!")
+            return@withContext emptyList()
+        }
         try {
             val ids = topicIds.joinToString(",")
-            val path = "content_items?topic_id=in.($ids)"
+            // Fetch ALL content items for these topics (including those with task_id)
+            // We'll return all and let the caller filter if needed
+            val path = "content_items?topic_id=in.($ids)&order=order_index.asc"
+            Log.d("SupabaseClient", "🔍 fetchContentItemsByTopicIds: Querying URL: $baseUrl/rest/v1/$path")
+            Log.d("SupabaseClient", "🔍 fetchContentItemsByTopicIds: Looking for topicIds: $ids")
             val req = buildGetRequest(path)
             client.newCall(req).execute().use { resp ->
+                Log.d("SupabaseClient", "🔍 fetchContentItemsByTopicIds: Response code=${resp.code}, message=${resp.message}")
                 if (!resp.isSuccessful) {
-                    Log.w("SupabaseClient", "fetchContentItemsByTopicIds failed status=${resp.code}")
+                    Log.w("SupabaseClient", "❌ fetchContentItemsByTopicIds failed status=${resp.code}, message=${resp.message}")
                     return@withContext emptyList()
                 }
                 val body = resp.body?.string() ?: return@withContext emptyList()
-                val arr = underscoredGson.fromJson(body, Array<ContentItem>::class.java)
-                return@withContext arr.toList()
+                
+                // Log raw JSON for debugging
+                Log.d("SupabaseClient", "🔍 fetchContentItemsByTopicIds RAW JSON: $body")
+                
+                if (body == "[]" || body.isBlank()) {
+                    Log.w("SupabaseClient", "⚠️ fetchContentItemsByTopicIds: Empty response from Supabase for topicIds=$ids")
+                    return@withContext emptyList()
+                }
+                
+                // Use manual parsing to ensure 'body' maps to 'uriString'
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                val items = mutableListOf<ContentItem>()
+                
+                Log.d("SupabaseClient", "📚 Found ${jsonArray.size()} content items in Supabase response")
+                
+                jsonArray.forEach { element ->
+                    val item = parseContentItemFromJson(element.asJsonObject)
+                    items.add(item)
+                    Log.d("SupabaseClient", "📦 Parsed ContentItem: id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, name='${item.name}', uri='${item.uriString.take(50)}...', type=${item.contentType}")
+                }
+                
+                // Return ALL items for the topic - don't filter by taskId here
+                // The topic content should have taskId=null, but we include all to debug
+                Log.d("SupabaseClient", "✅ fetchContentItemsByTopicIds: Returning ${items.size} content items for topicIds=$ids")
+                
+                return@withContext items
             }
         } catch (e: Exception) {
-            Log.w("SupabaseClient", "fetchContentItemsByTopicIds exception", e)
+            Log.e("SupabaseClient", "❌ fetchContentItemsByTopicIds exception for topicIds=$topicIds", e)
+            emptyList()
+        }
+    }
+    
+    // Manual parser for ContentItem to ensure 'body' maps to 'uriString' correctly
+    // Handles null JSON values safely
+    private fun parseContentItemFromJson(json: com.google.gson.JsonObject): ContentItem {
+        // Helper function to safely get string from JSON, handling nulls
+        fun safeGetString(key: String): String? {
+            val element = json.get(key)
+            return if (element != null && !element.isJsonNull) element.asString else null
+        }
+        
+        // Helper function to safely get long from JSON, handling nulls
+        fun safeGetLong(key: String, default: Long = 0): Long {
+            val element = json.get(key)
+            return if (element != null && !element.isJsonNull) element.asLong else default
+        }
+        
+        // Helper function to safely get nullable long from JSON
+        fun safeGetLongOrNull(key: String): Long? {
+            val element = json.get(key)
+            return if (element != null && !element.isJsonNull) element.asLong else null
+        }
+        
+        // Helper function to safely get int from JSON, handling nulls
+        fun safeGetInt(key: String, default: Int = 0): Int {
+            val element = json.get(key)
+            return if (element != null && !element.isJsonNull) element.asInt else default
+        }
+        
+        // Helper function to parse ISO 8601 timestamp string to millis
+        fun parseTimestamp(key: String): Long {
+            val element = json.get(key)
+            if (element == null || element.isJsonNull) return System.currentTimeMillis()
+            return try {
+                // Supabase returns timestamps as ISO 8601 strings like "2025-12-13T04:52:22.792595+00:00"
+                val dateString = element.asString
+                val formatter = java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME
+                val instant = java.time.OffsetDateTime.parse(dateString, formatter).toInstant()
+                instant.toEpochMilli()
+            } catch (e: Exception) {
+                // If parsing fails, try as Long (backward compatibility)
+                try {
+                    element.asLong
+                } catch (e2: Exception) {
+                    System.currentTimeMillis()
+                }
+            }
+        }
+        
+        return ContentItem(
+            id = safeGetLong("id", 0),
+            topicId = safeGetLong("topic_id", 0),
+            taskId = safeGetLongOrNull("task_id"),
+            name = safeGetString("title"),
+            uriString = safeGetString("body") ?: "",  // Explicitly map 'body' to uriString
+            contentType = safeGetString("content_type") ?: "",
+            orderIndex = safeGetInt("order_index", 0),
+            creator_usuario_id = safeGetLongOrNull("creator_usuario_id"),
+            creator_username = safeGetString("creator_username"),
+            created_at = parseTimestamp("created_at")
+        )
+    }
+    
+    // DEBUG: Fetch ALL content items to see what's in the database
+    suspend fun debugFetchAllContentItems(): List<ContentItem> = withContext(Dispatchers.IO) {
+        try {
+            val path = "content_items?order=id.desc&limit=50"
+            Log.d("SupabaseClient", "🔍 DEBUG: Fetching ALL content items from: $baseUrl/rest/v1/$path")
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "❌ DEBUG: Failed to fetch all content items: ${resp.code}")
+                    return@withContext emptyList()
+                }
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                Log.d("SupabaseClient", "📋 DEBUG ALL content_items RAW: $body")
+                
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                val items = mutableListOf<ContentItem>()
+                jsonArray.forEach { element ->
+                    val item = parseContentItemFromJson(element.asJsonObject)
+                    items.add(item)
+                    Log.d("SupabaseClient", "📋 DEBUG item: id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, name='${item.name}'")
+                }
+                return@withContext items
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "❌ DEBUG: Error fetching all content items", e)
             emptyList()
         }
     }
@@ -2253,9 +2457,23 @@ object SupabaseClient {
                     return@withContext emptyList()
                 }
                 val body = resp.body?.string() ?: return@withContext emptyList()
-                val arr = underscoredGson.fromJson(body, Array<ContentItem>::class.java)
-                Log.d("SupabaseClient", "fetchContentItemsByTaskId: Found ${arr.size} items for taskId=$taskId")
-                return@withContext arr.toList()
+                
+                // Log raw JSON for debugging
+                Log.d("SupabaseClient", "🔍 fetchContentItemsByTaskId RAW JSON for taskId=$taskId: $body")
+                
+                // Use manual parsing to ensure 'body' maps to 'uriString'
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                val items = mutableListOf<ContentItem>()
+                
+                jsonArray.forEach { element ->
+                    val item = parseContentItemFromJson(element.asJsonObject)
+                    items.add(item)
+                    Log.d("SupabaseClient", "📦 Parsed ContentItem: id=${item.id}, name=${item.name}, uriString='${item.uriString}', type=${item.contentType}")
+                }
+                
+                Log.d("SupabaseClient", "fetchContentItemsByTaskId: Found ${items.size} items for taskId=$taskId")
+                
+                return@withContext items
             }
         } catch (e: Exception) {
             Log.w("SupabaseClient", "fetchContentItemsByTaskId exception for taskId=$taskId", e)
@@ -3127,12 +3345,29 @@ object SupabaseClient {
     }
 
     /**
-     * Fetch ContentItems ordered
+     * Fetch ContentItems ordered - using manual parsing for proper body->uriString mapping
      */
     suspend fun fetchContentItemsOrdered(orderBy: String, direction: String = "asc"): List<ContentItem> = withContext(Dispatchers.IO) {
         try {
             val path = "content_items?order=$orderBy.$direction"
-            return@withContext fetchList(path, Array<ContentItem>::class.java).toList()
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchContentItemsOrdered failed status=${resp.code}")
+                    return@withContext emptyList()
+                }
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                val items = mutableListOf<ContentItem>()
+                
+                jsonArray.forEach { element ->
+                    val item = parseContentItemFromJson(element.asJsonObject)
+                    items.add(item)
+                }
+                
+                return@withContext items
+            }
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error fetching content items ordered", e)
             return@withContext emptyList()
@@ -3283,6 +3518,51 @@ object SupabaseClient {
             }
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Exception updating certificate date", e)
+            return@withContext false
+        }
+    }
+
+    /**
+     * Actualiza la URL del certificado en progreso_estudiante
+     */
+    suspend fun updateCertificateUrl(
+        studentUserId: Long,
+        courseId: Long,
+        certificateUrl: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.e("SupabaseClient", "Supabase not configured, cannot update certificate URL")
+                return@withContext false
+            }
+            
+            val map = mapOf("certificado_url" to certificateUrl)
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            
+            // PATCH usando composite key en query params
+            val url = "$baseUrl/rest/v1/progreso_estudiante?usuario_estudiante=eq.$studentUserId&curso_id=eq.$courseId"
+            
+            val request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+            
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val bodyStr = resp.body?.string() ?: ""
+                    Log.e("SupabaseClient", "Failed to update certificate URL: ${resp.code} $bodyStr")
+                    return@withContext false
+                }
+                
+                Log.i("SupabaseClient", "✅ Certificate URL updated for userId=$studentUserId in course $courseId: $certificateUrl")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Exception updating certificate URL", e)
             return@withContext false
         }
     }
@@ -4162,5 +4442,605 @@ object SupabaseClient {
             Log.e("SupabaseClient", "Error marking notification $notificationId as read", e)
             false
         }
+    }
+
+    /**
+     * Count unread notifications for a specific user
+     * Returns the count of notifications where is_read = false
+     */
+    suspend fun countUnreadNotifications(userId: Long): Int = withContext(Dispatchers.IO) {
+        try {
+            val path = "notifications?user_id=eq.$userId&is_read=eq.false&select=id"
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/$path")
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Prefer", "count=exact")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "Failed to count unread notifications: ${response.code}")
+                    return@withContext 0
+                }
+                
+                // El header Content-Range contiene el count: "0-X/TOTAL"
+                val contentRange = response.header("Content-Range")
+                if (contentRange != null) {
+                    val count = contentRange.substringAfter("/").toIntOrNull() ?: 0
+                    Log.d("SupabaseClient", "🔔 Unread notifications for user $userId: $count")
+                    return@withContext count
+                }
+                
+                // Fallback: contar los elementos del array
+                val body = response.body?.string()
+                if (!body.isNullOrEmpty()) {
+                    val array = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    return@withContext array.size()
+                }
+                
+                0
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error counting unread notifications for user $userId", e)
+            0
+        }
+    }
+
+    /**
+     * Fetch courses where the user has submitted tasks (as a student).
+     * This uses the task_submissions table to find unique course_ids for the given student.
+     */
+    suspend fun fetchCoursesWithUserSubmissions(studentId: Long): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+            
+            // Step 1: Get all submissions for this student with task/topic/course info
+            val submissionsUrl = "$baseUrl/rest/v1/task_submissions?select=task_id,tasks!inner(topic_id,topics!inner(course_id))&student_id=eq.$studentId"
+            Log.d("SupabaseClient", "🔍 Fetching submissions for student $studentId: $submissionsUrl")
+            
+            val request = Request.Builder()
+                .url(submissionsUrl)
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .build()
+            
+            val courseIds = mutableSetOf<Long>()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string()
+                    Log.e("SupabaseClient", "fetchCoursesWithUserSubmissions failed: ${response.code} - $errorBody")
+                    return@withContext emptyList()
+                }
+                
+                val body = response.body?.string() ?: return@withContext emptyList()
+                Log.d("SupabaseClient", "📊 Submissions response: ${body.take(500)}")
+                
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                for (elem in jsonArray) {
+                    try {
+                        val obj = elem.asJsonObject
+                        if (obj.has("tasks") && !obj.get("tasks").isJsonNull) {
+                            val taskObj = obj.get("tasks").asJsonObject
+                            if (taskObj.has("topics") && !taskObj.get("topics").isJsonNull) {
+                                val topicObj = taskObj.get("topics").asJsonObject
+                                if (topicObj.has("course_id") && !topicObj.get("course_id").isJsonNull) {
+                                    courseIds.add(topicObj.get("course_id").asLong)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("SupabaseClient", "Error parsing submission entry: ${e.message}")
+                    }
+                }
+            }
+            
+            Log.d("SupabaseClient", "📚 Found ${courseIds.size} unique courses with submissions: $courseIds")
+            
+            if (courseIds.isEmpty()) {
+                return@withContext emptyList()
+            }
+            
+            // Step 2: Fetch course details for these course_ids
+            val coursesUrl = "$baseUrl/rest/v1/courses?select=*&id=in.(${courseIds.joinToString(",")})"
+            Log.d("SupabaseClient", "🔍 Fetching course details: $coursesUrl")
+            
+            val coursesRequest = Request.Builder()
+                .url(coursesUrl)
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .build()
+            
+            client.newCall(coursesRequest).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e("SupabaseClient", "Failed to fetch course details: ${response.code}")
+                    return@withContext emptyList()
+                }
+                
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val courses = underscoredGson.fromJson(body, Array<Course>::class.java)
+                Log.d("SupabaseClient", "✅ Fetched ${courses.size} courses with user submissions")
+                return@withContext courses.toList()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching courses with user submissions for student $studentId", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Insert a notification into Supabase
+     * Returns the notification ID on success, null on failure
+     */
+    suspend fun insertNotification(notification: com.example.tareamov.data.entity.Notification): Long? = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.w("SupabaseClient", "Supabase not configured, cannot insert notification")
+                return@withContext null
+            }
+
+            val map = mapOf(
+                "user_id" to notification.userId,
+                "type" to notification.type,
+                "title" to notification.title,
+                "message" to notification.message,
+                "sender_username" to notification.senderUsername,
+                "sender_avatar_url" to notification.senderAvatarUrl,
+                "thumbnail_url" to notification.thumbnailUrl,
+                "related_id" to notification.relatedId,
+                "is_read" to notification.isRead
+            )
+
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/notifications"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    Log.e("SupabaseClient", "insertNotification failed: ${resp.code} - $respBody")
+                    return@withContext null
+                }
+
+                if (respBody.isNullOrEmpty()) return@withContext null
+
+                try {
+                    val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
+                    if (jsonArray.size() > 0) {
+                        val idElem = jsonArray[0].asJsonObject.get("id")
+                        val id = idElem?.asLong
+                        Log.d("SupabaseClient", "✅ Notification inserted with id: $id")
+                        return@withContext id
+                    }
+                } catch (e: Exception) {
+                    Log.e("SupabaseClient", "Error parsing notification response", e)
+                }
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Exception inserting notification", e)
+            return@withContext null
+        }
+    }
+
+    /**
+     * Fetch all subscriber user IDs for a creator
+     * Returns a list of user IDs who are subscribed to the given creator
+     */
+    suspend fun fetchSubscriberIdsByCreatorId(creatorId: Long): List<Long> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) {
+                Log.w("SupabaseClient", "Supabase not configured, cannot fetch subscribers")
+                return@withContext emptyList()
+            }
+
+            val path = "subscriptions?creator_id=eq.$creatorId&select=subscriber_id"
+            val request = buildGetRequest(path)
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "Failed to fetch subscribers: ${response.code}")
+                    return@withContext emptyList()
+                }
+
+                val body = response.body?.string()
+                if (body.isNullOrEmpty()) {
+                    return@withContext emptyList()
+                }
+
+                val subscriberIds = mutableListOf<Long>()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                for (elem in jsonArray) {
+                    val obj = elem.asJsonObject
+                    if (obj.has("subscriber_id") && !obj.get("subscriber_id").isJsonNull) {
+                        subscriberIds.add(obj.get("subscriber_id").asLong)
+                    }
+                }
+                Log.d("SupabaseClient", "✅ Found ${subscriberIds.size} subscribers for creator $creatorId")
+                return@withContext subscriberIds
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching subscribers for creator $creatorId", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Notify all subscribers of a creator about a new course
+     * Creates notifications for each subscriber
+     */
+    suspend fun notifySubscribersOfNewCourse(
+        creatorUserId: Long,
+        creatorUsername: String,
+        creatorAvatarUrl: String?,
+        courseId: Long,
+        courseTitle: String,
+        courseThumbnailUrl: String?
+    ): Int = withContext(Dispatchers.IO) {
+        try {
+            val subscriberIds = fetchSubscriberIdsByCreatorId(creatorUserId)
+            if (subscriberIds.isEmpty()) {
+                Log.d("SupabaseClient", "No subscribers to notify for creator $creatorUserId")
+                return@withContext 0
+            }
+
+            var notifiedCount = 0
+            for (subscriberId in subscriberIds) {
+                val notification = com.example.tareamov.data.entity.Notification(
+                    userId = subscriberId,
+                    type = com.example.tareamov.data.entity.Notification.TYPE_NEW_COURSE,
+                    title = "Nuevo curso de $creatorUsername",
+                    message = "¡$creatorUsername ha publicado un nuevo curso: \"$courseTitle\"!",
+                    senderUsername = creatorUsername,
+                    senderAvatarUrl = creatorAvatarUrl,
+                    thumbnailUrl = courseThumbnailUrl,
+                    relatedId = courseId,
+                    isRead = false
+                )
+                val result = insertNotification(notification)
+                if (result != null) {
+                    notifiedCount++
+                }
+            }
+
+            Log.d("SupabaseClient", "✅ Notified $notifiedCount subscribers about new course '$courseTitle'")
+            return@withContext notifiedCount
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error notifying subscribers of new course", e)
+            0
+        }
+    }
+
+    /**
+     * Notify all enrolled students of a course about a new task
+     * Creates notifications for each enrolled student (excluding the creator)
+     */
+    suspend fun notifyEnrolledStudentsOfNewTask(
+        courseId: Long,
+        creatorUserId: Long,
+        creatorUsername: String,
+        creatorAvatarUrl: String?,
+        taskId: Long,
+        taskName: String,
+        courseName: String
+    ): Int = withContext(Dispatchers.IO) {
+        try {
+            // Fetch all enrolled students from progreso_estudiante table
+            val progresos = fetchProgresosByCurso(courseId)
+            if (progresos.isEmpty()) {
+                Log.d("SupabaseClient", "No enrolled students to notify for course $courseId")
+                return@withContext 0
+            }
+
+            // Get student IDs, excluding the course creator
+            val studentIds = progresos.map { it.usuarioEstudiante }.filter { it != creatorUserId }
+            if (studentIds.isEmpty()) {
+                Log.d("SupabaseClient", "No students (other than creator) to notify")
+                return@withContext 0
+            }
+
+            var notifiedCount = 0
+            for (studentId in studentIds) {
+                val notification = com.example.tareamov.data.entity.Notification(
+                    userId = studentId,
+                    type = com.example.tareamov.data.entity.Notification.TYPE_NEW_TASK,
+                    title = "Nueva tarea en $courseName",
+                    message = "$creatorUsername ha creado una nueva tarea: \"$taskName\"",
+                    senderUsername = creatorUsername,
+                    senderAvatarUrl = creatorAvatarUrl,
+                    thumbnailUrl = null,
+                    relatedId = taskId,
+                    isRead = false
+                )
+                val result = insertNotification(notification)
+                if (result != null) {
+                    notifiedCount++
+                }
+            }
+
+            Log.d("SupabaseClient", "✅ Notified $notifiedCount enrolled students about new task '$taskName' in course '$courseName'")
+            return@withContext notifiedCount
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error notifying enrolled students of new task", e)
+            0
+        }
+    }
+
+    /**
+     * Notify the course creator when a student submits a task
+     * Creates a notification for the course creator
+     */
+    suspend fun notifyCourseCreatorOfSubmission(
+        taskId: Long,
+        taskName: String,
+        studentUsername: String,
+        studentAvatarUrl: String?
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Fetch task to get topic_id
+            val task = fetchTaskById(taskId)
+            if (task == null) {
+                Log.w("SupabaseClient", "Task not found for notification: $taskId")
+                return@withContext false
+            }
+
+            // Fetch topic to get course_id
+            val topicId = task.topicId
+            if (topicId == null) {
+                Log.w("SupabaseClient", "Topic ID not found for task: $taskId")
+                return@withContext false
+            }
+
+            val topic = fetchTopics().firstOrNull { it.id == topicId }
+            if (topic == null) {
+                Log.w("SupabaseClient", "Topic not found: $topicId")
+                return@withContext false
+            }
+
+            // Fetch course to get creator_user_id
+            val courseId = topic.courseId
+            val course = fetchCourseById(courseId)
+            if (course == null) {
+                Log.w("SupabaseClient", "Course not found: $courseId")
+                return@withContext false
+            }
+
+            val creatorUserId = course.creatorUserId
+            
+            // Create notification for the course creator
+            val notification = com.example.tareamov.data.entity.Notification(
+                userId = creatorUserId,
+                type = com.example.tareamov.data.entity.Notification.TYPE_TASK_SUBMISSION,
+                title = "Nueva entrega de tarea",
+                message = "$studentUsername ha entregado la tarea \"$taskName\" en tu curso \"${course.title}\"",
+                senderUsername = studentUsername,
+                senderAvatarUrl = studentAvatarUrl,
+                thumbnailUrl = course.thumbnailUri,
+                relatedId = taskId,
+                isRead = false
+            )
+
+            val result = insertNotification(notification)
+            if (result != null) {
+                Log.d("SupabaseClient", "✅ Course creator (userId=$creatorUserId) notified about submission from $studentUsername for task '$taskName'")
+                return@withContext true
+            } else {
+                Log.w("SupabaseClient", "Failed to insert submission notification")
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error notifying course creator of submission", e)
+            false
+        }
+    }
+
+    /**
+     * Fetch FCM tokens for a list of user IDs
+     * Returns a map of userId to list of FCM tokens (users may have multiple devices)
+     */
+    suspend fun fetchFcmTokensByUserIds(userIds: List<Long>): Map<Long, List<String>> = withContext(Dispatchers.IO) {
+        if (userIds.isEmpty()) return@withContext emptyMap()
+        
+        try {
+            val userIdsParam = userIds.joinToString(",") { "($it)" }
+            val url = "$baseUrl/rest/v1/user_fcm_tokens?user_id=in.$userIdsParam&select=user_id,token"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                if (!response.isSuccessful || body.isNullOrEmpty()) {
+                    Log.e("SupabaseClient", "Error fetching FCM tokens: ${response.code}")
+                    return@withContext emptyMap()
+                }
+
+                val tokenMap = mutableMapOf<Long, MutableList<String>>()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                for (elem in jsonArray) {
+                    val obj = elem.asJsonObject
+                    val userId = obj.get("user_id")?.asLong ?: continue
+                    val token = obj.get("token")?.asString ?: continue
+                    tokenMap.getOrPut(userId) { mutableListOf() }.add(token)
+                }
+                Log.d("SupabaseClient", "✅ Fetched FCM tokens for ${tokenMap.size} users")
+                return@withContext tokenMap
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching FCM tokens", e)
+            emptyMap()
+        }
+    }
+
+    /**
+     * Send push notification to subscribers when a new course is created
+     * Uses FCM HTTP v1 API via a server-side function or direct call
+     */
+    suspend fun sendPushNotificationsToSubscribers(
+        creatorUserId: Long,
+        creatorUsername: String,
+        courseId: Long,
+        courseTitle: String,
+        courseThumbnailUrl: String?
+    ): Int = withContext(Dispatchers.IO) {
+        try {
+            // 1. Fetch subscriber IDs
+            val subscriberIds = fetchSubscriberIdsByCreatorId(creatorUserId)
+            if (subscriberIds.isEmpty()) {
+                Log.d("SupabaseClient", "No subscribers to send push notifications to")
+                return@withContext 0
+            }
+
+            // 2. Fetch FCM tokens for subscribers
+            val tokenMap = fetchFcmTokensByUserIds(subscriberIds)
+            if (tokenMap.isEmpty()) {
+                Log.d("SupabaseClient", "No FCM tokens found for subscribers")
+                return@withContext 0
+            }
+
+            // 3. Collect all tokens
+            val allTokens = tokenMap.values.flatten()
+            Log.d("SupabaseClient", "Found ${allTokens.size} FCM tokens for ${tokenMap.size} subscribers")
+
+            // 4. Send push notifications using FCM legacy HTTP API
+            var sentCount = 0
+            for (token in allTokens) {
+                val success = sendFcmPushNotification(
+                    token = token,
+                    title = "📚 Nuevo curso de $creatorUsername",
+                    body = "¡$creatorUsername ha publicado: \"$courseTitle\"!",
+                    data = mapOf(
+                        "type" to "new_course",
+                        "course_id" to courseId.toString(),
+                        "creator_username" to creatorUsername,
+                        "thumbnail_url" to (courseThumbnailUrl ?: "")
+                    )
+                )
+                if (success) sentCount++
+            }
+
+            Log.d("SupabaseClient", "✅ Sent $sentCount push notifications for new course '$courseTitle'")
+            return@withContext sentCount
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error sending push notifications to subscribers", e)
+            0
+        }
+    }
+
+    /**
+     * Send a single FCM push notification using legacy HTTP API
+     * Note: For production, consider using FCM HTTP v1 API with OAuth2
+     */
+    private suspend fun sendFcmPushNotification(
+        token: String,
+        title: String,
+        body: String,
+        data: Map<String, String> = emptyMap()
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // FCM Legacy HTTP API endpoint
+            val fcmUrl = "https://fcm.googleapis.com/fcm/send"
+            
+            // FCM Server Key - should be stored securely
+            // For now, we'll call a Supabase Edge Function that handles FCM sending
+            // This is more secure as it keeps the server key on the server side
+            
+            val payload = mapOf(
+                "to" to token,
+                "notification" to mapOf(
+                    "title" to title,
+                    "body" to body,
+                    "sound" to "default",
+                    "click_action" to "OPEN_COURSE_DETAIL"
+                ),
+                "data" to data,
+                "priority" to "high"
+            )
+
+            // Call Supabase Edge Function to send FCM notification
+            val edgeFunctionUrl = "$baseUrl/functions/v1/send-fcm-notification"
+            val requestBody = gson.toJson(payload).toRequestBody(jsonMedia)
+            val key = effectiveApiKey()
+
+            val request = Request.Builder()
+                .url(edgeFunctionUrl)
+                .post(requestBody)
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Content-Type", "application/json")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    Log.d("SupabaseClient", "✅ FCM notification sent to token: ${token.take(20)}...")
+                    return@withContext true
+                } else {
+                    val errorBody = response.body?.string()
+                    Log.e("SupabaseClient", "Error sending FCM notification: ${response.code} - $errorBody")
+                    
+                    // If edge function doesn't exist, try direct FCM call (requires server key in client - not recommended for production)
+                    if (response.code == 404) {
+                        Log.w("SupabaseClient", "Edge function not found, FCM notification not sent")
+                    }
+                    return@withContext false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Exception sending FCM notification", e)
+            false
+        }
+    }
+
+    /**
+     * Combined method: Notify subscribers with both in-app notifications AND push notifications
+     */
+    suspend fun notifySubscribersOfNewCourseWithPush(
+        creatorUserId: Long,
+        creatorUsername: String,
+        creatorAvatarUrl: String?,
+        courseId: Long,
+        courseTitle: String,
+        courseThumbnailUrl: String?
+    ): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        // Send in-app notifications
+        val inAppCount = notifySubscribersOfNewCourse(
+            creatorUserId = creatorUserId,
+            creatorUsername = creatorUsername,
+            creatorAvatarUrl = creatorAvatarUrl,
+            courseId = courseId,
+            courseTitle = courseTitle,
+            courseThumbnailUrl = courseThumbnailUrl
+        )
+
+        // Send push notifications
+        val pushCount = sendPushNotificationsToSubscribers(
+            creatorUserId = creatorUserId,
+            creatorUsername = creatorUsername,
+            courseId = courseId,
+            courseTitle = courseTitle,
+            courseThumbnailUrl = courseThumbnailUrl
+        )
+
+        Log.d("SupabaseClient", "✅ Total notifications: $inAppCount in-app, $pushCount push")
+        return@withContext Pair(inAppCount, pushCount)
     }
 }

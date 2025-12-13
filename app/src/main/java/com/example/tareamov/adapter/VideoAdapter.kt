@@ -146,6 +146,9 @@ class VideoAdapter(
                     // Get comment count
                     val commentCount = getCommentCount?.invoke(videoData.id) ?: 0
                     commentCountText?.text = formatCount(commentCount)
+                    
+                    // Update comment button state (activated if there are comments)
+                    commentButton?.isActivated = commentCount > 0
                 } catch (e: Exception) {
                     Log.e("VideoAdapter", "Error loading likes/comments for video ${videoData.id}", e)
                 }
@@ -503,9 +506,14 @@ class VideoAdapter(
                 }
             }
 
-            // Share button
+            // Share button with advanced options on long press
             shareButton?.setOnClickListener {
                 shareVideo()
+            }
+            
+            shareButton?.setOnLongClickListener {
+                showShareOptionsMenu()
+                true
             }
 
             // Sound button
@@ -714,6 +722,180 @@ class VideoAdapter(
             }
         }
 
+        /**
+         * Muestra un menú contextual con opciones avanzadas de compartir
+         */
+        private fun showShareOptionsMenu() {
+            try {
+                val context = itemView.context
+                val currentPosition = adapterPosition
+                if (currentPosition == RecyclerView.NO_POSITION || currentPosition >= videos.size) return
+                
+                val videoData = videos[currentPosition]
+                val r2PublicUrl = com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(videoData.videoUriString)
+                
+                val options = mutableListOf<String>()
+                val actions = mutableListOf<() -> Unit>()
+                
+                // Opción 1: Compartir con enlace (si hay URL pública)
+                if (r2PublicUrl != null && (r2PublicUrl.startsWith("http://") || r2PublicUrl.startsWith("https://"))) {
+                    options.add("🔗 Compartir enlace del video")
+                    actions.add {
+                        shareVideo() // Usa el método principal que ya maneja URLs
+                    }
+                    
+                    // Opción 2: Solo copiar URL al portapapeles
+                    options.add("📋 Copiar URL al portapapeles")
+                    actions.add {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        val clip = android.content.ClipData.newPlainText("URL del video", r2PublicUrl)
+                        clipboard.setPrimaryClip(clip)
+                        android.widget.Toast.makeText(context, "✅ URL copiada: $r2PublicUrl", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    
+                    // Opción 3: Abrir en navegador
+                    options.add("🌐 Abrir en navegador")
+                    actions.add {
+                        try {
+                            val browserIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(r2PublicUrl))
+                            context.startActivity(browserIntent)
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(context, "Error al abrir navegador", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                
+                // Opción 4: Compartir archivo local (si está disponible)
+                if (videoData.localFilePath != null && java.io.File(videoData.localFilePath).exists()) {
+                    options.add("📁 Compartir archivo local")
+                    actions.add {
+                        shareVideoFileLocally(videoData)
+                    }
+                }
+                
+                // Opción 5: Información del video
+                options.add("ℹ️ Información del video")
+                actions.add {
+                    showVideoInfo(videoData, r2PublicUrl)
+                }
+                
+                // Mostrar diálogo con opciones
+                android.app.AlertDialog.Builder(context)
+                    .setTitle("Opciones de compartir")
+                    .setItems(options.toTypedArray()) { dialog, which ->
+                        actions[which].invoke()
+                    }
+                    .setNegativeButton("Cancelar", null)
+                    .show()
+                
+            } catch (e: Exception) {
+                Log.e("VideoAdapter", "❌ Error mostrando menú de opciones: ${e.message}", e)
+            }
+        }
+        
+        /**
+         * Comparte el archivo de video local usando FileProvider
+         */
+        private fun shareVideoFileLocally(videoData: VideoData) {
+            try {
+                val context = itemView.context
+                val videoFile = java.io.File(videoData.localFilePath ?: return)
+                
+                if (!videoFile.exists()) {
+                    android.widget.Toast.makeText(context, "❌ Archivo no encontrado", android.widget.Toast.LENGTH_SHORT).show()
+                    return
+                }
+                
+                val videoUri = androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    videoFile
+                )
+                
+                val shareText = buildString {
+                    appendLine("🎥 ${videoData.title}")
+                    if (!videoData.description.isNullOrEmpty()) {
+                        appendLine()
+                        appendLine(videoData.description)
+                    }
+                    appendLine()
+                    appendLine("👤 Por: ${videoData.username ?: "Anónimo"}")
+                }
+                
+                val sendIntent = android.content.Intent().apply {
+                    action = android.content.Intent.ACTION_SEND
+                    putExtra(android.content.Intent.EXTRA_STREAM, videoUri)
+                    putExtra(android.content.Intent.EXTRA_TEXT, shareText)
+                    type = "video/*"
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                
+                context.startActivity(android.content.Intent.createChooser(sendIntent, "Compartir archivo de video"))
+                
+            } catch (e: Exception) {
+                Log.e("VideoAdapter", "❌ Error compartiendo archivo local: ${e.message}", e)
+                android.widget.Toast.makeText(itemView.context, "Error al compartir archivo", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+        
+        /**
+         * Muestra información detallada del video en un diálogo
+         */
+        private fun showVideoInfo(videoData: VideoData, r2PublicUrl: String?) {
+            try {
+                val context = itemView.context
+                val info = buildString {
+                    appendLine("🎥 ${videoData.title}")
+                    appendLine()
+                    appendLine("👤 Creador: ${videoData.username ?: "Desconocido"}")
+                    appendLine()
+                    if (!videoData.description.isNullOrEmpty()) {
+                        appendLine("📝 Descripción:")
+                        appendLine(videoData.description)
+                        appendLine()
+                    }
+                    appendLine("🆔 ID del video: ${videoData.id}")
+                    appendLine()
+                    if (r2PublicUrl != null) {
+                        appendLine("🔗 URL pública:")
+                        appendLine(r2PublicUrl)
+                        appendLine()
+                        appendLine("✅ Disponible para compartir")
+                    } else {
+                        appendLine("⚠️ Sin URL pública disponible")
+                        appendLine("Solo se puede ver en la app")
+                    }
+                    appendLine()
+                    val date = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date(videoData.timestamp))
+                    appendLine("📅 Publicado: $date")
+                    
+                    if (videoData.localFilePath != null) {
+                        val file = java.io.File(videoData.localFilePath)
+                        if (file.exists()) {
+                            val sizeMB = file.length() / (1024.0 * 1024.0)
+                            appendLine("💾 Tamaño: ${String.format("%.2f", sizeMB)} MB")
+                        }
+                    }
+                }
+                
+                android.app.AlertDialog.Builder(context)
+                    .setTitle("Información del Video")
+                    .setMessage(info)
+                    .setPositiveButton("Cerrar", null)
+                    .setNeutralButton("Copiar Info") { _, _ ->
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        val clip = android.content.ClipData.newPlainText("Información del video", info)
+                        clipboard.setPrimaryClip(clip)
+                        android.widget.Toast.makeText(context, "✅ Información copiada", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    .show()
+                
+            } catch (e: Exception) {
+                Log.e("VideoAdapter", "❌ Error mostrando info del video: ${e.message}", e)
+            }
+        }
+        
         private fun shareVideo() {
             try {
                 val context = itemView.context
@@ -721,39 +903,146 @@ class VideoAdapter(
                 if (currentPosition != RecyclerView.NO_POSITION && currentPosition < videos.size) {
                     val videoData = videos[currentPosition]
                     
+                    // ESTRATEGIA 1: Intentar obtener URL pública de Cloudflare R2
+                    val r2PublicUrl = com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(videoData.videoUriString)
+                    
+                    if (r2PublicUrl != null && (r2PublicUrl.startsWith("http://") || r2PublicUrl.startsWith("https://"))) {
+                        // Compartir usando URL pública de R2 - MÉTODO PREFERIDO
+                        Log.d("VideoAdapter", "📤 Compartiendo video usando URL pública de R2: $r2PublicUrl")
+                        
+                        val shareText = buildString {
+                            appendLine("🎥 ${videoData.title}")
+                            appendLine()
+                            if (!videoData.description.isNullOrEmpty()) {
+                                appendLine(videoData.description)
+                                appendLine()
+                            }
+                            appendLine("👤 Por: ${videoData.username ?: "Anónimo"}")
+                            appendLine()
+                            appendLine("🔗 Ver video:")
+                            appendLine(r2PublicUrl)
+                            appendLine()
+                            appendLine("📱 Compartido desde TareaMov")
+                        }
+                        
+                        // Copiar URL al portapapeles automáticamente para facilitar el compartir
+                        try {
+                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            val clip = android.content.ClipData.newPlainText("URL del video", r2PublicUrl)
+                            clipboard.setPrimaryClip(clip)
+                            Log.d("VideoAdapter", "📋 URL copiada al portapapeles: $r2PublicUrl")
+                        } catch (e: Exception) {
+                            Log.w("VideoAdapter", "⚠️ No se pudo copiar URL al portapapeles: ${e.message}")
+                        }
+                        
+                        val sendIntent = android.content.Intent().apply {
+                            action = android.content.Intent.ACTION_SEND
+                            putExtra(android.content.Intent.EXTRA_TEXT, shareText)
+                            putExtra(android.content.Intent.EXTRA_SUBJECT, "🎥 ${videoData.title}")
+                            type = "text/plain" // Usar text/plain para compatibilidad con más apps
+                        }
+                        
+                        val shareIntent = android.content.Intent.createChooser(sendIntent, "Compartir video vía")
+                        context.startActivity(shareIntent)
+                        
+                        android.widget.Toast.makeText(
+                            context, 
+                            "✅ Enlace del video listo para compartir\n📋 URL copiada al portapapeles", 
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        
+                        Log.d("VideoAdapter", "✅ Video compartido exitosamente con URL pública")
+                        return
+                    }
+                    
+                    // ESTRATEGIA 2: Compartir usando archivo local si está disponible
                     if (videoData.localFilePath != null) {
                         val videoFile = java.io.File(videoData.localFilePath)
                         if (videoFile.exists()) {
-                            val videoUri: android.net.Uri = androidx.core.content.FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.fileprovider",
-                                videoFile
-                            )
+                            Log.d("VideoAdapter", "📤 Compartiendo video usando archivo local: ${videoData.localFilePath}")
+                            
+                            val videoUri: android.net.Uri = try {
+                                androidx.core.content.FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    videoFile
+                                )
+                            } catch (e: Exception) {
+                                Log.e("VideoAdapter", "❌ Error creando URI con FileProvider: ${e.message}")
+                                // Fallback a file:// URI (menos compatible pero funciona en algunos casos)
+                                android.net.Uri.fromFile(videoFile)
+                            }
 
-                            val shareText = "Mira este video: ${videoData.title}\n${videoData.description}"
+                            val shareText = buildString {
+                                appendLine("🎥 ${videoData.title}")
+                                if (!videoData.description.isNullOrEmpty()) {
+                                    appendLine()
+                                    appendLine(videoData.description)
+                                }
+                                appendLine()
+                                appendLine("👤 Por: ${videoData.username ?: "Anónimo"}")
+                                appendLine("📱 Compartido desde TareaMov")
+                            }
 
                             val sendIntent = android.content.Intent().apply {
                                 action = android.content.Intent.ACTION_SEND
                                 putExtra(android.content.Intent.EXTRA_STREAM, videoUri)
                                 putExtra(android.content.Intent.EXTRA_TEXT, shareText)
                                 putExtra(android.content.Intent.EXTRA_SUBJECT, videoData.title)
-                                type = context.contentResolver.getType(videoUri) ?: "video/*"
+                                type = "video/*"
                                 addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
 
                             val shareIntent = android.content.Intent.createChooser(sendIntent, "Compartir video vía")
                             context.startActivity(shareIntent)
-                            Log.d("VideoAdapter", "Sharing video: ${videoData.title}")
+                            
+                            Log.d("VideoAdapter", "✅ Compartiendo video desde archivo local: ${videoData.title}")
+                            return
                         } else {
-                            android.widget.Toast.makeText(context, "Archivo de video no encontrado.", android.widget.Toast.LENGTH_SHORT).show()
+                            Log.w("VideoAdapter", "⚠️ Archivo local no existe: ${videoData.localFilePath}")
                         }
-                    } else {
-                        android.widget.Toast.makeText(context, "No hay video para compartir o ruta no válida.", android.widget.Toast.LENGTH_SHORT).show()
                     }
+                    
+                    // ESTRATEGIA 3: Si no hay archivo local ni URL pública, compartir solo información del video
+                    Log.d("VideoAdapter", "⚠️ No se encontró archivo local ni URL pública, compartiendo solo información")
+                    
+                    val shareText = buildString {
+                        appendLine("🎥 ${videoData.title}")
+                        appendLine()
+                        if (!videoData.description.isNullOrEmpty()) {
+                            appendLine(videoData.description)
+                            appendLine()
+                        }
+                        appendLine("👤 Por: ${videoData.username ?: "Anónimo"}")
+                        appendLine()
+                        appendLine("📱 Video de TareaMov")
+                        appendLine()
+                        appendLine("⚠️ Para ver el video completo, descarga la app TareaMov")
+                    }
+                    
+                    val sendIntent = android.content.Intent().apply {
+                        action = android.content.Intent.ACTION_SEND
+                        putExtra(android.content.Intent.EXTRA_TEXT, shareText)
+                        putExtra(android.content.Intent.EXTRA_SUBJECT, videoData.title)
+                        type = "text/plain"
+                    }
+                    
+                    val shareIntent = android.content.Intent.createChooser(sendIntent, "Compartir información del video")
+                    context.startActivity(shareIntent)
+                    
+                    android.widget.Toast.makeText(
+                        context,
+                        "ℹ️ Se compartió la información del video (el archivo no está disponible públicamente)",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
                 }
             } catch (e: Exception) {
-                Log.e("VideoAdapter", "Error sharing video", e)
-                android.widget.Toast.makeText(itemView.context, "Error al compartir video", android.widget.Toast.LENGTH_SHORT).show()
+                Log.e("VideoAdapter", "❌ Error sharing video: ${e.message}", e)
+                android.widget.Toast.makeText(
+                    itemView.context, 
+                    "Error al compartir video: ${e.message}", 
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }

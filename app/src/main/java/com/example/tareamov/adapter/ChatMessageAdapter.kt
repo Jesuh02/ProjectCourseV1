@@ -95,7 +95,7 @@ class ChatMessageAdapter(
     }
 
     inner class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val userMessageContainer: androidx.constraintlayout.widget.ConstraintLayout = itemView.findViewById(R.id.userMessageContainer)
+        private val userMessageContainer: LinearLayout = itemView.findViewById(R.id.userMessageContainer)
         private val botMessageContainer: LinearLayout = itemView.findViewById(R.id.botMessageContainer)
         private val userMessageTextView: TextView = itemView.findViewById(R.id.userMessageTextView)
         private val botMessageTextView: TextView = itemView.findViewById(R.id.botMessageTextView)

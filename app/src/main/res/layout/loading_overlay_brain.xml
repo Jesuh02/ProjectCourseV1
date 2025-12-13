@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/loadingOverlay"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#E6000000"
+    android:clickable="true"
+    android:focusable="true"
+    android:elevation="100dp"
+    android:visibility="gone">
+
+    <!-- Main Loading Container -->
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginHorizontal="32dp"
+        app:cardBackgroundColor="#1A1A1A"
+        app:cardCornerRadius="24dp"
+        app:cardElevation="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="32dp"
+            android:gravity="center">
+
+            <!-- Brain Animation Container -->
+            <FrameLayout
+                android:layout_width="160dp"
+                android:layout_height="160dp"
+                android:layout_marginBottom="24dp">
+
+                <!-- Background Circle with Gradient -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/circle_shape"
+                    android:backgroundTint="#10A37F"
+                    android:alpha="0.15" />
+
+                <!-- Pulsing Circle Animation -->
+                <View
+                    android:id="@+id/pulsingCircle"
+                    android:layout_width="120dp"
+                    android:layout_height="120dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/circle_shape"
+                    android:backgroundTint="#10A37F"
+                    android:alpha="0.3" />
+
+                <!-- Brain Icon -->
+                <ImageView
+                    android:id="@+id/brainIcon"
+                    android:layout_width="80dp"
+                    android:layout_height="80dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_brain"
+                    app:tint="#10A37F" />
+
+                <!-- Data Particles Container -->
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent">
+
+                    <!-- Particle 1 -->
+                    <View
+                        android:id="@+id/particle1"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/circle_shape"
+                        android:backgroundTint="#10A37F"
+                        android:alpha="0.8" />
+
+                    <!-- Particle 2 -->
+                    <View
+                        android:id="@+id/particle2"
+                        android:layout_width="6dp"
+                        android:layout_height="6dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/circle_shape"
+                        android:backgroundTint="#4CAF50"
+                        android:alpha="0.6" />
+
+                    <!-- Particle 3 -->
+                    <View
+                        android:id="@+id/particle3"
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/circle_shape"
+                        android:backgroundTint="#00BCD4"
+                        android:alpha="0.7" />
+
+                    <!-- Particle 4 -->
+                    <View
+                        android:id="@+id/particle4"
+                        android:layout_width="7dp"
+                        android:layout_height="7dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/circle_shape"
+                        android:backgroundTint="#FF9800"
+                        android:alpha="0.5" />
+                </FrameLayout>
+            </FrameLayout>
+
+            <!-- Loading Title -->
+            <TextView
+                android:id="@+id/loadingTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Procesando Video"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginBottom="8dp" />
+
+            <!-- Loading Status -->
+            <TextView
+                android:id="@+id/loadingStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Preparando..."
+                android:textColor="#10A37F"
+                android:textSize="14sp"
+                android:fontFamily="sans-serif"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Progress Bar -->
+            <ProgressBar
+                android:id="@+id/loadingProgressBar"
+                style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:progressTint="#10A37F"
+                android:progressBackgroundTint="#333333"
+                android:max="100"
+                android:progress="0"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Progress Percentage -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/loadingPercentage"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="0%"
+                    android:textColor="#999999"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium" />
+
+                <TextView
+                    android:id="@+id/loadingSpeed"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Calculando..."
+                    android:textColor="#666666"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif" />
+            </LinearLayout>
+
+            <!-- Info Text -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Procesando tu video, por favor espera..."
+                android:textColor="#666666"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif"
+                android:gravity="center"
+                android:layout_marginTop="20dp"
+                android:lineSpacingExtra="2dp" />
+
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+</FrameLayout>
+

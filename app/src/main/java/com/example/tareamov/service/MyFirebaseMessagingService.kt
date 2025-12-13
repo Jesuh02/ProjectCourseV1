@@ -46,15 +46,24 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         if (remoteMessage.data.isNotEmpty()) {
             Log.d(TAG, "Message data payload: ${remoteMessage.data}")
             
-            // Handle chat-specific notifications with rich UI
-            val notificationType = remoteMessage.data["type"]
-            if (notificationType == "chat_response") {
-                sendChatNotification(
-                    title = remoteMessage.notification?.title ?: "🤖 Nueva respuesta del chat",
-                    body = remoteMessage.notification?.body ?: "Tu consulta ha sido procesada",
-                    data = remoteMessage.data
-                )
-                return
+            // Handle different notification types
+            when (remoteMessage.data["type"]) {
+                "chat_response" -> {
+                    sendChatNotification(
+                        title = remoteMessage.notification?.title ?: "🤖 Nueva respuesta del chat",
+                        body = remoteMessage.notification?.body ?: "Tu consulta ha sido procesada",
+                        data = remoteMessage.data
+                    )
+                    return
+                }
+                "new_course" -> {
+                    sendCourseNotification(
+                        title = remoteMessage.notification?.title ?: "📚 Nuevo curso disponible",
+                        body = remoteMessage.notification?.body ?: "Un creador que sigues ha publicado un nuevo curso",
+                        data = remoteMessage.data
+                    )
+                    return
+                }
             }
         }
 
@@ -205,5 +214,81 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         notificationManager.notify(notificationId, notificationBuilder.build())
         
         Log.d(TAG, "📱 Chat notification displayed with ID: $notificationId")
+    }
+
+    /**
+     * Crea y muestra notificación para nuevos cursos de creadores seguidos
+     * Incluye estilo expandido y deep linking al curso
+     */
+    private fun sendCourseNotification(title: String, body: String, data: Map<String, String>) {
+        val courseId = data["course_id"]?.toLongOrNull() ?: 0L
+        val creatorUsername = data["creator_username"] ?: ""
+        
+        // Intent para abrir el curso directamente
+        val courseIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra("openFragment", "CourseDetailFragment")
+            putExtra("courseId", courseId)
+            putExtra("creatorUsername", creatorUsername)
+            
+            // Pass all data
+            for ((key, value) in data) {
+                putExtra(key, value)
+            }
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            System.currentTimeMillis().toInt(),
+            courseIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Canal de notificación específico para cursos
+        val channelId = "course_notifications"
+        val defaultSoundUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+        
+        // Construir notificación con estilo expandido
+        val notificationBuilder = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle()
+                .bigText("$body\n\n🎓 Toca para explorar el nuevo contenido educativo.")
+                .setBigContentTitle(title)
+            )
+            .setAutoCancel(true)
+            .setSound(defaultSoundUri)
+            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setColor(0xFF10B981.toInt()) // Green color for educational content
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        // Crear canal de notificaciones para cursos (Android O+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "Nuevos Cursos",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notificaciones de nuevos cursos de creadores que sigues"
+                enableLights(true)
+                lightColor = 0xFF10B981.toInt()
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 200, 100, 200)
+                setShowBadge(true)
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        // Generar ID único basado en timestamp y courseId
+        val notificationId = (courseId + System.currentTimeMillis()).toInt()
+        notificationManager.notify(notificationId, notificationBuilder.build())
+        
+        Log.d(TAG, "📚 Course notification displayed - Course ID: $courseId, Notification ID: $notificationId")
     }
 }

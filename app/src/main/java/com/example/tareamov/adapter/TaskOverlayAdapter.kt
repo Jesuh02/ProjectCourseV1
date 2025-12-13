@@ -61,8 +61,10 @@ class TaskOverlayAdapter(
 
         private fun setupSkeletonBar(view: TextView, width: Int) {
             view.text = ""
-            view.width = (width * view.context.resources.displayMetrics.density).toInt()
-            view.height = (16 * view.context.resources.displayMetrics.density).toInt()
+            val params = view.layoutParams
+            params.width = (width * view.context.resources.displayMetrics.density).toInt()
+            params.height = (16 * view.context.resources.displayMetrics.density).toInt()
+            view.layoutParams = params
             
             // Create rounded dark skeleton bar
             val skeletonDrawable = GradientDrawable().apply {
@@ -108,8 +110,10 @@ class TaskOverlayAdapter(
         private fun restoreView(view: TextView, color: Int) {
             view.setTextColor(color)
             view.background = null
-            view.layoutParams.width = ViewGroup.LayoutParams.MATCH_PARENT
-            view.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            val params = view.layoutParams
+            params.width = ViewGroup.LayoutParams.MATCH_PARENT
+            params.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            view.layoutParams = params
         }
 
         fun bind(task: TaskItem) {

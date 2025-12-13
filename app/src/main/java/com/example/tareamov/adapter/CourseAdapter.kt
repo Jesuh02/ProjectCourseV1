@@ -132,10 +132,11 @@ class CourseAdapter(
                             "Por: Tú"
                         }
                         
-                        // Enable click on creator name/avatar to view profile
+                        // Enable click on creator name/avatar/subscriber count to view profile
                         if (!creatorUsername.isNullOrBlank()) {
                             holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                             holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                            holder.subscriberCountTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                         }
                         
                         Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
@@ -202,6 +203,8 @@ class CourseAdapter(
                             if (!creatorUsername.isNullOrBlank()) {
                                 holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                                 holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                                holder.subscriberCountTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                                creatorInfoContainer?.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                             }
                             
                             holder.enrollButtonContainer?.visibility = View.GONE
@@ -219,10 +222,12 @@ class CourseAdapter(
                             holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"
                             Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
                             
-                            // Enable click on creator name/avatar to view profile
+                            // Enable click on creator name/avatar/subscriber count to view creator's profile
                             if (!creatorUsername.isNullOrBlank()) {
                                 holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                                 holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                                holder.subscriberCountTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                                creatorInfoContainer?.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                             }
                             
                             // Update Avatar
@@ -276,21 +281,7 @@ class CourseAdapter(
         }
 
         // Load thumbnail image
-        if (!course.thumbnailUri.isNullOrEmpty()) {
-            // Hide overlay text when real thumbnail is available
-            holder.overlayText.visibility = View.GONE
-            Glide.with(context)
-                .load(course.thumbnailUri)
-                .apply(RequestOptions().transform(RoundedCorners(16)))
-                .placeholder(R.drawable.bg_course_placeholder_card)
-                .error(R.drawable.bg_course_placeholder_card)
-                .centerCrop()
-                .into(holder.thumbnailImageView)
-        } else {
-            // Show placeholder image when no thumbnail is available (YouTube style)
-            holder.overlayText.visibility = View.GONE
-            holder.thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
-        }
+        loadCourseThumbnail(holder, course)
 
         // Apply dark mode colors to text views
         applyDarkModeTextColors(holder)
@@ -334,6 +325,12 @@ class CourseAdapter(
                 val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
                 if (userId == null) {
                     Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
+                    return@launch
+                }
+
+                // Guard: don't auto-enroll the course creator into their own course
+                if (userId == course.creatorUserId) {
+                    Log.d("CourseAdapter", "Skipping background enrollment: user is course creator for course ${course.id}")
                     return@launch
                 }
                 
@@ -611,11 +608,20 @@ class CourseAdapter(
                             
                             // Set click listener for enrollment (only once)
                             holder.enrollButton?.setOnClickListener {
+                                // Guard: prevent the course creator from enrolling in their own course
+                                if (canUserModifyCourse(course)) {
+                                    Log.w("CourseAdapter", "Creator attempted to enroll in own course ${course.id}; action blocked")
+                                    holder.enrollButton?.isEnabled = false
+                                    holder.enrollButton?.alpha = 0.6f
+                                    holder.enrollButton?.text = "No disponible"
+                                    return@setOnClickListener
+                                }
+
                                 // Disable button immediately to prevent double-clicks
                                 holder.enrollButton?.isEnabled = false
                                 holder.enrollButton?.alpha = 0.6f
                                 holder.enrollButton?.text = "Inscribiendo..."
-                                
+
                                 onEnrollClickListener?.invoke(course)
                             }
                         }
@@ -656,5 +662,35 @@ class CourseAdapter(
         holder.priceTextView.setTextColor(accentColor)
         // Subscription elements already have colors defined in layout
         holder.subscriberCountTextView.setTextColor(ContextCompat.getColor(context, R.color.purple_500))
+    }
+    
+    /**
+     * Load course thumbnail image using Glide
+     */
+    private fun loadCourseThumbnail(holder: CourseViewHolder, course: Course) {
+        // Set placeholder immediately
+        holder.thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
+        
+        val thumbnailUri = course.thumbnailUri
+        if (!thumbnailUri.isNullOrEmpty()) {
+            val requestOptions = RequestOptions()
+                .placeholder(R.drawable.bg_course_placeholder_card)
+                .error(R.drawable.bg_course_placeholder_card)
+                .centerCrop()
+                .transform(RoundedCorners(dpToPx(16)))
+            
+            Glide.with(context)
+                .load(thumbnailUri)
+                .apply(requestOptions)
+                .into(holder.thumbnailImageView)
+        }
+    }
+    
+    /**
+     * Convert dp to pixels for Glide rounded corners
+     */
+    private fun dpToPx(dp: Int): Int {
+        val density = context.resources.displayMetrics.density
+        return (dp * density).toInt()
     }
 }

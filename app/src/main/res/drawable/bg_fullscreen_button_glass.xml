@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Pressed State - Glass effect -->
+    <item android:state_pressed="true">
+        <layer-list>
+            <!-- Background layer with blur effect simulation -->
+            <item>
+                <shape android:shape="rectangle">
+                    <solid android:color="#80000000" />
+                    <corners android:radius="14dp" />
+                </shape>
+            </item>
+            <!-- Border layer -->
+            <item>
+                <shape android:shape="rectangle">
+                    <stroke android:width="1.5dp" android:color="#50FFFFFF" />
+                    <corners android:radius="14dp" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+    
+    <!-- Normal State - Glass effect -->
+    <item>
+        <layer-list>
+            <!-- Background layer with blur effect simulation -->
+            <item>
+                <shape android:shape="rectangle">
+                    <solid android:color="#60000000" />
+                    <corners android:radius="14dp" />
+                </shape>
+            </item>
+            <!-- Border layer -->
+            <item>
+                <shape android:shape="rectangle">
+                    <stroke android:width="1dp" android:color="#30FFFFFF" />
+                    <corners android:radius="14dp" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</selector>
+

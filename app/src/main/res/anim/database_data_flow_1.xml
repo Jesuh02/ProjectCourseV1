@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <objectAnimator
+        android:propertyName="translateX"
+        android:valueFrom="0"
+        android:valueTo="8"
+        android:duration="1500"
+        android:interpolator="@android:anim/accelerate_decelerate_interpolator"
+        android:repeatCount="infinite"
+        android:repeatMode="reverse" />
+    <objectAnimator
+        android:propertyName="fillAlpha"
+        android:valueFrom="0.2"
+        android:valueTo="0.6"
+        android:duration="1500"
+        android:interpolator="@android:anim/accelerate_decelerate_interpolator"
+        android:repeatCount="infinite"
+        android:repeatMode="reverse" />
+</set>

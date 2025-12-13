@@ -577,11 +577,17 @@ class SyncRepository(
 
     // New wrappers that use SupabaseClient server-side filters when available
     suspend fun fetchTopicsByCourseFromSupabase(courseId: Long): List<Topic> {
+        Log.d("SyncRepository", "📚 fetchTopicsByCourseFromSupabase called for courseId=$courseId")
         return try {
-            if (!supabaseClient.isConfigured()) return emptyList()
-            withContext(Dispatchers.IO) { supabaseClient.fetchTopicsByCourse(courseId) }
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "⚠️ Supabase not configured!")
+                return emptyList()
+            }
+            val topics = withContext(Dispatchers.IO) { supabaseClient.fetchTopicsByCourse(courseId) }
+            Log.d("SyncRepository", "📚 fetchTopicsByCourseFromSupabase: returned ${topics.size} topics for courseId=$courseId")
+            topics
         } catch (e: Exception) {
-            Log.w("SyncRepository", "fetchTopicsByCourseFromSupabase failed for courseId=$courseId", e)
+            Log.w("SyncRepository", "❌ fetchTopicsByCourseFromSupabase failed for courseId=$courseId", e)
             emptyList()
         }
     }
@@ -608,11 +614,21 @@ class SyncRepository(
     }
 
     suspend fun fetchContentItemsByTopicIdsFromSupabase(topicIds: List<Long>): List<ContentItem> {
+        Log.d("SyncRepository", "📚 fetchContentItemsByTopicIdsFromSupabase called with topicIds=$topicIds")
         return try {
-            if (!supabaseClient.isConfigured() || topicIds.isEmpty()) return emptyList()
-            withContext(Dispatchers.IO) { supabaseClient.fetchContentItemsByTopicIds(topicIds) }
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "⚠️ Supabase not configured!")
+                return emptyList()
+            }
+            if (topicIds.isEmpty()) {
+                Log.w("SyncRepository", "⚠️ Empty topicIds list!")
+                return emptyList()
+            }
+            val result = withContext(Dispatchers.IO) { supabaseClient.fetchContentItemsByTopicIds(topicIds) }
+            Log.d("SyncRepository", "📚 fetchContentItemsByTopicIdsFromSupabase returned ${result.size} items")
+            result
         } catch (e: Exception) {
-            Log.w("SyncRepository", "fetchContentItemsByTopicIdsFromSupabase failed for topicIds=$topicIds", e)
+            Log.e("SyncRepository", "❌ fetchContentItemsByTopicIdsFromSupabase failed for topicIds=$topicIds", e)
             emptyList()
         }
     }
@@ -1302,8 +1318,23 @@ class SyncRepository(
                         if (hasGrade) {
                             success = withContext(Dispatchers.IO) { supabaseClient.updateTaskSubmissionRemote(submission) }
                         } else {
-                            val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
-                            success = remoteId != null
+                            // Defensive: ask remote if a submission for this task/student already exists
+                            try {
+                                val existingRemote = withContext(Dispatchers.IO) {
+                                    supabaseClient.fetchTaskSubmissionByTaskId(submission.taskId, submission.studentId)
+                                }
+                                if (existingRemote != null) {
+                                    Log.i("SyncRepository", "Remote submission already exists for task=${submission.taskId} student=${submission.studentId} id=${existingRemote.id}; skipping insert.")
+                                    success = true
+                                } else {
+                                    val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
+                                    success = remoteId != null
+                                }
+                            } catch (e: Exception) {
+                                Log.w("SyncRepository", "Failed to check existing remote submission before insert: ${e.message}")
+                                val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
+                                success = remoteId != null
+                            }
                         }
 
                         if (!success) {
@@ -1316,8 +1347,21 @@ class SyncRepository(
                                     if (hasGrade) {
                                         success = withContext(Dispatchers.IO) { supabaseClient.updateTaskSubmissionRemote(submission) }
                                     } else {
-                                        val remoteId2 = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
-                                        success = remoteId2 != null
+                                        // Retry: check remote existence again before insert
+                                        try {
+                                            val existingRemote2 = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissionByTaskId(submission.taskId, submission.studentId) }
+                                            if (existingRemote2 != null) {
+                                                Log.i("SyncRepository", "(retry) Remote submission already exists for task=${submission.taskId} student=${submission.studentId} id=${existingRemote2.id}; skipping insert.")
+                                                success = true
+                                            } else {
+                                                val remoteId2 = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
+                                                success = remoteId2 != null
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.w("SyncRepository", "(retry) Failed check before insert: ${e.message}")
+                                            val remoteId2 = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
+                                            success = remoteId2 != null
+                                        }
                                     }
                                 } else {
                                     Log.w("SyncRepository", "Failed to upsert parent task ${submission.taskId} while retrying submission ${submission.id}.")
@@ -2761,6 +2805,127 @@ class SyncRepository(
     // Helper to get user by ID locally
     suspend fun getUsuarioByIdLocal(userId: Long): Usuario? {
         return usuarioDao.getUsuarioById(userId)
+    }
+
+    /**
+     * Notify all subscribers of a creator about a new course
+     * This should be called after a course is successfully created/published
+     * Sends both in-app notifications AND push notifications
+     * @param course The newly created course
+     * @return Pair of (in-app notifications sent, push notifications sent)
+     */
+    suspend fun notifySubscribersOfNewCourse(course: Course): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "Supabase not configured, cannot notify subscribers")
+                return@withContext Pair(0, 0)
+            }
+
+            val creatorUserId = course.creatorUserId
+            if (creatorUserId <= 0) {
+                Log.w("SyncRepository", "Invalid creator user ID for course ${course.id}")
+                return@withContext Pair(0, 0)
+            }
+
+            // Get creator info
+            val creatorUsername = supabaseClient.getUsernameFromUserId(creatorUserId) ?: "Usuario"
+            val creatorAvatarUrl = supabaseClient.getUserAvatarUrl(creatorUserId)
+
+            // Call the combined notification method (in-app + push)
+            val (inAppCount, pushCount) = supabaseClient.notifySubscribersOfNewCourseWithPush(
+                creatorUserId = creatorUserId,
+                creatorUsername = creatorUsername,
+                creatorAvatarUrl = creatorAvatarUrl,
+                courseId = course.id,
+                courseTitle = course.title ?: "Nuevo curso",
+                courseThumbnailUrl = course.thumbnailUri
+            )
+
+            Log.d("SyncRepository", "Notified subscribers about new course '${course.title}': $inAppCount in-app, $pushCount push")
+            return@withContext Pair(inAppCount, pushCount)
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error notifying subscribers of new course", e)
+            Pair(0, 0)
+        }
+    }
+
+    /**
+     * Fire-and-forget version of notifySubscribersOfNewCourse
+     * Launches in background scope
+     */
+    fun notifySubscribersOfNewCourseAsync(course: Course) {
+        syncScope.launch {
+            notifySubscribersOfNewCourse(course)
+        }
+    }
+
+    /**
+     * Notify enrolled students about a new task in their course
+     * @param taskId The ID of the newly created task
+     * @param taskName The name of the task
+     * @param courseId The course ID the task belongs to
+     * @param courseName The course name
+     * @param creatorUserId The creator's user ID
+     * @param creatorUsername The creator's username
+     * @param creatorAvatarUrl The creator's avatar URL (optional)
+     */
+    suspend fun notifyEnrolledStudentsOfNewTask(
+        taskId: Long,
+        taskName: String,
+        courseId: Long,
+        courseName: String,
+        creatorUserId: Long,
+        creatorUsername: String,
+        creatorAvatarUrl: String? = null
+    ): Int = withContext(Dispatchers.IO) {
+        try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "Supabase not configured, skipping task notifications")
+                return@withContext 0
+            }
+
+            val notifiedCount = supabaseClient.notifyEnrolledStudentsOfNewTask(
+                courseId = courseId,
+                creatorUserId = creatorUserId,
+                creatorUsername = creatorUsername,
+                creatorAvatarUrl = creatorAvatarUrl,
+                taskId = taskId,
+                taskName = taskName,
+                courseName = courseName
+            )
+
+            Log.i("SyncRepository", "✅ Notified $notifiedCount students about new task '$taskName' in course '$courseName'")
+            return@withContext notifiedCount
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error notifying enrolled students of new task", e)
+            0
+        }
+    }
+
+    /**
+     * Fire-and-forget version of notifyEnrolledStudentsOfNewTask
+     * Launches in background scope
+     */
+    fun notifyEnrolledStudentsOfNewTaskAsync(
+        taskId: Long,
+        taskName: String,
+        courseId: Long,
+        courseName: String,
+        creatorUserId: Long,
+        creatorUsername: String,
+        creatorAvatarUrl: String? = null
+    ) {
+        syncScope.launch {
+            notifyEnrolledStudentsOfNewTask(
+                taskId = taskId,
+                taskName = taskName,
+                courseId = courseId,
+                courseName = courseName,
+                creatorUserId = creatorUserId,
+                creatorUsername = creatorUsername,
+                creatorAvatarUrl = creatorAvatarUrl
+            )
+        }
     }
 
 }

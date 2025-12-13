@@ -3,12 +3,16 @@ package com.example.tareamov.ui.adapter
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
+import com.bumptech.glide.load.resource.bitmap.RoundedCorners
+import com.bumptech.glide.request.RequestOptions
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.Notification
 import java.text.SimpleDateFormat
@@ -31,6 +35,8 @@ class NotificationAdapter(
     }
 
     class NotificationViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val iconContainer: FrameLayout = itemView.findViewById(R.id.iconContainer)
+        private val notificationIcon: ImageView = itemView.findViewById(R.id.notificationIcon)
         private val senderAvatar: ImageView = itemView.findViewById(R.id.senderAvatar)
         private val titleText: TextView = itemView.findViewById(R.id.titleText)
         private val messageText: TextView = itemView.findViewById(R.id.messageText)
@@ -39,24 +45,49 @@ class NotificationAdapter(
         private val unreadIndicator: View = itemView.findViewById(R.id.unreadIndicator)
 
         fun bind(notification: Notification, onClick: (Notification) -> Unit) {
-            titleText.text = notification.title
+            // Set "Para ti" as the category label
+            titleText.text = "Para ti"
+            
+            // Set the notification message
             messageText.text = notification.message
             timeText.text = formatTime(notification.createdAt)
 
             // Show/hide unread indicator
             unreadIndicator.visibility = if (notification.isRead) View.GONE else View.VISIBLE
 
-            // Load sender avatar with Glide
-            Glide.with(itemView.context)
-                .load(notification.senderAvatarUrl)
-                .placeholder(R.drawable.default_avatar)
-                .error(R.drawable.default_avatar)
-                .circleCrop()
-                .into(senderAvatar)
+            // Set icon based on notification type
+            when (notification.type) {
+                Notification.TYPE_NEW_COURSE -> {
+                    notificationIcon.setImageResource(R.drawable.ic_school)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon_course)
+                }
+                Notification.TYPE_NEW_VIDEO -> {
+                    notificationIcon.setImageResource(R.drawable.ic_play_circle)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon_video)
+                }
+                Notification.TYPE_TASK_GRADED -> {
+                    notificationIcon.setImageResource(R.drawable.ic_assignment_turned_in)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon_task)
+                }
+                Notification.TYPE_COMMENT -> {
+                    notificationIcon.setImageResource(R.drawable.ic_comment)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
+                }
+                Notification.TYPE_LIKE -> {
+                    notificationIcon.setImageResource(R.drawable.ic_favorite)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
+                }
+                else -> {
+                    notificationIcon.setImageResource(R.drawable.ic_notifications)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
+                }
+            }
 
-            // Load thumbnail with Glide
+            // Load thumbnail with rounded corners
+            val thumbnailUrl = notification.thumbnailUrl ?: notification.senderAvatarUrl
             Glide.with(itemView.context)
-                .load(notification.thumbnailUrl)
+                .load(thumbnailUrl)
+                .apply(RequestOptions().transform(RoundedCorners(16)))
                 .placeholder(R.drawable.placeholder_image)
                 .error(R.drawable.placeholder_image)
                 .centerCrop()
@@ -79,10 +110,10 @@ class NotificationAdapter(
                 val diff = now - date.time
 
                 return when {
-                    diff < TimeUnit.MINUTES.toMillis(1) -> "hace menos de 1 minuto"
+                    diff < TimeUnit.MINUTES.toMillis(1) -> "hace menos de 1 min"
                     diff < TimeUnit.HOURS.toMillis(1) -> {
                         val minutes = TimeUnit.MILLISECONDS.toMinutes(diff)
-                        "hace $minutes minuto${if (minutes > 1) "s" else ""}"
+                        "hace $minutes min"
                     }
                     diff < TimeUnit.DAYS.toMillis(1) -> {
                         val hours = TimeUnit.MILLISECONDS.toHours(diff)

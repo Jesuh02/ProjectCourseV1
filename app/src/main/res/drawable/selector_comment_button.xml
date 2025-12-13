@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Estado seleccionado/activo (cuando hay comentarios) -->
+    <item android:state_selected="true" android:drawable="@drawable/ic_comment_filled" />
+    <item android:state_activated="true" android:drawable="@drawable/ic_comment_filled" />
+    
+    <!-- Estado normal (sin comentarios) -->
+    <item android:drawable="@drawable/ic_comment_minimal" />
+</selector>
+
