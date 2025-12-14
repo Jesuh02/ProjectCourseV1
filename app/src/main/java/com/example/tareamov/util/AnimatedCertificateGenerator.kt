@@ -52,13 +52,38 @@ object AnimatedCertificateGenerator {
                 }
 
                 // Get creator full name from Persona table
-                val creatorName = withContext(Dispatchers.IO) {
+                var creatorName = withContext(Dispatchers.IO) {
                     val user = db.usuarioDao().getUsuarioByUsername(creatorUsername)
                     if (user != null) {
                         val persona = db.personaDao().getPersonaById(user.personaId)
                         "${persona?.nombres ?: ""} ${persona?.apellidos ?: ""}".trim().ifEmpty { creatorUsername }
                     } else {
                         creatorUsername
+                    }
+                }
+
+                // Try to get creator name from Supabase if we only have the username
+                if (creatorName == creatorUsername) {
+                    try {
+                        if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
+                            val remoteUser = withContext(Dispatchers.IO) {
+                                com.example.tareamov.service.SupabaseClient.fetchUsuarioByUsername(creatorUsername)
+                            }
+                            if (remoteUser != null) {
+                                val personaId = try { remoteUser.persona_id } catch (e: Exception) { 0L }
+                                if (personaId > 0) {
+                                    val persona = withContext(Dispatchers.IO) {
+                                        com.example.tareamov.service.SupabaseClient.fetchPersonas().firstOrNull { p -> p.id == personaId }
+                                    }
+                                    if (persona != null) {
+                                        val names = listOfNotNull(persona.nombres.takeIf { it.isNotBlank() }, persona.apellidos.takeIf { it.isNotBlank() })
+                                        if (names.isNotEmpty()) creatorName = names.joinToString(" ")
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to fetch creator real name from Supabase", e)
                     }
                 }
 
@@ -108,13 +133,42 @@ object AnimatedCertificateGenerator {
                     }
                 }
 
-                // Open HTML file in browser
-                openHtmlFile(context, file)
+                // Get student user ID for certificate URL
+                val studentUserId = withContext(Dispatchers.IO) {
+                    db.usuarioDao().getUsuarioByUsername(studentUsername)?.id ?: 0L
+                }
 
-                // Update certificate issued date
-                CertificateGenerator.updateCertificateIssuedDate(context, studentUsername, courseId)
+                // Generate certificate URL for the web app (Vercel)
+                // This URL can be shared and opened in any browser
+                val certificateUrl = CertificateUrlBuilder.buildCertificateUrl(
+                    studentName = studentName,
+                    courseName = courseName,
+                    grade = grade.replace(",", ".").toFloatOrNull() ?: 0f,
+                    tasksCompleted = tareasCompletadas,
+                    totalTasks = tareasTotales,
+                    progress = porcentajeProgreso,
+                    instructorName = creatorName,
+                    instructorUsername = creatorUsername,
+                    userId = studentUserId,
+                    courseId = courseId,
+                    certId = certificateId
+                )
+                
+                Log.i(TAG, "✅ URL de certificado generada: $certificateUrl")
 
-                Toast.makeText(context, "Certificado generado con éxito", Toast.LENGTH_SHORT).show()
+                // Open the certificate URL in browser (web version)
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(certificateUrl))
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "No se pudo abrir en navegador, abriendo archivo local", e)
+                    openHtmlFile(context, file)
+                }
+
+                // Update certificate issued date and URL in Supabase
+                CertificateGenerator.updateCertificateIssuedDate(context, studentUsername, courseId, certificateUrl)
+
+                Toast.makeText(context, "🎓 Certificado generado con éxito", Toast.LENGTH_SHORT).show()
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error generating animated certificate", e)
@@ -230,65 +284,82 @@ object AnimatedCertificateGenerator {
     </div>
 
     <!-- Certificate Container -->
-    <div id="certificate" class="relative w-full max-w-[600px] aspect-[3/4] bg-[#0a0014] rounded-xl overflow-hidden shadow-2xl border border-purple-900 flex flex-col items-center p-8 text-center select-none">
+    <div id="certificate" class="relative w-full max-w-[600px] aspect-[3/4] bg-[#0a0014] rounded-xl overflow-hidden shadow-2xl flex flex-col items-center p-4 sm:p-8 text-center select-none transform transition-transform duration-300 hover:scale-[1.01]">
         
-        <!-- Glow effects -->
-        <div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-500 shadow-[0_0_20px_rgba(255,0,255,0.5)]"></div>
-        <div class="absolute bottom-0 left-0 w-full h-2 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-500 shadow-[0_0_20px_rgba(255,0,255,0.5)]"></div>
+        <!-- Tech Border (Image Style) -->
+        <div class="absolute inset-0 p-[2px] rounded-xl pointer-events-none">
+            <!-- Top-Left & Bottom-Right Cyan -->
+            <div class="absolute top-0 left-0 w-1/2 h-[2px] bg-cyan-400 shadow-[0_0_10px_#22d3ee]"></div>
+            <div class="absolute top-0 left-0 h-1/3 w-[2px] bg-cyan-400 shadow-[0_0_10px_#22d3ee]"></div>
+            
+            <div class="absolute bottom-0 right-0 w-1/2 h-[2px] bg-cyan-400 shadow-[0_0_10px_#22d3ee]"></div>
+            <div class="absolute bottom-0 right-0 h-1/3 w-[2px] bg-cyan-400 shadow-[0_0_10px_#22d3ee]"></div>
+
+            <!-- Top-Right & Bottom-Left Pink -->
+            <div class="absolute top-0 right-0 w-1/2 h-[2px] bg-pink-500 shadow-[0_0_10px_#ec4899]"></div>
+            <div class="absolute top-0 right-0 h-1/3 w-[2px] bg-pink-500 shadow-[0_0_10px_#ec4899]"></div>
+
+            <div class="absolute bottom-0 left-0 w-1/2 h-[2px] bg-pink-500 shadow-[0_0_10px_#ec4899]"></div>
+            <div class="absolute bottom-0 left-0 h-1/3 w-[2px] bg-pink-500 shadow-[0_0_10px_#ec4899]"></div>
+            
+            <!-- Corner Accents -->
+            <div class="absolute top-[-2px] left-[-2px] w-4 h-4 border-t-2 border-l-2 border-cyan-300 rounded-tl-lg"></div>
+            <div class="absolute top-[-2px] right-[-2px] w-4 h-4 border-t-2 border-r-2 border-pink-400 rounded-tr-lg"></div>
+            <div class="absolute bottom-[-2px] left-[-2px] w-4 h-4 border-b-2 border-l-2 border-pink-400 rounded-bl-lg"></div>
+            <div class="absolute bottom-[-2px] right-[-2px] w-4 h-4 border-b-2 border-r-2 border-cyan-300 rounded-br-lg"></div>
+        </div>
+        
+        <!-- Glow effects (Background) -->
+        <div class="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-purple-900/10 via-transparent to-purple-900/10 pointer-events-none"></div>
 
         <!-- Header -->
-        <div class="anim-element mt-4 flex items-center gap-2 mb-6">
-            <svg class="w-8 h-8 text-pink-500 drop-shadow-[0_0_5px_rgba(255,0,255,0.8)]" fill="currentColor" viewBox="0 0 24 24">
+        <div class="anim-element mt-2 sm:mt-4 flex items-center gap-2 mb-4 sm:mb-6">
+            <svg class="w-6 h-6 sm:w-8 sm:h-8 text-pink-500 drop-shadow-[0_0_5px_rgba(255,0,255,0.8)]" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 3L1 9L12 15L21 10.09V17H23V9M5 13.18V17.18L12 21L19 17.18V13.18L12 17L5 13.18Z"/>
             </svg>
-            <h1 class="font-orbitron font-bold text-2xl tracking-wider text-white">CERTIFICADO</h1>
+            <h1 class="font-orbitron font-bold text-xl sm:text-2xl tracking-wider text-white">CERTIFICADO</h1>
         </div>
 
         <!-- Logo -->
-        <div class="anim-element mb-6 flex flex-col items-center">
-            <h2 class="font-orbitron font-bold text-4xl neon-text-pink mb-2">CourseV</h2>
-            <div class="text-6xl font-bold text-purple-500 drop-shadow-[0_0_10px_rgba(189,0,255,0.8)] animate-pulse">
+        <div class="anim-element mb-4 sm:mb-6 flex flex-col items-center">
+            <h2 class="font-orbitron font-bold text-3xl sm:text-4xl neon-text-pink mb-2">CourseV</h2>
+            <div class="text-5xl sm:text-6xl font-bold text-purple-500 drop-shadow-[0_0_10px_rgba(189,0,255,0.8)] animate-pulse">
                 {&lt;/&gt;}
             </div>
         </div>
 
         <!-- Body Text -->
-        <p class="anim-element font-poppins text-gray-300 text-sm mb-4">
+        <p class="anim-element font-poppins text-gray-300 text-xs sm:text-sm mb-4">
             Se certifica que<br>ha completado exitosamente el curso
         </p>
 
         <!-- Student Name -->
-        <div class="anim-element w-full mb-6">
-            <h3 class="font-orbitron font-bold text-2xl text-pink-500 neon-text-pink uppercase">$studentName</h3>
+        <div class="anim-element w-full mb-4 sm:mb-6">
+            <h3 class="font-orbitron font-bold text-xl sm:text-2xl text-pink-500 neon-text-pink uppercase break-words px-2">$studentName</h3>
             <div class="h-[1px] w-3/4 mx-auto bg-pink-500 shadow-[0_0_10px_#ff00ff] mt-2"></div>
         </div>
 
         <!-- Course Name -->
-        <div class="anim-element w-full mb-8">
-            <h3 class="font-orbitron font-bold text-xl text-purple-400 neon-text-purple uppercase">$displayTopic</h3>
+        <div class="anim-element w-full mb-6 sm:mb-8">
+            <h3 class="font-orbitron font-bold text-lg sm:text-xl text-purple-400 neon-text-purple uppercase break-words px-2">$displayTopic</h3>
             <div class="h-[1px] w-2/3 mx-auto bg-purple-500 shadow-[0_0_10px_#bd00ff] mt-2"></div>
         </div>
 
         <!-- Grade -->
-        <div class="anim-element mb-6">
-            <p class="font-poppins text-gray-300 text-sm mb-2">con una calificación de</p>
+        <div class="anim-element mb-4 sm:mb-6">
+            <p class="font-poppins text-gray-300 text-xs sm:text-sm mb-2">con una calificación de</p>
             <div class="flex items-center justify-center gap-2">
-                <span class="text-yellow-400 text-2xl">☆</span>
-                <span class="font-orbitron font-bold text-3xl text-white">[$grade/10]</span>
-                <span class="text-yellow-400 text-2xl">☆</span>
+                <span class="text-yellow-400 text-xl sm:text-2xl">☆</span>
+                <span class="font-orbitron font-bold text-2xl sm:text-3xl text-white">[$grade/10]</span>
+                <span class="text-yellow-400 text-xl sm:text-2xl">☆</span>
             </div>
         </div>
 
         <!-- Stats Box -->
-        <div class="anim-element w-full bg-purple-900/20 border border-purple-500/50 rounded-lg p-4 mb-6 shadow-[0_0_15px_rgba(189,0,255,0.2)]">
-            <div class="flex flex-col gap-2 text-left text-sm font-poppins">
+        <div class="anim-element w-full bg-purple-900/20 border border-purple-500/50 rounded-lg p-3 sm:p-4 mb-4 sm:mb-6 shadow-[0_0_15px_rgba(189,0,255,0.2)]">
+            <div class="flex flex-col gap-2 text-left text-xs sm:text-sm font-poppins">
                 <div class="flex items-center gap-2">
-                    <span class="text-pink-500">📝</span>
-                    <span class="text-gray-300">Tareas completadas:</span>
-                    <span class="text-white ml-auto">$tareasCompletadas/$tareasTotales</span>
-                </div>
-                <div class="flex items-center gap-2">
-                    <span class="text-pink-500">📊</span>
+                    <span class="text-pink-500"></span>
                     <span class="text-gray-300">Progreso:</span>
                     <span class="text-white ml-auto">${porcentajeProgreso.toInt()}%</span>
                 </div>
@@ -303,8 +374,8 @@ object AnimatedCertificateGenerator {
         <!-- Instructor -->
         <div class="anim-element mt-auto mb-4">
             <p class="font-poppins text-xs text-gray-400">Impartido por:</p>
-            <p class="font-poppins font-bold text-white">$creatorName</p>
-            <p class="font-poppins text-xs text-pink-400">@$creatorUsername</p>
+            <p id="instructorName" class="font-poppins font-bold text-white">$creatorName</p>
+            <p id="instructorUsername" class="font-poppins text-xs text-pink-400">@$creatorUsername</p>
         </div>
 
         <!-- Footer -->
@@ -347,6 +418,10 @@ object AnimatedCertificateGenerator {
         });
 
         // Download Functions
+        function getFileName() {
+            return 'certificado_${studentName.replace(Regex("[^a-zA-Z0-9]"), "_")}_${courseName.replace(Regex("[^a-zA-Z0-9]"), "_")}';
+        }
+
         function downloadPNG() {
             const element = document.getElementById('certificate');
             html2canvas(element, {
@@ -354,7 +429,7 @@ object AnimatedCertificateGenerator {
                 scale: 2
             }).then(canvas => {
                 const link = document.createElement('a');
-                link.download = 'certificado.png';
+                link.download = getFileName() + '.png';
                 link.href = canvas.toDataURL();
                 link.click();
             });
@@ -375,7 +450,7 @@ object AnimatedCertificateGenerator {
                 });
                 
                 pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-                pdf.save('certificado.pdf');
+                pdf.save(getFileName() + '.pdf');
             });
         }
 
@@ -384,7 +459,7 @@ object AnimatedCertificateGenerator {
             domtoimage.toSvg(element)
                 .then(function (dataUrl) {
                     const link = document.createElement('a');
-                    link.download = 'certificado.svg';
+                    link.download = getFileName() + '.svg';
                     link.href = dataUrl;
                     link.click();
                 });

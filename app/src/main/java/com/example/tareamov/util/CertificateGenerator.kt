@@ -185,34 +185,22 @@ object CertificateGenerator {
 
                 pdfDocument.close()
 
-                // Upload to Cloudflare R2
-                var certificateUrl: String? = null
-                if (CloudflareR2Service.isConfigured()) {
-                    // Ensure public URL base points to the desired domain so uploaded files
-                    // are exposed under https://yisuscompany.com/<objectKey>
-                    try {
-                        CloudflareR2Service.setPublicUrlBase("https://yisuscompany.com")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Could not set R2 public URL base", e)
-                    }
-                    Toast.makeText(context, "Subiendo certificado a la nube...", Toast.LENGTH_SHORT).show()
-                    
-                    val uploadResult = withContext(Dispatchers.IO) {
-                        CloudflareR2Service.uploadFile(
-                            context = context,
-                            fileUri = Uri.fromFile(file),
-                            folder = "certificates",
-                            customFileName = "cert_${studentUsername}_${courseId}_${System.currentTimeMillis()}"
-                        )
-                    }
-                    
-                    if (uploadResult is CloudflareR2Service.UploadResult.Success) {
-                        certificateUrl = uploadResult.url
-                        Log.i(TAG, "✅ Certificado subido a R2: $certificateUrl")
-                    } else {
-                        Log.w(TAG, "⚠️ No se pudo subir certificado a R2: ${(uploadResult as? CloudflareR2Service.UploadResult.Error)?.message}")
-                    }
-                }
+                // Generate certificate URL for the web app (Vercel) instead of uploading to R2
+                val certificateUrl = CertificateUrlBuilder.buildCertificateUrl(
+                    studentName = studentName,
+                    courseName = courseName,
+                    grade = gradeFloat,
+                    tasksCompleted = certData.tasksCompleted,
+                    totalTasks = certData.totalTasks,
+                    progress = certData.progress,
+                    instructorName = creatorName,
+                    instructorUsername = creatorUsername,
+                    userId = userId ?: 0L,
+                    courseId = courseId,
+                    certId = certificateId
+                )
+                
+                Log.i(TAG, "✅ URL de certificado web generada: $certificateUrl")
 
                 // Update certificate issued date and URL in Supabase
                 updateCertificateIssuedDate(context, studentUsername, courseId, certificateUrl)
@@ -221,12 +209,7 @@ object CertificateGenerator {
                 sharePdf(context, file)
 
                 // Show success toast
-                val successMsg = if (certificateUrl != null) {
-                    "Certificado generado y guardado en la nube"
-                } else {
-                    "Certificado generado con éxito"
-                }
-                Toast.makeText(context, successMsg, Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "🎓 Certificado generado con éxito", Toast.LENGTH_SHORT).show()
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error generating certificate", e)
