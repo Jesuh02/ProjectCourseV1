@@ -759,6 +759,26 @@ class CourseDetailFragment : Fragment() {
             try {
                 val db = AppDatabase.getDatabase(requireContext())
                 
+                // CRITICAL: Prevent course creator from enrolling in their own course
+                val userId = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                }
+                
+                if (userId == course.creatorUserId) {
+                    Log.d("CourseDetailFragment", "⚠️ Creator cannot enroll in own course ${course.id}")
+                    return@launch
+                }
+                
+                // Double-check with username comparison as fallback
+                val creatorUsername = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                }
+                
+                if (currentUsername == creatorUsername) {
+                    Log.d("CourseDetailFragment", "⚠️ Creator (by username) cannot enroll in own course ${course.id}")
+                    return@launch
+                }
+                
                 // Ensure course exists in local DB
                 withContext(Dispatchers.IO) {
                     val existingCourse = db.courseDao().getCourseById(course.id)
@@ -781,11 +801,7 @@ class CourseDetailFragment : Fragment() {
                     0
                 }
                 
-                // Get user ID from username
-                val userId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
-                }
-                
+                // userId was already obtained above for creator check
                 if (userId == null) {
                     android.widget.Toast.makeText(requireContext(), "Error: Usuario no encontrado", android.widget.Toast.LENGTH_SHORT).show()
                     return@launch

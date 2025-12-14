@@ -106,6 +106,34 @@ data class SubmissionInfo(
     val feedback: String?
 )
 
+// Request para enviar notificación por push y email
+data class SendNotificationRequest(
+    val userId: Long,
+    val title: String,
+    val message: String,
+    val type: String? = null,
+    val relatedId: Long? = null,
+    val senderUsername: String? = null
+)
+
+// Response para enviar notificación
+data class SendNotificationResponse(
+    val success: Boolean,
+    val message: String? = null,
+    val results: NotificationResults? = null
+)
+
+data class NotificationResults(
+    val push: NotificationResult? = null,
+    val email: NotificationResult? = null
+)
+
+data class NotificationResult(
+    val success: Boolean,
+    val error: String? = null,
+    val sentCount: Int? = null
+)
+
 interface MicroservicioApi {
     @POST("/procesar-prompt")
     suspend fun procesarPrompt(@Body request: MicroservicioPromptRequest): MicroservicioPromptResponse
@@ -123,4 +151,8 @@ interface MicroservicioApi {
     // Nuevo endpoint para listar submissions de una tarea
     @retrofit2.http.GET("listar-submissions/{taskId}")
     suspend fun listarSubmissions(@retrofit2.http.Path("taskId") taskId: Long): ListarSubmissionsResponse
+    
+    // Endpoint para enviar notificación por push y email
+    @POST("send-notification")
+    suspend fun sendNotification(@Body request: SendNotificationRequest): SendNotificationResponse
 }

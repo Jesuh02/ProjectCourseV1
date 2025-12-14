@@ -44,6 +44,9 @@ import retrofit2.HttpException
 import java.net.SocketTimeoutException
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 
 class ChatBotFragment : Fragment() {
     private fun clearChat() {
@@ -614,20 +617,11 @@ class ChatBotFragment : Fragment() {
             // Cargar información de la tarea, tema y curso
             updateCourseInfo(submissionId)
             
-            // LOGGING DETALLADO PARA DEBUGGING
-            Log.d("ChatBotFragment", "==============================================")
-            Log.d("ChatBotFragment", "🔍 LOADING FILE CONTEXT BY ID:")
-            Log.d("ChatBotFragment", "==============================================")
-            Log.d("ChatBotFragment", "submissionId: $submissionId")
-            Log.d("ChatBotFragment", "currentFileContext es null?: ${currentFileContext == null}")
+            // Logging mínimo
+            Log.d("ChatBotFragment", "🔍 FileContext cargado - submissionId: $submissionId, presente: ${currentFileContext != null}")
             if (currentFileContext != null) {
-                Log.d("ChatBotFragment", "currentFileContext.contentSummary: '${currentFileContext!!.contentSummary}'")
-                Log.d("ChatBotFragment", "currentFileContext.fileName: '${currentFileContext!!.fileName}'")
-                Log.d("ChatBotFragment", "currentFileContext.fileType: '${currentFileContext!!.fileType}'")
-                Log.d("ChatBotFragment", "contentSummary length: ${currentFileContext!!.contentSummary?.length ?: 0}")
-                Log.d("ChatBotFragment", "¿contentSummary vacío?: ${currentFileContext!!.contentSummary.isNullOrEmpty()}")
+                Log.d("ChatBotFragment", "   - fileName: '${currentFileContext!!.fileName}', fileType: '${currentFileContext!!.fileType}'")
             }
-            Log.d("ChatBotFragment", "==============================================")
 
             if (currentFileContext != null) {
                 // Verificar si es un error específico de Google Drive
@@ -956,15 +950,15 @@ class ChatBotFragment : Fragment() {
                             val remoteFileContexts = supabaseClient.fetchFileContexts()
                             val latest = remoteFileContexts.maxByOrNull { it.submissionId ?: 0L }
                             val summary = latest?.contentSummary
-                            Log.d("ChatBotFragment", "📋 Último contentSummary (supabase) obtenido: '$summary'")
+                            Log.d("ChatBotFragment", "📋 Fallback: contentSummary obtenido desde Supabase")
                             summary ?: ""
                         } else {
                             val latestContentSummary = database.fileContextDao().getLatestContentSummary()
-                            Log.d("ChatBotFragment", "📋 Último contentSummary (local) obtenido: '$latestContentSummary'")
+                            Log.d("ChatBotFragment", "📋 Fallback: contentSummary obtenido desde local")
                             latestContentSummary ?: ""
                         }
                     } catch (e: Exception) {
-                        Log.e("ChatBotFragment", "❌ Error obteniendo último contentSummary: ${e.message}")
+                        Log.e("ChatBotFragment", "❌ Error obteniendo contentSummary: ${e.message}")
                         ""
                     }
                 }
@@ -1393,24 +1387,19 @@ class ChatBotFragment : Fragment() {
                 }
             }
             
-            Log.d("ChatBotFragment", "==============================================")
-            Log.d("ChatBotFragment", "📋 CONTEXTOS QUE SE ENVIARÁN AL MICROSERVICIO:")
-            Log.d("ChatBotFragment", "==============================================")
-            Log.d("ChatBotFragment", "currentFileContext es null?: ${currentFileContext == null}")
+            // Logging mínimo (sin contenido sensible ni longitudes)
+            Log.d("ChatBotFragment", "📋 Enviando contexto al microservicio...")
+            Log.d("ChatBotFragment", "   - FileContext presente: ${currentFileContext != null}")
             if (currentFileContext != null) {
-                Log.d("ChatBotFragment", "currentFileContext.submissionId: ${currentFileContext!!.submissionId}")
-                Log.d("ChatBotFragment", "currentFileContext.contentSummary: '${currentFileContext!!.contentSummary}'")
-                Log.d("ChatBotFragment", "currentFileContext.fileName: '${currentFileContext!!.fileName}'")
+                Log.d("ChatBotFragment", "   - SubmissionId: ${currentFileContext!!.submissionId}")
+                Log.d("ChatBotFragment", "   - FileName: '${currentFileContext!!.fileName}'")
             }
-            Log.d("ChatBotFragment", "taskDescription (descripción de la tarea): '$effectiveTaskDescription'")
-            Log.d("ChatBotFragment", "fileContent (contenido del archivo): longitud ${effectiveFileContent.length} caracteres")
-            Log.d("ChatBotFragment", "taskDescription después de fallback: '$effectiveTaskDescription'")
-            Log.d("ChatBotFragment", "Longitud taskDescription: ${effectiveTaskDescription.length}")
-            Log.d("ChatBotFragment", "Longitud fileContent: ${effectiveFileContent.length}")
-            Log.d("ChatBotFragment", "==============================================")
+
+            // Data class local para capturar tanto el texto como la nota del backend
+            data class LLMResponse(val text: String, val nota: Float?)
 
             try {
-                val response = withContext(Dispatchers.IO) {
+                val llmResponse = withContext(Dispatchers.IO) {
                     try {
                         // Obtener información de la submission para que el backend pueda buscar el contenido desde R2
                         val currentSubmissionId = currentFileContext?.submissionId
@@ -1458,6 +1447,8 @@ class ChatBotFragment : Fragment() {
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📥 RESPUESTA COMPLETA DEL MODELO:")
                         Log.d("ChatBotFragment", "respuesta_texto completa: '${res.respuesta_texto}'")
+                        Log.d("ChatBotFragment", "nota del backend: ${res.nota}")
+                        Log.d("ChatBotFragment", "esCalificacion: ${res.esCalificacion}")
                         Log.d("ChatBotFragment", "Longitud total: ${res.respuesta_texto?.length ?: 0} caracteres")
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "✅ ENVIANDO RESPUESTA COMPLETA AL CHAT (SIN FILTROS)")
@@ -1468,7 +1459,7 @@ class ChatBotFragment : Fragment() {
                         if (res.respuesta_texto.isNullOrBlank()) {
                             // Verificar si el contenido del archivo estaba vacío
                             if (effectiveFileContent.isBlank() || effectiveFileContent.length < 50) {
-                                """📊 **CALIFICACIÓN: 0/100**
+                                LLMResponse("""📊 **CALIFICACIÓN: 0/100**
 
 ❌ **RESULTADO:** No aprobado
 
@@ -1482,12 +1473,13 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 3. Si usaste un formato especial, conviértelo a PDF o TXT
 4. Vuelve a subir la tarea con el contenido completo
 
-📝 **Feedback:** Una entrega vacía siempre recibe nota 0."""
+📝 **Feedback:** Una entrega vacía siempre recibe nota 0.""", 0f)
                             } else {
-                                "Hubo un problema al procesar tu solicitud. Por favor, intenta nuevamente."
+                                LLMResponse("Hubo un problema al procesar tu solicitud. Por favor, intenta nuevamente.", null)
                             }
                         } else {
-                            res.respuesta_texto
+                            // Capturar la nota del backend directamente
+                            LLMResponse(res.respuesta_texto, res.nota)
                         }
                     } catch (e: HttpException) {
                         Log.e("ChatBotFragment", "❌ HttpException: ${e.message()}")
@@ -1496,27 +1488,37 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         try {
                             val errorBody = e.response()?.errorBody()?.string()
                             Log.e("ChatBotFragment", "❌ Error Body: $errorBody")
-                            "Error del microservicio (HTTP ${e.code()}): $errorBody"
+                            LLMResponse("Error del microservicio (HTTP ${e.code()}): $errorBody", null)
                         } catch (ex: Exception) {
-                            "Error al conectar con el microservicio (HTTP ${e.code()}): ${e.message()}"
+                            LLMResponse("Error al conectar con el microservicio (HTTP ${e.code()}): ${e.message()}", null)
                         }
                     } catch (e: SocketTimeoutException) {
                         Log.e("ChatBotFragment", "❌ SocketTimeoutException: ${e.message}")
-                        "El modelo está tardando más de lo esperado. Intenta nuevamente en unos minutos."
+                        LLMResponse("El modelo está tardando más de lo esperado. Intenta nuevamente en unos minutos.", null)
                     } catch (e: java.net.ConnectException) {
                         Log.e("ChatBotFragment", "❌ ConnectException: ${e.message}")
-                        "No se puede conectar con el microservicio. Verifica que esté ejecutándose en ${getMicroserviceBaseUrl()}"
+                        LLMResponse("No se puede conectar con el microservicio. Verifica que esté ejecutándose en ${getMicroserviceBaseUrl()}", null)
                     } catch (e: Exception) {
                         Log.e("ChatBotFragment", "❌ Exception: ${e.message}")
                         Log.e("ChatBotFragment", "❌ Exception Type: ${e::class.java.simpleName}")
                         Log.e("ChatBotFragment", "❌ Stack Trace: ${e.stackTrace.contentToString()}")
-                        "Error inesperado: ${e.message}"
+                        LLMResponse("Error inesperado: ${e.message}", null)
                     }
                 }
                 
-                // Detectar si la respuesta contiene una calificación
-                val hasCalification = detectCalification(messageText, response)
-                val calificationValue = extractCalificationValue(response)
+                val response = llmResponse.text
+                
+                // Usar la nota del backend si está disponible, sino extraerla del texto
+                val hasCalification = detectCalification(messageText, response) || llmResponse.nota != null
+                val calificationValue = if (llmResponse.nota != null) {
+                    // Usar la nota del backend directamente
+                    val notaValue = llmResponse.nota
+                    Log.d("ChatBotFragment", "📊 Usando nota del backend: $notaValue")
+                    if (notaValue % 1 == 0f) "${notaValue.toInt()}/10" else String.format("%.1f/10", notaValue)
+                } else {
+                    // Fallback: extraer del texto
+                    extractCalificationValue(response)
+                }
                 
                 val botMessage = ChatMessage(
                     message = response,
@@ -1929,6 +1931,18 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                         val okRemote = com.example.tareamov.data.sync.SyncRepository.updateTaskSubmissionToSupabase(updatedSubmission)
                                         if (okRemote) {
                                             Log.i("ChatBotFragment", "✅ TaskSubmission $targetSubmissionId actualizado en Supabase")
+                                            
+                                            // 📧📱 NOTIFICAR AL ESTUDIANTE que recibió una calificación
+                                            // La notificación va al ESTUDIANTE (dueño de la entrega), NO al creador del curso
+                                            val graderUsername = sessionManager.getUsername() ?: "Profesor"
+                                            
+                                            notifyStudentAboutGrade(
+                                                studentId = taskSubmission.studentId,
+                                                taskName = taskName,
+                                                grade = gradeFloat,
+                                                feedback = feedback,
+                                                gradedByUsername = graderUsername
+                                            )
                                         } else {
                                             Log.w("ChatBotFragment", "⚠️ No se pudo actualizar TaskSubmission $targetSubmissionId en Supabase")
                                         }
@@ -3800,6 +3814,87 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error al manejar referencia a tarea calificada", e)
                 Toast.makeText(context, "Error al buscar tarea calificada", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * 📧📱 Notifica al ESTUDIANTE cuando recibe una calificación en su tarea.
+     * 
+     * IMPORTANTE: Esta notificación va al ESTUDIANTE (dueño de la entrega),
+     * NO al creador del curso.
+     * 
+     * Ejemplo: Si usuario 5 le pone un 8 a usuario 6 en su tarea,
+     * la notificación le llega al usuario 6 (el estudiante).
+     * 
+     * @param studentId ID del estudiante que recibirá la notificación
+     * @param taskName Nombre de la tarea calificada
+     * @param grade Calificación numérica (0-10)
+     * @param feedback Retroalimentación del profesor
+     * @param gradedByUsername Nombre del usuario que calificó
+     */
+    private fun notifyStudentAboutGrade(
+        studentId: Long,
+        taskName: String,
+        grade: Float,
+        feedback: String,
+        gradedByUsername: String
+    ) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                Log.d("ChatBotFragment", "📧 Enviando notificación de calificación al estudiante $studentId")
+                Log.d("ChatBotFragment", "   📝 Tarea: $taskName")
+                Log.d("ChatBotFragment", "   📊 Nota: $grade/10")
+                Log.d("ChatBotFragment", "   👤 Calificado por: $gradedByUsername")
+                
+                val baseUrl = getMicroserviceBaseUrl().trimEnd('/')
+                
+                // Crear el payload JSON
+                // Nota: JSONObject en Android no tiene put(String, Float), usar toDouble()
+                val payload = JSONObject().apply {
+                    put("studentId", studentId)
+                    put("taskName", taskName)
+                    put("grade", grade.toDouble())
+                    put("feedback", feedback)
+                    put("gradedByUsername", gradedByUsername)
+                }
+                
+                // Configurar el cliente HTTP
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                
+                val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+                val request = okhttp3.Request.Builder()
+                    .url("$baseUrl/notify-grade")
+                    .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
+                    .post(body)
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                
+                if (response.isSuccessful) {
+                    val responseBody = response.body?.string()
+                    Log.i("ChatBotFragment", "✅ Notificación de calificación enviada al estudiante $studentId")
+                    Log.d("ChatBotFragment", "   Response: $responseBody")
+                    
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            context, 
+                            "📧 Estudiante notificado de su calificación", 
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                } else {
+                    val errorBody = response.body?.string()
+                    Log.w("ChatBotFragment", "⚠️ Error enviando notificación de calificación: ${response.code} - $errorBody")
+                }
+                
+                response.close()
+                
+            } catch (e: Exception) {
+                Log.e("ChatBotFragment", "❌ Error enviando notificación de calificación: ${e.message}", e)
             }
         }
     }

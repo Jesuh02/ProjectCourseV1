@@ -1161,6 +1161,18 @@ class UserProfileViewFragment : Fragment() {
                 }
 
                 if (currentUserId != null) {
+                    // CRITICAL: Prevent course creator from enrolling in their own course
+                    // Get actual Course entity to check creatorUserId
+                    val actualCourse = withContext(Dispatchers.IO) {
+                        db.courseDao().getCourseById(course.id)
+                    }
+                    
+                    if (actualCourse != null && currentUserId == actualCourse.creatorUserId) {
+                        Log.d("UserProfileView", "⚠️ Creator cannot enroll in own course ${course.id}")
+                        handleContentClick(course)
+                        return@launch
+                    }
+                    
                     val isEnrolled = withContext(Dispatchers.IO) {
                         db.progresoEstudianteDao().estaInscrito(currentUserId, course.id)
                     }

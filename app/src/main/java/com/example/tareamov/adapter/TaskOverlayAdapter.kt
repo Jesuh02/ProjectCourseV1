@@ -129,15 +129,29 @@ class TaskOverlayAdapter(
                 // Mostrar: "👤 username" como encabezado
                 topicNameTextView.text = "👤 ${task.studentUsername}"
                 taskNameTextView.text = task.taskName
+                // taskDescription ya contiene la nota formateada desde ChatBotFragment
                 taskDescriptionTextView.text = task.taskDescription
             } else {
                 topicNameTextView.text = task.topicName
                 taskNameTextView.text = task.taskName
-                taskDescriptionTextView.text = if (task.taskDescription.isNotEmpty() && task.taskDescription != "Sin descripción") {
+                // Mostrar nota promedio si está disponible
+                val descriptionWithGrade = if (!task.averageGrade.isNullOrBlank() && task.averageGrade != "0.0") {
+                    val baseDesc = if (task.taskDescription.isNotEmpty() && task.taskDescription != "Sin descripción") {
+                        task.taskDescription
+                    } else {
+                        ""
+                    }
+                    if (baseDesc.isNotEmpty()) {
+                        "$baseDesc • 📊 Nota: ${task.averageGrade}"
+                    } else {
+                        "📊 Nota: ${task.averageGrade}"
+                    }
+                } else if (task.taskDescription.isNotEmpty() && task.taskDescription != "Sin descripción") {
                     task.taskDescription
                 } else {
                     "Sin descripción disponible"
                 }
+                taskDescriptionTextView.text = descriptionWithGrade
             }
             
             taskIndexTextView.text = "#${task.index}"

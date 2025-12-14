@@ -3761,9 +3761,38 @@ object SupabaseClient {
     }
     
     // Fetch ALL submissions for a specific course (both graded and ungraded)
+    // Excludes submissions from the course creator
     suspend fun fetchAllSubmissionsForCourse(courseId: Long): List<Map<String, Any>> = withContext(Dispatchers.IO) {
         try {
             if (!isConfigured()) return@withContext emptyList()
+
+            // First, get the course creator_user_id to exclude their submissions
+            var creatorUserId: Long? = null
+            try {
+                val courseUrl = "$baseUrl/rest/v1/courses?select=creator_user_id&id=eq.$courseId"
+                val courseRequest = Request.Builder()
+                    .url(courseUrl)
+                    .get()
+                    .addHeader("apikey", effectiveApiKey())
+                    .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                    .build()
+                
+                client.newCall(courseRequest).execute().use { courseResponse ->
+                    if (courseResponse.isSuccessful) {
+                        val courseBody = courseResponse.body?.string() ?: "[]"
+                        val courseArray = com.google.gson.JsonParser.parseString(courseBody).asJsonArray
+                        if (courseArray.size() > 0) {
+                            val courseObj = courseArray[0].asJsonObject
+                            if (courseObj.has("creator_user_id") && !courseObj.get("creator_user_id").isJsonNull) {
+                                creatorUserId = courseObj.get("creator_user_id").asLong
+                                Log.d("SupabaseClient", "Course $courseId creator_user_id: $creatorUserId")
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("SupabaseClient", "Could not fetch course creator_user_id", e)
+            }
 
             // Fetch ALL submissions with task info (not just grade > 0)
             val url = "$baseUrl/rest/v1/task_submissions?select=id,grade,student_id,task_id,submission_date,file_name,tasks!inner(title,topics!inner(course_id))&tasks.topics.course_id=eq.$courseId"
@@ -3821,7 +3850,7 @@ object SupabaseClient {
                 
                 if (studentIds.isNotEmpty()) {
                     try {
-                        val usersUrl = "$baseUrl/rest/v1/usuarios?select=id,username&id=in.(${studentIds.joinToString(",")})"
+                        val usersUrl = "$baseUrl/rest/v1/usuarios?select=id,usuario&id=in.(${studentIds.joinToString(",")})"
                         val usersRequest = Request.Builder()
                             .url(usersUrl)
                             .get()
@@ -3837,7 +3866,7 @@ object SupabaseClient {
                                     val userObj = userElem.asJsonObject
                                     val userId = userObj.get("id").asLong
                                     val username = when {
-                                        userObj.has("username") && !userObj.get("username").isJsonNull -> userObj.get("username").asString
+                                        userObj.has("usuario") && !userObj.get("usuario").isJsonNull -> userObj.get("usuario").asString
                                         else -> "Usuario_$userId"
                                     }
                                     usernames[userId] = username
@@ -3849,15 +3878,26 @@ object SupabaseClient {
                     }
                 }
                 
-                // Add usernames to submissions
+                // Add usernames to submissions and filter out course creator
+                val filteredSubmissions = mutableListOf<MutableMap<String, Any>>()
                 for (submission in submissions) {
                     val studentId = submission["student_id"] as? Long
+                    
+                    // Skip submissions from course creator
+                    if (creatorUserId != null && studentId == creatorUserId) {
+                        Log.d("SupabaseClient", "Filtering out submission from course creator (student_id=$studentId)")
+                        continue
+                    }
+                    
                     if (studentId != null && studentId > 0) {
                         submission["student_username"] = usernames[studentId] ?: "Usuario_$studentId"
                     } else {
                         submission["student_username"] = "Usuario desconocido"
                     }
+                    filteredSubmissions.add(submission)
                 }
+                submissions.clear()
+                submissions.addAll(filteredSubmissions)
             }
             
             Log.d("SupabaseClient", "Loaded ${submissions.size} total submissions for course $courseId")
@@ -4572,9 +4612,13 @@ object SupabaseClient {
         }
     }
 
+    // Backend URL for sending push notifications and emails
+    private const val BACKEND_URL = "https://mcp-backenddeploy-production.up.railway.app"
+
     /**
      * Insert a notification into Supabase
      * Returns the notification ID on success, null on failure
+     * After successful insertion, also sends push notification and email to the user
      */
     suspend fun insertNotification(notification: com.example.tareamov.data.entity.Notification): Long? = withContext(Dispatchers.IO) {
         try {
@@ -4623,6 +4667,17 @@ object SupabaseClient {
                         val idElem = jsonArray[0].asJsonObject.get("id")
                         val id = idElem?.asLong
                         Log.d("SupabaseClient", "✅ Notification inserted with id: $id")
+                        
+                        // Send push notification and email via backend
+                        sendPushAndEmailNotification(
+                            userId = notification.userId,
+                            title = notification.title,
+                            message = notification.message,
+                            type = notification.type,
+                            relatedId = notification.relatedId,
+                            senderUsername = notification.senderUsername
+                        )
+                        
                         return@withContext id
                     }
                 } catch (e: Exception) {
@@ -4633,6 +4688,52 @@ object SupabaseClient {
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Exception inserting notification", e)
             return@withContext null
+        }
+    }
+
+    /**
+     * Send push notification and email to a user via the backend
+     * This is called automatically after inserting a notification to Supabase
+     */
+    private suspend fun sendPushAndEmailNotification(
+        userId: Long,
+        title: String,
+        message: String,
+        type: String,
+        relatedId: String?,
+        senderUsername: String?
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val notificationData = mapOf(
+                "userId" to userId,
+                "title" to title,
+                "message" to message,
+                "type" to type,
+                "relatedId" to (relatedId ?: ""),
+                "senderUsername" to (senderUsername ?: "")
+            )
+
+            val requestBody = gson.toJson(notificationData).toRequestBody(jsonMedia)
+            val url = "$BACKEND_URL/send-notification"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .addHeader("Content-Type", "application/json")
+                .addHeader("X-API-Key", "tareamov-mcp-api-key-2025-secure")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (resp.isSuccessful) {
+                    Log.d("SupabaseClient", "✅ Push/Email notification sent successfully: $respBody")
+                } else {
+                    Log.w("SupabaseClient", "⚠️ Push/Email notification failed: ${resp.code} - $respBody")
+                }
+            }
+        } catch (e: Exception) {
+            // Don't fail the main notification insert if push/email fails
+            Log.w("SupabaseClient", "⚠️ Exception sending push/email notification (non-fatal)", e)
         }
     }
 
