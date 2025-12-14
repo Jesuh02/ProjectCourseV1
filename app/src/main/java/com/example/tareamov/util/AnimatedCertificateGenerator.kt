@@ -143,8 +143,7 @@ object AnimatedCertificateGenerator {
         val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale("es", "ES"))
         val currentDate = dateFormat.format(Date())
         val displayTopic = courseTopic.ifEmpty { courseName }
-        // Escape $ for Kotlin string template
-        val dollarSign = "$"
+        // Escape $ for Kotlin string template if needed, but standard HTML/CSS/JS here doesn't use it except for interpolation
 
         return """
 <!DOCTYPE html>
@@ -153,516 +152,243 @@ object AnimatedCertificateGenerator {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Certificado - $courseName</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Anime.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <!-- Download Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        orbitron: ['Orbitron', 'sans-serif'],
+                        poppins: ['Poppins', 'sans-serif'],
+                    },
+                    colors: {
+                        neon: {
+                            pink: '#ff00ff',
+                            purple: '#bd00ff',
+                            dark: '#0a0014',
+                        }
+                    },
+                    boxShadow: {
+                        'neon-pink': '0 0 10px #ff00ff, 0 0 20px #ff00ff',
+                        'neon-purple': '0 0 10px #bd00ff, 0 0 20px #bd00ff',
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        :root {
-            --neon-purple: #a855f7;
-            --neon-pink: #ec4899;
-            --neon-magenta: #ff00ff;
-            --dark-bg: #0d0015;
-            --card-bg: #1a0a2e;
-            --text-light: #ffffff;
-            --text-muted: #a78bfa;
-        }
-
         body {
-            font-family: 'Poppins', sans-serif;
-            background: linear-gradient(180deg, #0d0015 0%, #1a0a2e 50%, #0d0015 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-            position: relative;
+            background-color: #05000a;
+            color: white;
             overflow-x: hidden;
         }
-
-        /* Animated stars background */
-        .stars {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            overflow: hidden;
-            z-index: 0;
+        .neon-text-pink {
+            text-shadow: 0 0 5px #ff00ff, 0 0 10px #ff00ff, 0 0 20px #ff00ff;
         }
-
-        .star {
-            position: absolute;
-            width: 2px;
-            height: 2px;
-            background: white;
-            border-radius: 50%;
-            animation: twinkle 3s infinite;
+        .neon-text-purple {
+            text-shadow: 0 0 5px #bd00ff, 0 0 10px #bd00ff, 0 0 20px #bd00ff;
         }
-
-        @keyframes twinkle {
-            0%, 100% { opacity: 0.3; transform: scale(1); }
-            50% { opacity: 1; transform: scale(1.5); }
+        .neon-box {
+            box-shadow: 0 0 5px #bd00ff, inset 0 0 5px #bd00ff;
+            border: 1px solid #bd00ff;
         }
-
-        /* Certificate container */
-        .certificate-container {
-            width: 100%;
-            max-width: 420px;
-            background: linear-gradient(145deg, #1a0a2e 0%, #2d1b4e 50%, #1a0a2e 100%);
-            border-radius: 24px;
-            padding: 32px 24px;
-            position: relative;
-            z-index: 10;
-            box-shadow: 
-                0 0 40px rgba(168, 85, 247, 0.3),
-                0 0 80px rgba(236, 72, 153, 0.2),
-                inset 0 1px 0 rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(168, 85, 247, 0.3);
-            animation: certificateEntry 1s ease-out;
+        .glass-panel {
+            background: rgba(20, 0, 40, 0.6);
+            backdrop-filter: blur(10px);
         }
-
-        @keyframes certificateEntry {
-            0% {
-                opacity: 0;
-                transform: translateY(30px) scale(0.95);
-            }
-            100% {
-                opacity: 1;
-                transform: translateY(0) scale(1);
-            }
-        }
-
-        /* Glowing border effect */
-        .certificate-container::before {
-            content: '';
-            position: absolute;
-            top: -2px;
-            left: -2px;
-            right: -2px;
-            bottom: -2px;
-            background: linear-gradient(45deg, #a855f7, #ec4899, #a855f7, #ec4899);
-            border-radius: 26px;
-            z-index: -1;
-            animation: borderGlow 3s linear infinite;
-            background-size: 400% 400%;
-        }
-
-        @keyframes borderGlow {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-
-        /* Header section */
-        .header {
-            text-align: center;
-            margin-bottom: 24px;
-            animation: fadeInDown 0.8s ease-out 0.2s both;
-        }
-
-        @keyframes fadeInDown {
-            0% {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-            100% {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .certificate-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(236, 72, 153, 0.2));
-            padding: 8px 20px;
-            border-radius: 50px;
-            margin-bottom: 20px;
-            border: 1px solid rgba(168, 85, 247, 0.4);
-        }
-
-        .certificate-badge svg {
-            width: 20px;
-            height: 20px;
-            fill: #a855f7;
-        }
-
-        .certificate-badge span {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 14px;
-            font-weight: 600;
-            color: #e9d5ff;
-            letter-spacing: 2px;
-        }
-
-        /* Logo section */
-        .logo-section {
-            margin-bottom: 24px;
-            animation: fadeIn 0.8s ease-out 0.4s both;
-        }
-
-        @keyframes fadeIn {
-            0% { opacity: 0; }
-            100% { opacity: 1; }
-        }
-
-        .logo-text {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 36px;
-            font-weight: 700;
-            background: linear-gradient(135deg, #a855f7, #ec4899);
+        .gradient-text {
+            background: linear-gradient(to right, #ff00ff, #bd00ff);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            background-clip: text;
-            text-shadow: 0 0 30px rgba(168, 85, 247, 0.5);
-        }
-
-        .code-icon {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 48px;
-            color: #ec4899;
-            margin: 8px 0;
-            text-shadow: 0 0 20px rgba(236, 72, 153, 0.7);
-            animation: pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-        }
-
-        /* Body text */
-        .body-text {
-            color: #c4b5fd;
-            font-size: 14px;
-            margin-bottom: 16px;
-            animation: fadeIn 0.8s ease-out 0.5s both;
-        }
-
-        /* Student name */
-        .student-name {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 22px;
-            font-weight: 600;
-            color: #ec4899;
-            text-shadow: 0 0 20px rgba(236, 72, 153, 0.5);
-            margin-bottom: 20px;
-            padding: 12px 0;
-            border-top: 1px solid rgba(168, 85, 247, 0.3);
-            border-bottom: 1px solid rgba(168, 85, 247, 0.3);
-            animation: nameGlow 2s ease-in-out infinite, fadeIn 0.8s ease-out 0.6s both;
-        }
-
-        @keyframes nameGlow {
-            0%, 100% { text-shadow: 0 0 20px rgba(236, 72, 153, 0.5); }
-            50% { text-shadow: 0 0 30px rgba(236, 72, 153, 0.8), 0 0 40px rgba(236, 72, 153, 0.4); }
-        }
-
-        /* Course name */
-        .course-name {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 18px;
-            font-weight: 500;
-            color: #a855f7;
-            text-shadow: 0 0 15px rgba(168, 85, 247, 0.5);
-            margin-bottom: 24px;
-            animation: fadeIn 0.8s ease-out 0.7s both;
-        }
-
-        /* Grade section */
-        .grade-section {
-            margin-bottom: 24px;
-            animation: fadeIn 0.8s ease-out 0.8s both;
-        }
-
-        .grade-label {
-            color: #c4b5fd;
-            font-size: 14px;
-            margin-bottom: 8px;
-        }
-
-        .grade-display {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-        }
-
-        .star-icon {
-            font-size: 24px;
-            color: #fbbf24;
-            text-shadow: 0 0 10px rgba(251, 191, 36, 0.7);
-            animation: starPulse 1.5s ease-in-out infinite;
-        }
-
-        .star-icon:nth-child(1) { animation-delay: 0s; }
-        .star-icon:nth-child(3) { animation-delay: 0.3s; }
-
-        @keyframes starPulse {
-            0%, 100% { transform: scale(1); opacity: 0.8; }
-            50% { transform: scale(1.2); opacity: 1; }
-        }
-
-        .grade-value {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 28px;
-            font-weight: 700;
-            color: #ffffff;
-            background: linear-gradient(135deg, #fbbf24, #f59e0b);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        /* Stats box */
-        .stats-box {
-            background: rgba(168, 85, 247, 0.1);
-            border: 1px solid rgba(168, 85, 247, 0.3);
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 24px;
-            animation: fadeIn 0.8s ease-out 0.9s both;
-        }
-
-        .stat-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 0;
-            color: #e9d5ff;
-            font-size: 14px;
-        }
-
-        .stat-item:not(:last-child) {
-            border-bottom: 1px solid rgba(168, 85, 247, 0.2);
-        }
-
-        .stat-icon {
-            font-size: 16px;
-        }
-
-        .stat-label {
-            flex: 1;
-        }
-
-        .stat-value {
-            font-weight: 600;
-            color: #a855f7;
-        }
-
-        .status-approved {
-            color: #4ade80 !important;
-            font-weight: 700;
-        }
-
-        /* Creator section */
-        .creator-section {
-            margin-bottom: 24px;
-            padding-top: 16px;
-            border-top: 1px solid rgba(168, 85, 247, 0.2);
-            animation: fadeIn 0.8s ease-out 1s both;
-        }
-
-        .creator-label {
-            color: #a78bfa;
-            font-size: 12px;
-            margin-bottom: 4px;
-        }
-
-        .creator-name {
-            color: #ffffff;
-            font-size: 16px;
-            font-weight: 600;
-        }
-
-        .creator-username {
-            color: #ec4899;
-            font-size: 14px;
-        }
-
-        /* Footer */
-        .footer {
-            display: flex;
-            justify-content: space-between;
-            padding-top: 16px;
-            border-top: 1px solid rgba(168, 85, 247, 0.2);
-            animation: fadeIn 0.8s ease-out 1.1s both;
-        }
-
-        .footer-item {
-            text-align: center;
-        }
-
-        .footer-label {
-            color: #a78bfa;
-            font-size: 10px;
-            margin-bottom: 2px;
-        }
-
-        .footer-value {
-            color: #e9d5ff;
-            font-size: 12px;
-            font-weight: 500;
-        }
-
-        /* Floating particles */
-        .particle {
-            position: absolute;
-            width: 4px;
-            height: 4px;
-            background: #a855f7;
-            border-radius: 50%;
-            animation: float 6s ease-in-out infinite;
-            opacity: 0.6;
-        }
-
-        @keyframes float {
-            0%, 100% { transform: translateY(0) translateX(0); opacity: 0.6; }
-            25% { transform: translateY(-20px) translateX(10px); opacity: 1; }
-            50% { transform: translateY(-10px) translateX(-10px); opacity: 0.8; }
-            75% { transform: translateY(-30px) translateX(5px); opacity: 1; }
-        }
-
-        /* Responsive */
-        @media (max-width: 480px) {
-            .certificate-container {
-                padding: 24px 16px;
-            }
-            .logo-text {
-                font-size: 28px;
-            }
-            .code-icon {
-                font-size: 36px;
-            }
-            .student-name {
-                font-size: 18px;
-            }
-            .course-name {
-                font-size: 16px;
-            }
         }
     </style>
 </head>
-<body>
-    <!-- Stars background -->
-    <div class="stars" id="stars"></div>
+<body class="min-h-screen flex flex-col items-center justify-center p-4 relative bg-[url('https://www.transparenttextures.com/patterns/stardust.png')]">
 
-    <!-- Floating particles -->
-    <div class="particle" style="top: 10%; left: 10%; animation-delay: 0s;"></div>
-    <div class="particle" style="top: 20%; right: 15%; animation-delay: 1s;"></div>
-    <div class="particle" style="top: 60%; left: 5%; animation-delay: 2s;"></div>
-    <div class="particle" style="top: 80%; right: 10%; animation-delay: 3s;"></div>
-    <div class="particle" style="top: 40%; left: 85%; animation-delay: 4s;"></div>
+    <!-- Actions Bar -->
+    <div class="fixed top-4 right-4 flex gap-2 z-50 no-print">
+        <button onclick="downloadPNG()" class="bg-pink-600 hover:bg-pink-700 text-white px-4 py-2 rounded-lg font-poppins transition-all shadow-lg hover:shadow-pink-500/50">
+            PNG
+        </button>
+        <button onclick="downloadPDF()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-poppins transition-all shadow-lg hover:shadow-purple-500/50">
+            PDF
+        </button>
+        <button onclick="downloadSVG()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-poppins transition-all shadow-lg hover:shadow-blue-500/50">
+            SVG
+        </button>
+    </div>
 
-    <!-- Certificate -->
-    <div class="certificate-container">
+    <!-- Certificate Container -->
+    <div id="certificate" class="relative w-full max-w-[600px] aspect-[3/4] bg-[#0a0014] rounded-xl overflow-hidden shadow-2xl border border-purple-900 flex flex-col items-center p-8 text-center select-none">
+        
+        <!-- Glow effects -->
+        <div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-500 shadow-[0_0_20px_rgba(255,0,255,0.5)]"></div>
+        <div class="absolute bottom-0 left-0 w-full h-2 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-500 shadow-[0_0_20px_rgba(255,0,255,0.5)]"></div>
+
         <!-- Header -->
-        <div class="header">
-            <div class="certificate-badge">
-                <svg viewBox="0 0 24 24">
-                    <path d="M12 3L1 9L12 15L21 10.09V17H23V9M5 13.18V17.18L12 21L19 17.18V13.18L12 17L5 13.18Z"/>
-                </svg>
-                <span>CERTIFICADO</span>
-            </div>
+        <div class="anim-element mt-4 flex items-center gap-2 mb-6">
+            <svg class="w-8 h-8 text-pink-500 drop-shadow-[0_0_5px_rgba(255,0,255,0.8)]" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 3L1 9L12 15L21 10.09V17H23V9M5 13.18V17.18L12 21L19 17.18V13.18L12 17L5 13.18Z"/>
+            </svg>
+            <h1 class="font-orbitron font-bold text-2xl tracking-wider text-white">CERTIFICADO</h1>
+        </div>
 
-            <!-- Logo -->
-            <div class="logo-section">
-                <div class="logo-text">CourseV</div>
-                <div class="code-icon">{&lt;/&gt;}</div>
+        <!-- Logo -->
+        <div class="anim-element mb-6 flex flex-col items-center">
+            <h2 class="font-orbitron font-bold text-4xl neon-text-pink mb-2">CourseV</h2>
+            <div class="text-6xl font-bold text-purple-500 drop-shadow-[0_0_10px_rgba(189,0,255,0.8)] animate-pulse">
+                {&lt;/&gt;}
             </div>
         </div>
 
-        <!-- Body -->
-        <div class="body-text">
+        <!-- Body Text -->
+        <p class="anim-element font-poppins text-gray-300 text-sm mb-4">
             Se certifica que<br>ha completado exitosamente el curso
-        </div>
+        </p>
 
         <!-- Student Name -->
-        <div class="student-name">$studentName</div>
+        <div class="anim-element w-full mb-6">
+            <h3 class="font-orbitron font-bold text-2xl text-pink-500 neon-text-pink uppercase">$studentName</h3>
+            <div class="h-[1px] w-3/4 mx-auto bg-pink-500 shadow-[0_0_10px_#ff00ff] mt-2"></div>
+        </div>
 
         <!-- Course Name -->
-        <div class="course-name">$displayTopic</div>
+        <div class="anim-element w-full mb-8">
+            <h3 class="font-orbitron font-bold text-xl text-purple-400 neon-text-purple uppercase">$displayTopic</h3>
+            <div class="h-[1px] w-2/3 mx-auto bg-purple-500 shadow-[0_0_10px_#bd00ff] mt-2"></div>
+        </div>
 
         <!-- Grade -->
-        <div class="grade-section">
-            <div class="grade-label">con una calificación de</div>
-            <div class="grade-display">
-                <span class="star-icon">☆</span>
-                <span class="grade-value">[$grade/10]</span>
-                <span class="star-icon">☆</span>
+        <div class="anim-element mb-6">
+            <p class="font-poppins text-gray-300 text-sm mb-2">con una calificación de</p>
+            <div class="flex items-center justify-center gap-2">
+                <span class="text-yellow-400 text-2xl">☆</span>
+                <span class="font-orbitron font-bold text-3xl text-white">[$grade/10]</span>
+                <span class="text-yellow-400 text-2xl">☆</span>
             </div>
         </div>
 
-        <!-- Stats -->
-        <div class="stats-box">
-            <div class="stat-item">
-                <span class="stat-icon">✓</span>
-                <span class="stat-label">Tareas completadas:</span>
-                <span class="stat-value">$tareasCompletadas/$tareasTotales</span>
-            </div>
-            <div class="stat-item">
-                <span class="stat-icon">📊</span>
-                <span class="stat-label">Progreso:</span>
-                <span class="stat-value">${porcentajeProgreso.toInt()}%</span>
-            </div>
-            <div class="stat-item">
-                <span class="stat-icon">🏆</span>
-                <span class="stat-label">Estado:</span>
-                <span class="stat-value status-approved">$estado</span>
+        <!-- Stats Box -->
+        <div class="anim-element w-full bg-purple-900/20 border border-purple-500/50 rounded-lg p-4 mb-6 shadow-[0_0_15px_rgba(189,0,255,0.2)]">
+            <div class="flex flex-col gap-2 text-left text-sm font-poppins">
+                <div class="flex items-center gap-2">
+                    <span class="text-pink-500">📝</span>
+                    <span class="text-gray-300">Tareas completadas:</span>
+                    <span class="text-white ml-auto">$tareasCompletadas/$tareasTotales</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-pink-500">📊</span>
+                    <span class="text-gray-300">Progreso:</span>
+                    <span class="text-white ml-auto">${porcentajeProgreso.toInt()}%</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-pink-500">🏆</span>
+                    <span class="text-gray-300">Estado:</span>
+                    <span class="text-green-400 font-bold ml-auto">$estado</span>
+                </div>
             </div>
         </div>
 
-        <!-- Creator -->
-        <div class="creator-section">
-            <div class="creator-label">Impartido por:</div>
-            <div class="creator-name">$creatorName</div>
-            <div class="creator-username">@$creatorUsername</div>
+        <!-- Instructor -->
+        <div class="anim-element mt-auto mb-4">
+            <p class="font-poppins text-xs text-gray-400">Impartido por:</p>
+            <p class="font-poppins font-bold text-white">$creatorName</p>
+            <p class="font-poppins text-xs text-pink-400">@$creatorUsername</p>
         </div>
 
         <!-- Footer -->
-        <div class="footer">
-            <div class="footer-item">
-                <div class="footer-label">Fecha emisión:</div>
-                <div class="footer-value">$currentDate</div>
+        <div class="anim-element w-full flex justify-between items-end border-t border-purple-800 pt-2 mt-2">
+            <div class="text-left">
+                <p class="font-poppins text-[10px] text-gray-400">Fecha emisión:</p>
+                <p class="font-orbitron text-[10px] text-white">$currentDate</p>
             </div>
-            <div class="footer-item">
-                <div class="footer-label">ID del certificado:</div>
-                <div class="footer-value">$certificateId</div>
+            <div class="text-right">
+                <p class="font-poppins text-[10px] text-gray-400">ID del certificado:</p>
+                <p class="font-orbitron text-[10px] text-white tracking-widest">$certificateId</p>
             </div>
         </div>
+
     </div>
 
     <script>
-        // Generate random stars
-        const starsContainer = document.getElementById('stars');
-        for (let i = 0; i < 100; i++) {
-            const star = document.createElement('div');
-            star.className = 'star';
-            star.style.left = Math.random() * 100 + '%';
-            star.style.top = Math.random() * 100 + '%';
-            star.style.animationDelay = Math.random() * 3 + 's';
-            star.style.animationDuration = (2 + Math.random() * 2) + 's';
-            starsContainer.appendChild(star);
+        // Animations using Anime.js
+        document.addEventListener('DOMContentLoaded', () => {
+            anime({
+                targets: '.anim-element',
+                translateY: [20, 0],
+                opacity: [0, 1],
+                delay: anime.stagger(100),
+                easing: 'easeOutExpo',
+                duration: 1000
+            });
+
+            anime({
+                targets: '#certificate',
+                boxShadow: [
+                    '0 0 20px rgba(189, 0, 255, 0.2)',
+                    '0 0 40px rgba(189, 0, 255, 0.4)',
+                    '0 0 20px rgba(189, 0, 255, 0.2)'
+                ],
+                loop: true,
+                duration: 3000,
+                easing: 'easeInOutSine'
+            });
+        });
+
+        // Download Functions
+        function downloadPNG() {
+            const element = document.getElementById('certificate');
+            html2canvas(element, {
+                backgroundColor: '#0a0014',
+                scale: 2
+            }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = 'certificado.png';
+                link.href = canvas.toDataURL();
+                link.click();
+            });
         }
 
-        // Add interactive hover effects
-        const container = document.querySelector('.certificate-container');
-        container.addEventListener('mousemove', (e) => {
-            const rect = container.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / rect.width - 0.5;
-            const y = (e.clientY - rect.top) / rect.height - 0.5;
-            container.style.transform = 'perspective(1000px) rotateY(' + (x * 5) + 'deg) rotateX(' + (-y * 5) + 'deg)';
-        });
+        function downloadPDF() {
+            const element = document.getElementById('certificate');
+            const { jsPDF } = window.jspdf;
+            
+            html2canvas(element, {
+                scale: 2
+            }).then(canvas => {
+                const imgData = canvas.toDataURL('image/png');
+                const pdf = new jsPDF({
+                    orientation: 'portrait',
+                    unit: 'px',
+                    format: [canvas.width, canvas.height]
+                });
+                
+                pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+                pdf.save('certificado.pdf');
+            });
+        }
 
-        container.addEventListener('mouseleave', () => {
-            container.style.transform = 'perspective(1000px) rotateY(0deg) rotateX(0deg)';
-        });
+        function downloadSVG() {
+            const element = document.getElementById('certificate');
+            domtoimage.toSvg(element)
+                .then(function (dataUrl) {
+                    const link = document.createElement('a');
+                    link.download = 'certificado.svg';
+                    link.href = dataUrl;
+                    link.click();
+                });
+        }
     </script>
 </body>
 </html>

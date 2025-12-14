@@ -279,6 +279,10 @@ class DatabaseChatAdapter(
             itemView.context.startActivity(Intent.createChooser(intent, "Compartir respuesta"))
         }
         
+        /**
+         * Format text with Markdown bold (**text**) and remove asterisks
+         * Converts **bold** to actual bold spans and removes the asterisks
+         */
         private fun formatBoldText(text: String): SpannableString {
             var processedText = text
             
@@ -287,23 +291,62 @@ class DatabaseChatAdapter(
                 processedText = formatMarkdownTable(text)
             }
             
+            // Process Markdown bold (**text**) - remove asterisks and track positions
+            val boldPattern = Regex("\\*\\*(.+?)\\*\\*")
+            val boldRanges = mutableListOf<Pair<Int, Int>>()
+            
+            // First pass: find all bold sections and calculate their final positions
+            var offset = 0
+            var tempText = processedText
+            
+            boldPattern.findAll(processedText).forEach { match ->
+                val adjustedStart = match.range.first - offset
+                val contentLength = match.groupValues[1].length
+                boldRanges.add(Pair(adjustedStart, adjustedStart + contentLength))
+                offset += 4 // Remove 4 asterisks (2 on each side)
+            }
+            
+            // Remove all ** markers
+            tempText = tempText.replace("**", "")
+            processedText = tempText
+            
             val spannableString = SpannableString(processedText)
             
-            // Apply bold to lines that start with ━━━ (card headers)
+            // Apply bold to all tracked ranges from Markdown
+            boldRanges.forEach { (start, end) ->
+                if (start >= 0 && end <= spannableString.length && start < end) {
+                    spannableString.setSpan(
+                        StyleSpan(Typeface.BOLD),
+                        start,
+                        end,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+            }
+            
+            // Also apply bold to lines with ":" (existing functionality)
             val lines = processedText.split("\n")
             var currentPos = 0
             
             for (line in lines) {
                 // Bold for card separators and labels before ":"
-                if (line.contains(":") && !line.startsWith("━") && !line.startsWith("Total")) {
+                if (line.contains(":") && !line.startsWith("━") && !line.startsWith("Total") && !line.startsWith("*")) {
                     val colonIndex = line.indexOf(":")
                     if (colonIndex > 0 && currentPos + colonIndex <= spannableString.length) {
-                        spannableString.setSpan(
-                            StyleSpan(Typeface.BOLD),
-                            currentPos,
-                            currentPos + colonIndex,
-                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                        )
+                        // Only apply if not already in a bold range
+                        val rangeStart = currentPos
+                        val rangeEnd = currentPos + colonIndex
+                        val alreadyBold = boldRanges.any { (s, e) -> 
+                            (rangeStart >= s && rangeStart < e) || (rangeEnd > s && rangeEnd <= e)
+                        }
+                        if (!alreadyBold) {
+                            spannableString.setSpan(
+                                StyleSpan(Typeface.BOLD),
+                                rangeStart,
+                                rangeEnd,
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                            )
+                        }
                     }
                 }
                 currentPos += line.length + 1 // +1 for newline
