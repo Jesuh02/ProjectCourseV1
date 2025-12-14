@@ -177,35 +177,6 @@ class SyncRepository(
         }
     }
 
-    // Utility: check if an email exists in Supabase
-    suspend fun isEmailExistsInSupabase(email: String): Boolean {
-        try {
-            if (!supabaseClient.isConfigured()) {
-                Log.d("SyncRepository", "SupabaseClient not configured for email check")
-                return false
-            }
-
-            Log.d("SyncRepository", "isEmailExistsInSupabase: checking email=$email")
-            val u = try {
-                withContext(Dispatchers.IO) { supabaseClient.fetchUsuarioByEmail(email) }
-            } catch (e: Exception) {
-                Log.w("SyncRepository", "fetchUsuarioByEmail failed: ${e.message}")
-                null
-            }
-
-            if (u != null) {
-                Log.d("SyncRepository", "isEmailExistsInSupabase: found remote user id=${u.id} for email=$email")
-                return true
-            } else {
-                Log.d("SyncRepository", "isEmailExistsInSupabase: email not found on Supabase for email=$email")
-                return false
-            }
-        } catch (e: Exception) {
-            Log.w("SyncRepository", "isEmailExistsInSupabase failed", e)
-            return false
-        }
-    }
-    
     // Public helper to upsert a Course to Supabase. This will try the dedicated
     // SupabaseClient.insertCourse first (which returns the remote id), and fall
     // back to SupabaseRepository.upsert if needed.
