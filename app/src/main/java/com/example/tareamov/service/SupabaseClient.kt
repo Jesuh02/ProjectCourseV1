@@ -235,6 +235,7 @@ object SupabaseClient {
     }
 
     suspend fun insertPersona(persona: Persona): Long? {
+        Log.d("SupabaseClient", "insertPersona called for: nombres=${persona.nombres}, apellidos=${persona.apellidos}")
         val payload = mapOf(
             "identificacion" to persona.identificacion,
             "nombres" to persona.nombres,
@@ -243,10 +244,14 @@ object SupabaseClient {
             "direccion" to persona.direccion,
             "fecha_nacimiento" to persona.fechaNacimiento
         )
-        return insertRecord("personas", payload)
+        val result = insertRecord("personas", payload)
+        Log.d("SupabaseClient", "insertPersona result for ${persona.nombres}: $result")
+        return result
     }
 
     suspend fun insertUsuario(usuario: Usuario): Long? {
+        Log.d("SupabaseClient", "insertUsuario called for username: ${usuario.usuario}, email: ${usuario.email}, persona_id: ${usuario.persona_id}, rol_id: ${usuario.rol_id}")
+        // Only include fields that exist in the Supabase usuarios table
         val payload = mapOf(
             "username" to usuario.usuario,
             "contrasena" to usuario.contrasena,
@@ -255,8 +260,11 @@ object SupabaseClient {
             "email" to usuario.email,
             "avatar" to usuario.avatar,
             "is_active" to usuario.isActive
+            // Note: email_verified, last_login, created_at are managed by Supabase or don't exist in remote table
         )
-        return insertRecord("usuarios", payload)
+        val result = insertRecord("usuarios", payload)
+        Log.d("SupabaseClient", "insertUsuario result for ${usuario.usuario}: $result")
+        return result
     }
 
     suspend fun insertVideo(video: com.example.tareamov.data.entity.VideoData): Long? = withContext(Dispatchers.IO) {
@@ -804,6 +812,8 @@ object SupabaseClient {
     // Update an existing Usuario by id. Returns true on success.
     suspend fun updateUsuario(usuario: Usuario): Boolean = withContext(Dispatchers.IO) {
         try {
+            Log.d("SupabaseClient", "updateUsuario called for id: ${usuario.id}, username: ${usuario.usuario}")
+            // Only include fields that exist in the Supabase usuarios table
             val map = mutableMapOf<String, Any?>()
             map["username"] = usuario.usuario
             map["contrasena"] = usuario.contrasena
@@ -812,6 +822,7 @@ object SupabaseClient {
             map["email"] = usuario.email
             map["avatar"] = usuario.avatar
             map["is_active"] = usuario.isActive
+            // Note: email_verified, last_login, created_at are managed by Supabase or don't exist in remote table
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
             val url = "$baseUrl/rest/v1/usuarios?id=eq.${usuario.id}"
@@ -819,8 +830,8 @@ object SupabaseClient {
             val request = Request.Builder()
                 .url(url)
                 .patch(body)
-                .addHeader("apikey", apiKey)
-                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Prefer", "return=representation")
@@ -828,13 +839,14 @@ object SupabaseClient {
 
             client.newCall(request).execute().use { resp ->
                 if (!resp.isSuccessful) {
-                    android.util.Log.w("SupabaseClient", "updateUsuario failed status=${resp.code} body=${resp.body?.string()}")
+                    Log.w("SupabaseClient", "updateUsuario failed status=${resp.code} body=${resp.body?.string()}")
                     return@withContext false
                 }
+                Log.d("SupabaseClient", "updateUsuario success for id: ${usuario.id}")
                 return@withContext true
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("SupabaseClient", "updateUsuario exception", e)
             return@withContext false
         }
     }
@@ -1412,6 +1424,35 @@ object SupabaseClient {
             }
         } catch (e: Exception) {
             android.util.Log.w("SupabaseClient", "fetchUsuarioById exception for id=$userId: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Fetch a Usuario by email from Supabase.
+     * Returns the Usuario if found, null otherwise.
+     */
+    suspend fun fetchUsuarioByEmail(email: String): Usuario? = withContext(Dispatchers.IO) {
+        if (email.isBlank()) return@withContext null
+        return@withContext try {
+            val encodedEmail = java.net.URLEncoder.encode(email, "UTF-8")
+            val path = "usuarios?email=eq.$encodedEmail&limit=1"
+            client.newCall(buildGetRequest(path)).execute().use { resp ->
+                val body = resp.body?.string()
+                if (!resp.isSuccessful || body.isNullOrEmpty()) {
+                    Log.d("SupabaseClient", "fetchUsuarioByEmail failed for email=$email code=${resp.code}")
+                    return@use null
+                }
+                try {
+                    val arr = gson.fromJson(body, Array<Usuario>::class.java)
+                    arr?.firstOrNull()
+                } catch (parse: Exception) {
+                    Log.w("SupabaseClient", "fetchUsuarioByEmail parse error for email=$email", parse)
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchUsuarioByEmail exception for email=$email: ${e.message}", e)
             null
         }
     }

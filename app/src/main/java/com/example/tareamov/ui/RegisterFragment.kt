@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -835,13 +836,48 @@ class RegisterFragment : Fragment() {
         // Proceder con el registro
         lifecycleScope.launch {
             try {
-                // Verificar si el nombre de usuario ya existe
-                val usernameExists = viewModel.checkUsernameExists(username)
-                if (usernameExists) {
+                // Verificar si el nombre de usuario ya existe localmente
+                val usernameExistsLocal = viewModel.checkUsernameExists(username)
+                if (usernameExistsLocal) {
                     withContext(Dispatchers.Main) {
                         usernameLayout.error = "El nombre de usuario ya existe"
                     }
                     return@launch
+                }
+
+                // Verificar en Supabase si está configurado
+                if (SupabaseClient.isConfigured()) {
+                    // Verificar si el username ya existe en Supabase
+                    val remoteUserByUsername = withContext(Dispatchers.IO) {
+                        try {
+                            SupabaseClient.fetchUsuarioByUsername(username)
+                        } catch (e: Exception) {
+                            Log.w("RegisterFragment", "Error checking username in Supabase: ${e.message}")
+                            null
+                        }
+                    }
+                    if (remoteUserByUsername != null) {
+                        withContext(Dispatchers.Main) {
+                            usernameLayout.error = "El nombre de usuario ya existe en el servidor"
+                        }
+                        return@launch
+                    }
+
+                    // Verificar si el email ya existe en Supabase
+                    val remoteUserByEmail = withContext(Dispatchers.IO) {
+                        try {
+                            SupabaseClient.fetchUsuarioByEmail(email)
+                        } catch (e: Exception) {
+                            Log.w("RegisterFragment", "Error checking email in Supabase: ${e.message}")
+                            null
+                        }
+                    }
+                    if (remoteUserByEmail != null) {
+                        withContext(Dispatchers.Main) {
+                            emailLayout.error = "Este correo electrónico ya está registrado"
+                        }
+                        return@launch
+                    }
                 }
 
                 // Crear entidad Persona con el avatar
@@ -857,48 +893,85 @@ class RegisterFragment : Fragment() {
                     // esUsuario removed from Persona
                 )
 
-                // Insert the persona first (local DB)
-                val personaId = withContext(Dispatchers.IO) {
-                    viewModel.insertAndGetId(persona)
-                }
+                // Hash the password once for both local and remote
+                val hashedPassword = BCrypt.withDefaults().hashToString(12, password.toCharArray())
 
-                // Then create and insert the usuario locally
-                // Note: do NOT pre-hash here — UsuarioRepository will hash the password
-                val usuario = Usuario(
-                    usuario = username,
-                    contrasena = password,
-                    persona_id = personaId,
-                    email = email, // Moved to Usuario
-                    avatar = avatarUri // Moved to Usuario
-                )
-
-                withContext(Dispatchers.IO) {
-                    viewModel.insertUsuario(usuario)
-                }
-
-                // Also attempt to send to Supabase (best-effort). Use service role key carefully.
-                // We send persona first to supabase, then usuario with returned persona id if available.
+                // First, try to sync with Supabase to get remote IDs
+                var remotePersonaId: Long? = null
+                var remoteUserId: Long? = null
+                
                 if (SupabaseClient.isConfigured()) {
                     try {
-                        val remotePersonaId = withContext(Dispatchers.IO) { SupabaseClient.insertPersona(persona) }
-                        val usuarioToSend = usuario.copy(persona_id = remotePersonaId ?: personaId)
-                        val remoteUserId = withContext(Dispatchers.IO) { SupabaseClient.insertUsuario(usuarioToSend) }
-                        if (remoteUserId == null) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(requireContext(), "Advertencia: usuario no sincronizado con servidor remoto", Toast.LENGTH_LONG).show()
+                        // Insert persona to Supabase first
+                        remotePersonaId = withContext(Dispatchers.IO) { 
+                            SupabaseClient.insertPersona(persona) 
+                        }
+                        Log.d("RegisterFragment", "Persona insertada en Supabase con id: $remotePersonaId")
+
+                        if (remotePersonaId != null) {
+                            // Create usuario with the remote persona_id
+                            val usuarioForSupabase = Usuario(
+                                usuario = username,
+                                contrasena = hashedPassword,
+                                persona_id = remotePersonaId,
+                                email = email,
+                                avatar = avatarUri
+                            )
+                            
+                            remoteUserId = withContext(Dispatchers.IO) { 
+                                SupabaseClient.insertUsuario(usuarioForSupabase) 
                             }
+                            
+                            if (remoteUserId != null) {
+                                Log.d("RegisterFragment", "Usuario sincronizado con Supabase exitosamente, id: $remoteUserId")
+                            } else {
+                                Log.e("RegisterFragment", "Error: insertUsuario returned null")
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(requireContext(), "Error al crear usuario en el servidor", Toast.LENGTH_LONG).show()
+                                }
+                                return@launch
+                            }
+                        } else {
+                            Log.e("RegisterFragment", "Error: insertPersona returned null")
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), "Error al crear persona en el servidor", Toast.LENGTH_LONG).show()
+                            }
+                            return@launch
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
+                        Log.e("RegisterFragment", "Error al sincronizar con Supabase", e)
                         withContext(Dispatchers.Main) {
                             Toast.makeText(requireContext(), "Error al sincronizar con Supabase: ${e.message}", Toast.LENGTH_LONG).show()
                         }
+                        return@launch
                     }
-                } else {
-                    // Not configured - notify developer/tester
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(requireContext(), "Supabase no está configurado (chequear local.properties)", Toast.LENGTH_LONG).show()
+                }
+
+                // Now insert locally with the same IDs if available, or generate new ones
+                val localPersonaId = withContext(Dispatchers.IO) {
+                    val personaToInsert = if (remotePersonaId != null) {
+                        persona.copy(id = remotePersonaId)
+                    } else {
+                        persona
                     }
+                    viewModel.insertAndGetId(personaToInsert)
+                }
+
+                // Create usuario for local database
+                val usuarioLocal = Usuario(
+                    id = remoteUserId ?: 0, // Use remote ID if available
+                    usuario = username,
+                    contrasena = hashedPassword, // Already hashed
+                    persona_id = remotePersonaId ?: localPersonaId,
+                    email = email,
+                    avatar = avatarUri
+                )
+
+                withContext(Dispatchers.IO) {
+                    // Insert directly without re-hashing
+                    val db = AppDatabase.getDatabase(requireContext())
+                    db.usuarioDao().insertUsuario(usuarioLocal)
                 }
 
                 // Navegar según el modo de registro
