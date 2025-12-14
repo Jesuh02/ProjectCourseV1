@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Button
+import android.widget.PopupMenu
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
@@ -29,7 +30,6 @@ class CourseAdapter(
     private val onSubscriptionClickListener: ((Course, Boolean) -> Unit)? = null, // Subscription callback
     private val onEditClickListener: ((Course) -> Unit)? = null, // Edit callback
     private val onDeleteClickListener: ((Course) -> Unit)? = null, // Delete callback
-    private val onThumbnailChangeClickListener: ((Course) -> Unit)? = null, // Thumbnail change callback
     private val onEnrollClickListener: ((Course) -> Unit)? = null, // Enrollment callback
     private val onCreatorClickListener: ((String) -> Unit)? = null // Creator profile callback
 ) : RecyclerView.Adapter<CourseAdapter.CourseViewHolder>() {
@@ -62,16 +62,15 @@ class CourseAdapter(
         val creatorAvatarImageView: de.hdodenhof.circleimageview.CircleImageView = itemView.findViewById(R.id.creatorAvatarImageView)
         val subscriberCountTextView: TextView = itemView.findViewById(R.id.subscriberCountTextView)
         val subscribeButton: Button = itemView.findViewById(R.id.subscribeButton)
+        // Creator info container
+        val creatorInfoContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.creatorInfoContainer)
         // Enrollment elements
         val enrollButtonContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.enrollButtonContainer)
         val enrollButton: Button? = itemView.findViewById(R.id.enrollButton)
         // Enrolled status elements
         val enrolledStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.enrolledStatusContainer)
-        // CRUD action elements
-        val actionButtonsContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.actionButtonsContainer)
-        val editButton: android.widget.ImageButton? = itemView.findViewById(R.id.editButton)
-        val deleteButton: android.widget.ImageButton? = itemView.findViewById(R.id.deleteButton)
-        val changeThumbnailButton: android.widget.ImageButton? = itemView.findViewById(R.id.changeThumbnailButton)
+        // CRUD action elements - moreOptionsButton is now directly in the layout
+        val moreOptionsButton: android.widget.ImageButton? = itemView.findViewById(R.id.moreOptionsButton)
         val ownerStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.ownerStatusContainer)
     }
 
@@ -98,87 +97,84 @@ class CourseAdapter(
         Log.d("CourseAdapter", "Binding course: ${course.title}, creatorUserId: ${course.creatorUserId}, currentUsername: $currentUsername")
         
         // CRITICAL: Check if user is creator FIRST before showing any UI
-        val isCreator = canUserModifyCourse(course)
+        var isCreator = canUserModifyCourse(course)
         
         // Default: hide enrollment-related UI to avoid brief flashes before ownership check completes
         holder.enrollButtonContainer?.visibility = View.GONE
         holder.enrollButton?.visibility = View.GONE
         holder.enrolledStatusContainer?.visibility = View.GONE
         holder.ownerStatusContainer?.visibility = View.GONE
+        // CRITICAL: Hide 3-dot menu by default - only show for course owners
+        holder.moreOptionsButton?.visibility = View.GONE
+
+        // If currentUserIdCached is null but we have a username, fetch the user ID asynchronously
+        // and update the UI accordingly
+        if (currentUserIdCached == null && currentUsername != null) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                    if (userId != null) {
+                        currentUserIdCached = userId
+                        val isOwner = userId == course.creatorUserId
+                        withContext(Dispatchers.Main) {
+                            if (isOwner) {
+                                // HIDE creatorInfoContainer completely for course owners
+                                holder.creatorInfoContainer?.visibility = View.GONE
+                                holder.subscribeButton.visibility = View.GONE
+                                holder.moreOptionsButton?.visibility = View.VISIBLE
+                                holder.ownerStatusContainer?.visibility = View.VISIBLE
+                                holder.enrollButtonContainer?.visibility = View.GONE
+                                holder.enrolledStatusContainer?.visibility = View.GONE
+                                
+                                // Set up 3-dot menu click listener
+                                holder.moreOptionsButton?.setOnClickListener { view ->
+                                    showPopupMenu(view, course)
+                                }
+                                Log.d("CourseAdapter", "Async check: User IS creator of course: ${course.title}")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("CourseAdapter", "Error fetching user ID for ownership check", e)
+                }
+            }
+        }
 
         // Load real enrollment count from progreso_estudiante table
         loadEnrollmentCount(holder, course)
-
-        // Handle subscription elements and CRUD actions based on user permissions
-        val creatorInfoContainer = holder.itemView.findViewById<android.widget.LinearLayout>(R.id.creatorInfoContainer)
         
         Log.d("CourseAdapter", "Is creator: $isCreator for course: ${course.title}")
         
         if (isCreator) {
-            // Hide subscription info for course creators
-            creatorInfoContainer?.visibility = View.GONE
+            // HIDE subscription/creator info container completely for course owners
+            holder.creatorInfoContainer?.visibility = View.GONE
             
-            // Set creator name for own courses - fetch username from user_id
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val creatorUsername = creatorUsernameCache[course.creatorUserId]
-                        ?: com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)?.also {
-                            creatorUsernameCache[course.creatorUserId] = it
-                        }
-                    withContext(Dispatchers.Main) {
-                        holder.creatorTextView.text = if (!creatorUsername.isNullOrBlank()) {
-                            "Por: $creatorUsername (Tu curso)"
-                        } else {
-                            "Por: Tú"
-                        }
-                        
-                        // Enable click on creator name/avatar/subscriber count to view profile
-                        if (!creatorUsername.isNullOrBlank()) {
-                            holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                            holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                            holder.subscriberCountTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                        }
-                        
-                        Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
-                    }
-                } catch (e: Exception) {
-                    Log.e("CourseAdapter", "Error loading creator username for course ${course.id}", e)
-                    withContext(Dispatchers.Main) {
-                        holder.creatorTextView.text = "Por: Tú"
-                    }
-                }
-            }
+            // Hide subscribe button (it's inside creatorInfoContainer but just in case)
+            holder.subscribeButton.visibility = View.GONE
+            
+            // Show 3-dot menu for creators (now in Course Info Row)
+            holder.moreOptionsButton?.visibility = View.VISIBLE
             
             // CRITICAL: Hide ALL enrollment UI for creators (both button and enrolled status)
             // This ensures "Tu curso" owners never see enrollment options
             holder.enrollButtonContainer?.visibility = View.GONE
             holder.enrollButton?.visibility = View.GONE
             holder.enrolledStatusContainer?.visibility = View.GONE
-            
-            // Show CRUD action buttons for creators
-            holder.actionButtonsContainer?.visibility = View.VISIBLE
 
             // Show owner badge
             holder.ownerStatusContainer?.visibility = View.VISIBLE
             
-            // Set up CRUD button click listeners
-            holder.editButton?.setOnClickListener {
-                onEditClickListener?.invoke(course)
-            }
-            
-            holder.deleteButton?.setOnClickListener {
-                onDeleteClickListener?.invoke(course)
-            }
-            
-            holder.changeThumbnailButton?.setOnClickListener {
-                onThumbnailChangeClickListener?.invoke(course)
+            // Set up 3-dot menu click listener
+            holder.moreOptionsButton?.setOnClickListener { view ->
+                showPopupMenu(view, course)
             }
         } else {
             // Hide CRUD actions for non-creators
-            holder.actionButtonsContainer?.visibility = View.GONE
+            holder.moreOptionsButton?.visibility = View.GONE
             
-            // Show subscription info for other users' courses
-            creatorInfoContainer?.visibility = View.VISIBLE
+            // Show subscription info for other users' courses, show subscribe button
+            holder.creatorInfoContainer?.visibility = View.VISIBLE
+            holder.subscribeButton.visibility = View.VISIBLE
             
             // Set creator info - fetch username from user_id
             CoroutineScope(Dispatchers.IO).launch {
@@ -204,20 +200,20 @@ class CourseAdapter(
                                 holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                                 holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                                 holder.subscriberCountTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                                creatorInfoContainer?.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                                holder.creatorInfoContainer?.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                             }
                             
                             holder.enrollButtonContainer?.visibility = View.GONE
                             holder.enrollButton?.visibility = View.GONE
                             holder.enrolledStatusContainer?.visibility = View.GONE
                             holder.ownerStatusContainer?.visibility = View.VISIBLE
-                            holder.actionButtonsContainer?.visibility = View.VISIBLE
-                            creatorInfoContainer?.visibility = View.GONE
+                            holder.moreOptionsButton?.visibility = View.VISIBLE
+                            holder.creatorInfoContainer?.visibility = View.VISIBLE
                             
-                            // Setup listeners for the now-visible action buttons
-                            holder.editButton?.setOnClickListener { onEditClickListener?.invoke(course) }
-                            holder.deleteButton?.setOnClickListener { onDeleteClickListener?.invoke(course) }
-                            holder.changeThumbnailButton?.setOnClickListener { onThumbnailChangeClickListener?.invoke(course) }
+                            // Set up 3-dot menu click listener for this case too
+                            holder.moreOptionsButton?.setOnClickListener { view ->
+                                showPopupMenu(view, course)
+                            }
                         } else {
                             holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"
                             Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
@@ -227,7 +223,7 @@ class CourseAdapter(
                                 holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                                 holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                                 holder.subscriberCountTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                                creatorInfoContainer?.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                                holder.creatorInfoContainer?.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                             }
                             
                             // Update Avatar
@@ -418,6 +414,31 @@ class CourseAdapter(
         courses = newCourses
             .sortedWith(compareByDescending<Course> { it.timestamp }.thenByDescending { it.creationDate })
         notifyDataSetChanged()
+    }
+
+    /**
+     * Show popup menu with edit and delete options
+     */
+    private fun showPopupMenu(anchorView: View, course: Course) {
+        val popupMenu = PopupMenu(context, anchorView)
+        popupMenu.menu.add(0, 1, 0, "✏️ Modificar")
+        popupMenu.menu.add(0, 2, 1, "🗑️ Eliminar")
+        
+        popupMenu.setOnMenuItemClickListener { menuItem ->
+            when (menuItem.itemId) {
+                1 -> {
+                    onEditClickListener?.invoke(course)
+                    true
+                }
+                2 -> {
+                    onDeleteClickListener?.invoke(course)
+                    true
+                }
+                else -> false
+            }
+        }
+        
+        popupMenu.show()
     }
 
     /**

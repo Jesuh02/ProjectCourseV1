@@ -367,9 +367,10 @@
 
             <!-- Rating -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
+                android:layout_weight="1"
+                android:gravity="start|center_vertical"
                 android:orientation="horizontal">
 
                 <TextView
@@ -390,6 +391,18 @@
                     android:textSize="14sp" />
 
             </LinearLayout>
+
+            <!-- 3-dot Menu Button (Only visible for course creators) -->
+            <ImageButton
+                android:id="@+id/moreOptionsButton"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center_vertical|end"
+                android:background="@android:color/transparent"
+                android:contentDescription="Más opciones"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_more_vert"
+                android:visibility="gone" />
 
         </LinearLayout>        <!-- Bottom Row: Enrollment and Price -->
         <LinearLayout
@@ -455,57 +468,6 @@
                     tools:text="$199.99" />
 
             </LinearLayout>
-
-        </LinearLayout>
-
-        <!-- CRUD Action Buttons Container (Only visible for course creators) -->
-        <LinearLayout
-            android:id="@+id/actionButtonsContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="8dp"
-            android:layout_marginEnd="16dp"
-            android:layout_marginBottom="12dp"
-            android:gravity="end"
-            android:orientation="horizontal"
-            android:paddingTop="4dp"
-            android:visibility="gone">
-
-            <!-- Edit Button -->
-            <ImageButton
-                android:id="@+id/editButton"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_marginEnd="6dp"
-                android:background="@drawable/button_action_edit"
-                android:contentDescription="Editar curso"
-                android:padding="6dp"
-                android:scaleType="centerInside"
-                android:src="@drawable/ic_edit" />
-
-            <!-- Change Thumbnail Button -->
-            <ImageButton
-                android:id="@+id/changeThumbnailButton"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_marginEnd="6dp"
-                android:background="@drawable/button_action_thumbnail"
-                android:contentDescription="Cambiar miniatura"
-                android:padding="6dp"
-                android:scaleType="centerInside"
-                android:src="@drawable/ic_image" />
-
-            <!-- Delete Button -->
-            <ImageButton
-                android:id="@+id/deleteButton"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:background="@drawable/button_action_delete"
-                android:contentDescription="Eliminar curso"
-                android:padding="6dp"
-                android:scaleType="centerInside"
-                android:src="@drawable/ic_delete" />
 
         </LinearLayout>
 

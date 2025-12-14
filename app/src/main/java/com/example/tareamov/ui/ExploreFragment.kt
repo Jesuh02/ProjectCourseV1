@@ -608,10 +608,12 @@ class ExploreFragment : Fragment() {
                 handleSubscriptionClick(course, isCurrentlySubscribed)
             },
             onEditClickListener = { course ->
-                lifecycleScope.launch {
-                    val videoData = convertCourseToVideoData(course)
-                    editCourse(videoData)
+                // Navigate to CourseCreationFragment with course data for editing
+                val bundle = Bundle().apply {
+                    putLong("courseId", course.id)
+                    putBoolean("isEditing", true)
                 }
+                findNavController().navigate(R.id.action_exploreFragment_to_courseCreationFragment, bundle)
             },
             onDeleteClickListener = { course ->
                 lifecycleScope.launch {
@@ -619,12 +621,6 @@ class ExploreFragment : Fragment() {
                         com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
                     }
                     deleteCourseFromTable(course.id, creatorUsername ?: "")
-                }
-            },
-            onThumbnailChangeClickListener = { course ->
-                lifecycleScope.launch {
-                    val videoData = convertCourseToVideoData(course)
-                    showThumbnailChangeOptions(videoData)
                 }
             },
             onEnrollClickListener = { course ->

@@ -107,6 +107,9 @@
         <action
             android:id="@+id/action_exploreFragment_to_userProfileViewFragment"
             app:destination="@id/userProfileViewFragment" />
+        <action
+            android:id="@+id/action_exploreFragment_to_courseCreationFragment"
+            app:destination="@id/courseCreationFragment" />
     </fragment>
 
     <!-- Single notificacionesFragment definition -->
