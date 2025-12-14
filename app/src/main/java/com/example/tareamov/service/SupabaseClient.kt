@@ -235,7 +235,6 @@ object SupabaseClient {
     }
 
     suspend fun insertPersona(persona: Persona): Long? {
-        Log.d("SupabaseClient", "insertPersona called for: nombres=${persona.nombres}, apellidos=${persona.apellidos}")
         val payload = mapOf(
             "identificacion" to persona.identificacion,
             "nombres" to persona.nombres,
@@ -244,9 +243,7 @@ object SupabaseClient {
             "direccion" to persona.direccion,
             "fecha_nacimiento" to persona.fechaNacimiento
         )
-        val result = insertRecord("personas", payload)
-        Log.d("SupabaseClient", "insertPersona result for ${persona.nombres}: $result")
-        return result
+        return insertRecord("personas", payload)
     }
 
     suspend fun insertUsuario(usuario: Usuario): Long? {
@@ -812,8 +809,6 @@ object SupabaseClient {
     // Update an existing Usuario by id. Returns true on success.
     suspend fun updateUsuario(usuario: Usuario): Boolean = withContext(Dispatchers.IO) {
         try {
-            Log.d("SupabaseClient", "updateUsuario called for id: ${usuario.id}, username: ${usuario.usuario}")
-            // Only include fields that exist in the Supabase usuarios table
             val map = mutableMapOf<String, Any?>()
             map["username"] = usuario.usuario
             map["contrasena"] = usuario.contrasena
@@ -1432,30 +1427,7 @@ object SupabaseClient {
      * Fetch a Usuario by email from Supabase.
      * Returns the Usuario if found, null otherwise.
      */
-    suspend fun fetchUsuarioByEmail(email: String): Usuario? = withContext(Dispatchers.IO) {
-        if (email.isBlank()) return@withContext null
-        return@withContext try {
-            val encodedEmail = java.net.URLEncoder.encode(email, "UTF-8")
-            val path = "usuarios?email=eq.$encodedEmail&limit=1"
-            client.newCall(buildGetRequest(path)).execute().use { resp ->
-                val body = resp.body?.string()
-                if (!resp.isSuccessful || body.isNullOrEmpty()) {
-                    Log.d("SupabaseClient", "fetchUsuarioByEmail failed for email=$email code=${resp.code}")
-                    return@use null
-                }
-                try {
-                    val arr = gson.fromJson(body, Array<Usuario>::class.java)
-                    arr?.firstOrNull()
-                } catch (parse: Exception) {
-                    Log.w("SupabaseClient", "fetchUsuarioByEmail parse error for email=$email", parse)
-                    null
-                }
-            }
-        } catch (e: Exception) {
-            Log.w("SupabaseClient", "fetchUsuarioByEmail exception for email=$email: ${e.message}", e)
-            null
-        }
-    }
+
 
     suspend fun isUserAdmin(userId: Long): Boolean = withContext(Dispatchers.IO) {
         val user = fetchUsuarioById(userId)
