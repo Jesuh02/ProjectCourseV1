@@ -54,4 +54,31 @@
         <item name="cornerSizeBottomLeft">0dp</item>
         <item name="cornerSizeBottomRight">0dp</item>
     </style>
+
+    <!-- Dark PopupMenu widget style for course options -->
+    <style name="DarkPopupMenu" parent="Widget.Material3.PopupMenu">
+        <item name="android:popupBackground">@drawable/popup_menu_dark_background</item>
+        <item name="android:textColor">#FFFFFF</item>
+    </style>
+    
+    <!-- Dark PopupMenu Theme Overlay for use with ContextThemeWrapper -->
+    <style name="DarkPopupMenuThemeOverlay" parent="ThemeOverlay.Material3.Dark">
+        <item name="android:popupMenuStyle">@style/DarkPopupMenu</item>
+        <item name="android:popupBackground">@drawable/popup_menu_dark_background</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:textColorSecondary">#B3B3B3</item>
+        <item name="android:colorBackground">#1E1E2E</item>
+        <item name="colorSurface">#1E1E2E</item>
+        <item name="colorOnSurface">#FFFFFF</item>
+        <item name="android:listSelector">@drawable/popup_menu_item_selector</item>
+    </style>
+
+    <!-- Dark BottomSheet dialog theme for filter options -->
+    <style name="DarkBottomSheetDialogTheme" parent="Theme.Material3.Dark.BottomSheetDialog">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="bottomSheetStyle">@style/Widget_TareaMov_BottomSheet</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
 </resources>

@@ -4485,6 +4485,57 @@ object SupabaseClient {
     }
 
     /**
+     * Get the course thumbnail URL for a given task ID
+     * Traverses: task -> topic -> course -> thumbnail_uri
+     * Used for task-related notifications to show the course image
+     */
+    suspend fun getCourseThumbnailForTask(taskId: Long): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext null
+            
+            // Use nested select to get task -> topic -> course in one query
+            val url = "$baseUrl/rest/v1/tasks?id=eq.$taskId&select=topic_id,topics!inner(course_id,courses!inner(thumbnail_uri))"
+            
+            Log.d("SupabaseClient", "🖼️ Fetching course thumbnail for task $taskId")
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "Failed to fetch course thumbnail for task $taskId: ${response.code}")
+                    return@withContext null
+                }
+                
+                val body = response.body?.string()
+                if (body.isNullOrEmpty() || body == "[]") {
+                    Log.d("SupabaseClient", "No data found for task $taskId")
+                    return@withContext null
+                }
+                
+                // Parse the nested JSON response
+                val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                if (jsonArray.size() == 0) return@withContext null
+                
+                val taskObj = jsonArray[0].asJsonObject
+                val topicsObj = taskObj.getAsJsonObject("topics") ?: return@withContext null
+                val coursesObj = topicsObj.getAsJsonObject("courses") ?: return@withContext null
+                val thumbnailUri = coursesObj.get("thumbnail_uri")?.asString
+                
+                Log.d("SupabaseClient", "✅ Found course thumbnail for task $taskId: ${thumbnailUri?.take(50)}...")
+                return@withContext thumbnailUri
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching course thumbnail for task $taskId", e)
+            null
+        }
+    }
+
+    /**
      * Count unread notifications for a specific user
      * Returns the count of notifications where is_read = false
      */

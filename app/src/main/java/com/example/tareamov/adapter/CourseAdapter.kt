@@ -420,9 +420,22 @@ class CourseAdapter(
      * Show popup menu with edit and delete options
      */
     private fun showPopupMenu(anchorView: View, course: Course) {
-        val popupMenu = PopupMenu(context, anchorView)
+        // Use ContextThemeWrapper to apply dark theme to PopupMenu
+        val wrapper = android.view.ContextThemeWrapper(context, R.style.DarkPopupMenuThemeOverlay)
+        val popupMenu = PopupMenu(wrapper, anchorView, android.view.Gravity.END)
         popupMenu.menu.add(0, 1, 0, "✏️ Modificar")
         popupMenu.menu.add(0, 2, 1, "🗑️ Eliminar")
+        
+        // Force icons to show if API level supports it
+        try {
+            val popup = PopupMenu::class.java.getDeclaredField("mPopup")
+            popup.isAccessible = true
+            val menuPopupHelper = popup.get(popupMenu)
+            menuPopupHelper.javaClass.getDeclaredMethod("setForceShowIcon", Boolean::class.java)
+                .invoke(menuPopupHelper, true)
+        } catch (e: Exception) {
+            // Ignore if reflection fails
+        }
         
         popupMenu.setOnMenuItemClickListener { menuItem ->
             when (menuItem.itemId) {

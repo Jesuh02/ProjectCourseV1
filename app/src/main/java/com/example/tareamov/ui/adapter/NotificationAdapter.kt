@@ -1,5 +1,6 @@
 package com.example.tareamov.ui.adapter
 
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -15,6 +16,11 @@ import com.bumptech.glide.load.resource.bitmap.RoundedCorners
 import com.bumptech.glide.request.RequestOptions
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.Notification
+import com.example.tareamov.service.SupabaseClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -22,6 +28,9 @@ import java.util.concurrent.TimeUnit
 class NotificationAdapter(
     private val onNotificationClick: (Notification) -> Unit
 ) : ListAdapter<Notification, NotificationAdapter.NotificationViewHolder>(NotificationDiffCallback()) {
+
+    // Cache for course thumbnails by taskId to avoid repeated network calls
+    private val courseThumbnailCache = java.util.concurrent.ConcurrentHashMap<Long, String?>()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): NotificationViewHolder {
         val view = LayoutInflater.from(parent.context)
@@ -31,7 +40,7 @@ class NotificationAdapter(
 
     override fun onBindViewHolder(holder: NotificationViewHolder, position: Int) {
         val notification = getItem(position)
-        holder.bind(notification, onNotificationClick)
+        holder.bind(notification, onNotificationClick, courseThumbnailCache)
     }
 
     class NotificationViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -44,7 +53,11 @@ class NotificationAdapter(
         private val thumbnailImage: ImageView = itemView.findViewById(R.id.thumbnailImage)
         private val unreadIndicator: View = itemView.findViewById(R.id.unreadIndicator)
 
-        fun bind(notification: Notification, onClick: (Notification) -> Unit) {
+        fun bind(
+            notification: Notification, 
+            onClick: (Notification) -> Unit,
+            thumbnailCache: java.util.concurrent.ConcurrentHashMap<Long, String?>
+        ) {
             // Set "Para ti" as the category label
             titleText.text = "Para ti"
             
@@ -69,6 +82,14 @@ class NotificationAdapter(
                     notificationIcon.setImageResource(R.drawable.ic_assignment_turned_in)
                     iconContainer.setBackgroundResource(R.drawable.bg_notification_icon_task)
                 }
+                Notification.TYPE_TASK_SUBMISSION -> {
+                    notificationIcon.setImageResource(R.drawable.ic_assignment)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon_task)
+                }
+                Notification.TYPE_NEW_TASK -> {
+                    notificationIcon.setImageResource(R.drawable.ic_assignment)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon_task)
+                }
                 Notification.TYPE_COMMENT -> {
                     notificationIcon.setImageResource(R.drawable.ic_comment)
                     iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
@@ -83,19 +104,77 @@ class NotificationAdapter(
                 }
             }
 
-            // Load thumbnail with rounded corners
-            val thumbnailUrl = notification.thumbnailUrl ?: notification.senderAvatarUrl
+            // Determine thumbnail URL based on notification type
+            val isTaskRelated = notification.type in listOf(
+                Notification.TYPE_TASK_GRADED,
+                Notification.TYPE_TASK_SUBMISSION,
+                Notification.TYPE_NEW_TASK
+            )
+            
+            if (isTaskRelated && notification.relatedId != null) {
+                // For task-related notifications, load the course thumbnail
+                loadCourseThumbnailForTask(notification.relatedId, thumbnailCache)
+            } else {
+                // For other notifications, use the provided thumbnail or avatar
+                val thumbnailUrl = notification.thumbnailUrl ?: notification.senderAvatarUrl
+                loadThumbnail(thumbnailUrl)
+            }
+
+            itemView.setOnClickListener {
+                onClick(notification)
+            }
+        }
+        
+        /**
+         * Load course thumbnail for task-related notifications
+         * Uses cache to avoid repeated network calls
+         */
+        private fun loadCourseThumbnailForTask(
+            taskId: Long,
+            thumbnailCache: java.util.concurrent.ConcurrentHashMap<Long, String?>
+        ) {
+            // Check cache first
+            if (thumbnailCache.containsKey(taskId)) {
+                val cachedUrl = thumbnailCache[taskId]
+                loadThumbnail(cachedUrl)
+                return
+            }
+            
+            // Load placeholder while fetching
+            thumbnailImage.setImageResource(R.drawable.placeholder_image)
+            
+            // Fetch course thumbnail asynchronously
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    // Get task -> topic -> course -> thumbnail
+                    val courseThumbnail = SupabaseClient.getCourseThumbnailForTask(taskId)
+                    
+                    // Cache the result (even if null)
+                    thumbnailCache[taskId] = courseThumbnail
+                    
+                    // Update UI on main thread
+                    withContext(Dispatchers.Main) {
+                        loadThumbnail(courseThumbnail)
+                    }
+                } catch (e: Exception) {
+                    Log.e("NotificationAdapter", "Error loading course thumbnail for task $taskId", e)
+                    // Cache null to avoid repeated failed requests
+                    thumbnailCache[taskId] = null
+                }
+            }
+        }
+        
+        /**
+         * Load thumbnail image with Glide
+         */
+        private fun loadThumbnail(url: String?) {
             Glide.with(itemView.context)
-                .load(thumbnailUrl)
+                .load(url)
                 .apply(RequestOptions().transform(RoundedCorners(16)))
                 .placeholder(R.drawable.placeholder_image)
                 .error(R.drawable.placeholder_image)
                 .centerCrop()
                 .into(thumbnailImage)
-
-            itemView.setOnClickListener {
-                onClick(notification)
-            }
         }
 
         private fun formatTime(createdAt: String?): String {
