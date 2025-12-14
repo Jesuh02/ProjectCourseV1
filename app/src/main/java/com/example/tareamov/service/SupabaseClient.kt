@@ -4674,7 +4674,7 @@ object SupabaseClient {
                             title = notification.title,
                             message = notification.message,
                             type = notification.type,
-                            relatedId = notification.relatedId,
+                            relatedId = notification.relatedId?.toString(),
                             senderUsername = notification.senderUsername
                         )
                         
