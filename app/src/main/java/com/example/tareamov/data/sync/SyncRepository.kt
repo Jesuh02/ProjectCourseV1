@@ -117,12 +117,36 @@ class SyncRepository(
     }
 
     suspend fun isUserAdmin(userId: Long): Boolean {
-        // Check local first
+        // Check local first (legacy column)
         val user = usuarioDao.getUsuarioById(userId)
-        if (user != null) return user.isAdmin
+        if (user != null && user.rol_id == 3L) return true
         
-        // Fallback to remote
-        return supabaseClient.isUserAdmin(userId)
+        // Check remote (both primary column and join table)
+        return hasUserRole(userId, 3L)
+    }
+
+    /**
+     * Checks if a user has a specific role, either in the primary 'usuarios.rol_id' column
+     * or in the 'usuarios_roles' many-to-many table.
+     */
+    suspend fun hasUserRole(userId: Long, roleId: Long): Boolean {
+        try {
+            if (userId <= 0) return false
+
+            // 1. Check usuarios_roles table (Explicit assignments)
+            val sqlRoles = "SELECT 1 FROM usuarios_roles WHERE usuario_id = $userId AND rol_id = $roleId"
+            val resRoles = supabaseRepo.executeRawQuery(sqlRoles)
+            if (resRoles.isNotEmpty()) return true
+
+            // 2. Check usuarios table (Primary role)
+            val sqlPrimary = "SELECT 1 FROM usuarios WHERE id = $userId AND rol_id = $roleId"
+            val resPrimary = supabaseRepo.executeRawQuery(sqlPrimary)
+            return resPrimary.isNotEmpty()
+
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error checking user role $roleId for user $userId", e)
+            return false
+        }
     }
 
     // Wrapper to fetch role by id from Supabase
@@ -274,13 +298,82 @@ class SyncRepository(
                 val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertCourse(course) }
                 if (remoteId != null) {
                     Log.i("SyncRepository", "Course '${course.title}' upserted to Supabase (id=$remoteId).")
+                    // Ensure the creator has the correct role
+                    if (course.creatorUserId > 0) {
+                        ensureCreatorRole(course.creatorUserId)
+                    }
                 } else {
                     val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("courses", course) }
-                    if (ok) Log.i("SyncRepository", "Course '${course.title}' upserted to Supabase via SupabaseRepository.")
+                    if (ok) {
+                        Log.i("SyncRepository", "Course '${course.title}' upserted to Supabase via SupabaseRepository.")
+                        // Ensure the creator has the correct role
+                        if (course.creatorUserId > 0) {
+                            ensureCreatorRole(course.creatorUserId)
+                        }
+                    }
                     else Log.e("SyncRepository", "Failed to upsert course '${course.title}' to Supabase.")
                 }
             } catch (e: Exception) {
                 Log.e("SyncRepository", "Exception during upsertCourseToSupabase", e)
+            }
+        }
+    }
+
+    /**
+     * Ensures that a user who created a course has the 'Creator' role (ID 2).
+     * This updates both the 'usuarios_roles' table and the 'usuarios' table (if applicable).
+     */
+    private suspend fun ensureCreatorRole(userId: Long) {
+        try {
+            if (userId <= 0) return
+
+            // 1. Check/Insert into usuarios_roles
+            val checkRoleSql = "SELECT 1 FROM usuarios_roles WHERE usuario_id = $userId AND rol_id = 2"
+            val roles = supabaseRepo.executeRawQuery(checkRoleSql)
+            if (roles.isEmpty()) {
+                val insertRoleSql = "INSERT INTO usuarios_roles (usuario_id, rol_id) VALUES ($userId, 2)"
+                supabaseRepo.executeRawQuery(insertRoleSql)
+                Log.i("SyncRepository", "Assigned role 2 to user $userId in usuarios_roles")
+            }
+
+            // 2. Update 'usuarios' table 'rol_id' column if it is currently 1 (Student)
+            // We don't want to downgrade Admins (rol_id 3).
+            val checkUserSql = "SELECT rol_id FROM usuarios WHERE id = $userId"
+            val users = supabaseRepo.executeRawQuery(checkUserSql)
+            if (users.isNotEmpty()) {
+                val currentRolId = (users[0]["rol_id"] as? Number)?.toLong() ?: 1
+                if (currentRolId == 1L) {
+                    val updateUserSql = "UPDATE usuarios SET rol_id = 2 WHERE id = $userId"
+                    supabaseRepo.executeRawQuery(updateUserSql)
+                    Log.i("SyncRepository", "Updated usuarios.rol_id to 2 for user $userId")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error ensuring creator role for user $userId", e)
+        }
+    }
+
+    /**
+     * Scans all courses and ensures their creators have the Creator role.
+     * Can be called periodically or on app start to fix existing data.
+     */
+    suspend fun syncAllCreatorRoles() {
+        withContext(Dispatchers.IO) {
+            try {
+                Log.i("SyncRepository", "Starting syncAllCreatorRoles...")
+                // Get all unique creator IDs from courses
+                val sql = "SELECT DISTINCT creator_user_id FROM courses WHERE creator_user_id IS NOT NULL AND creator_user_id > 0"
+                val creators = supabaseRepo.executeRawQuery(sql)
+                
+                var count = 0
+                for (row in creators) {
+                    val userId = (row["creator_user_id"] as? Number)?.toLong() ?: continue
+                    ensureCreatorRole(userId)
+                    count++
+                }
+                Log.i("SyncRepository", "Finished syncAllCreatorRoles. Checked/Updated $count creators.")
+            } catch (e: Exception) {
+                Log.e("SyncRepository", "Error in syncAllCreatorRoles", e)
             }
         }
     }

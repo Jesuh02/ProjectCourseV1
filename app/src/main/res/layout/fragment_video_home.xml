@@ -19,17 +19,15 @@
         app:layout_constraintTop_toTopOf="parent" />
 
     <!-- Skeleton Loader Overlay -->
-    <FrameLayout
+    <com.example.tareamov.ui.ShimmerFrameLayout
         android:id="@+id/skeletonContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#000000"
         android:visibility="gone"
-        android:stateListAnimator="@animator/skeleton_shimmer"
         tools:visibility="visible">
         
         <include layout="@layout/layout_video_home_skeleton" />
-    </FrameLayout>
+    </com.example.tareamov.ui.ShimmerFrameLayout>
 
     <!-- Top Navigation Container - Professional Minimal Design -->
     <FrameLayout

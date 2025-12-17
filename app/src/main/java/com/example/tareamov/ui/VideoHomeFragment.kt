@@ -55,13 +55,13 @@ import eightbitlab.com.blurview.RenderScriptBlur
 import android.view.ViewOutlineProvider
 import android.animation.ObjectAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
+import com.example.tareamov.ui.ShimmerFrameLayout
 
 class VideoHomeFragment : Fragment() {
     private lateinit var profileAvatars: CircleImageView
     private lateinit var videoManager: VideoManager
     private lateinit var sessionManager: SessionManager // Add SessionManager instance
-    private lateinit var skeletonContainer: View // Skeleton container
-    private var skeletonAnimator: ObjectAnimator? = null
+    private lateinit var skeletonContainer: ShimmerFrameLayout // Skeleton container
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     private lateinit var homeIconImageView: ImageView
@@ -403,14 +403,14 @@ class VideoHomeFragment : Fragment() {
                     } catch (e: Exception) {
                         Log.w("VideoHomeFragment", "Error fetching videos from Supabase", e)
                         // Fallback: attempt to load from local DB
-                        loadVideos(videoId, videoTitle, videoUsername)
+                        loadVideos(videoId, videoTitle, videoUsername, true)
                     }
                 } else {
                     loadVideos(videoId, videoTitle, videoUsername)
                 }
             } catch (e: Exception) {
                 Log.w("VideoHomeFragment", "Could not access SyncRepository to fetch videos", e)
-                loadVideos(videoId, videoTitle, videoUsername)
+                loadVideos(videoId, videoTitle, videoUsername, true)
             }
         }
 
@@ -741,7 +741,12 @@ class VideoHomeFragment : Fragment() {
     /**
      * Carga los primeros 10 videos desde Supabase (más recientes primero)
      */
-    private fun loadVideos(targetVideoId: Long = -1L, targetVideoTitle: String? = null, targetVideoUsername: String? = null) {
+    private fun loadVideos(
+        targetVideoId: Long = -1L, 
+        targetVideoTitle: String? = null, 
+        targetVideoUsername: String? = null,
+        keepSkeletonIfEmpty: Boolean = false
+    ) {
         if (isLoadingVideos) {
             Log.d("VideoHomeFragment", "Already loading videos, skipping")
             return
@@ -801,7 +806,12 @@ class VideoHomeFragment : Fragment() {
                     isVideosLoaded = true
                     
                     // Stop skeleton animation with fade out
-                    stopSkeletonAnimation()
+                    if (videoList.isNotEmpty() || !keepSkeletonIfEmpty) {
+                        stopSkeletonAnimation()
+                    } else {
+                        Log.d("VideoHomeFragment", "Keeping skeleton animation (empty list + keepSkeletonIfEmpty=true)")
+                        startSkeletonAnimation()
+                    }
                 }
 
             } catch (e: Exception) {
@@ -823,20 +833,11 @@ class VideoHomeFragment : Fragment() {
     private fun startSkeletonAnimation() {
         skeletonContainer.visibility = View.VISIBLE
         skeletonContainer.alpha = 1f
-        
-        skeletonAnimator?.cancel()
-        skeletonAnimator = ObjectAnimator.ofFloat(skeletonContainer, "alpha", 0.4f, 1.0f).apply {
-            duration = 800
-            repeatCount = ObjectAnimator.INFINITE
-            repeatMode = ObjectAnimator.REVERSE
-            interpolator = AccelerateDecelerateInterpolator()
-            start()
-        }
+        skeletonContainer.startShimmer()
     }
 
     private fun stopSkeletonAnimation() {
-        skeletonAnimator?.cancel()
-        skeletonAnimator = null
+        skeletonContainer.stopShimmer()
         
         skeletonContainer.animate()
             .alpha(0f)
