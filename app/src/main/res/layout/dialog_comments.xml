@@ -101,138 +101,56 @@
         android:layout_height="0.5dp"
         android:background="#333333" />
 
-    <!-- Reaction Emoji Bar -->
-    <HorizontalScrollView
-        android:id="@+id/emojiScrollView"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:scrollbars="none"
-        android:paddingTop="12dp"
-        android:paddingBottom="8dp"
-        android:background="#1A1A1A"
-        android:fadingEdge="horizontal"
-        android:requiresFadingEdge="horizontal">
-        
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:gravity="center_vertical">
-            
-            <TextView 
-                android:id="@+id/emoji_heart"
-                android:text="❤️" 
-                android:textSize="26sp" 
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:layout_width="wrap_content" 
-                android:layout_height="wrap_content" 
-                android:background="?attr/selectableItemBackgroundBorderless"/>
-            
-            <TextView 
-                android:id="@+id/emoji_hands"
-                android:text="🙌" 
-                android:textSize="26sp" 
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:layout_width="wrap_content" 
-                android:layout_height="wrap_content" 
-                android:background="?attr/selectableItemBackgroundBorderless"/>
-            
-            <TextView 
-                android:id="@+id/emoji_fire"
-                android:text="🔥" 
-                android:textSize="26sp" 
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:layout_width="wrap_content" 
-                android:layout_height="wrap_content" 
-                android:background="?attr/selectableItemBackgroundBorderless"/>
-            
-            <TextView 
-                android:id="@+id/emoji_clap"
-                android:text="👏" 
-                android:textSize="26sp" 
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:layout_width="wrap_content" 
-                android:layout_height="wrap_content" 
-                android:background="?attr/selectableItemBackgroundBorderless"/>
-            
-            <TextView 
-                android:id="@+id/emoji_sad"
-                android:text="😢" 
-                android:textSize="26sp" 
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:layout_width="wrap_content" 
-                android:layout_height="wrap_content" 
-                android:background="?attr/selectableItemBackgroundBorderless"/>
-            
-            <TextView 
-                android:id="@+id/emoji_love"
-                android:text="😍" 
-                android:textSize="26sp" 
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:layout_width="wrap_content" 
-                android:layout_height="wrap_content" 
-                android:background="?attr/selectableItemBackgroundBorderless"/>
-            
-            <TextView 
-                android:id="@+id/emoji_surprised"
-                android:text="😮" 
-                android:textSize="26sp" 
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:layout_width="wrap_content" 
-                android:layout_height="wrap_content" 
-                android:background="?attr/selectableItemBackgroundBorderless"/>
-            
-            <TextView 
-                android:id="@+id/emoji_laugh"
-                android:text="😂" 
-                android:textSize="26sp" 
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:layout_width="wrap_content" 
-                android:layout_height="wrap_content" 
-                android:background="?attr/selectableItemBackgroundBorderless"/>
-            
-        </LinearLayout>
-    </HorizontalScrollView>
-
     <!-- Input Area -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="16dp"
+        android:orientation="vertical"
         android:background="#1A1A1A">
 
-        <de.hdodenhof.circleimageview.CircleImageView
+        <!-- Replying to banner (Initially GONE) -->
+        <LinearLayout
+            android:id="@+id/replyingToBanner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:background="#222222"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/replyingToText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Respondiendo a usuario..."
+                android:textColor="#AAAAAA"
+                android:textSize="12sp" />
+
+            <ImageView
+                android:id="@+id/cancelReplyButton"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:src="@drawable/ic_close"
+                app:tint="#AAAAAA"
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="16dp">
+
+            <de.hdodenhof.circleimageview.CircleImageView
             android:id="@+id/currentUserAvatar"
             android:layout_width="36dp"
             android:layout_height="36dp"
@@ -264,16 +182,6 @@
                 android:textSize="14sp"
                 android:maxLines="3"
                 android:inputType="textMultiLine|textCapSentences" />
-                
-            <ImageButton
-                android:id="@+id/emojiButton"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_marginStart="8dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_emoji_smile"
-                android:contentDescription="Emojis"
-                app:tint="#888888" />
 
         </LinearLayout>
 
@@ -287,6 +195,8 @@
             android:contentDescription="Enviar"
             app:tint="#888888"
             android:visibility="gone" />
+
+        </LinearLayout>
 
     </LinearLayout>
 

@@ -11,6 +11,7 @@ import android.graphics.Typeface
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.LinearLayout
@@ -23,6 +24,8 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.ChatMessage
+import com.bumptech.glide.Glide
+import com.example.tareamov.util.SessionManager
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -95,6 +98,7 @@ class ChatMessageAdapter(
     }
 
     inner class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val userAvatarImageView: ImageView? = itemView.findViewById(R.id.userAvatar)
         private val userMessageContainer: LinearLayout = itemView.findViewById(R.id.userMessageContainer)
         private val botMessageContainer: LinearLayout = itemView.findViewById(R.id.botMessageContainer)
         private val userMessageTextView: TextView = itemView.findViewById(R.id.userMessageTextView)
@@ -117,12 +121,33 @@ class ChatMessageAdapter(
                 botMessageContainer.visibility = View.GONE
                 
                 userMessageTextView.text = formatBoldText(message.message)
+                try {
+                    val sess = SessionManager.getInstance(itemView.context)
+                    val avatarUri = sess.getUserAvatar()
+                    userAvatarImageView?.let { iv ->
+                        if (!avatarUri.isNullOrEmpty()) {
+                            Glide.with(itemView.context)
+                                .load(avatarUri)
+                                .placeholder(R.drawable.ic_profile_avatars)
+                                .error(R.drawable.ic_profile_avatars)
+                                .circleCrop()
+                                .into(iv)
+                        } else {
+                            iv.setImageResource(R.drawable.ic_profile_avatars)
+                        }
+                        iv.visibility = View.VISIBLE
+                    }
+                } catch (e: Exception) {
+                    // Fail silently; avatar not critical
+                }
                 userMessageTime.text = timeFormat.format(Date(message.timestamp))
                 
                 setupUserMessageActions(message)
                 calificationButtonsContainer.visibility = View.GONE
             } else {
                 // Show bot message
+                // Optionally hide user avatar for bot messages
+                userAvatarImageView?.visibility = View.GONE
                 userMessageContainer.visibility = View.GONE
                 botMessageContainer.visibility = View.VISIBLE
                 

@@ -78,6 +78,7 @@ class UserProfileViewFragment : Fragment() {
     private var videosFilterText: TextView? = null
     private lateinit var contentRecyclerView: RecyclerView
     private lateinit var emptyStateTextView: TextView
+    private lateinit var skeletonContainer: ShimmerFrameLayout
     private lateinit var contentAdapter: CreatedCourseAdapter
     private lateinit var videoAdapter: YouTubeStyleVideoAdapter
     private lateinit var videoManager: VideoManager
@@ -216,6 +217,7 @@ class UserProfileViewFragment : Fragment() {
             clearSearchButton = view.findViewById(R.id.clearSearchButton) ?: throw NullPointerException("clearSearchButton not found")
             contentRecyclerView = view.findViewById(R.id.contentRecyclerView) ?: throw NullPointerException("contentRecyclerView not found")
             emptyStateTextView = view.findViewById(R.id.emptyStateTextView) ?: throw NullPointerException("emptyStateTextView not found")
+            skeletonContainer = view.findViewById(R.id.skeletonContainer) ?: throw NullPointerException("skeletonContainer not found")
 
             // Initialize BlurViews for glass effect
             searchBarBlurView = view.findViewById(R.id.searchBarBlurView)
@@ -574,6 +576,7 @@ class UserProfileViewFragment : Fragment() {
             }
         }
     }private fun loadUserData(username: String) {
+        startSkeletonAnimation()
         lifecycleScope.launch {
             try {
                 val database = AppDatabase.getDatabase(requireContext())
@@ -651,6 +654,18 @@ class UserProfileViewFragment : Fragment() {
                 }
             }
         }
+    }
+
+    private fun startSkeletonAnimation() {
+        skeletonContainer.visibility = View.VISIBLE
+        skeletonContainer.startShimmer()
+        contentRecyclerView.visibility = View.GONE
+        emptyStateTextView.visibility = View.GONE
+    }
+
+    private fun stopSkeletonAnimation() {
+        skeletonContainer.stopShimmer()
+        skeletonContainer.visibility = View.GONE
     }
 
     private fun loadUserAvatar(usuario: Usuario?) {
@@ -1740,29 +1755,19 @@ class UserProfileViewFragment : Fragment() {
     }
 
     private fun setupAdminButton() {
-        val adminSlot = bottomNavBinding.adminSlot
-        val goToAdminButton = bottomNavBinding.goToAdminButton
-        Log.d("UserProfileViewFragment", "setupAdminButton called, button found: ${goToAdminButton != null}")
-
-        // Inicializa como INVISIBLE para evitar salto al inflar
-        goToAdminButton.visibility = View.INVISIBLE
-
-        // Decidir con SessionManager antes del primer render para evitar hueco
-        val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        if (!sess.isAdmin()) {
-            // Ocultar slot completo antes del render para que no quede hueco
-            adminSlot.visibility = View.GONE
-            Log.d("UserProfileViewFragment", "Admin slot hidden (user not admin)")
-            return
-        }
-
-        // Usuario admin: mostrar botón y asignar listener
-        goToAdminButton.visibility = View.VISIBLE
-        goToAdminButton.setOnClickListener {
-            Log.d("UserProfileViewFragment", "Admin button clicked, navigating to HomeFragment")
-            findNavController().navigate(R.id.action_userProfileViewFragment_to_homeFragment)
-        }
-        Log.d("UserProfileViewFragment", "Admin button made visible and click listener set")
+        val view = view ?: return
+        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        
+        com.example.tareamov.util.BottomNavigationHelper.setupBottomNavigation(
+            lifecycleOwner = viewLifecycleOwner,
+            navController = findNavController(),
+            view = view,
+            sessionManager = sessionManager,
+            syncRepository = getSyncRepository(),
+            onAdminClick = {
+                findNavController().navigate(R.id.action_userProfileViewFragment_to_homeFragment)
+            }
+        )
     }
 
     private fun checkAdminStatus(callback: (Boolean) -> Unit) {

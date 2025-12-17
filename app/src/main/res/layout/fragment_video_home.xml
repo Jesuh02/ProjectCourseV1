@@ -63,6 +63,46 @@
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent" />
 
+            <!-- Active Filter Indicator (Hidden by default) -->
+            <LinearLayout
+                android:id="@+id/activeFilterIndicator"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginStart="0dp"
+                android:background="@drawable/bg_pill_button_active"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="10dp"
+                android:paddingEnd="4dp"
+                android:visibility="gone"
+                app:layout_constraintStart_toEndOf="@id/toggleSearchButton"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent">
+
+                <TextView
+                    android:id="@+id/activeFilterText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Filtro"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:maxWidth="120dp"
+                    android:ellipsize="end"
+                    android:singleLine="true" />
+
+                <ImageButton
+                    android:id="@+id/clearActiveFilterButton"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginStart="4dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_menu_close_clear_cancel"
+                    app:tint="#FFFFFF"
+                    android:scaleType="centerInside"
+                    android:padding="4dp" />
+            </LinearLayout>
+
             <!-- Center Pill Buttons Container -->
             <LinearLayout
                 android:id="@+id/centerPillContainer"
@@ -98,7 +138,7 @@
                         android:src="@drawable/ic_live_stream"
                         android:scaleType="centerInside"
                         android:padding="6dp"
-                        android:background="@drawable/bg_pill_button_active"
+                        android:background="@drawable/bg_circle_orange"
                         android:contentDescription="En Vivo" />
                 </FrameLayout>
 
@@ -151,6 +191,18 @@
                     android:layout_width="0dp"
                     android:layout_height="0dp"
                     android:visibility="gone" />
+
+                <!-- AI Assistant Button (Grading) -->
+                <ImageView
+                    android:id="@+id/aiAssistantIconImageView"
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:layout_marginEnd="2dp"
+                    android:src="@drawable/ic_task_grading"
+                    android:contentDescription="Asistente de Calificación"
+                    android:background="@android:color/transparent"
+                    android:scaleType="centerInside"
+                    android:padding="6dp" />
 
                 <!-- Database Orbit Button -->
                 <ImageView

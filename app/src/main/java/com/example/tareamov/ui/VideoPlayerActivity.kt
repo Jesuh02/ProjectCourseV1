@@ -42,6 +42,8 @@ class VideoPlayerActivity : AppCompatActivity() {
     private lateinit var skipForwardIcon: ImageView
     private lateinit var btnFloatingMode: ImageView
     private lateinit var loadingSpinner: android.widget.ProgressBar
+    private lateinit var brightnessOverlay: LinearLayout
+    private lateinit var brightnessSeekBar: SeekBar
 
     private var mediaPlayer: MediaPlayer? = null
     private var mediaPlayerPrepared: Boolean = false
@@ -51,10 +53,17 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var progressRunnable: Runnable? = null
     private val autoHideDelayMs = 3000L
     private var autoHideRunnable: Runnable? = null
+    private var brightnessHideRunnable: Runnable? = null
     private var pendingUserSeekMs: Int? = null
     private var isScrubbing: Boolean = false
     private val ACTION_TOGGLE_PLAYBACK = "com.example.tareamov.action.TOGGLE_PIP_PLAYBACK"
     private var pipReceiver: BroadcastReceiver? = null
+    
+    // Brightness control variables
+    private var startY = 0f
+    private var startX = 0f
+    private var isBrightnessAdjusting = false
+    private var initialBrightness = -1f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,6 +94,26 @@ class VideoPlayerActivity : AppCompatActivity() {
         skipForwardIcon = findViewById(R.id.skipForwardIcon)
         btnFloatingMode = findViewById(R.id.btn_floating_mode)
         loadingSpinner = findViewById(R.id.loadingSpinner)
+        brightnessOverlay = findViewById(R.id.brightnessOverlay)
+        brightnessSeekBar = findViewById(R.id.brightnessSeekBar)
+
+        // Brightness SeekBar Listener
+        brightnessSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    val lp = window.attributes
+                    lp.screenBrightness = progress / 100f
+                    window.attributes = lp
+                    scheduleAutoHide()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                cancelAutoHide()
+            }
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                scheduleAutoHide()
+            }
+        })
 
         // uriPermissionManager = UriPermissionManager(this)
 
@@ -235,12 +264,70 @@ class VideoPlayerActivity : AppCompatActivity() {
     // Start with controls hidden
     hideControls(immediate = true)
 
-    // Interaction: any tap shows controls and resets auto-hide timer
-        controlsOverlay.setOnClickListener {
-            if (isControlsVisible) {
-                hideControls()
-            } else {
-                showControls()
+    // Interaction: swipe for brightness (left), tap for controls
+        controlsOverlay.setOnTouchListener { _, event ->
+            val screenWidth = resources.displayMetrics.widthPixels
+            val screenHeight = resources.displayMetrics.heightPixels
+
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    startX = event.x
+                    startY = event.y
+                    
+                    // Get current brightness
+                    val lp = window.attributes
+                    if (lp.screenBrightness < 0) {
+                        try {
+                            val sys = android.provider.Settings.System.getInt(contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
+                            initialBrightness = sys / 255f
+                        } catch (e: Exception) {
+                            initialBrightness = 0.5f
+                        }
+                    } else {
+                        initialBrightness = lp.screenBrightness
+                    }
+                    
+                    isBrightnessAdjusting = false
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val deltaY = startY - event.y // Up is positive (increase)
+                    val deltaX = event.x - startX
+                    
+                    // Threshold to detect scroll vs tap (e.g. 30px)
+                    // Check if swipe is on the left side (Brightness)
+                    if (!isBrightnessAdjusting && startX < screenWidth / 2 && kotlin.math.abs(deltaY) > 30 && kotlin.math.abs(deltaY) > kotlin.math.abs(deltaX)) {
+                        isBrightnessAdjusting = true
+                    }
+                    
+                    if (isBrightnessAdjusting) {
+                        val change = deltaY / (screenHeight * 0.8f)
+                        var newB = initialBrightness + change
+                        newB = newB.coerceIn(0.01f, 1.0f)
+                        
+                        val lp = window.attributes
+                        lp.screenBrightness = newB
+                        window.attributes = lp
+                        
+                        showBrightnessOverlay(newB)
+                    }
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    if (isBrightnessAdjusting) {
+                        isBrightnessAdjusting = false
+                        scheduleHideBrightnessOverlay()
+                    } else {
+                        // Tap detected
+                        if (isControlsVisible) {
+                            hideControls()
+                        } else {
+                            showControls()
+                        }
+                    }
+                    true
+                }
+                else -> false
             }
         }
 
@@ -364,6 +451,23 @@ class VideoPlayerActivity : AppCompatActivity() {
             fadeVisibility(skipBackIcon, true)
             fadeVisibility(skipForwardIcon, true)
             fadeVisibility(playPauseOverlay, true)
+            
+            // Show Brightness Overlay with Controls
+            val lp = window.attributes
+            val brightness = if (lp.screenBrightness < 0) {
+                try {
+                    android.provider.Settings.System.getInt(contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS) / 255f
+                } catch (e: Exception) { 0.5f }
+            } else {
+                lp.screenBrightness
+            }
+            brightnessSeekBar.progress = (brightness * 100).toInt()
+            // Nudge brightness overlay further to the right for better ergonomics
+            brightnessOverlay.translationX = dpToPx(120f)
+            brightnessOverlay.visibility = View.VISIBLE
+            brightnessOverlay.animate().alpha(1f).setDuration(250).start()
+            // Cancel specific brightness hide timer
+            brightnessHideRunnable?.let { uiHandler.removeCallbacks(it) }
         }
         scheduleAutoHide()
     }
@@ -378,12 +482,19 @@ class VideoPlayerActivity : AppCompatActivity() {
                 skipBackIcon.apply { alpha = 0f; visibility = View.GONE }
                 skipForwardIcon.apply { alpha = 0f; visibility = View.GONE }
                 playPauseOverlay.apply { alpha = 0f; visibility = View.GONE }
+                brightnessOverlay.apply { alpha = 0f; visibility = View.GONE }
             } else {
                 fadeVisibility(findViewById(R.id.topBar), false)
                 fadeVisibility(findViewById(R.id.bottomBar), false)
                 fadeVisibility(skipBackIcon, false)
                 fadeVisibility(skipForwardIcon, false)
                 fadeVisibility(playPauseOverlay, false)
+                
+                brightnessOverlay.animate()
+                    .alpha(0f)
+                    .setDuration(250)
+                    .withEndAction { brightnessOverlay.visibility = View.GONE }
+                    .start()
             }
         }
     }
@@ -598,5 +709,35 @@ class VideoPlayerActivity : AppCompatActivity() {
             pipReceiver = null
             Log.d("VideoPlayerActivity", "PIP receiver unregistered")
         }
+    }
+
+    private fun showBrightnessOverlay(brightness: Float) {
+        brightnessHideRunnable?.let { uiHandler.removeCallbacks(it) }
+        // Keep the overlay slightly to the right to avoid covering main controls
+        brightnessOverlay.translationX = dpToPx(40f)
+        brightnessOverlay.visibility = View.VISIBLE
+        brightnessOverlay.alpha = 1f
+        brightnessSeekBar.progress = (brightness * 100).toInt()
+    }
+
+    // Utility to convert dp to pixels
+    private fun dpToPx(dp: Float): Float {
+        return dp * resources.displayMetrics.density
+    }
+
+    private fun scheduleHideBrightnessOverlay() {
+        brightnessHideRunnable?.let { uiHandler.removeCallbacks(it) }
+        
+        // If controls are visible, let the main auto-hide handle it.
+        if (isControlsVisible) return
+
+        brightnessHideRunnable = Runnable {
+            brightnessOverlay.animate()
+                .alpha(0f)
+                .setDuration(300)
+                .withEndAction { brightnessOverlay.visibility = View.GONE }
+                .start()
+        }
+        uiHandler.postDelayed(brightnessHideRunnable!!, 1000)
     }
 }

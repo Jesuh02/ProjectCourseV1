@@ -53,7 +53,8 @@
         android:preserveLegacyExternalStorage="true"
         android:extractNativeLibs="true"
         tools:targetApi="31"
-        android:networkSecurityConfig="@xml/network_security_config">
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:foregroundServiceType="mediaPlayback">
 
         <activity
             android:name=".MainActivity"
@@ -131,7 +132,8 @@
             android:value="350567399298-nm30ojtig7u0n6t223vhvq8hpovag2jt.apps.googleusercontent.com" />
         <service
             android:name=".service.MyFirebaseMessagingService"
-            android:exported="false">
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>

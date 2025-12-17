@@ -1,4 +1,4 @@
-﻿package com.example.tareamov.service
+package com.example.tareamov.service
 
 import com.example.tareamov.BuildConfig
 import com.example.tareamov.data.entity.Persona
@@ -1849,26 +1849,8 @@ object SupabaseClient {
         }
     }
     
-    suspend fun fetchTasks(): List<Task> = fetchList("tasks", Array<Task>::class.java)
-    // Fetch a single task by id using server-side filter
-    suspend fun fetchTaskById(id: Long): Task? = withContext(Dispatchers.IO) {
-        try {
-            val path = "tasks?id=eq.${id}"
-            val req = buildGetRequest(path)
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    Log.w("SupabaseClient", "fetchTaskById failed status=${resp.code}")
-                    return@withContext null
-                }
-                val body = resp.body?.string() ?: return@withContext null
-                val arr = underscoredGson.fromJson(body, Array<Task>::class.java)
-                return@withContext arr.firstOrNull()
-            }
-        } catch (e: Exception) {
-            Log.w("SupabaseClient", "fetchTaskById exception", e)
-            null
-        }
-    }
+    // Removed duplicate fetchTaskById implementation
+
     
     /**
      * Fetch a task by its name (title) using case-insensitive search.
@@ -2493,6 +2475,16 @@ object SupabaseClient {
             emptyList()
         }
     }
+
+    // Backwards-compatible alias: fetch all tasks (used by older callers)
+    suspend fun fetchTasks(): List<Task> = withContext(Dispatchers.IO) {
+        try {
+            return@withContext fetchList("tasks", Array<Task>::class.java).toList()
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "fetchTasks exception", e)
+            return@withContext emptyList()
+        }
+    }
     
     // Fetch tasks for a specific topic or for many topics using 'in' filter
     suspend fun fetchTasksByTopicIds(topicIds: List<Long>): List<Task> = withContext(Dispatchers.IO) {
@@ -2515,6 +2507,29 @@ object SupabaseClient {
             emptyList()
         }
     }
+
+    /**
+     * Fetch a single task by ID
+     */
+    suspend fun fetchTaskById(taskId: Long): Task? = withContext(Dispatchers.IO) {
+        try {
+            val path = "tasks?id=eq.$taskId&select=*&limit=1"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchTaskById failed status=${resp.code}")
+                    return@withContext null
+                }
+                val body = resp.body?.string() ?: return@withContext null
+                val arr = underscoredGson.fromJson(body, Array<Task>::class.java)
+                return@withContext arr.firstOrNull()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching task by ID=$taskId", e)
+            return@withContext null
+        }
+    }
+
     // Fetch courses created by a specific username (server-side filter on creator_username).
     suspend fun fetchCoursesByCreator(username: String): List<Course> = withContext(Dispatchers.IO) {
         try {
@@ -2599,124 +2614,110 @@ object SupabaseClient {
     }
 
     /**
+     * Execute a raw SQL query (actually fetches from a table with filters)
+     * Mimics raw query by allowing selection and filtering
+     * This is NOT a true SQL executor due to REST API limits, but used for flexibility
+     * For actual raw SQL, you need an RPC function like 'exec_sql'
+     */
+    suspend fun executeRawQuery(queryOrPath: String): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+        // If it starts with SELECT, it's SQL. We can't run SQL directly without RPC.
+        // Assuming we have an RPC function 'exec_sql' or similar, or we map it to REST.
+        
+        // For the specific use case of checking roles: "SELECT 1 FROM usuarios_roles WHERE..."
+        // We can map this to a REST request: /usuarios_roles?select=1&usuario_id=eq.X&rol_id=eq.Y
+        
+        if (queryOrPath.trim().startsWith("SELECT", ignoreCase = true)) {
+             // Basic SQL parser for specific known queries
+             if (queryOrPath.contains("FROM usuarios_roles", ignoreCase = true)) {
+                 // Extract params
+                 // Example: "SELECT 1 FROM usuarios_roles WHERE usuario_id = 123 AND rol_id = 2"
+                 var userId = -1L
+                 var roleId = -1
+                 
+                 val userIdMatch = Regex("usuario_id\\s*=\\s*(\\d+)").find(queryOrPath)
+                 if (userIdMatch != null) userId = userIdMatch.groupValues[1].toLong()
+                 
+                 val roleIdMatch = Regex("rol_id\\s*=\\s*(\\d+)").find(queryOrPath)
+                 if (roleIdMatch != null) roleId = roleIdMatch.groupValues[1].toInt()
+                 
+                 if (userId != -1L) {
+                     val query = StringBuilder("usuarios_roles?usuario_id=eq.$userId")
+                     if (roleId != -1) {
+                         query.append("&rol_id=eq.$roleId")
+                     }
+                     if (queryOrPath.contains("SELECT rol_id", ignoreCase = true)) {
+                         query.append("&select=rol_id")
+                     } else {
+                         query.append("&select=usuario_id") // Just select something to check existence
+                     }
+                     
+                     return@withContext fetchListMap(query.toString())
+                 }
+             }
+             else if (queryOrPath.contains("FROM video_comment_likes", ignoreCase = true)) {
+                 // "SELECT id FROM video_comment_likes WHERE comment_id = X AND usuario_id = Y"
+                 // "SELECT COUNT(*) as count FROM video_comment_likes WHERE comment_id = X"
+                 
+                 var commentId = -1L
+                 var userId = -1L
+                 
+                 val commentIdMatch = Regex("comment_id\\s*=\\s*(\\d+)").find(queryOrPath)
+                 if (commentIdMatch != null) commentId = commentIdMatch.groupValues[1].toLong()
+                 
+                 val userIdMatch = Regex("usuario_id\\s*=\\s*(\\d+)").find(queryOrPath)
+                 if (userIdMatch != null) userId = userIdMatch.groupValues[1].toLong()
+                 
+                 if (commentId != -1L) {
+                     val query = StringBuilder("video_comment_likes?comment_id=eq.$commentId")
+                     
+                     if (userId != -1L) {
+                        query.append("&usuario_id=eq.$userId")
+                     }
+                     
+                     // If it's a count query
+                     if (queryOrPath.contains("COUNT(*)", ignoreCase = true)) {
+                         // We need to get the count from headers or fetch all (inefficient but works for small sets)
+                         // Better: REST API supports count=exact in header
+                         // But fetchListMap returns list.
+                         // Let's just fetch items and count them locally for now
+                         val items = fetchListMap(query.toString())
+                         return@withContext listOf(mapOf("count" to items.size))
+                     }
+                     
+                     return@withContext fetchListMap(query.toString())
+                 }
+             }
+        }
+        
+        // Default fallthrough (assumes it's a REST path)
+        return@withContext fetchListMap(queryOrPath)
+    }
+
+    private suspend fun fetchListMap(path: String): List<Map<String, Any?>> {
+        try {
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val body = resp.body?.string() ?: return emptyList()
+                val type = object : com.google.gson.reflect.TypeToken<List<Map<String, Any?>>>() {}.type
+                return gson.fromJson(body, type) ?: emptyList()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "fetchListMap failed for $path", e)
+            return emptyList()
+        }
+    }
+
+    /**
      * Execute raw SQL query via REST API de PostgREST
      * Parsea el SQL y lo convierte en una consulta REST a Supabase
      */
-    suspend fun executeRawSql(sql: String): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
-        try {
-            Log.d("SupabaseClient", "🔍 executeRawSql called with SQL: $sql")
-            
-            // Parsear el SQL para extraer la tabla y filtros
-            val trimmedSql = sql.trim().replace(Regex("\\s+"), " ")
-            Log.d("SupabaseClient", "  📝 Normalized SQL: $trimmedSql")
-            
-            // Regex para capturar: SELECT ... FROM [schema.]table WHERE ...
-            val selectPattern = Regex(
-                "SELECT\\s+(.+?)\\s+FROM\\s+(?:public\\.)?([\\w_]+)(?:\\s+WHERE\\s+(.+?))?(?:\\s+ORDER\\s+BY\\s+(.+?))?(?:\\s+LIMIT\\s+(\\d+))?\\s*;?",
-                RegexOption.IGNORE_CASE
-            )
-            
-            val match = selectPattern.find(trimmedSql)
-            if (match == null) {
-                Log.e("SupabaseClient", "❌ Could not parse SQL query. Use format: SELECT ... FROM table WHERE ...")
-                return@withContext emptyList()
-            }
-            
-            val columns = match.groupValues[1].trim()
-            val table = match.groupValues[2].trim()
-            val whereClause = match.groupValues[3].trim()
-            val orderByClause = match.groupValues[4].trim()
-            val limitClause = match.groupValues[5].trim()
-            
-            Log.d("SupabaseClient", "  📊 Parsed - Table: $table, Columns: $columns, Where: $whereClause, OrderBy: $orderByClause, Limit: $limitClause")
-            
-            // Construir la URL de PostgREST
-            val queryParams = mutableListOf<String>()
-            
-            // Agregar filtros WHERE como query params de PostgREST
-            if (whereClause.isNotEmpty()) {
-                // Parsear condiciones simples: "id = 2" o "username = 'test'"
-                val conditionPattern = Regex("([\\w_]+)\\s*=\\s*([\\w'\"]+)")
-                val conditions = conditionPattern.findAll(whereClause)
-                
-                conditions.forEach { condMatch ->
-                    val column = condMatch.groupValues[1]
-                    var value = condMatch.groupValues[2].replace("'", "").replace("\"", "")
-                    queryParams.add("$column=eq.$value")
-                }
-            }
-            
-            // Agregar ORDER BY
-            if (orderByClause.isNotEmpty()) {
-                queryParams.add("order=$orderByClause")
-            }
-            
-            // Agregar LIMIT
-            if (limitClause.isNotEmpty()) {
-                queryParams.add("limit=$limitClause")
-            }
-            
-            // Construir path con query params
-            val path = if (queryParams.isNotEmpty()) {
-                "$table?" + queryParams.joinToString("&")
-            } else {
-                table
-            }
-            
-            Log.d("SupabaseClient", "  🌐 REST path: $path")
-            
-            // Ejecutar GET request usando el helper existente
-            val request = buildGetRequest(path)
-            
-            val response = client.newCall(request).execute()
-            val body = response.body?.string()
-            
-            Log.d("SupabaseClient", "  📡 Response code: ${response.code}")
-            Log.d("SupabaseClient", "  📦 Response body: ${body?.take(500)}")
-            
-            if (!response.isSuccessful || body.isNullOrEmpty()) {
-                Log.e("SupabaseClient", "❌ Request failed or empty response")
-                return@withContext emptyList()
-            }
-            
-            // Parsear JSON array
-            val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
-            val result = mutableListOf<Map<String, Any?>>()
-            
-            Log.d("SupabaseClient", "  🔢 JSON array size: ${jsonArray.size()}")
-            
-            for (i in 0 until jsonArray.size()) {
-                val jsonObject = jsonArray[i].asJsonObject
-                val map = mutableMapOf<String, Any?>()
-                
-                jsonObject.keySet().forEach { key ->
-                    val element = jsonObject.get(key)
-                    map[key] = when {
-                        element.isJsonNull -> null
-                        element.isJsonPrimitive -> {
-                            val prim = element.asJsonPrimitive
-                            when {
-                                prim.isBoolean -> prim.asBoolean
-                                prim.isNumber -> prim.asNumber
-                                else -> prim.asString
-                            }
-                        }
-                        else -> element.toString()
-                    }
-                }
-                
-                result.add(map)
-                Log.d("SupabaseClient", "    📋 Row ${i + 1}: $map")
-            }
-            
-            Log.d("SupabaseClient", "  ✅ Successfully parsed ${result.size} rows")
-            return@withContext result
-            
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "❌ Error executing raw SQL: ${e.message}", e)
-            e.printStackTrace()
-            return@withContext emptyList()
-        }
+    /**
+     * Legacy method for raw SQL (kept to avoid breaking changes if used elsewhere)
+     * Calls executeRawQuery internally
+     */
+    suspend fun executeRawSql(sql: String): List<Map<String, Any?>> {
+         return executeRawQuery(sql)
     }
 
     /**
@@ -4218,13 +4219,16 @@ object SupabaseClient {
     /**
      * Add a comment to a video
      */
-    suspend fun addVideoComment(videoId: Long, usuarioId: Long, comment: String): Long? = withContext(Dispatchers.IO) {
+    suspend fun addVideoComment(videoId: Long, usuarioId: Long, comment: String, parentId: Long? = null): Long? = withContext(Dispatchers.IO) {
         try {
-            val payload = mapOf(
+            val payload = mutableMapOf<String, Any>(
                 "video_id" to videoId,
                 "usuario_id" to usuarioId,
                 "comment" to comment
             )
+            if (parentId != null) {
+                payload["parent_id"] = parentId
+            }
             return@withContext insertRecord("video_comments", payload)
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error adding comment to video $videoId", e)
@@ -4261,6 +4265,7 @@ object SupabaseClient {
                         videoId = obj.get("video_id")?.asLong ?: 0,
                         usuarioId = obj.get("usuario_id")?.asLong ?: 0,
                         comment = obj.get("comment")?.asString ?: "",
+                        parentId = if (obj.has("parent_id") && !obj.get("parent_id").isJsonNull) obj.get("parent_id").asLong else null,
                         createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
                             obj.get("created_at").asString else null
                     )
@@ -4362,6 +4367,7 @@ object SupabaseClient {
                         videoId = obj.get("video_id")?.asLong ?: 0,
                         usuarioId = obj.get("usuario_id")?.asLong ?: 0,
                         comment = obj.get("comment")?.asString ?: "",
+                        parentId = if (obj.has("parent_id") && !obj.get("parent_id").isJsonNull) obj.get("parent_id").asLong else null,
                         createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
                             obj.get("created_at").asString else null
                     )

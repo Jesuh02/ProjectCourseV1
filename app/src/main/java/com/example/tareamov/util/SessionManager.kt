@@ -19,6 +19,7 @@ class SessionManager private constructor(private val context: Context) {
         private const val KEY_SUBSCRIPTIONS_PREFIX = "subscription_"
         private const val KEY_LAST_ACTIVE_USER = "last_active_user" // Para detectar cambios de usuario
         private const val KEY_USER_SESSION_TIMESTAMP = "user_session_timestamp" // Timestamp de sesión
+        private const val KEY_IS_ADMIN_ACCESS = "is_admin_access" // Boolean to cache specific admin access (Role 3)
 
         @Volatile
         private var instance: SessionManager? = null
@@ -82,11 +83,60 @@ class SessionManager private constructor(private val context: Context) {
     }
 
     fun isAdmin(): Boolean {
+        // Check cached boolean first if available
+        if (sharedPreferences.contains(KEY_IS_ADMIN_ACCESS)) {
+            val isAdmin = sharedPreferences.getBoolean(KEY_IS_ADMIN_ACCESS, false)
+            android.util.Log.d("SessionManager", "isAdmin() returning cached value: $isAdmin")
+            return isAdmin
+        }
+        // Fallback to legacy role name check
         val role = getUserRole()
         val isAdmin = role?.equals("admin", ignoreCase = true) == true
-        android.util.Log.d("SessionManager", "isAdmin() called - role: '$role', isAdmin: $isAdmin")
+        android.util.Log.d("SessionManager", "isAdmin() fallback check - role: '$role', isAdmin: $isAdmin")
         return isAdmin
     }
+
+    /**
+     * Set admin status manually
+     */
+    fun setAdminStatus(isAdmin: Boolean) {
+        editor.putBoolean(KEY_IS_ADMIN_ACCESS, isAdmin)
+        editor.apply()
+        android.util.Log.d("SessionManager", "setAdminStatus: $isAdmin")
+    }
+
+    /**
+     * Add a role ID to the cached set of roles
+     */
+    fun addRole(roleId: Int) {
+        val currentRoles = getRoles().toMutableSet()
+        currentRoles.add(roleId.toString())
+        editor.putStringSet("user_role_ids", currentRoles)
+        editor.apply()
+    }
+
+    /**
+     * Remove a role ID from the cached set
+     */
+    fun removeRole(roleId: Int) {
+        val currentRoles = getRoles().toMutableSet()
+        currentRoles.remove(roleId.toString())
+        editor.putStringSet("user_role_ids", currentRoles)
+        editor.apply()
+    }
+
+    /**
+     * Check if user has a specific role ID cached
+     */
+    fun hasRole(roleId: Int): Boolean {
+        val roles = getRoles()
+        return roles.contains(roleId.toString())
+    }
+
+    private fun getRoles(): Set<String> {
+        return sharedPreferences.getStringSet("user_role_ids", emptySet()) ?: emptySet()
+    }
+
     /**
      * Get stored username
      */
@@ -136,11 +186,20 @@ class SessionManager private constructor(private val context: Context) {
 
             val roleName = r?.nombre ?: getUserRole() ?: ""
             val avatar = u.avatar
+            
+            // Check robust admin status (Role 3 check)
+            val isAdminRemote = com.example.tareamov.service.SupabaseClient.isUserAdmin(u.id)
+
+            // STICKY ADMIN FIX: If user was already admin, keep it that way to prevent UI flickering
+            // The user requested: "if it appears once more I don't want it to disappear again"
+            val currentIsAdmin = sharedPreferences.getBoolean(KEY_IS_ADMIN_ACCESS, false)
+            val finalIsAdmin = isAdminRemote || currentIsAdmin
 
             editor.putString(KEY_USERNAME, u.usuario)
             editor.putLong(KEY_USER_ID, u.id)
             editor.putLong(KEY_PERSONA_ID, u.persona_id)
             editor.putString(KEY_USER_ROLE, roleName)
+            editor.putBoolean(KEY_IS_ADMIN_ACCESS, finalIsAdmin)
             if (avatar != null) editor.putString(KEY_USER_AVATAR, avatar)
             editor.apply()
 

@@ -155,6 +155,26 @@ class NotificacionesFragment : Fragment() {
                     }
                 }
             }
+            Notification.TYPE_COMMENT, Notification.TYPE_LIKE -> {
+                Log.d("Notificaciones", "Interaction notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { videoId ->
+                    val bundle = Bundle().apply {
+                        putLong("videoId", videoId)
+                    }
+                    try {
+                        // Navigate to VideoHomeFragment to view the video and comments
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to video home", e)
+                        // Fallback to video details
+                        try {
+                            findNavController().navigate(R.id.action_notificacionesFragment_to_videoDetailsFragment, bundle)
+                        } catch (e2: Exception) {
+                            Log.e("NotificacionesFragment", "Error navigating to video details", e2)
+                        }
+                    }
+                }
+            }
             Notification.TYPE_NEW_TASK -> {
                 Log.d("Notificaciones", "New task notification clicked: ${notification.relatedId}")
                 notification.relatedId?.let { taskId ->
@@ -231,26 +251,27 @@ class NotificacionesFragment : Fragment() {
         _binding = null
     }
 
+    private fun getSyncRepository(): com.example.tareamov.data.sync.SyncRepository {
+        val db = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
+        return com.example.tareamov.data.sync.SyncRepository(
+            db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
+            db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
+            db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
+        )
+    }
+
     private fun setupAdminButton() {
-        // Usar la propiedad de clase bottomNavBinding inicializada en onViewCreated
-        val adminSlot = bottomNavBinding.adminSlot
-        val goToAdminButton = bottomNavBinding.goToAdminButton
-
-        // Inicializa como INVISIBLE para evitar salto al inflar
-        goToAdminButton.visibility = View.INVISIBLE
-
-        // Si SessionManager ya conoce el rol del usuario, podemos decidir antes del primer render
-        val sess = SessionManager.getInstance(requireContext())
-        if (!sess.isAdmin()) {
-            // Ocultar completamente el slot antes de que se dibuje para que no quede hueco
-            adminSlot.visibility = View.GONE
-            return
-        }
-
-        // Si llegó aquí, el usuario es admin según SessionManager: mostrar y asignar listener
-        goToAdminButton.visibility = View.VISIBLE
-        goToAdminButton.setOnClickListener {
-            findNavController().navigate(R.id.action_notificacionesFragment_to_homeFragment)
-        }
+        val view = view ?: return
+        
+        com.example.tareamov.util.BottomNavigationHelper.setupBottomNavigation(
+            lifecycleOwner = viewLifecycleOwner,
+            navController = findNavController(),
+            view = view,
+            sessionManager = sessionManager,
+            syncRepository = getSyncRepository(),
+            onAdminClick = {
+                findNavController().navigate(R.id.action_notificacionesFragment_to_homeFragment)
+            }
+        )
     }
 }

@@ -46,6 +46,10 @@ data class VideoComment(
     @ColumnInfo(name = "comment")
     @SerializedName("comment")
     val comment: String,
+
+    @ColumnInfo(name = "parent_id")
+    @SerializedName("parent_id")
+    val parentId: Long? = null,
     
     @ColumnInfo(name = "created_at")
     @SerializedName("created_at")

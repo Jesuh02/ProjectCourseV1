@@ -69,6 +69,7 @@ class VideoHomeFragment : Fragment() {
     private lateinit var activityIconImageView: ImageView
     private lateinit var profileIconImageView: ImageView
     private lateinit var databaseIconImageView: ImageView // New database icon for admins
+    private lateinit var aiAssistantIconImageView: ImageView // New AI Assistant icon
     private var notificationBadge: TextView? = null // Badge de notificaciones
 
     private var isLiked = false
@@ -165,6 +166,7 @@ class VideoHomeFragment : Fragment() {
         activityIconImageView = view.findViewById(R.id.activityIconImageView)
         profileIconImageView = view.findViewById(R.id.profileIconImageView)
         databaseIconImageView = view.findViewById(R.id.databaseIconImageView) // Initialize new icon
+        aiAssistantIconImageView = view.findViewById(R.id.aiAssistantIconImageView) // Initialize AI icon
         notificationBadge = view.findViewById(R.id.notificationBadge) // Badge de notificaciones
 
         // Setup initial colors for bottom navigation icons
@@ -175,6 +177,36 @@ class VideoHomeFragment : Fragment() {
         
         // Setup search functionality
         setupSearchBar(view)
+
+        // Setup AI Assistant Icon with animation and click listener
+        aiAssistantIconImageView.setOnClickListener {
+            try {
+                findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
+            } catch (e: Exception) {
+                Log.e("VideoHomeFragment", "Error navigating to ChatBotFragment", e)
+            }
+        }
+        
+        // Professional animation for AI icon (Subtle Rotate + Scale)
+        val scaleX = ObjectAnimator.ofFloat(aiAssistantIconImageView, "scaleX", 1f, 1.15f, 1f)
+        val scaleY = ObjectAnimator.ofFloat(aiAssistantIconImageView, "scaleY", 1f, 1.15f, 1f)
+        val rotate = ObjectAnimator.ofFloat(aiAssistantIconImageView, "rotation", 0f, 5f, -5f, 0f)
+        
+        scaleX.repeatCount = ObjectAnimator.INFINITE
+        scaleY.repeatCount = ObjectAnimator.INFINITE
+        rotate.repeatCount = ObjectAnimator.INFINITE
+        
+        scaleX.duration = 3000
+        scaleY.duration = 3000
+        rotate.duration = 3000
+        
+        scaleX.interpolator = AccelerateDecelerateInterpolator()
+        scaleY.interpolator = AccelerateDecelerateInterpolator()
+        rotate.interpolator = AccelerateDecelerateInterpolator()
+        
+        val animatorSet = android.animation.AnimatorSet()
+        animatorSet.playTogether(scaleX, scaleY, rotate)
+        animatorSet.start()
 
         // Initial setup for database icon (will be updated by updateAdminUi)
         databaseIconImageView.visibility = View.GONE
@@ -280,6 +312,20 @@ class VideoHomeFragment : Fragment() {
         
         // Function to update admin UI elements
         fun updateAdminUi(isAdmin: Boolean) {
+            // New Logic: Check if user has explicit role ID 2 (AiAssistant access)
+            val hasAiRole = sess.hasRole(2)
+            
+            if (hasAiRole) {
+                // Show AI Assistant icon for Role 2
+                aiAssistantIconImageView.visibility = View.VISIBLE
+                aiAssistantIconImageView.setOnClickListener {
+                     // Navigate to AI Assistant or ChatBot
+                     findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
+                }
+            } else {
+                 aiAssistantIconImageView.visibility = View.GONE
+            }
+
             if (isAdmin) {
                 // Admin: Show database icon with animated drawable
                 databaseIconImageView.visibility = View.VISIBLE
@@ -306,7 +352,6 @@ class VideoHomeFragment : Fragment() {
                 // Non-admin: Hide elements
                 databaseIconImageView.visibility = View.GONE
                 adminSlot?.visibility = View.GONE
-                goToAdminButton?.visibility = View.GONE
             }
         }
 
@@ -317,11 +362,21 @@ class VideoHomeFragment : Fragment() {
         lifecycleScope.launch {
             val userId = getCurrentUserId()
             if (userId > 0) {
+                // Check if admin (Role 3)
                 val isAdmin = withContext(Dispatchers.IO) {
                     syncRepository.isUserAdmin(userId)
                 }
-                // Only update if different from session check or to confirm
-                if (isAdmin != sess.isAdmin()) {
+                
+                // Check if user has AI role (Role 2)
+                val hasAiRole = withContext(Dispatchers.IO) {
+                    syncRepository.hasUserRole(userId, 2)
+                }
+                
+                // Update SessionManager
+                sess.setAdminStatus(isAdmin)
+                if (hasAiRole) sess.addRole(2) else sess.removeRole(2)
+                
+                withContext(Dispatchers.Main) {
                     updateAdminUi(isAdmin)
                 }
             }
@@ -1214,6 +1269,12 @@ class VideoHomeFragment : Fragment() {
         // searchButton removed as per design
         val closeSearchButton = view.findViewById<ImageButton>(R.id.closeSearchButton)
         val filterChipGroup = view.findViewById<ChipGroup>(R.id.searchFilterChipGroup)
+        
+        // Active Filter Indicator Views
+        val activeFilterIndicator = view.findViewById<LinearLayout>(R.id.activeFilterIndicator)
+        val activeFilterText = view.findViewById<TextView>(R.id.activeFilterText)
+        val clearActiveFilterButton = view.findViewById<ImageButton>(R.id.clearActiveFilterButton)
+        val centerPillContainer = view.findViewById<View>(R.id.centerPillContainer)
 
         // Setup BlurView
         val radius = 20f
@@ -1260,18 +1321,30 @@ class VideoHomeFragment : Fragment() {
             androidx.transition.TransitionManager.beginDelayedTransition(container, transition)
             
             if (searchBarContainer.visibility == View.GONE) {
-                // Mostrar barra de búsqueda y ocultar botones normales
-                // topNavTabs.visibility = View.GONE // Keep icons visible in background
+                // OPEN SEARCH
+                // Hide active filter indicator while searching (full bar takes over)
+                activeFilterIndicator.visibility = View.GONE
+                centerPillContainer.visibility = View.GONE // Hide pills to avoid clutter
+                
                 searchBarContainer.visibility = View.VISIBLE
                 searchEditText.requestFocus()
                 showKeyboard(searchEditText)
             } else {
-                // Ocultar barra de búsqueda y mostrar botones normales
+                // CLOSE/MINIMIZE SEARCH
                 searchBarContainer.visibility = View.GONE
-                // topNavTabs.visibility = View.VISIBLE
+                centerPillContainer.visibility = View.VISIBLE
                 hideKeyboard(searchEditText)
-                if (isSearchMode) {
-                    clearSearch()
+                
+                // If there is active search text, show the minimalist indicator
+                if (isSearchMode && currentSearchQuery.isNotEmpty()) {
+                    activeFilterIndicator.visibility = View.VISIBLE
+                    activeFilterText.text = "$currentSearchQuery"
+                } else {
+                    // No search active, ensure indicator is gone and reset
+                    activeFilterIndicator.visibility = View.GONE
+                    if (isSearchMode) {
+                        clearSearch()
+                    }
                 }
             }
         }
@@ -1298,17 +1371,37 @@ class VideoHomeFragment : Fragment() {
 
             // Ocultar barra de búsqueda y mostrar botones normales
             searchBarContainer.visibility = View.GONE
-            // topNavTabs.visibility = View.VISIBLE
+            centerPillContainer.visibility = View.VISIBLE
             hideKeyboard(searchEditText)
+            
+            // Ensure indicator is gone (since we cleared or it was empty)
+            activeFilterIndicator.visibility = View.GONE
             if (isSearchMode) {
                 clearSearch()
             }
+        }
+        
+        // Clear Active Filter Button (The 'X' on the minimalist indicator)
+        clearActiveFilterButton?.setOnClickListener {
+            // Animate removal
+            val container = view.findViewById<ViewGroup>(R.id.topNavContainer)
+            val transition = androidx.transition.TransitionSet()
+                .addTransition(androidx.transition.Fade())
+                .addTransition(androidx.transition.ChangeBounds())
+                .setDuration(300)
+            androidx.transition.TransitionManager.beginDelayedTransition(container, transition)
+            
+            activeFilterIndicator.visibility = View.GONE
+            searchEditText.setText("") // Clear text
+            clearSearch() // Reset videos
         }
         
         // Search on Enter key
         searchEditText?.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 hideKeyboard(searchEditText)
+                // Minimize search bar (persist filter)
+                toggleSearchButton.performClick()
                 true
             } else {
                 false
@@ -1351,6 +1444,7 @@ class VideoHomeFragment : Fragment() {
         isSearchMode = true
         currentSearchQuery = query
         val lowerQuery = query.lowercase()
+        val usernameQuery = if (query.startsWith("@")) query.removePrefix("@").trim() else null
         
         // 1. Instant local filter for immediate feedback
         // Filter AND Sort by relevance: Exact > StartsWith > Contains
@@ -1358,8 +1452,8 @@ class VideoHomeFragment : Fragment() {
             "title" -> allVideosList.filter { 
                 it.title?.contains(query, ignoreCase = true) == true
             }
-            "username" -> allVideosList.filter { 
-                it.username?.contains(query, ignoreCase = true) == true
+            "username" -> allVideosList.filter {
+                it.username?.contains(query.removePrefix("@"), ignoreCase = true) == true
             }
             "category" -> allVideosList.filter { 
                 it.description?.contains(query, ignoreCase = true) == true
@@ -1399,13 +1493,44 @@ class VideoHomeFragment : Fragment() {
         // Note: This is called from a coroutine scope already
         try {
             Log.d("VideoHomeFragment", "Searching remote videos: query='$query', type='$currentSearchType'")
-            
-            // We need to run this in IO context, but we are already in a launch block from filterVideos
-            // However, we should ensure we don't block the main thread if called directly
+
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    val results = syncRepository.searchVideos(query, currentSearchType, 50)
-                    
+                    // Decide remote strategy: if explicit username filter OR query looks like a username
+                    val explicitUsername = currentSearchType == "username"
+                    val looksLikeUsername = query.startsWith("@") || (!query.contains(" ") && query.length <= 40)
+
+                    val usernameTerm = query.removePrefix("@").trim()
+
+                    val resultsByUsername: List<com.example.tareamov.data.entity.VideoData> = if (explicitUsername || looksLikeUsername) {
+                        try {
+                            syncRepository.fetchVideosByUsernameFromSupabase(usernameTerm)
+                        } catch (e: Exception) {
+                            Log.w("VideoHomeFragment", "SyncRepository fetch by username failed, falling back to SupabaseClient: ${e.message}")
+                            try {
+                                com.example.tareamov.service.SupabaseClient.fetchVideosByUsername(usernameTerm)
+                            } catch (e2: Exception) {
+                                Log.e("VideoHomeFragment", "SupabaseClient.fetchVideosByUsername failed", e2)
+                                emptyList()
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
+
+                    val resultsFallback: List<com.example.tareamov.data.entity.VideoData> = try {
+                        syncRepository.searchVideos(query, currentSearchType, 50)
+                    } catch (e: Exception) {
+                        Log.e("VideoHomeFragment", "Remote search via SyncRepository failed", e)
+                        emptyList()
+                    }
+
+                    // Merge results: username results first, then other results, deduplicated by id
+                    val merged = LinkedHashMap<Long, com.example.tareamov.data.entity.VideoData>()
+                    for (v in resultsByUsername) merged[v.id] = v
+                    for (v in resultsFallback) merged.putIfAbsent(v.id, v)
+                    val results = merged.values.toList()
+
                     withContext(Dispatchers.Main) {
                         // Only update if the query hasn't changed since we started
                         if (currentSearchQuery == query) {
@@ -1414,15 +1539,15 @@ class VideoHomeFragment : Fragment() {
                                 videoList.clear()
                                 videoList.addAll(results)
                                 // Use updateVideos to ensure adapter refreshes correctly with a new list reference
-                                videoAdapter.updateVideos(videoList.toList())
+                                if (::videoAdapter.isInitialized) {
+                                    videoAdapter.updateVideos(videoList.toList())
+                                }
                                 view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.currentItem = 0
                                 Log.d("VideoHomeFragment", "Updated with ${results.size} remote results")
                             } else {
-                                // If no remote results, keep local results or show empty state?
-                                // For now, we keep local results if any, or empty if none.
-                                Log.d("VideoHomeFragment", "No remote results found")
-                                if (videoList.isEmpty()) {
-                                    // If local was empty and remote is empty, ensure adapter knows
+                                Log.d("VideoHomeFragment", "No remote results found for query='$query' type='$currentSearchType'")
+                                // If no remote results and local list is empty, clear adapter
+                                if (videoList.isEmpty() && ::videoAdapter.isInitialized) {
                                     videoAdapter.updateVideos(emptyList())
                                 }
                             }
@@ -1595,10 +1720,75 @@ class VideoHomeFragment : Fragment() {
         val skeletonContainer = dialogView.findViewById<LinearLayout>(R.id.skeletonContainer)
         val currentUserAvatar = dialogView.findViewById<de.hdodenhof.circleimageview.CircleImageView>(R.id.currentUserAvatar)
         
+        // Replying UI elements
+        val replyingToBanner = dialogView.findViewById<LinearLayout>(R.id.replyingToBanner)
+        val replyingToText = dialogView.findViewById<TextView>(R.id.replyingToText)
+        val cancelReplyButton = dialogView.findViewById<ImageView>(R.id.cancelReplyButton)
+        
+        // State for replying
+        var replyingToUsername: String? = null
+        var replyingToCommentId: Long? = null
+        
         titleText?.text = "Comentarios"
         
+        // Cancel reply logic
+        cancelReplyButton?.setOnClickListener {
+            replyingToUsername = null
+            replyingToCommentId = null
+            replyingToBanner?.visibility = View.GONE
+            commentInput?.hint = "Agrega un comentario..."
+        }
+        
         // Setup RecyclerView
-        val commentsAdapter = CommentsAdapter()
+        val commentsAdapter = CommentsAdapter(
+            onReplyClick = { comment ->
+                // Handle reply logic:
+                // If the comment is already a reply (has parentId), we reply to the parent (flattened structure).
+                // If it's a top-level comment, we reply to it directly.
+                val targetParentId = if (comment.parentId != null && comment.parentId != 0L) {
+                    comment.parentId
+                } else {
+                    comment.id
+                }
+                
+                replyingToCommentId = targetParentId
+                
+                // Fetch username asynchronously
+                lifecycleScope.launch {
+                    val db = AppDatabase.getDatabase(context)
+                    val user = db.usuarioDao().getUsuarioById(comment.usuarioId)
+                    val username = user?.usuario ?: "Usuario"
+                    
+                    replyingToUsername = username
+                    replyingToBanner?.visibility = View.VISIBLE
+                    replyingToText?.text = "Respondiendo a $username"
+                    
+                    commentInput?.hint = "Responder a $username..."
+                    commentInput?.requestFocus()
+                    showKeyboard(commentInput!!)
+                }
+            },
+            onLikeClick = { comment ->
+                lifecycleScope.launch {
+                    val userId = getCurrentUserId()
+                    if (userId > 0) {
+                        // Optimistic UI update already happened in Adapter
+                        // Now sync with backend
+                        syncRepository.likeVideoComment(comment.id, comment.videoId, userId, comment.usuarioId)
+                    } else {
+                        Toast.makeText(context, "Debes iniciar sesión", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            onProfileClick = { username ->
+                // Dismiss dialog and navigate to user profile
+                bottomSheetDialog.dismiss()
+                val bundle = Bundle().apply {
+                    putString("username", username)
+                }
+                findNavController().navigate(R.id.userProfileViewFragment, bundle)
+            }
+        )
         commentsRecyclerView?.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(context)
         commentsRecyclerView?.adapter = commentsAdapter
         
@@ -1637,26 +1827,6 @@ class VideoHomeFragment : Fragment() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
-
-        // Setup Emoji Click Listeners
-        val emojiContainer = dialogView.findViewById<android.widget.HorizontalScrollView>(R.id.emojiScrollView)
-        if (emojiContainer != null) {
-            val linearLayout = emojiContainer.getChildAt(0) as? android.widget.LinearLayout
-            if (linearLayout != null) {
-                for (i in 0 until linearLayout.childCount) {
-                    val child = linearLayout.getChildAt(i)
-                    if (child is TextView) {
-                        child.setOnClickListener {
-                            val emoji = child.text.toString()
-                            val start = commentInput?.selectionStart ?: 0
-                            val end = commentInput?.selectionEnd ?: 0
-                            commentInput?.text?.replace(start, end, emoji)
-                            commentInput?.setSelection(start + emoji.length)
-                        }
-                    }
-                }
-            }
-        }
         
         // Load comments with delay to show skeleton animation
         lifecycleScope.launch {
@@ -1692,9 +1862,24 @@ class VideoHomeFragment : Fragment() {
                     try {
                         val userId = getCurrentUserId()
                         if (userId > 0) {
-                            val commentId = syncRepository.addVideoComment(videoData.id, userId, commentText)
+                            // Logic to handle reply vs top-level comment
+                            // If replyingToUsername is set, we might want to prepend @username or handle parentId if DB supports it
+                            // For now, prepending @username if not present is a good visual fallback
+                            val finalCommentText = if (replyingToUsername != null && !commentText.startsWith("@$replyingToUsername")) {
+                                "@$replyingToUsername $commentText"
+                            } else {
+                                commentText
+                            }
+                            
+                            val commentId = syncRepository.addVideoComment(videoData.id, userId, finalCommentText, replyingToCommentId)
                             if (commentId != null) {
                                 commentInput.setText("")
+                                // Reset reply state
+                                replyingToUsername = null
+                                replyingToCommentId = null
+                                replyingToBanner?.visibility = View.GONE
+                                commentInput.hint = "Agrega un comentario..."
+                                
                                 // Reload comments
                                 val comments = syncRepository.getVideoComments(videoData.id)
                                 emptyText?.visibility = View.GONE
@@ -1723,11 +1908,29 @@ class VideoHomeFragment : Fragment() {
     /**
      * Simple adapter for comments
      */
-    inner class CommentsAdapter : RecyclerView.Adapter<CommentsAdapter.CommentViewHolder>() {
-        private var comments: List<com.example.tareamov.data.entity.VideoComment> = emptyList()
+    inner class CommentsAdapter(
+        private val onReplyClick: (com.example.tareamov.data.entity.VideoComment) -> Unit,
+        private val onLikeClick: (com.example.tareamov.data.entity.VideoComment) -> Unit,
+        private val onProfileClick: (String) -> Unit // New callback for profile navigation
+    ) : RecyclerView.Adapter<CommentsAdapter.CommentViewHolder>() {
+        private var allComments: List<com.example.tareamov.data.entity.VideoComment> = emptyList()
+        private var topLevelComments: List<com.example.tareamov.data.entity.VideoComment> = emptyList()
+        private var repliesMap: Map<Long, List<com.example.tareamov.data.entity.VideoComment>> = emptyMap()
+        
+        // Map to track local like state: commentId -> isLiked
+        private val likedComments = mutableMapOf<Long, Boolean>()
+        // Map to track local like count: commentId -> count
+        private val likeCounts = mutableMapOf<Long, Int>()
+        // Map to track expanded replies state
+        private val expandedReplies = mutableMapOf<Long, Boolean>()
         
         fun submitList(newComments: List<com.example.tareamov.data.entity.VideoComment>) {
-            comments = newComments
+            allComments = newComments
+            // Separate top-level comments (parentId is null or 0) from replies
+            topLevelComments = allComments.filter { it.parentId == null || it.parentId == 0L }
+            repliesMap = allComments.filter { it.parentId != null && it.parentId != 0L }
+                .groupBy { it.parentId!! }
+            
             notifyDataSetChanged()
         }
         
@@ -1738,10 +1941,12 @@ class VideoHomeFragment : Fragment() {
         }
         
         override fun onBindViewHolder(holder: CommentViewHolder, position: Int) {
-            holder.bind(comments[position])
+            val comment = topLevelComments[position]
+            val replies = repliesMap[comment.id] ?: emptyList()
+            holder.bind(comment, replies)
         }
         
-        override fun getItemCount() = comments.size
+        override fun getItemCount() = topLevelComments.size
         
         inner class CommentViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
             private val usernameText: TextView = itemView.findViewById(R.id.commentUsername)
@@ -1749,19 +1954,85 @@ class VideoHomeFragment : Fragment() {
             private val timestampText: TextView = itemView.findViewById(R.id.commentTimestamp)
             private val avatar: de.hdodenhof.circleimageview.CircleImageView = itemView.findViewById(R.id.commentAvatar)
             private val likeCount: TextView = itemView.findViewById(R.id.commentLikeCount)
+            private val replyButton: TextView = itemView.findViewById(R.id.replyButton)
+            private val likeIcon: ImageView = itemView.findViewById(R.id.commentLikeIcon)
             
-            fun bind(comment: com.example.tareamov.data.entity.VideoComment) {
+            // New UI elements for replies
+            private val repliesSection: LinearLayout = itemView.findViewById(R.id.repliesSection)
+            private val viewRepliesContainer: LinearLayout = itemView.findViewById(R.id.viewRepliesContainer)
+            private val viewRepliesText: TextView = itemView.findViewById(R.id.viewRepliesText)
+            private val repliesContainer: LinearLayout = itemView.findViewById(R.id.repliesContainer)
+            
+            fun bind(comment: com.example.tareamov.data.entity.VideoComment, replies: List<com.example.tareamov.data.entity.VideoComment>) {
                 commentText.text = comment.comment
                 // Simple timestamp formatting
                 timestampText.text = "Hace un momento" // Placeholder, ideally parse createdAt
-                likeCount.text = (0..10).random().toString() // Mock like count for visual fidelity
+                
+                // Initialize local state if not present
+                if (!likeCounts.containsKey(comment.id)) {
+                    // Fetch real count asynchronously
+                    likeCounts[comment.id] = 0 // Placeholder
+                    lifecycleScope.launch {
+                        val count = syncRepository.getCommentLikeCount(comment.id)
+                        likeCounts[comment.id] = count
+                        // Only update if visible/bound
+                        if (comment.id == topLevelComments.getOrNull(adapterPosition)?.id) {
+                            likeCount.text = count.toString()
+                        }
+                    }
+                }
+                
+                if (!likedComments.containsKey(comment.id)) {
+                    likedComments[comment.id] = false
+                    lifecycleScope.launch {
+                        val userId = getCurrentUserId()
+                        if (userId > 0) {
+                            val liked = syncRepository.hasUserLikedComment(comment.id, userId)
+                            likedComments[comment.id] = liked
+                            // Only update if visible
+                             if (comment.id == topLevelComments.getOrNull(adapterPosition)?.id) {
+                                if (liked) {
+                                    likeIcon.setColorFilter(android.graphics.Color.RED)
+                                    likeIcon.setImageResource(R.drawable.ic_heart_filled)
+                                } else {
+                                    likeIcon.setColorFilter(android.graphics.Color.parseColor("#888888"))
+                                    likeIcon.setImageResource(R.drawable.ic_heart_outline)
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                val currentCount = likeCounts[comment.id] ?: 0
+                val isLiked = likedComments[comment.id] ?: false
+                
+                likeCount.text = currentCount.toString()
+                
+                if (isLiked) {
+                    likeIcon.setColorFilter(android.graphics.Color.RED)
+                    likeIcon.setImageResource(R.drawable.ic_heart_filled)
+                } else {
+                    likeIcon.setColorFilter(android.graphics.Color.parseColor("#888888"))
+                    likeIcon.setImageResource(R.drawable.ic_heart_outline)
+                }
                 
                 // Load username and avatar
                 lifecycleScope.launch {
                     try {
                         val db = AppDatabase.getDatabase(itemView.context)
                         val user = db.usuarioDao().getUsuarioById(comment.usuarioId)
-                        usernameText.text = user?.usuario ?: "Usuario"
+                        val username = user?.usuario ?: "Usuario"
+                        usernameText.text = username
+                        
+                        // Setup reply click
+                        replyButton.setOnClickListener {
+                            onReplyClick(comment)
+                        }
+
+                        // Setup profile navigation on username click
+                        usernameText.setOnClickListener {
+                            onProfileClick(username)
+                        }
                         
                         if (user != null && !user.avatar.isNullOrEmpty()) {
                              com.bumptech.glide.Glide.with(itemView.context)
@@ -1771,12 +2042,189 @@ class VideoHomeFragment : Fragment() {
                         } else {
                             avatar.setImageResource(R.drawable.ic_profile)
                         }
+
+                        // Setup profile navigation on avatar click
+                        avatar.setOnClickListener {
+                            onProfileClick(username)
+                        }
+
                     } catch (e: Exception) {
                         usernameText.text = "Usuario"
                         avatar.setImageResource(R.drawable.ic_profile)
+                        replyButton.setOnClickListener { onReplyClick(comment) }
                     }
                 }
+                
+                // Handle Like Click directly on the icon or find parent safely
+                likeIcon.setOnClickListener {
+                    val newLikedState = !isLiked
+                    likedComments[comment.id] = newLikedState
+                    
+                    val newCount = if (newLikedState) currentCount + 1 else maxOf(0, currentCount - 1)
+                    likeCounts[comment.id] = newCount
+                    
+                    // Update UI immediately
+                    likeCount.text = newCount.toString()
+                    if (newLikedState) {
+                        likeIcon.setColorFilter(android.graphics.Color.RED)
+                        likeIcon.setImageResource(R.drawable.ic_heart_filled)
+                    } else {
+                        likeIcon.setColorFilter(android.graphics.Color.parseColor("#888888"))
+                        likeIcon.setImageResource(R.drawable.ic_heart_outline)
+                    }
+                    
+                    // Notify parent
+                    if (newLikedState) {
+                        onLikeClick(comment)
+                    }
+                }
+                
+                // --- Replies Logic ---
+                repliesContainer.removeAllViews() // Clear previous views
+                
+                if (replies.isNotEmpty()) {
+                    repliesSection.visibility = View.VISIBLE
+                    
+                    val isExpanded = expandedReplies[comment.id] ?: false
+                    
+                    if (isExpanded) {
+                        viewRepliesText.text = "Ocultar respuestas"
+                        repliesContainer.visibility = View.VISIBLE
+                        addRealReplies(replies)
+                    } else {
+                        viewRepliesText.text = "Ver ${replies.size} respuestas más"
+                        repliesContainer.visibility = View.GONE
+                    }
+                    
+                    viewRepliesContainer.setOnClickListener {
+                        val newState = !isExpanded
+                        expandedReplies[comment.id] = newState
+                        // Refresh just this item to update view
+                        notifyItemChanged(adapterPosition)
+                    }
+                } else {
+                    repliesSection.visibility = View.GONE
+                }
             }
+
+            private fun addRealReplies(replies: List<com.example.tareamov.data.entity.VideoComment>) {
+                val context = itemView.context
+                val inflater = LayoutInflater.from(context)
+                
+                for (reply in replies) {
+                    val replyView = inflater.inflate(R.layout.item_comment, repliesContainer, false)
+                    
+                    // Adjust padding/layout for nested reply to look like the image (indentation)
+                    // But since we are adding it to a container that is already indented by layout_marginStart in XML, 
+                    // we might need to adjust or just let it be.
+                    // The 'repliesContainer' is inside a vertical LinearLayout which is inside the main LinearLayout.
+                    // Let's check item_comment.xml again. 
+                    // repliesSection is inside the main text container (layout_weight=1).
+                    // So it is already indented relative to the main avatar.
+                    
+                    // However, we want the reply to look like a full comment row but smaller or indented?
+                    // The provided image shows replies aligned with the text of the parent.
+                    // Since 'repliesContainer' is inside the text column, it aligns with text.
+                    // But 'item_comment' has its own avatar and padding.
+                    // We might need to reduce padding for nested items or scale down avatar.
+                    
+                    val avatar = replyView.findViewById<de.hdodenhof.circleimageview.CircleImageView>(R.id.commentAvatar)
+                    val usernameText = replyView.findViewById<TextView>(R.id.commentUsername)
+                    val commentText = replyView.findViewById<TextView>(R.id.commentText)
+                    val timestampText = replyView.findViewById<TextView>(R.id.commentTimestamp)
+                    val likeCount = replyView.findViewById<TextView>(R.id.commentLikeCount)
+                    val replyButton = replyView.findViewById<TextView>(R.id.replyButton)
+                    val likeIcon = replyView.findViewById<ImageView>(R.id.commentLikeIcon)
+                    val nestedRepliesSection = replyView.findViewById<View>(R.id.repliesSection) // Should be hidden
+                    
+                    // Hide nested replies section for replies (1 level depth only)
+                    nestedRepliesSection.visibility = View.GONE
+                    
+                    // Scale down avatar for replies
+                    val params = avatar.layoutParams
+                    params.width = (30 * context.resources.displayMetrics.density).toInt()
+                    params.height = (30 * context.resources.displayMetrics.density).toInt()
+                    avatar.layoutParams = params
+                    
+                    // Bind data
+                    commentText.text = reply.comment
+                    timestampText.text = "Hace un momento"
+                    
+                    // Local state for reply likes
+                     if (!likeCounts.containsKey(reply.id)) {
+                        likeCounts[reply.id] = 0
+                    }
+                    if (!likedComments.containsKey(reply.id)) {
+                        likedComments[reply.id] = false
+                    }
+                    
+                    val currentCount = likeCounts[reply.id] ?: 0
+                    val isLiked = likedComments[reply.id] ?: false
+                    
+                    likeCount.text = currentCount.toString()
+                    
+                    if (isLiked) {
+                        likeIcon.setColorFilter(android.graphics.Color.RED)
+                        likeIcon.setImageResource(R.drawable.ic_heart_filled)
+                    } else {
+                        likeIcon.setColorFilter(android.graphics.Color.parseColor("#888888"))
+                        likeIcon.setImageResource(R.drawable.ic_heart_outline)
+                    }
+                    
+                    // Async load user
+                    lifecycleScope.launch {
+                        try {
+                            val db = AppDatabase.getDatabase(context)
+                            val user = db.usuarioDao().getUsuarioById(reply.usuarioId)
+                            val username = user?.usuario ?: "Usuario"
+                            usernameText.text = username
+                            
+                             if (user != null && !user.avatar.isNullOrEmpty()) {
+                                 com.bumptech.glide.Glide.with(context)
+                                    .load(user.avatar)
+                                    .placeholder(R.drawable.ic_profile)
+                                    .into(avatar)
+                            } else {
+                                avatar.setImageResource(R.drawable.ic_profile)
+                            }
+                            
+                            // Navigations
+                            usernameText.setOnClickListener { onProfileClick(username) }
+                            avatar.setOnClickListener { onProfileClick(username) }
+                            
+                        } catch (e: Exception) {
+                            usernameText.text = "Usuario"
+                        }
+                    }
+                    
+                    // Actions
+                    replyButton.setOnClickListener { onReplyClick(reply) }
+                    
+                    likeIcon.setOnClickListener {
+                        val newLikedState = !isLiked
+                        likedComments[reply.id] = newLikedState
+                        val newCount = if (newLikedState) currentCount + 1 else maxOf(0, currentCount - 1)
+                        likeCounts[reply.id] = newCount
+                        
+                        likeCount.text = newCount.toString()
+                         if (newLikedState) {
+                            likeIcon.setColorFilter(android.graphics.Color.RED)
+                            likeIcon.setImageResource(R.drawable.ic_heart_filled)
+                        } else {
+                            likeIcon.setColorFilter(android.graphics.Color.parseColor("#888888"))
+                            likeIcon.setImageResource(R.drawable.ic_heart_outline)
+                        }
+                        onLikeClick(reply)
+                    }
+                    
+                    repliesContainer.addView(replyView)
+                }
+            }
+            
+            // Function ready for when we have real reply data
+            // private fun addRealReplies(replies: List<com.example.tareamov.data.entity.VideoComment>) {
+            //    // Method removed to avoid duplicate definition
+            // }
         }
     }
 }

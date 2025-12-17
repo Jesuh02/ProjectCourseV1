@@ -1010,6 +1010,22 @@ class ChatBotFragment : Fragment() {
                         append("\n\n⚠️ NOTA IMPORTANTE: El contenido del archivo del estudiante NO está disponible para análisis detallado.")
                         append("\n   El sistema solo puede proporcionar información basada en la descripción de la tarea y el resumen.")
                     }
+
+                    // 🔥 LOGIC TO CONTROL GRADING VS Q&A
+                    val lowerMessage = messageText.lowercase()
+                    val isGradingRequest = lowerMessage.contains("calific") || 
+                                           lowerMessage.contains("nota") || 
+                                           lowerMessage.contains("evalu") || 
+                                           lowerMessage.contains("puntaje") ||
+                                           lowerMessage.contains("grade") ||
+                                           lowerMessage.contains("score") ||
+                                           lowerMessage.contains("rate")
+
+                    if (isGradingRequest) {
+                            append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
+                        } else {
+                            append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
+                        }
                 }
                 
                 // También cargar jsonContent y metadata si están disponibles
@@ -1034,6 +1050,22 @@ class ChatBotFragment : Fragment() {
                     }
                     // Indicar que no hay archivo del estudiante disponible
                     append("\n⚠️ NOTA: No se encontró archivo del estudiante para esta tarea")
+
+                    // 🔥 LOGIC TO CONTROL GRADING VS Q&A
+                    val lowerMessage = messageText.lowercase()
+                    val isGradingRequest = lowerMessage.contains("calific") || 
+                                           lowerMessage.contains("nota") || 
+                                           lowerMessage.contains("evalu") || 
+                                           lowerMessage.contains("puntaje") ||
+                                           lowerMessage.contains("grade") ||
+                                           lowerMessage.contains("score") ||
+                                           lowerMessage.contains("rate")
+
+                    if (isGradingRequest) {
+                        append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
+                    } else {
+                        append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
+                    }
                 }
                 
                 Log.d("ChatBotFragment", "✅ taskDescription construido: ${effectiveTaskDescription.length} caracteres")
@@ -1119,6 +1151,22 @@ class ChatBotFragment : Fragment() {
                                                 if (fc.fileContent.isBlank()) {
                                                     append("\n⚠️ NOTA: El contenido del archivo no está disponible para análisis detallado")
                                                 }
+
+                                                // 🔥 LOGIC TO CONTROL GRADING VS Q&A
+                                                val lowerMessage = messageText.lowercase()
+                                                val isGradingRequest = lowerMessage.contains("calific") || 
+                                                                       lowerMessage.contains("nota") || 
+                                                                       lowerMessage.contains("evalu") || 
+                                                                       lowerMessage.contains("puntaje") ||
+                                                                       lowerMessage.contains("grade") ||
+                                                                       lowerMessage.contains("score") ||
+                                                                       lowerMessage.contains("rate")
+
+                                                if (isGradingRequest) {
+                                                    append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
+                                                } else {
+                                                    append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
+                                                }
                                             }
                                             Log.d("ChatBotFragment", "📄 Contexto de archivo cargado para tarea seleccionada: ${fc.fileName}")
                                             Log.d("ChatBotFragment", "📋 effectiveTaskDescription: ${effectiveTaskDescription.take(300)}...")
@@ -1160,6 +1208,22 @@ class ChatBotFragment : Fragment() {
                             append("📋 TAREA: $taskTitle\n")
                             if (taskDescFromProf.isNotBlank()) {
                                 append("📝 DESCRIPCIÓN DEL PROFESOR:\n$taskDescFromProf\n")
+                            }
+
+                            // 🔥 LOGIC TO CONTROL GRADING VS Q&A
+                            val lowerMessage = messageText.lowercase()
+                            val isGradingRequest = lowerMessage.contains("calific") || 
+                                                   lowerMessage.contains("nota") || 
+                                                   lowerMessage.contains("evalu") || 
+                                                   lowerMessage.contains("puntaje") ||
+                                                   lowerMessage.contains("grade") ||
+                                                   lowerMessage.contains("score") ||
+                                                   lowerMessage.contains("rate")
+
+                            if (isGradingRequest) {
+                                append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
+                            } else {
+                                append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
                             }
                         }
                         effectiveTaskDescription = baseTaskContext
@@ -1231,6 +1295,22 @@ class ChatBotFragment : Fragment() {
                                                 if (!currentFc.contentSummary.isNullOrBlank() && currentFc.contentSummary != taskDescFromProf) {
                                                     append("\n📄 RESUMEN DEL CONTENIDO:\n${currentFc.contentSummary}")
                                                 }
+                                                
+                                                // 🔥 LOGIC TO CONTROL GRADING VS Q&A
+                                                val lowerMessage = messageText.lowercase()
+                                                val isGradingRequest = lowerMessage.contains("calific") || 
+                                                                       lowerMessage.contains("nota") || 
+                                                                       lowerMessage.contains("evalu") || 
+                                                                       lowerMessage.contains("puntaje") ||
+                                                                       lowerMessage.contains("grade") ||
+                                                                       lowerMessage.contains("score") ||
+                                                                       lowerMessage.contains("rate")
+
+                                                if (isGradingRequest) {
+                                                    append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
+                                                } else {
+                                                    append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
+                                                }
                                             }
                                             currentFileContext = currentFc
                                             Log.d("ChatBotFragment", "✅ FileContext cargado con contexto completo para #$idx")
@@ -1280,6 +1360,22 @@ class ChatBotFragment : Fragment() {
                         append("📋 TAREA: $taskTitle\n")
                         if (taskDescFromProf.isNotBlank()) {
                             append("📝 DESCRIPCIÓN DEL PROFESOR:\n$taskDescFromProf\n")
+                        }
+                        
+                        // 🔥 LOGIC TO CONTROL GRADING VS Q&A
+                        val lowerMessage = messageText.lowercase()
+                        val isGradingRequest = lowerMessage.contains("calific") || 
+                                               lowerMessage.contains("nota") || 
+                                               lowerMessage.contains("evalu") || 
+                                               lowerMessage.contains("puntaje") ||
+                                               lowerMessage.contains("grade") ||
+                                               lowerMessage.contains("score") ||
+                                               lowerMessage.contains("rate")
+
+                        if (isGradingRequest) {
+                            append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
+                        } else {
+                            append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
                         }
                     }
                     
@@ -1695,6 +1791,15 @@ El archivo enviado está vacío o no se pudo leer su contenido.
      * Extrae la calificación numérica para el campo gradeEditText (solo el número)
      */
     private fun extractGradeFromMessage(message: String): String? {
+        // 🔥 VALIDACIÓN CRÍTICA: Si el mensaje contiene explícitamente "NO proporciones una calificación numérica"
+        // o indicadores de modo consulta, IGNORAR cualquier número que parezca una nota.
+        if (message.contains("NO proporciones una calificación numérica", ignoreCase = true) ||
+            message.contains("MODO CONSULTA", ignoreCase = true) ||
+            message.contains("📊 **CALIFICACIÓN ACTUAL: 0/10**", ignoreCase = true) && message.contains("TEMA ENTREGADO: Archivo no recuperable", ignoreCase = true)) {
+            Log.d("ChatBotFragment", "🚫 Modo consulta o error de archivo detectado, ignorando extracción de nota.")
+            return null
+        }
+
         // Buscar patrones para extraer solo el número de la calificación
         val patterns = listOf(
             "calificación:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE),
@@ -1912,11 +2017,28 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                                     // Obtener información de la tarea para logging
                                     val task = database.taskDao().getTaskById(taskSubmission.taskId)
-                                    val taskName = task?.name ?: "Tarea desconocida"
+                                    var taskName = task?.name
+                                    
+                                    if (taskName == null) {
+                                        val supabaseClient = com.example.tareamov.service.SupabaseClient
+                                        if (supabaseClient.isConfigured()) {
+                                            try {
+                                                val remoteTask = withContext(Dispatchers.IO) {
+                                                    supabaseClient.fetchTaskById(taskSubmission.taskId)
+                                                }
+                                                taskName = remoteTask?.name
+                                                Log.d("ChatBotFragment", "✅ Nombre de tarea recuperado de Supabase: $taskName")
+                                            } catch (e: Exception) {
+                                                Log.w("ChatBotFragment", "Error fetching task name from Supabase: ${e.message}")
+                                            }
+                                        }
+                                    }
+                                    
+                                    val effectiveTaskName = taskName ?: "Tarea desconocida"
 
                                     Log.d("ChatBotFragment", "✅ TaskSubmission actualizada (local/remote seguirá):")
                                     Log.d("ChatBotFragment", "   - ID: $targetSubmissionId")
-                                    Log.d("ChatBotFragment", "   - Tarea: $taskName")
+                                    Log.d("ChatBotFragment", "   - Tarea: $effectiveTaskName")
                                     val studentName = try {
                                         database.usuarioDao().getUsuarioById(taskSubmission.studentId)?.usuario ?: taskSubmission.studentId.toString()
                                     } catch (e: Exception) {
@@ -1938,7 +2060,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                             
                                             notifyStudentAboutGrade(
                                                 studentId = taskSubmission.studentId,
-                                                taskName = taskName,
+                                                taskName = effectiveTaskName,
                                                 grade = gradeFloat,
                                                 feedback = feedback,
                                                 gradedByUsername = graderUsername
@@ -2654,20 +2776,30 @@ El archivo enviado está vacío o no se pudo leer su contenido.
     private suspend fun loadSubmissionsForCourse(courseId: Long): List<TaskItem> {
         return withContext(Dispatchers.IO) {
             try {
-                // Fetch ALL submissions for the course (not just graded ones)
-                val submissions = syncRepository.fetchAllSubmissionsForCourse(courseId)
+                // Fetch ALL submissions for the course using the new method with usernames
+                // The method returns List<Map<String, Any?>> which is compatible
+                val submissions = syncRepository.fetchCourseSubmissionsWithUsernames(courseId)
                 
                 Log.d("ChatBotFragment", "Loaded ${submissions.size} submissions for course $courseId")
                 
                 // Group submissions by student and sort by username
+                // The 'student_username' key is now directly available from the JOIN query
                 val submissionsByStudent = submissions
-                    .groupBy { it["student_username"] as? String ?: "Unknown" }
+                    .groupBy { 
+                         // Use 'student_username' from the query result (from LEFT JOIN usuarios)
+                         // Fallback to "Unknown" if null
+                         (it["student_username"] as? String) ?: "Unknown"
+                    }
                     .toSortedMap(String.CASE_INSENSITIVE_ORDER)
                 
                 val taskItems = mutableListOf<TaskItem>()
                 var index = 1
                 
-                for ((username, studentSubmissions) in submissionsByStudent) {
+                // Explicitly iterate over entries to avoid inference issues
+                for (entry in submissionsByStudent.entries) {
+                    val username = entry.key
+                    val studentSubmissions = entry.value
+                    
                     // Calculate student average for context
                     val progressManager = com.example.tareamov.util.StudentProgressManager(requireContext())
                     val avgGrade = try {
@@ -2682,7 +2814,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     for (sub in studentSubmissions) {
                         val taskTitle = sub["task_title"] as? String ?: "Tarea sin título"
                         val grade = (sub["grade"] as? Number)?.toFloat() ?: 0f
-                        val submissionDate = sub["submission_date"] as? Long
+                        // submission_date can be Long or String depending on source
+                        val submissionDate = sub["submission_date"]
                         
                         // Format grade info
                         val gradeInfo = if (grade > 0) {
@@ -2697,7 +2830,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 taskId = (sub["task_id"] as? Number)?.toLong() ?: 0L,
                                 taskName = taskTitle,
                                 taskDescription = "$gradeInfo • Promedio: $formattedAvg",
-                                topicName = "Entrega", // Changed from username
+                                topicName = username, // Use the resolved username here for display in overlay
                                 index = index++,
                                 studentUsername = username,
                                 averageGrade = formattedAvg
@@ -3330,11 +3463,11 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 val remoteSubmission = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissions().firstOrNull { it.id == submissionId } }
                                 if (remoteSubmission != null) {
                                     val remoteTask = withContext(Dispatchers.IO) { supabaseClient.fetchTaskById(remoteSubmission.taskId) }
-                                    val remoteTopic = if (remoteTask?.topicId != null) withContext(Dispatchers.IO) { supabaseClient.fetchTopics().firstOrNull { it.id == remoteTask.topicId } } else null
-                                    val remoteCourse = if (remoteTopic?.courseId != null) withContext(Dispatchers.IO) { supabaseClient.fetchCourseById(remoteTopic.courseId) } else null
+                                    val remoteTopic = if (remoteTask != null) withContext(Dispatchers.IO) { supabaseClient.fetchTopics().firstOrNull { it.id == remoteTask.topicId } } else null
+                                    val remoteCourse = if (remoteTopic != null) withContext(Dispatchers.IO) { supabaseClient.fetchCourseById(remoteTopic.courseId) } else null
 
                                     if (remoteTask != null && remoteTopic != null && remoteCourse != null) {
-                                        taskName = remoteTask.name ?: ""
+                                        taskName = remoteTask.name
                                         taskDescription = remoteTask.description ?: "Sin descripción"
                                         topicName = remoteTopic.name ?: ""
                                         courseTitle = remoteCourse.title ?: ""

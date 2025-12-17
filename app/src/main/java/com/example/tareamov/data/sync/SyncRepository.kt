@@ -31,6 +31,7 @@ import com.example.tareamov.data.entity.RolRecurso
 import com.example.tareamov.data.entity.VideoLike
 import com.example.tareamov.data.entity.UserVideoLike
 import com.example.tareamov.data.entity.VideoComment
+import com.example.tareamov.data.entity.Notification
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -117,12 +118,16 @@ class SyncRepository(
     }
 
     suspend fun isUserAdmin(userId: Long): Boolean {
-        // Check local first (legacy column)
-        val user = usuarioDao.getUsuarioById(userId)
-        if (user != null && user.rol_id == 3L) return true
-        
-        // Check remote (both primary column and join table)
-        return hasUserRole(userId, 3L)
+        // User requirement: Check ONLY usuarios_roles table for role 3 (Admin)
+        // Ignoring local legacy column and remote legacy column as per instruction.
+        return try {
+            val sql = "SELECT 1 FROM usuarios_roles WHERE usuario_id = $userId AND rol_id = 3"
+            val res = supabaseRepo.executeRawQuery(sql)
+            res.isNotEmpty()
+        } catch (e: Exception) {
+            android.util.Log.e("SyncRepository", "Error checking admin role for user $userId", e)
+            false
+        }
     }
 
     /**
@@ -294,7 +299,7 @@ class SyncRepository(
      * Ensures that a user who created a course has the 'Creator' role (ID 2).
      * This updates both the 'usuarios_roles' table and the 'usuarios' table (if applicable).
      */
-    private suspend fun ensureCreatorRole(userId: Long) {
+    suspend fun ensureCreatorRole(userId: Long) {
         try {
             if (userId <= 0) return
 
@@ -696,12 +701,12 @@ class SyncRepository(
     }
 
     // Fetch single task by id from Supabase
-    suspend fun fetchTaskByIdFromSupabase(id: Long): Task? {
+    suspend fun fetchTaskByIdFromSupabase(taskId: Long): Task? {
         return try {
             if (!supabaseClient.isConfigured()) return null
-            withContext(Dispatchers.IO) { supabaseClient.fetchTaskById(id) }
+            withContext(Dispatchers.IO) { supabaseClient.fetchTaskById(taskId) }
         } catch (e: Exception) {
-            Log.w("SyncRepository", "fetchTaskByIdFromSupabase failed for id=$id", e)
+            Log.w("SyncRepository", "fetchTaskByIdFromSupabase failed for id=$taskId", e)
             null
         }
     }
@@ -2540,8 +2545,82 @@ class SyncRepository(
     }
     
     // Fetch ALL submissions for a course (both graded and ungraded)
-    suspend fun fetchAllSubmissionsForCourse(courseId: Long): List<Map<String, Any>> {
-        return supabaseClient.fetchAllSubmissionsForCourse(courseId)
+    // REMOVED: conflicting overload. Use the one with fetchCourseSubmissionsWithUsernames logic instead.
+    // suspend fun fetchAllSubmissionsForCourse(courseId: Long): List<Map<String, Any>> {
+    //    return supabaseClient.fetchAllSubmissionsForCourse(courseId)
+    // }
+
+    suspend fun likeVideoComment(commentId: Long, videoId: Long, userId: Long, authorId: Long): Boolean {
+        return withContext(Dispatchers.IO) {
+             val repo = com.example.tareamov.data.repository.SupabaseRepository()
+             // This toggles the like in the DB and returns the new state (true=liked, false=unliked)
+             val isLiked = repo.likeVideoComment(commentId, userId)
+             
+             if (isLiked && authorId != userId) {
+                try {
+                    val localUser = usuarioDao.getUsuarioById(userId)
+                    val localVideo = videoDao.getVideoById(videoId)
+                    
+                    val notification = Notification(
+                        userId = authorId,
+                        type = Notification.TYPE_LIKE,
+                        title = "Me gusta en tu comentario",
+                        message = "${localUser?.usuario ?: "Alguien"} reaccionó a tu comentario",
+                        senderUsername = localUser?.usuario,
+                        senderAvatarUrl = localUser?.avatar,
+                        thumbnailUrl = localVideo?.thumbnailUri ?: localVideo?.videoUriString,
+                        relatedId = videoId
+                    )
+                    supabaseClient.insertNotification(notification)
+                } catch (e: Exception) {
+                    Log.e("SyncRepository", "Error sending like notification", e)
+                }
+             }
+             return@withContext isLiked
+        }
+    }
+    
+    suspend fun getCommentLikeCount(commentId: Long): Int {
+        return withContext(Dispatchers.IO) {
+             val repo = com.example.tareamov.data.repository.SupabaseRepository()
+             repo.getCommentLikeCount(commentId)
+        }
+    }
+    
+    suspend fun hasUserLikedComment(commentId: Long, userId: Long): Boolean {
+        return withContext(Dispatchers.IO) {
+             val repo = com.example.tareamov.data.repository.SupabaseRepository()
+             repo.hasUserLikedComment(commentId, userId)
+        }
+    }
+
+    /**
+     * Check if a user has a specific role (checks usuarios_roles table)
+     */
+    suspend fun hasUserRole(userId: Long, roleId: Int): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Use SupabaseClient to check raw SQL
+            val sql = "SELECT 1 FROM usuarios_roles WHERE usuario_id = $userId AND rol_id = $roleId"
+            val result = supabaseClient.executeRawQuery(sql)
+            return@withContext result.isNotEmpty()
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error checking user role $roleId", e)
+            false
+        }
+    }
+
+    /**
+     * Get all roles for a user
+     */
+    suspend fun getUserRoles(userId: Long): List<Int> = withContext(Dispatchers.IO) {
+        try {
+            val sql = "SELECT rol_id FROM usuarios_roles WHERE usuario_id = $userId"
+            val result = supabaseClient.executeRawQuery(sql)
+            return@withContext result.mapNotNull { (it["rol_id"] as? Number)?.toInt() }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error getting user roles", e)
+            emptyList()
+        }
     }
 
     // ========== VIDEO LIKES SYNC OPERATIONS ==========
@@ -2688,10 +2767,10 @@ class SyncRepository(
     /**
      * Add a comment to a video
      */
-    suspend fun addVideoComment(videoId: Long, usuarioId: Long, comment: String): Long? = withContext(Dispatchers.IO) {
+    suspend fun addVideoComment(videoId: Long, usuarioId: Long, comment: String, parentId: Long? = null): Long? = withContext(Dispatchers.IO) {
         try {
             // Ensure video exists locally to satisfy FK constraint
-            val localVideo = videoDao.getVideoById(videoId)
+            var localVideo = videoDao.getVideoById(videoId)
             if (localVideo == null) {
                 val remoteVideo = supabaseClient.fetchVideoById(videoId)
                 if (remoteVideo != null) {
@@ -2702,6 +2781,7 @@ class SyncRepository(
                         title = remoteVideo.title ?: "Untitled Video"
                     )
                     videoDao.insertVideo(safeVideo)
+                    localVideo = safeVideo
                 } else {
                     Log.e("SyncRepository", "Cannot add comment: Video $videoId not found locally or remotely")
                     return@withContext null
@@ -2709,11 +2789,12 @@ class SyncRepository(
             }
 
             // Ensure user exists locally to satisfy FK constraint
-            val localUser = usuarioDao.getUsuarioById(usuarioId)
+            var localUser = usuarioDao.getUsuarioById(usuarioId)
             if (localUser == null) {
                 val remoteUser = supabaseClient.fetchUsuarioById(usuarioId)
                 if (remoteUser != null) {
                     usuarioDao.insertUsuario(remoteUser)
+                    localUser = remoteUser
                 } else {
                     Log.e("SyncRepository", "Cannot add comment: User $usuarioId not found locally or remotely")
                     return@withContext null
@@ -2721,7 +2802,7 @@ class SyncRepository(
             }
 
             // Add to Supabase first
-            val remoteId = supabaseClient.addVideoComment(videoId, usuarioId, comment)
+            val remoteId = supabaseClient.addVideoComment(videoId, usuarioId, comment, parentId)
             
             if (remoteId != null) {
                 // Add to local with the remote ID
@@ -2729,9 +2810,60 @@ class SyncRepository(
                     id = remoteId,
                     videoId = videoId,
                     usuarioId = usuarioId,
-                    comment = comment
+                    comment = comment,
+                    parentId = parentId
                 )
                 videoCommentDao?.insertComment(localComment)
+
+                // --- NOTIFICATION LOGIC ---
+                try {
+                    // 1. Notify Video Owner
+                    if (localVideo != null && localVideo.username != null) {
+                        val ownerUsername = localVideo.username
+                        // Try local then remote
+                        val owner = usuarioDao.getUsuarioByUsername(ownerUsername) 
+                            ?: supabaseClient.fetchUsuarioByUsername(ownerUsername)
+                            
+                        if (owner != null && owner.id != usuarioId) {
+                            val notification = Notification(
+                                userId = owner.id,
+                                type = Notification.TYPE_COMMENT,
+                                title = "Nuevo comentario",
+                                message = "${localUser?.usuario ?: "Alguien"} comentó tu video",
+                                senderUsername = localUser?.usuario,
+                                senderAvatarUrl = localUser?.avatar,
+                                thumbnailUrl = localVideo.thumbnailUri ?: localVideo.videoUriString, // Use thumbnail or video URI for frame
+                                relatedId = videoId
+                            )
+                            supabaseClient.insertNotification(notification)
+                        }
+                    }
+
+                    // 2. Notify Mentions (@username)
+                    val mentions = Regex("@(\\w+)").findAll(comment).map { it.groupValues[1] }.toList()
+                    if (mentions.isNotEmpty()) {
+                        for (username in mentions) {
+                            val mentionedUser = usuarioDao.getUsuarioByUsername(username) 
+                                ?: supabaseClient.fetchUsuarioByUsername(username)
+                                
+                            if (mentionedUser != null && mentionedUser.id != usuarioId) {
+                                 val notification = Notification(
+                                     userId = mentionedUser.id,
+                                     type = Notification.TYPE_COMMENT, // Or create TYPE_MENTION if desired, reusing COMMENT for now
+                                     title = "Mención en comentario",
+                                     message = "${localUser?.usuario ?: "Alguien"} te mencionó en un comentario",
+                                     senderUsername = localUser?.usuario,
+                                     senderAvatarUrl = localUser?.avatar,
+                                     thumbnailUrl = localVideo?.thumbnailUri ?: localVideo?.videoUriString,
+                                     relatedId = videoId
+                                 )
+                                 supabaseClient.insertNotification(notification)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("SyncRepository", "Error sending comment notifications", e)
+                }
             }
             
             return@withContext remoteId
@@ -2898,6 +3030,58 @@ class SyncRepository(
     // Helper to get user by ID locally
     suspend fun getUsuarioByIdLocal(userId: Long): Usuario? {
         return usuarioDao.getUsuarioById(userId)
+    }
+
+    /**
+     * Fetch all submissions for a course including student usernames
+     * This uses a raw SQL query to join task_submissions, tasks, topics, and usuarios tables
+     */
+    suspend fun fetchCourseSubmissionsWithUsernames(courseId: Long): List<Map<String, Any?>> {
+        return try {
+            if (supabaseClient.isConfigured()) {
+                // Use supabaseRepo (the class instance) which has the method
+                return supabaseRepo.fetchCourseSubmissionsWithUsernames(courseId)
+            }
+            
+            // Local fallback logic
+            val topics = topicDao.getTopicsByCourse(courseId)
+            val submissionsList = mutableListOf<Map<String, Any?>>()
+            
+            for (topic in topics) {
+                val tasks = taskDao.getTasksByTopicId(topic.id)
+                for (task in tasks) {
+                    val submissions = taskSubmissionDao.getSubmissionsByTask(task.id)
+                    for (submission in submissions) {
+                        var studentUsername = "Unknown"
+                        val studentId = submission.studentId
+                        
+                        if (studentId > 0) {
+                            val user = usuarioDao.getUsuarioById(studentId)
+                            if (user != null) {
+                                studentUsername = user.usuario
+                            }
+                        }
+                        // Removed fallback to studentUsername property as it does not exist in Entity
+                        
+                        val map = mapOf(
+                            "submission_id" to submission.id,
+                            "task_id" to task.id,
+                            "task_title" to task.name,
+                            "student_id" to studentId,
+                            "student_username" to studentUsername,
+                            "grade" to submission.grade,
+                            "submission_date" to submission.submissionDate,
+                            "file_uri" to submission.fileUri
+                        )
+                        submissionsList.add(map)
+                    }
+                }
+            }
+            return submissionsList
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error fetching course submissions with usernames", e)
+            emptyList()
+        }
     }
 
     /**

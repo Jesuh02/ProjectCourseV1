@@ -71,7 +71,7 @@ import kotlinx.coroutines.launch
         UserVideoLike::class,
         VideoComment::class
     ],
-    version = 31, // Updated version to add video_likes, user_video_likes, and video_comments tables
+    version = 32, // Updated version to add parent_id to video_comments
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -155,7 +155,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
                         MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
                         MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
-                        MIGRATION_29_30, MIGRATION_30_31
+                        MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -1062,6 +1062,20 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.i(TAG, "Migration 30 to 31 completed: Added video_likes, user_video_likes, and video_comments tables")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 30 to 31", e)
+                }
+            }
+        }
+
+        // Migration 31 to 32: Add parent_id to video_comments
+        private val MIGRATION_31_32 = object : Migration(31, 32) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE video_comments ADD COLUMN parent_id INTEGER")
+                    // Index for performance
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_video_comments_parent_id` ON `video_comments` (`parent_id`)")
+                    Log.i(TAG, "Migration 31 to 32 completed: Added parent_id to video_comments")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 31 to 32", e)
                 }
             }
         }

@@ -4,18 +4,14 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#000000"
     android:paddingTop="320dp"
     android:paddingBottom="80dp">
 
     <!-- Skeleton Item 1 -->
-    <androidx.cardview.widget.CardView
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_margin="12dp"
-        app:cardCornerRadius="24dp"
-        app:cardElevation="0dp"
-        app:cardBackgroundColor="#1E1E1E">
+        android:layout_margin="12dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -75,16 +71,13 @@
             </LinearLayout>
 
         </LinearLayout>
-    </androidx.cardview.widget.CardView>
+    </FrameLayout>
 
     <!-- Skeleton Item 2 -->
-    <androidx.cardview.widget.CardView
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_margin="12dp"
-        app:cardCornerRadius="24dp"
-        app:cardElevation="0dp"
-        app:cardBackgroundColor="#1E1E1E">
+        android:layout_margin="12dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -144,6 +137,6 @@
             </LinearLayout>
 
         </LinearLayout>
-    </androidx.cardview.widget.CardView>
+    </FrameLayout>
 
 </LinearLayout>

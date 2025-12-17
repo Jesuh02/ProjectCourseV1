@@ -497,6 +497,11 @@ class CourseCreationFragment : Fragment() {
                         val createdCourse = courseData.copy(id = savedCourseId)
                         activity.syncRepository.notifySubscribersOfNewCourseAsync(createdCourse)
 
+                        // Ensure the creator has the correct role (Role 2)
+                        withContext(Dispatchers.IO) {
+                            activity.syncRepository.ensureCreatorRole(userId)
+                        }
+
                         val bundle = Bundle()
                         bundle.putInt("topicNumber", topicCount)
                         bundle.putLong("courseId", savedCourseId)

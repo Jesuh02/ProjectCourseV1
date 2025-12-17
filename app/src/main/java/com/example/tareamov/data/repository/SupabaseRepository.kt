@@ -8,6 +8,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
+import java.net.SocketTimeoutException
 
 // Minimal Supabase REST client using OkHttp. This avoids pulling a large SDK and keeps control
 // over headers. It performs simple upserts to Supabase tables via the PostgREST interface.
@@ -15,9 +17,36 @@ class SupabaseRepository(
     private val supabaseUrl: String = BuildConfig.SUPABASE_URL,
     private val supabaseKey: String = BuildConfig.SUPABASE_KEY
 ) {
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(60, TimeUnit.SECONDS)
+        .build()
     private val gson = Gson()
     private val jsonMediaType = "application/json".toMediaType()
+
+    // Execute an OkHttp request with simple retry/backoff handling for transient errors (timeouts)
+    private fun executeRequestWithRetries(request: Request, maxAttempts: Int = 3): okhttp3.Response? {
+        var attempt = 1
+        var backoff = 500L
+        while (attempt <= maxAttempts) {
+            try {
+                val resp = client.newCall(request).execute()
+                return resp
+            } catch (e: SocketTimeoutException) {
+                Log.w("SupabaseRepository", "Request timeout (attempt $attempt/$maxAttempts)", e)
+                if (attempt == maxAttempts) return null
+                try { Thread.sleep(backoff) } catch (_: InterruptedException) { }
+                backoff *= 2
+                attempt++
+            } catch (e: Exception) {
+                Log.e("SupabaseRepository", "Request failed (non-timeout)", e)
+                return null
+            }
+        }
+        return null
+    }
 
     // Helper to coerce various incoming types (Double, Int, String) to Long for bigint columns
     private fun coerceToLong(value: Any?): Long? {
@@ -99,9 +128,14 @@ class SupabaseRepository(
                     .addHeader("Content-Type", "application/json")
                     .build()
 
-                client.newCall(request).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        Log.e("SupabaseRepository", "Upsert failed for app_documents code=${resp.code} body=${resp.body?.string()}")
+                val resp = executeRequestWithRetries(request)
+                    ?: run {
+                        Log.e("SupabaseRepository", "Request failed (timeout) for app_documents after retries")
+                        return false
+                    }
+                resp.use { r ->
+                    if (!r.isSuccessful) {
+                        Log.e("SupabaseRepository", "Upsert failed for app_documents code=${r.code} body=${r.body?.string()}")
                         return false
                     }
                     return true
@@ -339,10 +373,15 @@ class SupabaseRepository(
                         .addHeader("Content-Type", "application/json")
                         .build()
 
-                    client.newCall(request).execute().use { resp ->
-                        if (!resp.isSuccessful) {
-                            val bodyStr = resp.body?.string()
-                            Log.e("SupabaseRepository", "Direct upsert failed for $table code=${resp.code} body=$bodyStr")
+                    val resp = executeRequestWithRetries(request)
+                        ?: run {
+                            Log.e("SupabaseRepository", "Request failed (timeout) for $table after retries")
+                            return false
+                        }
+                    resp.use { r ->
+                        if (!r.isSuccessful) {
+                            val bodyStr = r.body?.string()
+                            Log.e("SupabaseRepository", "Direct upsert failed for $table code=${r.code} body=$bodyStr")
                             return false
                         }
                         return true
@@ -778,6 +817,95 @@ class SupabaseRepository(
         } catch (e: Exception) {
             Log.e("SupabaseRepository", "Error updating progreso_estudiante", e)
             false
+        }
+    }
+
+    /**
+     * Increment like count for a video comment
+     * Checks if user already liked the comment to prevent duplicates or toggles it
+     * Uses a transaction or direct inserts to `video_comment_likes`
+     */
+    suspend fun likeVideoComment(commentId: Long, userId: Long): Boolean {
+        return try {
+            // Check if already liked
+            val checkSql = "SELECT id FROM video_comment_likes WHERE comment_id = $commentId AND usuario_id = $userId"
+            val existing = executeRawQuery(checkSql)
+            
+            if (existing.isNotEmpty()) {
+                // Already liked -> Unlike (Delete)
+                val deleteSql = "DELETE FROM video_comment_likes WHERE comment_id = $commentId AND usuario_id = $userId"
+                executeRawQuery(deleteSql)
+                Log.d("SupabaseRepository", "Unliked comment $commentId by user $userId")
+                return false // Return false to indicate unliked state
+            } else {
+                // Not liked -> Like (Insert)
+                val insertSql = "INSERT INTO video_comment_likes (comment_id, usuario_id) VALUES ($commentId, $userId)"
+                executeRawQuery(insertSql)
+                Log.d("SupabaseRepository", "Liked comment $commentId by user $userId")
+                return true // Return true to indicate liked state
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error toggling comment like", e)
+            false // Assume failure means no change, but return false
+        }
+    }
+    
+    /**
+     * Get like count for a comment
+     */
+    suspend fun getCommentLikeCount(commentId: Long): Int {
+        return try {
+            val sql = "SELECT COUNT(*) as count FROM video_comment_likes WHERE comment_id = $commentId"
+            val result = executeRawQuery(sql)
+            (result.firstOrNull()?.get("count") as? Number)?.toInt() ?: 0
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error getting comment like count", e)
+            0
+        }
+    }
+
+    /**
+     * Check if user liked a comment
+     */
+    suspend fun hasUserLikedComment(commentId: Long, userId: Long): Boolean {
+        return try {
+            val sql = "SELECT id FROM video_comment_likes WHERE comment_id = $commentId AND usuario_id = $userId"
+            val result = executeRawQuery(sql)
+            result.isNotEmpty()
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error checking comment like status", e)
+            false
+        }
+    }
+    
+    /**
+     * Fetch all submissions for a course including student usernames
+     * This uses a raw SQL query to join task_submissions, tasks, topics, and usuarios tables
+     */
+    suspend fun fetchCourseSubmissionsWithUsernames(courseId: Long): List<Map<String, Any?>> {
+        return try {
+            val sql = """
+                SELECT 
+                    ts.id as submission_id,
+                    ts.task_id,
+                    tk.title as task_title,
+                    ts.student_id,
+                    u.username as student_username,
+                    ts.grade,
+                    ts.submission_date,
+                    ts.file_uri
+                FROM task_submissions ts
+                JOIN tasks tk ON ts.task_id = tk.id
+                JOIN topics t ON tk.topic_id = t.id
+                LEFT JOIN usuarios u ON ts.student_id = u.id
+                WHERE t.course_id = $courseId
+                ORDER BY ts.submission_date DESC
+            """.trimIndent()
+            
+            executeRawQuery(sql)
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error fetching course submissions with usernames", e)
+            emptyList()
         }
     }
 
