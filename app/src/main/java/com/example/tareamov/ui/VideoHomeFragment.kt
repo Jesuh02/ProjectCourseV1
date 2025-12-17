@@ -335,6 +335,9 @@ class VideoHomeFragment : Fragment() {
             // Show skeleton only on initial load (empty list)
             if (videoList.isEmpty()) {
                 startSkeletonAnimation()
+            } else {
+                // If we already have data, ensure skeleton is hidden immediately
+                skeletonContainer.visibility = View.GONE
             }
             
             try {
@@ -837,13 +840,20 @@ class VideoHomeFragment : Fragment() {
     }
 
     private fun stopSkeletonAnimation() {
-        skeletonContainer.stopShimmer()
-        
+        // If already gone, nothing to do
+        if (skeletonContainer.visibility == View.GONE) {
+            skeletonContainer.stopShimmer()
+            return
+        }
+
+        // Animate alpha to 0 while keeping shimmer running for smoothness
         skeletonContainer.animate()
             .alpha(0f)
             .setDuration(500)
             .withEndAction {
+                skeletonContainer.stopShimmer()
                 skeletonContainer.visibility = View.GONE
+                skeletonContainer.alpha = 1f // Reset alpha for next usage
             }
             .start()
     }
