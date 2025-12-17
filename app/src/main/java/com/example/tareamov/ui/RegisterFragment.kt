@@ -615,7 +615,8 @@ class RegisterFragment : Fragment() {
                 .build()
 
             datePicker.addOnPositiveButtonClickListener { selection ->
-                val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+                // Use ISO 8601 format (yyyy-MM-dd) for compatibility with Supabase/PostgreSQL
+                val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
                 val selectedDate = Date(selection)
                 fechaNacimientoEditText.setText(dateFormat.format(selectedDate))
                 
@@ -742,7 +743,8 @@ class RegisterFragment : Fragment() {
         } else {
             // Validar edad
             try {
-                val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+                // Use ISO 8601 format (yyyy-MM-dd)
+                val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
                 val birthDate = dateFormat.parse(fechaNacimiento)
                 if (birthDate != null && !validateAge(birthDate)) {
                     hasError = true
@@ -863,21 +865,6 @@ class RegisterFragment : Fragment() {
                         return@launch
                     }
 
-                    // Verificar si el email ya existe en Supabase
-                    val remoteUserByEmail = withContext(Dispatchers.IO) {
-                        try {
-                            SupabaseClient.fetchUsuarioByEmail(email)
-                        } catch (e: Exception) {
-                            Log.w("RegisterFragment", "Error checking email in Supabase: ${e.message}")
-                            null
-                        }
-                    }
-                    if (remoteUserByEmail != null) {
-                        withContext(Dispatchers.Main) {
-                            emailLayout.error = "Este correo electrónico ya está registrado"
-                        }
-                        return@launch
-                    }
                 }
 
                 // Crear entidad Persona con el avatar
@@ -1021,7 +1008,8 @@ class RegisterFragment : Fragment() {
     // Helper method to parse date from input string
     private fun parseDateFromInput(dateString: String): Date? {
         return try {
-            val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+            // Use ISO 8601 format (yyyy-MM-dd)
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             dateFormat.parse(dateString)
         } catch (e: Exception) {
             null
