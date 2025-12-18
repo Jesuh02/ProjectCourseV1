@@ -57,7 +57,11 @@ import android.animation.ObjectAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
 import com.example.tareamov.ui.ShimmerFrameLayout
 
+import androidx.lifecycle.ViewModelProvider
+import com.example.tareamov.viewmodel.VideoHomeViewModel
+
 class VideoHomeFragment : Fragment() {
+    private lateinit var viewModel: VideoHomeViewModel
     private lateinit var profileAvatars: CircleImageView
     private lateinit var videoManager: VideoManager
     private lateinit var sessionManager: SessionManager // Add SessionManager instance
@@ -74,7 +78,7 @@ class VideoHomeFragment : Fragment() {
 
     private var isLiked = false
     private var isMuted = false
-    
+
     // Paginación
     private val videoList = mutableListOf<VideoData>()
     private var currentVideoIndex = 0
@@ -83,16 +87,16 @@ class VideoHomeFragment : Fragment() {
     private val pageSize = 10
     private var totalVideos = 0
     private var isLoadingVideos = false
-    
+
     // Search variables
     private var isSearchMode = false
     private var currentSearchQuery = ""
     private var currentSearchType = "all"
     private lateinit var syncRepository: SyncRepository
-    
+
     // Store all videos for fast local filtering
     private val allVideosList = mutableListOf<VideoData>()
-    
+
     private var searchJob: kotlinx.coroutines.Job? = null
 
     override fun onCreateView(
@@ -111,7 +115,7 @@ class VideoHomeFragment : Fragment() {
         // Initialize VideoManager
         videoManager = VideoManager(requireContext())
         sessionManager = SessionManager.getInstance(requireContext()) // Initialize SessionManager
-        
+
         // Initialize SyncRepository
         val database = AppDatabase.getDatabase(requireContext())
         syncRepository = SyncRepository(
@@ -148,12 +152,44 @@ class VideoHomeFragment : Fragment() {
         val videoId = arguments?.getLong("videoId", -1L) ?: -1L
         val videoTitle = arguments?.getString("videoTitle")
         val videoUsername = arguments?.getString("videoUsername")
-        
+
         if (videoId != -1L) {
             Log.d("VideoHomeFragment", "📹 Video specific navigation requested:")
             Log.d("VideoHomeFragment", "  - videoId: $videoId")
             Log.d("VideoHomeFragment", "  - videoTitle: $videoTitle")
             Log.d("VideoHomeFragment", "  - videoUsername: $videoUsername")
+        }
+
+        // Initialize ViewModel
+        viewModel = ViewModelProvider(this)[VideoHomeViewModel::class.java]
+        
+        // Observe loading state
+        viewModel.isLoading.observe(viewLifecycleOwner) { isLoading ->
+            isLoadingVideos = isLoading
+            if (isLoading && videoList.isEmpty()) {
+                startSkeletonAnimation()
+            } else {
+                stopSkeletonAnimation()
+            }
+        }
+        
+        // Observe video list
+        viewModel.videoList.observe(viewLifecycleOwner) { videos ->
+            videoList.clear()
+            videoList.addAll(videos)
+            allVideosList.clear()
+            allVideosList.addAll(videos)
+            
+            if (::videoAdapter.isInitialized) {
+                videoAdapter.updateVideos(videoList)
+                // Restore scroll position if needed
+                val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
+                if (viewPager != null && viewModel.currentVideoIndex > 0 && viewModel.currentVideoIndex < videos.size) {
+                    if (viewPager.currentItem != viewModel.currentVideoIndex) {
+                        viewPager.setCurrentItem(viewModel.currentVideoIndex, false)
+                    }
+                }
+            }
         }
 
         // Initialize views
@@ -171,10 +207,10 @@ class VideoHomeFragment : Fragment() {
 
         // Setup initial colors for bottom navigation icons
         setupBottomNavigationIconColors()
-        
+
         // Actualizar badge de notificaciones
         updateNotificationBadge()
-        
+
         // Setup search functionality
         setupSearchBar(view)
 
@@ -186,24 +222,24 @@ class VideoHomeFragment : Fragment() {
                 Log.e("VideoHomeFragment", "Error navigating to ChatBotFragment", e)
             }
         }
-        
+
         // Professional animation for AI icon (Subtle Rotate + Scale)
         val scaleX = ObjectAnimator.ofFloat(aiAssistantIconImageView, "scaleX", 1f, 1.15f, 1f)
         val scaleY = ObjectAnimator.ofFloat(aiAssistantIconImageView, "scaleY", 1f, 1.15f, 1f)
         val rotate = ObjectAnimator.ofFloat(aiAssistantIconImageView, "rotation", 0f, 5f, -5f, 0f)
-        
+
         scaleX.repeatCount = ObjectAnimator.INFINITE
         scaleY.repeatCount = ObjectAnimator.INFINITE
         rotate.repeatCount = ObjectAnimator.INFINITE
-        
+
         scaleX.duration = 3000
         scaleY.duration = 3000
         rotate.duration = 3000
-        
+
         scaleX.interpolator = AccelerateDecelerateInterpolator()
         scaleY.interpolator = AccelerateDecelerateInterpolator()
         rotate.interpolator = AccelerateDecelerateInterpolator()
-        
+
         val animatorSet = android.animation.AnimatorSet()
         animatorSet.playTogether(scaleX, scaleY, rotate)
         animatorSet.start()
@@ -309,38 +345,38 @@ class VideoHomeFragment : Fragment() {
 
         // Check if the current user is admin
         val sess = SessionManager.getInstance(requireContext())
-        
+
         // Function to update admin UI elements
         fun updateAdminUi(isAdmin: Boolean) {
             // New Logic: Check if user has explicit role ID 2 (AiAssistant access)
             val hasAiRole = sess.hasRole(2)
-            
+
             if (hasAiRole) {
                 // Show AI Assistant icon for Role 2
                 aiAssistantIconImageView.visibility = View.VISIBLE
                 aiAssistantIconImageView.setOnClickListener {
-                     // Navigate to AI Assistant or ChatBot
-                     findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
+                    // Navigate to AI Assistant or ChatBot
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
                 }
             } else {
-                 aiAssistantIconImageView.visibility = View.GONE
+                aiAssistantIconImageView.visibility = View.GONE
             }
 
             if (isAdmin) {
                 // Admin: Show database icon with animated drawable
                 databaseIconImageView.visibility = View.VISIBLE
                 databaseIconImageView.setImageResource(R.drawable.ic_database_orbit_animated_anim)
-                
+
                 // Start animation automatically
                 val drawable = databaseIconImageView.drawable
                 if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
                     drawable.start()
                 }
-                
+
                 databaseIconImageView.setOnClickListener {
                     findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
                 }
-                
+
                 // Admin: Show admin slot and button
                 adminSlot?.visibility = View.VISIBLE
                 goToAdminButton?.visibility = View.VISIBLE
@@ -366,16 +402,16 @@ class VideoHomeFragment : Fragment() {
                 val isAdmin = withContext(Dispatchers.IO) {
                     syncRepository.isUserAdmin(userId)
                 }
-                
+
                 // Check if user has AI role (Role 2)
                 val hasAiRole = withContext(Dispatchers.IO) {
                     syncRepository.hasUserRole(userId, 2)
                 }
-                
+
                 // Update SessionManager
                 sess.setAdminStatus(isAdmin)
                 if (hasAiRole) sess.addRole(2) else sess.removeRole(2)
-                
+
                 withContext(Dispatchers.Main) {
                     updateAdminUi(isAdmin)
                 }
@@ -386,94 +422,9 @@ class VideoHomeFragment : Fragment() {
         // Load videos directly from Supabase (ordered newest -> oldest) and display
         // This will show videos from all users and bypass Room for this fragment's feed
         setupVideoViewPager(view)
-        lifecycleScope.launch {
-            // Show skeleton only on initial load (empty list)
-            if (videoList.isEmpty()) {
-                startSkeletonAnimation()
-            } else {
-                // If we already have data, ensure skeleton is hidden immediately
-                skeletonContainer.visibility = View.GONE
-            }
-            
-            try {
-                val act = requireActivity()
-                if (act is com.example.tareamov.MainActivity) {
-                    val repo = act.syncRepository
-                    try {
-                        // First fetch all videos
-                        val supaVideos = repo.fetchVideosFromSupabase()
-                        
-                        // If a specific video is requested, try to find it
-                        var targetVideo: VideoData? = null
-                        var targetIndex = -1
-                        
-                        if (videoId != -1L) {
-                            Log.d("VideoHomeFragment", "🔍 Looking for video ID: $videoId")
-                            
-                            // First try to find in the fetched list
-                            targetIndex = supaVideos.indexOfFirst { it.id == videoId }
-                            if (targetIndex >= 0) {
-                                targetVideo = supaVideos[targetIndex]
-                                Log.d("VideoHomeFragment", "✅ Video found in list at index $targetIndex: ${targetVideo.title}")
-                            } else {
-                                // Not in list, try to fetch directly from Supabase
-                                Log.d("VideoHomeFragment", "⚠️ Video not in list, fetching directly...")
-                                targetVideo = withContext(Dispatchers.IO) {
-                                    com.example.tareamov.service.SupabaseClient.fetchVideoById(videoId)
-                                }
-                                if (targetVideo != null) {
-                                    Log.d("VideoHomeFragment", "📹 Video fetched directly: ${targetVideo.title}")
-                                } else {
-                                    Log.w("VideoHomeFragment", "❌ Video ID $videoId not found anywhere")
-                                }
-                            }
-                        }
-                        
-                        // Replace adapter data on main thread
-                        withContext(Dispatchers.Main) {
-                            // Update videoList with fetched videos
-                            videoList.clear()
-                            
-                            // If we have a target video that was NOT in the original list, add it first
-                            if (targetVideo != null && targetIndex < 0) {
-                                videoList.add(targetVideo)
-                                videoList.addAll(supaVideos)
-                                Log.d("VideoHomeFragment", "✅ Target video added at index 0 (was not in list)")
-                            } else {
-                                videoList.addAll(supaVideos)
-                            }
-                            
-                            videoAdapter.updateVideos(videoList)
-                            isVideosLoaded = true
-                            
-                            // Navigate to the target video position
-                            if (videoId != -1L && targetVideo != null) {
-                                val finalIndex = if (targetIndex >= 0) targetIndex else 0
-                                Log.d("VideoHomeFragment", "🎯 Scrolling to video at index $finalIndex")
-                                view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.setCurrentItem(finalIndex, false)
-                            } else if (videoId != -1L) {
-                                Log.w("VideoHomeFragment", "⚠️ Target video ID $videoId could not be found")
-                                Toast.makeText(requireContext(), "Video no encontrado", Toast.LENGTH_SHORT).show()
-                            }
-                            // Hide skeleton after successful load
-                            stopSkeletonAnimation()
-                        }
-                    } catch (e: Exception) {
-                        Log.w("VideoHomeFragment", "Error fetching videos from Supabase", e)
-                        // Fallback: attempt to load from local DB
-                        loadVideos(videoId, videoTitle, videoUsername, true)
-                    }
-                } else {
-                    loadVideos(videoId, videoTitle, videoUsername)
-                }
-            } catch (e: Exception) {
-                Log.w("VideoHomeFragment", "Could not access SyncRepository to fetch videos", e)
-                loadVideos(videoId, videoTitle, videoUsername, true)
-            }
-        }
-
-        // Inicializar el adaptador de videos y configurar el ViewPager2
-        setupVideoViewPager(view)
+        
+        // Load videos using ViewModel
+        viewModel.loadVideos(videoId)
     }
 
     // REMOVE the checkCurrentUserAdminStatus() function as it's no longer needed
@@ -496,7 +447,7 @@ class VideoHomeFragment : Fragment() {
     private suspend fun checkIfSubscribed(creatorId: Long): Boolean {
         val currentUserId = getCurrentUserId()
         if (currentUserId == -1L) return false
-        
+
         return try {
             // Use SupabaseClient for validation as requested
             withContext(Dispatchers.IO) {
@@ -512,12 +463,12 @@ class VideoHomeFragment : Fragment() {
     private suspend fun handleSubscriptionToggle(creatorId: Long, isSubscribing: Boolean) {
         val currentUserId = getCurrentUserId()
         if (currentUserId == -1L) {
-             withContext(Dispatchers.Main) {
-                 Toast.makeText(context, "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
-             }
-             return
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
+            }
+            return
         }
-        
+
         try {
             if (isSubscribing) {
                 val subscription = Subscription(
@@ -527,7 +478,7 @@ class VideoHomeFragment : Fragment() {
                 )
                 // Update local immediately for UI responsiveness
                 syncRepository.insertSubscriptionLocal(subscription)
-                
+
                 // Update Supabase
                 withContext(Dispatchers.IO) {
                     com.example.tareamov.service.SupabaseClient.insertSubscriptionToSupabase(subscription)
@@ -535,7 +486,7 @@ class VideoHomeFragment : Fragment() {
             } else {
                 // Update local immediately
                 syncRepository.deleteSubscriptionLocal(currentUserId, creatorId)
-                
+
                 // Update Supabase
                 withContext(Dispatchers.IO) {
                     com.example.tareamov.service.SupabaseClient.deleteSubscriptionFromSupabase(currentUserId, creatorId)
@@ -577,7 +528,7 @@ class VideoHomeFragment : Fragment() {
                 val unreadCount = withContext(Dispatchers.IO) {
                     com.example.tareamov.service.SupabaseClient.countUnreadNotifications(userId)
                 }
-                
+
                 notificationBadge?.let { badge ->
                     if (unreadCount > 0) {
                         badge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
@@ -614,7 +565,7 @@ class VideoHomeFragment : Fragment() {
                                 putLong("courseId", videoData.courseId!!)
                                 putString("courseName", videoData.title)
                             }
-                            
+
                             // Check if current destination is still VideoHomeFragment before navigating
                             val navController = findNavController()
                             if (navController.currentDestination?.id == R.id.videoHomeFragment) {
@@ -631,8 +582,8 @@ class VideoHomeFragment : Fragment() {
                                     val remoteList = withContext(Dispatchers.IO) {
                                         act.syncRepository.fetchCoursesByCreatorFromSupabase(videoData.username ?: "")
                                     }
-                                    matchingCourse = remoteList.firstOrNull { c -> 
-                                        (c.title ?: "").equals(videoData.title ?: "", ignoreCase = true) 
+                                    matchingCourse = remoteList.firstOrNull { c ->
+                                        (c.title ?: "").equals(videoData.title ?: "", ignoreCase = true)
                                     }
                                 } catch (e: Exception) {
                                     Log.w("VideoHomeFragment", "Supabase course lookup failed: ${e.message}", e)
@@ -720,11 +671,12 @@ class VideoHomeFragment : Fragment() {
             override fun onPageSelected(position: Int) {
                 super.onPageSelected(position)
                 currentVideoIndex = position
+                viewModel.currentVideoIndex = position
 
                 // Cargar más videos cuando se acerque al final
-                if (position >= videoList.size - 2 && !isLoadingVideos && videoList.size < totalVideos) {
+                if (position >= videoList.size - 2 && !isLoadingVideos && videoList.size < viewModel.totalVideos) {
                     Log.d("VideoHomeFragment", "Near end of list (pos $position/${videoList.size}), loading more...")
-                    loadMoreVideos()
+                    viewModel.loadMoreVideos()
                 }
 
                 // Pausar todos los videos y reproducir solo el actual
@@ -778,7 +730,7 @@ class VideoHomeFragment : Fragment() {
                 } else {
                     videoData.username // Fallback por compatibilidad
                 }
-                
+
                 if (videoUsername != null) {
                     val db = AppDatabase.getDatabase(requireContext())
                     val persona = withContext(Dispatchers.IO) {
@@ -795,98 +747,7 @@ class VideoHomeFragment : Fragment() {
         }
         // --- FIN DEL BLOQUE NUEVO ---
     }
-    
-    /**
-     * Carga los primeros 10 videos desde Supabase (más recientes primero)
-     */
-    private fun loadVideos(
-        targetVideoId: Long = -1L, 
-        targetVideoTitle: String? = null, 
-        targetVideoUsername: String? = null,
-        keepSkeletonIfEmpty: Boolean = false
-    ) {
-        if (isLoadingVideos) {
-            Log.d("VideoHomeFragment", "Already loading videos, skipping")
-            return
-        }
 
-        isLoadingVideos = true
-        lifecycleScope.launch {
-            try {
-                Log.d("VideoHomeFragment", "Loading initial videos from Supabase (page 0)")
-
-                // If a specific video is requested, try to fetch it first
-                var targetVideo: VideoData? = null
-                if (targetVideoId != -1L) {
-                    targetVideo = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.fetchVideoById(targetVideoId)
-                    }
-                }
-
-                val result = withContext(Dispatchers.IO) {
-                    syncRepository.fetchVideosPaginated(
-                        limit = pageSize,
-                        offset = 0
-                    )
-                }
-                val videos = result.first
-                val total = result.second
-
-                totalVideos = total
-                currentPage = 0
-                
-                withContext(Dispatchers.Main) {
-                    videoList.clear()
-                    
-                    // If we have a target video, add it first
-                    if (targetVideo != null) {
-                        videoList.add(targetVideo)
-                        // Add other videos, excluding the target if it's already in the list
-                        val others = videos.filter { it.id != targetVideoId }
-                        videoList.addAll(others)
-                    } else {
-                        videoList.addAll(videos)
-                    }
-                    
-                    // Store all videos for fast local filtering
-                    allVideosList.clear()
-                    allVideosList.addAll(videoList)
-                    
-                    if (::videoAdapter.isInitialized) {
-                        videoAdapter.updateVideos(videoList)
-                        // Scroll to top to show the target video
-                        if (targetVideo != null) {
-                            view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.setCurrentItem(0, false)
-                        }
-                    }
-                    
-                    Log.d("VideoHomeFragment", "Loaded ${videoList.size} videos (total: $totalVideos)")
-                    isVideosLoaded = true
-                    
-                    // Stop skeleton animation with fade out
-                    if (videoList.isNotEmpty() || !keepSkeletonIfEmpty) {
-                        stopSkeletonAnimation()
-                    } else {
-                        Log.d("VideoHomeFragment", "Keeping skeleton animation (empty list + keepSkeletonIfEmpty=true)")
-                        startSkeletonAnimation()
-                    }
-                }
-
-            } catch (e: Exception) {
-                Log.e("VideoHomeFragment", "Error loading videos", e)
-                // On error (e.g. no connection), keep skeleton visible if we have no content
-                withContext(Dispatchers.Main) {
-                    if (videoList.isEmpty()) {
-                        startSkeletonAnimation()
-                    } else {
-                        stopSkeletonAnimation()
-                    }
-                }
-            } finally {
-                isLoadingVideos = false
-            }
-        }
-    }
 
     private fun startSkeletonAnimation() {
         skeletonContainer.visibility = View.VISIBLE
@@ -912,66 +773,10 @@ class VideoHomeFragment : Fragment() {
             }
             .start()
     }
-    
-    /**
-     * Carga 10 videos más desde Supabase (siguiente página)
-     */
-    private fun loadMoreVideos() {
-        if (isLoadingVideos) {
-            Log.d("VideoHomeFragment", "Already loading videos, skipping")
-            return
-        }
 
-        isLoadingVideos = true
-        lifecycleScope.launch {
-            try {
-                val nextPage = currentPage + 1
-                val offset = nextPage * pageSize
-                
-                Log.d("VideoHomeFragment", "Loading more videos from Supabase (page $nextPage, offset $offset)")
-
-                val result = withContext(Dispatchers.IO) {
-                    syncRepository.fetchVideosPaginated(
-                        limit = pageSize,
-                        offset = offset
-                    )
-                }
-                val videos = result.first
-
-                if (videos.isNotEmpty()) {
-                    currentPage = nextPage
-                    
-                    withContext(Dispatchers.Main) {
-                        val oldSize = videoList.size
-                        videoList.addAll(videos)
-                        
-                        // Add to all videos list for filtering
-                        allVideosList.addAll(videos)
-                        
-                        if (::videoAdapter.isInitialized) {
-                            videoAdapter.notifyItemRangeInserted(oldSize, videos.size)
-                        }
-                        
-                        Log.d("VideoHomeFragment", "Loaded ${videos.size} more videos (total now: ${videoList.size}/$totalVideos)")
-                    }
-                } else {
-                    Log.d("VideoHomeFragment", "No more videos to load")
-                }
-
-            } catch (e: Exception) {
-                Log.e("VideoHomeFragment", "Error loading more videos", e)
-            } finally {
-                isLoadingVideos = false
-            }
-        }
-    }    override fun onResume() {
+    override fun onResume() {
         super.onResume()
         registerNetworkCallback()
-        // Recargar videos desde Supabase al volver al fragmento
-        if (isVideosLoaded) {
-            Log.d("VideoHomeFragment", "onResume: Reloading videos from Supabase")
-            forceReloadVideos()
-        }
     }
 
     override fun onPause() {
@@ -981,7 +786,6 @@ class VideoHomeFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        isVideosLoaded = false
     }
 
     private fun registerNetworkCallback() {
@@ -1001,7 +805,9 @@ class VideoHomeFragment : Fragment() {
                             // Add delay to ensure network is stable
                             kotlinx.coroutines.delay(1500)
                             Log.d("VideoHomeFragment", "Auto-reloading videos on network available")
-                            loadVideos()
+                            if (::viewModel.isInitialized) {
+                                viewModel.loadVideos()
+                            }
                         }
                     }
                 }
@@ -1026,14 +832,13 @@ class VideoHomeFragment : Fragment() {
 
     // Método para forzar la recarga de videos desde Supabase
     private fun forceReloadVideos() {
-        isVideosLoaded = false
-        currentPage = 0
-        totalVideos = 0
         // Show skeleton only if list is cleared (full reload)
         if (videoList.isEmpty()) {
             startSkeletonAnimation()
         }
-        loadVideos()
+        if (::viewModel.isInitialized) {
+            viewModel.loadVideos(isRefresh = true)
+        }
     }
 
     private fun getCurrentUsername(): String? {
@@ -1233,19 +1038,19 @@ class VideoHomeFragment : Fragment() {
                 Log.e("VideoHomeFragment", "❌ Invalid video index: $index (list size: ${videoList.size})")
                 return
             }
-            
+
             val videoData = videoList[index]
             Log.d("VideoHomeFragment", "🎯 Navigating to video at index $index:")
             Log.d("VideoHomeFragment", "  - Title: ${videoData.title}")
             Log.d("VideoHomeFragment", "  - ID: ${videoData.id}")
             Log.d("VideoHomeFragment", "  - Username: ${videoData.username}")
-            
+
             val viewPager = view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
             if (viewPager != null) {
                 viewPager.setCurrentItem(index, false) // false para navegación inmediata sin animación
                 currentVideoIndex = index
                 Log.d("VideoHomeFragment", "✅ ViewPager updated to position $index")
-                
+
                 // Forzar actualización del video
                 viewPager.post {
                     val recyclerView = viewPager.getChildAt(0) as? RecyclerView
@@ -1260,7 +1065,7 @@ class VideoHomeFragment : Fragment() {
             Log.e("VideoHomeFragment", "❌ Error navigating to video index $index: ${e.message}", e)
         }
     }
-    
+
     private fun setupSearchBar(view: View) {
         val toggleSearchButton = view.findViewById<ImageButton>(R.id.toggleSearchButton)
         val topNavTabs = view.findViewById<ViewGroup>(R.id.topNavTabs)
@@ -1269,7 +1074,7 @@ class VideoHomeFragment : Fragment() {
         // searchButton removed as per design
         val closeSearchButton = view.findViewById<ImageButton>(R.id.closeSearchButton)
         val filterChipGroup = view.findViewById<ChipGroup>(R.id.searchFilterChipGroup)
-        
+
         // Active Filter Indicator Views
         val activeFilterIndicator = view.findViewById<LinearLayout>(R.id.activeFilterIndicator)
         val activeFilterText = view.findViewById<TextView>(R.id.activeFilterText)
@@ -1288,7 +1093,7 @@ class VideoHomeFragment : Fragment() {
             .setBlurRadius(radius)
             .setBlurAutoUpdate(true)
             .setOverlayColor(Color.parseColor("#33000000")) // Match ExploreFragment overlay
-        
+
         searchBarContainer.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: android.graphics.Outline) {
                 val cornerRadius = view.context.resources.displayMetrics.density * 16 // 16dp
@@ -1296,7 +1101,7 @@ class VideoHomeFragment : Fragment() {
             }
         }
         searchBarContainer.clipToOutline = true
-        
+
         // Add TextWatcher for instant search (like ExploreFragment)
         searchEditText?.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -1306,7 +1111,7 @@ class VideoHomeFragment : Fragment() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
-        
+
         // Toggle search bar visibility
         toggleSearchButton?.setOnClickListener {
             // Animate the transition with a fluid custom transition
@@ -1317,15 +1122,15 @@ class VideoHomeFragment : Fragment() {
                 .addTransition(androidx.transition.ChangeTransform())
                 .setDuration(400)
                 .setInterpolator(androidx.interpolator.view.animation.FastOutSlowInInterpolator())
-            
+
             androidx.transition.TransitionManager.beginDelayedTransition(container, transition)
-            
+
             if (searchBarContainer.visibility == View.GONE) {
                 // OPEN SEARCH
                 // Hide active filter indicator while searching (full bar takes over)
                 activeFilterIndicator.visibility = View.GONE
                 centerPillContainer.visibility = View.GONE // Hide pills to avoid clutter
-                
+
                 searchBarContainer.visibility = View.VISIBLE
                 searchEditText.requestFocus()
                 showKeyboard(searchEditText)
@@ -1334,7 +1139,7 @@ class VideoHomeFragment : Fragment() {
                 searchBarContainer.visibility = View.GONE
                 centerPillContainer.visibility = View.VISIBLE
                 hideKeyboard(searchEditText)
-                
+
                 // If there is active search text, show the minimalist indicator
                 if (isSearchMode && currentSearchQuery.isNotEmpty()) {
                     activeFilterIndicator.visibility = View.VISIBLE
@@ -1348,7 +1153,7 @@ class VideoHomeFragment : Fragment() {
                 }
             }
         }
-        
+
         // Close search button
         closeSearchButton?.setOnClickListener {
             // Si hay texto, solo limpiarlo (eliminar filtro)
@@ -1373,14 +1178,14 @@ class VideoHomeFragment : Fragment() {
             searchBarContainer.visibility = View.GONE
             centerPillContainer.visibility = View.VISIBLE
             hideKeyboard(searchEditText)
-            
+
             // Ensure indicator is gone (since we cleared or it was empty)
             activeFilterIndicator.visibility = View.GONE
             if (isSearchMode) {
                 clearSearch()
             }
         }
-        
+
         // Clear Active Filter Button (The 'X' on the minimalist indicator)
         clearActiveFilterButton?.setOnClickListener {
             // Animate removal
@@ -1390,12 +1195,12 @@ class VideoHomeFragment : Fragment() {
                 .addTransition(androidx.transition.ChangeBounds())
                 .setDuration(300)
             androidx.transition.TransitionManager.beginDelayedTransition(container, transition)
-            
+
             activeFilterIndicator.visibility = View.GONE
             searchEditText.setText("") // Clear text
             clearSearch() // Reset videos
         }
-        
+
         // Search on Enter key
         searchEditText?.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
@@ -1407,14 +1212,14 @@ class VideoHomeFragment : Fragment() {
                 false
             }
         }
-        
+
         // Filter chip selection
         filterChipGroup?.setOnCheckedStateChangeListener { group, checkedIds ->
             if (checkedIds.isEmpty()) {
                 currentSearchType = "all"
                 return@setOnCheckedStateChangeListener
             }
-            
+
             val checkedChip = view.findViewById<Chip>(checkedIds[0])
             currentSearchType = when (checkedChip?.id) {
                 R.id.filterTitleChip -> "title"
@@ -1422,14 +1227,14 @@ class VideoHomeFragment : Fragment() {
                 R.id.filterCategoryChip -> "category"
                 else -> "all"
             }
-            
+
             // Re-filter with new type if in search mode
             if (isSearchMode && currentSearchQuery.isNotEmpty()) {
                 filterVideos(currentSearchQuery)
             }
         }
     }
-    
+
     // Fast local filtering with remote fallback (like ExploreFragment)
     private fun filterVideos(query: String) {
         if (query.isBlank()) {
@@ -1445,22 +1250,22 @@ class VideoHomeFragment : Fragment() {
         currentSearchQuery = query
         val lowerQuery = query.lowercase()
         val usernameQuery = if (query.startsWith("@")) query.removePrefix("@").trim() else null
-        
+
         // 1. Instant local filter for immediate feedback
         // Filter AND Sort by relevance: Exact > StartsWith > Contains
         val filtered = when (currentSearchType) {
-            "title" -> allVideosList.filter { 
+            "title" -> allVideosList.filter {
                 it.title?.contains(query, ignoreCase = true) == true
             }
             "username" -> allVideosList.filter {
                 it.username?.contains(query.removePrefix("@"), ignoreCase = true) == true
             }
-            "category" -> allVideosList.filter { 
+            "category" -> allVideosList.filter {
                 it.description?.contains(query, ignoreCase = true) == true
             }
             else -> allVideosList.filter { video ->
                 video.title?.contains(query, ignoreCase = true) == true ||
-                video.description?.contains(query, ignoreCase = true) == true
+                        video.description?.contains(query, ignoreCase = true) == true
             }
         }.sortedWith(compareBy<VideoData> { video ->
             val title = video.title?.lowercase() ?: ""
@@ -1471,7 +1276,7 @@ class VideoHomeFragment : Fragment() {
                 else -> 3 // Description match last
             }
         }.thenByDescending { it.id }) // Then by newest
-        
+
         videoList.clear()
         videoList.addAll(filtered)
         // Use updateVideos to ensure adapter refreshes correctly with a new list reference
@@ -1479,7 +1284,7 @@ class VideoHomeFragment : Fragment() {
             videoAdapter.updateVideos(videoList.toList())
         }
         view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.currentItem = 0
-        
+
         // 2. Debounced remote search (Supabase)
         searchJob?.cancel()
         searchJob = lifecycleScope.launch {
@@ -1487,7 +1292,7 @@ class VideoHomeFragment : Fragment() {
             searchRemoteVideos(query)
         }
     }
-    
+
     // Remote search for additional results
     private fun searchRemoteVideos(query: String) {
         // Note: This is called from a coroutine scope already
@@ -1561,34 +1366,34 @@ class VideoHomeFragment : Fragment() {
             Log.e("VideoHomeFragment", "Error initiating remote search", e)
         }
     }
-    
+
     private fun performSearch(query: String) {
         // This method is kept for compatibility but now just calls filterVideos
         filterVideos(query)
     }
-    
+
     private fun clearSearch() {
         isSearchMode = false
         currentSearchQuery = ""
         currentSearchType = "all"
-        
+
         view?.findViewById<EditText>(R.id.searchEditText)?.setText("")
         view?.findViewById<Chip>(R.id.filterAllChip)?.isChecked = true
-        
+
         Log.d("VideoHomeFragment", "clearSearch -> reloading videos from Supabase")
         forceReloadVideos()
     }
-    
+
     private fun showKeyboard(view: View) {
         val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
     }
-    
+
     private fun hideKeyboard(view: View) {
         val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(view.windowToken, 0)
     }
-    
+
     /**
      * Comparte un video usando la URL pública de Cloudflare R2 si está disponible
      * Esta función puede ser llamada desde cualquier parte del fragmento
@@ -1596,14 +1401,14 @@ class VideoHomeFragment : Fragment() {
     private fun shareVideoFromFragment(videoData: VideoData) {
         try {
             val context = requireContext()
-            
+
             // ESTRATEGIA 1: Intentar obtener URL pública de Cloudflare R2
             val r2PublicUrl = com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(videoData.videoUriString)
-            
+
             if (r2PublicUrl != null && (r2PublicUrl.startsWith("http://") || r2PublicUrl.startsWith("https://"))) {
                 // Compartir usando URL pública - MÉTODO PREFERIDO
                 Log.d("VideoHomeFragment", "📤 Compartiendo video usando URL pública de R2: $r2PublicUrl")
-                
+
                 // Copiar URL al portapapeles
                 try {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -1613,7 +1418,7 @@ class VideoHomeFragment : Fragment() {
                 } catch (e: Exception) {
                     Log.w("VideoHomeFragment", "⚠️ No se pudo copiar al portapapeles: ${e.message}")
                 }
-                
+
                 val shareText = buildString {
                     appendLine("🎥 ${videoData.title}")
                     appendLine()
@@ -1628,30 +1433,30 @@ class VideoHomeFragment : Fragment() {
                     appendLine()
                     appendLine("📱 Compartido desde TareaMov")
                 }
-                
+
                 val sendIntent = Intent().apply {
                     action = Intent.ACTION_SEND
                     putExtra(Intent.EXTRA_TEXT, shareText)
                     putExtra(Intent.EXTRA_SUBJECT, "🎥 ${videoData.title}")
                     type = "text/plain"
                 }
-                
+
                 val shareIntent = Intent.createChooser(sendIntent, "Compartir video vía")
                 startActivity(shareIntent)
-                
+
                 Toast.makeText(
                     context,
                     "✅ Enlace listo para compartir\n📋 URL copiada al portapapeles",
                     Toast.LENGTH_SHORT
                 ).show()
-                
+
                 Log.d("VideoHomeFragment", "✅ Video compartido con URL pública")
                 return
             }
-            
+
             // ESTRATEGIA 2: Compartir información del video si no hay URL pública
             Log.d("VideoHomeFragment", "⚠️ No hay URL pública disponible, compartiendo información")
-            
+
             val shareText = buildString {
                 appendLine("🎥 ${videoData.title}")
                 appendLine()
@@ -1665,40 +1470,40 @@ class VideoHomeFragment : Fragment() {
                 appendLine()
                 appendLine("⚠️ Para ver el video completo, descarga la app TareaMov")
             }
-            
+
             val sendIntent = Intent().apply {
                 action = Intent.ACTION_SEND
                 putExtra(Intent.EXTRA_TEXT, shareText)
                 putExtra(Intent.EXTRA_SUBJECT, videoData.title)
                 type = "text/plain"
             }
-            
+
             val shareIntent = Intent.createChooser(sendIntent, "Compartir información del video")
             startActivity(shareIntent)
-            
+
             Toast.makeText(
                 context,
                 "ℹ️ Se compartió la información del video\n⚠️ El video no está disponible públicamente",
                 Toast.LENGTH_LONG
             ).show()
-            
+
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "❌ Error compartiendo video: ${e.message}", e)
             Toast.makeText(context, "Error al compartir video: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
-    
+
     /**
      * Show comments dialog for a video
      */
     private fun showCommentsDialog(videoData: com.example.tareamov.data.entity.VideoData) {
         val context = context ?: return
-        
+
         // Use BottomSheetDialog for Instagram/TikTok style from bottom
         val bottomSheetDialog = com.google.android.material.bottomsheet.BottomSheetDialog(context, R.style.Theme_TareaMov_BottomSheet)
         val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_comments, null)
         bottomSheetDialog.setContentView(dialogView)
-        
+
         // Configure bottom sheet behavior
         val bottomSheet = bottomSheetDialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
         bottomSheet?.let {
@@ -1710,7 +1515,7 @@ class VideoHomeFragment : Fragment() {
             behavior.peekHeight = (resources.displayMetrics.heightPixels * 0.6).toInt()
             it.setBackgroundResource(android.R.color.transparent)
         }
-        
+
         val commentsRecyclerView = dialogView.findViewById<RecyclerView>(R.id.commentsRecyclerView)
         val commentInput = dialogView.findViewById<EditText>(R.id.commentInput)
         val sendButton = dialogView.findViewById<ImageButton>(R.id.sendCommentButton)
@@ -1719,18 +1524,18 @@ class VideoHomeFragment : Fragment() {
         val emptyText = dialogView.findViewById<View>(R.id.emptyCommentsText)
         val skeletonContainer = dialogView.findViewById<LinearLayout>(R.id.skeletonContainer)
         val currentUserAvatar = dialogView.findViewById<de.hdodenhof.circleimageview.CircleImageView>(R.id.currentUserAvatar)
-        
+
         // Replying UI elements
         val replyingToBanner = dialogView.findViewById<LinearLayout>(R.id.replyingToBanner)
         val replyingToText = dialogView.findViewById<TextView>(R.id.replyingToText)
         val cancelReplyButton = dialogView.findViewById<ImageView>(R.id.cancelReplyButton)
-        
+
         // State for replying
         var replyingToUsername: String? = null
         var replyingToCommentId: Long? = null
-        
+
         titleText?.text = "Comentarios"
-        
+
         // Cancel reply logic
         cancelReplyButton?.setOnClickListener {
             replyingToUsername = null
@@ -1738,7 +1543,7 @@ class VideoHomeFragment : Fragment() {
             replyingToBanner?.visibility = View.GONE
             commentInput?.hint = "Agrega un comentario..."
         }
-        
+
         // Setup RecyclerView
         val commentsAdapter = CommentsAdapter(
             onReplyClick = { comment ->
@@ -1750,19 +1555,19 @@ class VideoHomeFragment : Fragment() {
                 } else {
                     comment.id
                 }
-                
+
                 replyingToCommentId = targetParentId
-                
+
                 // Fetch username asynchronously
                 lifecycleScope.launch {
                     val db = AppDatabase.getDatabase(context)
                     val user = db.usuarioDao().getUsuarioById(comment.usuarioId)
                     val username = user?.usuario ?: "Usuario"
-                    
+
                     replyingToUsername = username
                     replyingToBanner?.visibility = View.VISIBLE
                     replyingToText?.text = "Respondiendo a $username"
-                    
+
                     commentInput?.hint = "Responder a $username..."
                     commentInput?.requestFocus()
                     showKeyboard(commentInput!!)
@@ -1791,7 +1596,7 @@ class VideoHomeFragment : Fragment() {
         )
         commentsRecyclerView?.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(context)
         commentsRecyclerView?.adapter = commentsAdapter
-        
+
         // Initial State: Show Skeleton, Hide List/Empty
         skeletonContainer?.visibility = View.VISIBLE
         commentsRecyclerView?.visibility = View.GONE
@@ -1827,18 +1632,18 @@ class VideoHomeFragment : Fragment() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
-        
+
         // Load comments with delay to show skeleton animation
         lifecycleScope.launch {
             try {
                 // Simulate network delay for skeleton effect (remove in production if not needed)
-                kotlinx.coroutines.delay(1000) 
-                
+                kotlinx.coroutines.delay(1000)
+
                 val comments = syncRepository.getVideoComments(videoData.id)
-                
+
                 skeletonContainer?.clearAnimation()
                 skeletonContainer?.visibility = View.GONE
-                
+
                 if (comments.isEmpty()) {
                     emptyText?.visibility = View.VISIBLE
                     commentsRecyclerView?.visibility = View.GONE
@@ -1853,7 +1658,7 @@ class VideoHomeFragment : Fragment() {
                 emptyText?.visibility = View.VISIBLE
             }
         }
-        
+
         // Send comment
         sendButton?.setOnClickListener {
             val commentText = commentInput?.text?.toString()?.trim()
@@ -1870,7 +1675,7 @@ class VideoHomeFragment : Fragment() {
                             } else {
                                 commentText
                             }
-                            
+
                             val commentId = syncRepository.addVideoComment(videoData.id, userId, finalCommentText, replyingToCommentId)
                             if (commentId != null) {
                                 commentInput.setText("")
@@ -1879,7 +1684,7 @@ class VideoHomeFragment : Fragment() {
                                 replyingToCommentId = null
                                 replyingToBanner?.visibility = View.GONE
                                 commentInput.hint = "Agrega un comentario..."
-                                
+
                                 // Reload comments
                                 val comments = syncRepository.getVideoComments(videoData.id)
                                 emptyText?.visibility = View.GONE
@@ -1897,14 +1702,14 @@ class VideoHomeFragment : Fragment() {
                 }
             }
         }
-        
+
         closeButton?.setOnClickListener {
             bottomSheetDialog.dismiss()
         }
-        
+
         bottomSheetDialog.show()
     }
-    
+
     /**
      * Simple adapter for comments
      */
@@ -1916,38 +1721,38 @@ class VideoHomeFragment : Fragment() {
         private var allComments: List<com.example.tareamov.data.entity.VideoComment> = emptyList()
         private var topLevelComments: List<com.example.tareamov.data.entity.VideoComment> = emptyList()
         private var repliesMap: Map<Long, List<com.example.tareamov.data.entity.VideoComment>> = emptyMap()
-        
+
         // Map to track local like state: commentId -> isLiked
         private val likedComments = mutableMapOf<Long, Boolean>()
         // Map to track local like count: commentId -> count
         private val likeCounts = mutableMapOf<Long, Int>()
         // Map to track expanded replies state
         private val expandedReplies = mutableMapOf<Long, Boolean>()
-        
+
         fun submitList(newComments: List<com.example.tareamov.data.entity.VideoComment>) {
             allComments = newComments
             // Separate top-level comments (parentId is null or 0) from replies
             topLevelComments = allComments.filter { it.parentId == null || it.parentId == 0L }
             repliesMap = allComments.filter { it.parentId != null && it.parentId != 0L }
                 .groupBy { it.parentId!! }
-            
+
             notifyDataSetChanged()
         }
-        
+
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CommentViewHolder {
             val view = LayoutInflater.from(parent.context)
                 .inflate(R.layout.item_comment, parent, false)
             return CommentViewHolder(view)
         }
-        
+
         override fun onBindViewHolder(holder: CommentViewHolder, position: Int) {
             val comment = topLevelComments[position]
             val replies = repliesMap[comment.id] ?: emptyList()
             holder.bind(comment, replies)
         }
-        
+
         override fun getItemCount() = topLevelComments.size
-        
+
         inner class CommentViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
             private val usernameText: TextView = itemView.findViewById(R.id.commentUsername)
             private val commentText: TextView = itemView.findViewById(R.id.commentText)
@@ -1956,18 +1761,18 @@ class VideoHomeFragment : Fragment() {
             private val likeCount: TextView = itemView.findViewById(R.id.commentLikeCount)
             private val replyButton: TextView = itemView.findViewById(R.id.replyButton)
             private val likeIcon: ImageView = itemView.findViewById(R.id.commentLikeIcon)
-            
+
             // New UI elements for replies
             private val repliesSection: LinearLayout = itemView.findViewById(R.id.repliesSection)
             private val viewRepliesContainer: LinearLayout = itemView.findViewById(R.id.viewRepliesContainer)
             private val viewRepliesText: TextView = itemView.findViewById(R.id.viewRepliesText)
             private val repliesContainer: LinearLayout = itemView.findViewById(R.id.repliesContainer)
-            
+
             fun bind(comment: com.example.tareamov.data.entity.VideoComment, replies: List<com.example.tareamov.data.entity.VideoComment>) {
                 commentText.text = comment.comment
                 // Simple timestamp formatting
                 timestampText.text = "Hace un momento" // Placeholder, ideally parse createdAt
-                
+
                 // Initialize local state if not present
                 if (!likeCounts.containsKey(comment.id)) {
                     // Fetch real count asynchronously
@@ -1981,7 +1786,7 @@ class VideoHomeFragment : Fragment() {
                         }
                     }
                 }
-                
+
                 if (!likedComments.containsKey(comment.id)) {
                     likedComments[comment.id] = false
                     lifecycleScope.launch {
@@ -1990,7 +1795,7 @@ class VideoHomeFragment : Fragment() {
                             val liked = syncRepository.hasUserLikedComment(comment.id, userId)
                             likedComments[comment.id] = liked
                             // Only update if visible
-                             if (comment.id == topLevelComments.getOrNull(adapterPosition)?.id) {
+                            if (comment.id == topLevelComments.getOrNull(adapterPosition)?.id) {
                                 if (liked) {
                                     likeIcon.setColorFilter(android.graphics.Color.RED)
                                     likeIcon.setImageResource(R.drawable.ic_heart_filled)
@@ -2002,12 +1807,12 @@ class VideoHomeFragment : Fragment() {
                         }
                     }
                 }
-                
+
                 val currentCount = likeCounts[comment.id] ?: 0
                 val isLiked = likedComments[comment.id] ?: false
-                
+
                 likeCount.text = currentCount.toString()
-                
+
                 if (isLiked) {
                     likeIcon.setColorFilter(android.graphics.Color.RED)
                     likeIcon.setImageResource(R.drawable.ic_heart_filled)
@@ -2015,7 +1820,7 @@ class VideoHomeFragment : Fragment() {
                     likeIcon.setColorFilter(android.graphics.Color.parseColor("#888888"))
                     likeIcon.setImageResource(R.drawable.ic_heart_outline)
                 }
-                
+
                 // Load username and avatar
                 lifecycleScope.launch {
                     try {
@@ -2023,7 +1828,7 @@ class VideoHomeFragment : Fragment() {
                         val user = db.usuarioDao().getUsuarioById(comment.usuarioId)
                         val username = user?.usuario ?: "Usuario"
                         usernameText.text = username
-                        
+
                         // Setup reply click
                         replyButton.setOnClickListener {
                             onReplyClick(comment)
@@ -2033,9 +1838,9 @@ class VideoHomeFragment : Fragment() {
                         usernameText.setOnClickListener {
                             onProfileClick(username)
                         }
-                        
+
                         if (user != null && !user.avatar.isNullOrEmpty()) {
-                             com.bumptech.glide.Glide.with(itemView.context)
+                            com.bumptech.glide.Glide.with(itemView.context)
                                 .load(user.avatar)
                                 .placeholder(R.drawable.ic_profile)
                                 .into(avatar)
@@ -2054,15 +1859,15 @@ class VideoHomeFragment : Fragment() {
                         replyButton.setOnClickListener { onReplyClick(comment) }
                     }
                 }
-                
+
                 // Handle Like Click directly on the icon or find parent safely
                 likeIcon.setOnClickListener {
                     val newLikedState = !isLiked
                     likedComments[comment.id] = newLikedState
-                    
+
                     val newCount = if (newLikedState) currentCount + 1 else maxOf(0, currentCount - 1)
                     likeCounts[comment.id] = newCount
-                    
+
                     // Update UI immediately
                     likeCount.text = newCount.toString()
                     if (newLikedState) {
@@ -2072,21 +1877,21 @@ class VideoHomeFragment : Fragment() {
                         likeIcon.setColorFilter(android.graphics.Color.parseColor("#888888"))
                         likeIcon.setImageResource(R.drawable.ic_heart_outline)
                     }
-                    
+
                     // Notify parent
                     if (newLikedState) {
                         onLikeClick(comment)
                     }
                 }
-                
+
                 // --- Replies Logic ---
                 repliesContainer.removeAllViews() // Clear previous views
-                
+
                 if (replies.isNotEmpty()) {
                     repliesSection.visibility = View.VISIBLE
-                    
+
                     val isExpanded = expandedReplies[comment.id] ?: false
-                    
+
                     if (isExpanded) {
                         viewRepliesText.text = "Ocultar respuestas"
                         repliesContainer.visibility = View.VISIBLE
@@ -2095,7 +1900,7 @@ class VideoHomeFragment : Fragment() {
                         viewRepliesText.text = "Ver ${replies.size} respuestas más"
                         repliesContainer.visibility = View.GONE
                     }
-                    
+
                     viewRepliesContainer.setOnClickListener {
                         val newState = !isExpanded
                         expandedReplies[comment.id] = newState
@@ -2110,10 +1915,10 @@ class VideoHomeFragment : Fragment() {
             private fun addRealReplies(replies: List<com.example.tareamov.data.entity.VideoComment>) {
                 val context = itemView.context
                 val inflater = LayoutInflater.from(context)
-                
+
                 for (reply in replies) {
                     val replyView = inflater.inflate(R.layout.item_comment, repliesContainer, false)
-                    
+
                     // Adjust padding/layout for nested reply to look like the image (indentation)
                     // But since we are adding it to a container that is already indented by layout_marginStart in XML, 
                     // we might need to adjust or just let it be.
@@ -2121,13 +1926,13 @@ class VideoHomeFragment : Fragment() {
                     // Let's check item_comment.xml again. 
                     // repliesSection is inside the main text container (layout_weight=1).
                     // So it is already indented relative to the main avatar.
-                    
+
                     // However, we want the reply to look like a full comment row but smaller or indented?
                     // The provided image shows replies aligned with the text of the parent.
                     // Since 'repliesContainer' is inside the text column, it aligns with text.
                     // But 'item_comment' has its own avatar and padding.
                     // We might need to reduce padding for nested items or scale down avatar.
-                    
+
                     val avatar = replyView.findViewById<de.hdodenhof.circleimageview.CircleImageView>(R.id.commentAvatar)
                     val usernameText = replyView.findViewById<TextView>(R.id.commentUsername)
                     val commentText = replyView.findViewById<TextView>(R.id.commentText)
@@ -2136,33 +1941,33 @@ class VideoHomeFragment : Fragment() {
                     val replyButton = replyView.findViewById<TextView>(R.id.replyButton)
                     val likeIcon = replyView.findViewById<ImageView>(R.id.commentLikeIcon)
                     val nestedRepliesSection = replyView.findViewById<View>(R.id.repliesSection) // Should be hidden
-                    
+
                     // Hide nested replies section for replies (1 level depth only)
                     nestedRepliesSection.visibility = View.GONE
-                    
+
                     // Scale down avatar for replies
                     val params = avatar.layoutParams
                     params.width = (30 * context.resources.displayMetrics.density).toInt()
                     params.height = (30 * context.resources.displayMetrics.density).toInt()
                     avatar.layoutParams = params
-                    
+
                     // Bind data
                     commentText.text = reply.comment
                     timestampText.text = "Hace un momento"
-                    
+
                     // Local state for reply likes
-                     if (!likeCounts.containsKey(reply.id)) {
+                    if (!likeCounts.containsKey(reply.id)) {
                         likeCounts[reply.id] = 0
                     }
                     if (!likedComments.containsKey(reply.id)) {
                         likedComments[reply.id] = false
                     }
-                    
+
                     val currentCount = likeCounts[reply.id] ?: 0
                     val isLiked = likedComments[reply.id] ?: false
-                    
+
                     likeCount.text = currentCount.toString()
-                    
+
                     if (isLiked) {
                         likeIcon.setColorFilter(android.graphics.Color.RED)
                         likeIcon.setImageResource(R.drawable.ic_heart_filled)
@@ -2170,7 +1975,7 @@ class VideoHomeFragment : Fragment() {
                         likeIcon.setColorFilter(android.graphics.Color.parseColor("#888888"))
                         likeIcon.setImageResource(R.drawable.ic_heart_outline)
                     }
-                    
+
                     // Async load user
                     lifecycleScope.launch {
                         try {
@@ -2178,36 +1983,36 @@ class VideoHomeFragment : Fragment() {
                             val user = db.usuarioDao().getUsuarioById(reply.usuarioId)
                             val username = user?.usuario ?: "Usuario"
                             usernameText.text = username
-                            
-                             if (user != null && !user.avatar.isNullOrEmpty()) {
-                                 com.bumptech.glide.Glide.with(context)
+
+                            if (user != null && !user.avatar.isNullOrEmpty()) {
+                                com.bumptech.glide.Glide.with(context)
                                     .load(user.avatar)
                                     .placeholder(R.drawable.ic_profile)
                                     .into(avatar)
                             } else {
                                 avatar.setImageResource(R.drawable.ic_profile)
                             }
-                            
+
                             // Navigations
                             usernameText.setOnClickListener { onProfileClick(username) }
                             avatar.setOnClickListener { onProfileClick(username) }
-                            
+
                         } catch (e: Exception) {
                             usernameText.text = "Usuario"
                         }
                     }
-                    
+
                     // Actions
                     replyButton.setOnClickListener { onReplyClick(reply) }
-                    
+
                     likeIcon.setOnClickListener {
                         val newLikedState = !isLiked
                         likedComments[reply.id] = newLikedState
                         val newCount = if (newLikedState) currentCount + 1 else maxOf(0, currentCount - 1)
                         likeCounts[reply.id] = newCount
-                        
+
                         likeCount.text = newCount.toString()
-                         if (newLikedState) {
+                        if (newLikedState) {
                             likeIcon.setColorFilter(android.graphics.Color.RED)
                             likeIcon.setImageResource(R.drawable.ic_heart_filled)
                         } else {
@@ -2216,11 +2021,11 @@ class VideoHomeFragment : Fragment() {
                         }
                         onLikeClick(reply)
                     }
-                    
+
                     repliesContainer.addView(replyView)
                 }
             }
-            
+
             // Function ready for when we have real reply data
             // private fun addRealReplies(replies: List<com.example.tareamov.data.entity.VideoComment>) {
             //    // Method removed to avoid duplicate definition

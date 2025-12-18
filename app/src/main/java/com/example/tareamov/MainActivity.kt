@@ -189,22 +189,26 @@ class MainActivity : AppCompatActivity() {
             .findFragmentById(R.id.nav_host_fragment) as NavHostFragment
         navController = navHostFragment.navController
 
-        // Make sure the navigation graph is properly set
-        // This is already done in XML, but we can set it programmatically to be sure
-        val navGraph = navController.navInflater.inflate(R.navigation.nav_graph)
-        // Change start destination to splashFragment to show loading screen
-        navGraph.setStartDestination(R.id.splashFragment)
-        navController.graph = navGraph
+        // Only setup the graph if we're not restoring state (e.g. from a theme change)
+        if (savedInstanceState == null) {
+            // Make sure the navigation graph is properly set
+            // This is already done in XML, but we can set it programmatically to be sure
+            val navGraph = navController.navInflater.inflate(R.navigation.nav_graph)
+            // Change start destination to splashFragment to show loading screen
+            navGraph.setStartDestination(R.id.splashFragment)
+            navController.graph = navGraph
 
-        // If the activity was launched with an intent asking to open VideoHomeFragment, navigate now
-        try {
-            val openHome = intent?.getBooleanExtra("open_video_home", false) ?: false
-            if (openHome) {
-                navController.navigate(R.id.videoHomeFragment)
+            // If the activity was launched with an intent asking to open VideoHomeFragment, navigate now
+            try {
+                val openHome = intent?.getBooleanExtra("open_video_home", false) ?: false
+                if (openHome) {
+                    navController.navigate(R.id.videoHomeFragment)
+                }
+            } catch (t: Throwable) {
+                // ignore
             }
-        } catch (t: Throwable) {
-            // ignore
         }
+
         
         // 📱 NUEVO: Handle notification deep links to open specific fragments
         try {
