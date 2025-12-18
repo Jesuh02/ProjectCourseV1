@@ -1849,8 +1849,26 @@ object SupabaseClient {
         }
     }
     
-    // Removed duplicate fetchTaskById implementation
-
+    suspend fun fetchTasks(): List<Task> = fetchList("tasks", Array<Task>::class.java)
+    // Fetch a single task by id using server-side filter
+    suspend fun fetchTaskById(id: Long): Task? = withContext(Dispatchers.IO) {
+        try {
+            val path = "tasks?id=eq.${id}"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchTaskById failed status=${resp.code}")
+                    return@withContext null
+                }
+                val body = resp.body?.string() ?: return@withContext null
+                val arr = underscoredGson.fromJson(body, Array<Task>::class.java)
+                return@withContext arr.firstOrNull()
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchTaskById exception", e)
+            null
+        }
+    }
     
     /**
      * Fetch a task by its name (title) using case-insensitive search.
@@ -2475,16 +2493,6 @@ object SupabaseClient {
             emptyList()
         }
     }
-
-    // Backwards-compatible alias: fetch all tasks (used by older callers)
-    suspend fun fetchTasks(): List<Task> = withContext(Dispatchers.IO) {
-        try {
-            return@withContext fetchList("tasks", Array<Task>::class.java).toList()
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "fetchTasks exception", e)
-            return@withContext emptyList()
-        }
-    }
     
     // Fetch tasks for a specific topic or for many topics using 'in' filter
     suspend fun fetchTasksByTopicIds(topicIds: List<Long>): List<Task> = withContext(Dispatchers.IO) {
@@ -2507,29 +2515,6 @@ object SupabaseClient {
             emptyList()
         }
     }
-
-    /**
-     * Fetch a single task by ID
-     */
-    suspend fun fetchTaskById(taskId: Long): Task? = withContext(Dispatchers.IO) {
-        try {
-            val path = "tasks?id=eq.$taskId&select=*&limit=1"
-            val req = buildGetRequest(path)
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    Log.w("SupabaseClient", "fetchTaskById failed status=${resp.code}")
-                    return@withContext null
-                }
-                val body = resp.body?.string() ?: return@withContext null
-                val arr = underscoredGson.fromJson(body, Array<Task>::class.java)
-                return@withContext arr.firstOrNull()
-            }
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching task by ID=$taskId", e)
-            return@withContext null
-        }
-    }
-
     // Fetch courses created by a specific username (server-side filter on creator_username).
     suspend fun fetchCoursesByCreator(username: String): List<Course> = withContext(Dispatchers.IO) {
         try {

@@ -375,29 +375,25 @@ class ProfileFragment : Fragment() {
         }
     }
 
-    private fun getSyncRepository(): com.example.tareamov.data.sync.SyncRepository {
-        val db = AppDatabase.getDatabase(requireContext())
-        return com.example.tareamov.data.sync.SyncRepository(
-            db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
-            db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-            db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
-        )
-    }
-
     private fun setupAdminButton(bottomNavBinding: ComponentBottomNavigationBinding) {
-        val view = view ?: return
-        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        
-        com.example.tareamov.util.BottomNavigationHelper.setupBottomNavigation(
-            lifecycleOwner = viewLifecycleOwner,
-            navController = findNavController(),
-            view = view,
-            sessionManager = sessionManager,
-            syncRepository = getSyncRepository(),
-            onAdminClick = {
-                findNavController().navigate(R.id.action_profileFragment_to_homeFragment)
-            }
-        )
+         // Mostrar el botón de admin solo si el usuario es admin
+        val adminSlot = bottomNavBinding.adminSlot
+        val goToAdminButton = bottomNavBinding.goToAdminButton
+
+        // Inicializa como INVISIBLE para evitar salto al inflar
+        goToAdminButton.visibility = View.INVISIBLE
+
+        val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        if (!sess.isAdmin()) {
+            adminSlot.visibility = View.GONE
+            return
+        }
+
+        // Usuario es admin según SessionManager: mostrar el botón y asignar listener
+        goToAdminButton.visibility = View.VISIBLE
+        goToAdminButton.setOnClickListener {
+            findNavController().navigate(R.id.action_profileFragment_to_homeFragment)
+        }
     }
 
     // Add this method to ProfileFragment class

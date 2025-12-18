@@ -70,15 +70,6 @@ class SplashFragment : Fragment() {
                     // syncSupabaseToLocal may perform network/DB work; run off UI thread
                     try {
                         repo.syncSupabaseToLocal()
-                        
-                        // Pre-fetch and cache admin status before entering the app
-                        val sessionManager = SessionManager.getInstance(requireContext())
-                        val userId = sessionManager.getUserId()
-                        if (userId != -1L) {
-                            val isAdmin = repo.isUserAdmin(userId)
-                            sessionManager.setAdminStatus(isAdmin)
-                            Log.d("SplashFragment", "Pre-fetched admin status: $isAdmin")
-                        }
                     } catch (t: Throwable) {
                         t.printStackTrace()
                     }

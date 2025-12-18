@@ -699,17 +699,18 @@
     </androidx.core.widget.NestedScrollView>
 
     <!-- Skeleton Loading Container -->
-    <com.example.tareamov.ui.ShimmerFrameLayout
+    <FrameLayout
         android:id="@+id/skeletonLayout"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:background="@drawable/bg_app_gradient"
         android:visibility="gone"
+        android:stateListAnimator="@animator/skeleton_shimmer"
         app:layout_constraintTop_toBottomOf="@id/toolbar"
         app:layout_constraintBottom_toTopOf="@id/bottomNavigation">
 
         <include layout="@layout/layout_course_detail_skeleton" />
-    </com.example.tareamov.ui.ShimmerFrameLayout>
+    </FrameLayout>
 
     <!-- Course Action Buttons (above bottom navigation) -->
     <LinearLayout

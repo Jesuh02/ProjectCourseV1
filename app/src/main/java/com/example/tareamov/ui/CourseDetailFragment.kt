@@ -76,7 +76,7 @@ class CourseDetailFragment : Fragment() {
     private lateinit var continueWatchingContainer: LinearLayout
     private var currentTab = "documentos" // Add this property for tab tracking
     private lateinit var courseActionBar: LinearLayout // To control visibility of the whole bar
-    private lateinit var skeletonLayout: ShimmerFrameLayout
+    private lateinit var skeletonLayout: FrameLayout
 
     // Add subscription state variable
     private var isSubscribed = false
@@ -2722,19 +2722,26 @@ class CourseDetailFragment : Fragment() {
     }
 
     private fun setupAdminButton() {
-        val view = view ?: return
-        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        
-        com.example.tareamov.util.BottomNavigationHelper.setupBottomNavigation(
-            lifecycleOwner = viewLifecycleOwner,
-            navController = findNavController(),
-            view = view,
-            sessionManager = sessionManager,
-            syncRepository = syncRepository,
-            onAdminClick = {
-                findNavController().navigate(R.id.action_courseDetailFragment_to_homeFragment)
+        // Use the ComponentBottomNavigationBinding slot pattern to avoid layout jumps/huecos
+        val adminSlot = bottomNavBinding.adminSlot
+        val goToAdminButton = bottomNavBinding.goToAdminButton
+
+        // Initialize as INVISIBLE while we decide to avoid visual jumps
+        goToAdminButton.visibility = View.INVISIBLE
+
+        // Prefer synchronous SessionManager check so the slot can be hidden before first render
+        val sess = SessionManager.getInstance(requireContext())
+        if (!sess.isAdmin()) {
+            // Hide the entire slot before drawing to prevent any gap for non-admin users
+            adminSlot.visibility = View.GONE
+            return
             }
-        )
+        // User is admin according to SessionManager: show button and wire listener
+        goToAdminButton.visibility = View.VISIBLE
+        goToAdminButton.setOnClickListener {
+            Log.d("CourseDetailFragment", "Admin button clicked, navigating to HomeFragment")
+            findNavController().navigate(R.id.action_courseDetailFragment_to_homeFragment)
+            }
     }
 
     private fun checkAdminStatus(callback: (Boolean) -> Unit) {
@@ -2996,12 +3003,40 @@ class CourseDetailFragment : Fragment() {
 
     private fun startSkeletonAnimation() {
         skeletonLayout.visibility = View.VISIBLE
-        skeletonLayout.startShimmer()
+        skeletonLayout.alpha = 1f
+        
+        // Iniciar animación shimmer continua
+        val shimmerAnimation = android.animation.ObjectAnimator.ofFloat(
+            skeletonLayout, 
+            "alpha", 
+            0.3f, 
+            1.0f
+        ).apply {
+            duration = 1200
+            repeatCount = android.animation.ObjectAnimator.INFINITE
+            repeatMode = android.animation.ObjectAnimator.REVERSE
+            interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+        }
+        shimmerAnimation.start()
+        
+        // Guardar referencia para detenerla después
+        skeletonLayout.setTag(R.id.skeletonLayout, shimmerAnimation)
     }
 
     private fun stopSkeletonAnimation() {
-        skeletonLayout.stopShimmer()
-        skeletonLayout.visibility = View.GONE
+        // Detener la animación shimmer
+        val shimmerAnimation = skeletonLayout.getTag(R.id.skeletonLayout) as? android.animation.ObjectAnimator
+        shimmerAnimation?.cancel()
+        
+        // Animar salida con fade out
+        skeletonLayout.animate()
+            .alpha(0f)
+            .setDuration(300)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .withEndAction {
+                skeletonLayout.visibility = View.GONE
+            }
+            .start()
     }
 
     private fun isNetworkAvailable(context: android.content.Context): Boolean {

@@ -200,21 +200,18 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center_horizontal"
-        android:layout_marginStart="12dp"
+        android:layout_marginStart="48dp"
         android:visibility="gone"
         android:alpha="0"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.5">
+        app:layout_constraintTop_toTopOf="parent">
 
         <ImageView
-            android:id="@+id/brightnessIcon"
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/ic_brightness_high"
-            android:tint="#FFFFFF"
-            android:layout_marginBottom="16dp" />
+            android:layout_marginBottom="16dp"/>
 
         <!-- Rotated seek bar for brightness control -->
         <FrameLayout
@@ -225,8 +222,8 @@
                 android:id="@+id/brightnessSeekBar"
                 android:layout_width="150dp"
                 android:layout_height="30dp"
-                android:minHeight="4dp"
-                android:maxHeight="4dp"
+                android:minHeight="6dp"
+                android:maxHeight="6dp"
                 android:layout_gravity="center"
                 android:rotation="-90"
                 android:progressDrawable="@drawable/custom_vertical_progress"

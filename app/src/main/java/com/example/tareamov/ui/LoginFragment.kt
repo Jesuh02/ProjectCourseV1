@@ -260,18 +260,6 @@ class LoginFragment : Fragment() {
                     val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                     sharedPrefs.edit().putLong("current_user_id", userId).apply()
                     
-                    // Cache admin status immediately
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        try {
-                            val ma = activity as? com.example.tareamov.MainActivity
-                            val isAdmin = ma?.syncRepository?.isUserAdmin(userId) ?: false
-                            sessionManager.setAdminStatus(isAdmin)
-                            Log.d("LoginFragment", "Cached admin status on login: $isAdmin")
-                        } catch (e: Exception) {
-                            Log.e("LoginFragment", "Error caching admin status", e)
-                        }
-                    }
-                    
                     // Register FCM Token safely
                     try {
                         if (FirebaseApp.getApps(requireContext()).isNotEmpty()) {
@@ -786,17 +774,6 @@ class LoginFragment : Fragment() {
                         val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                         sharedPrefs.edit().putLong("current_user_id", user.id).apply()
                         
-                        // Cache admin status
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            try {
-                                val ma = activity as? com.example.tareamov.MainActivity
-                                val isAdmin = ma?.syncRepository?.isUserAdmin(user.id) ?: false
-                                sessionManager.setAdminStatus(isAdmin)
-                            } catch (e: Exception) {
-                                Log.e("LoginFragment", "Error caching admin status (Google)", e)
-                            }
-                        }
-                        
                         Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
                         
                         // Navigate to home
@@ -943,17 +920,6 @@ class LoginFragment : Fragment() {
                     
                     val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                     sharedPrefs.edit().putLong("current_user_id", currentUser.id).apply()
-                    
-                    // Cache admin status
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        try {
-                            val ma = activity as? com.example.tareamov.MainActivity
-                            val isAdmin = ma?.syncRepository?.isUserAdmin(currentUser.id) ?: false
-                            sessionManager.setAdminStatus(isAdmin)
-                        } catch (e: Exception) {
-                            Log.e("LoginFragment", "Error caching admin status (Google email)", e)
-                        }
-                    }
                     
                     Toast.makeText(requireContext(), "¡Bienvenido de nuevo, $displayName!", Toast.LENGTH_SHORT).show()
                     findNavController().navigate(R.id.videoHomeFragment)
@@ -1140,17 +1106,6 @@ class LoginFragment : Fragment() {
                             
                             val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                             sharedPrefs.edit().putLong("current_user_id", currentUser.id).apply()
-                            
-                            // Cache admin status
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                try {
-                                    val ma = activity as? com.example.tareamov.MainActivity
-                                    val isAdmin = ma?.syncRepository?.isUserAdmin(currentUser.id) ?: false
-                                    sessionManager.setAdminStatus(isAdmin)
-                                } catch (e: Exception) {
-                                    Log.e("LoginFragment", "Error caching admin status (Google persona)", e)
-                                }
-                            }
                             
                             Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
                             findNavController().navigate(R.id.videoHomeFragment)

@@ -224,50 +224,18 @@ class ExploreFragment : Fragment() {
         val adminSlot = bottomNavBinding.adminSlot
         val goToAdminButton = bottomNavBinding.goToAdminButton
 
-        // 1. Check local cache first (Fast UI update)
-        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        val isCachedAdmin = sessionManager.isAdmin()
-        
-        // Helper to update visibility safely
-        fun updateVisibility(visible: Boolean) {
-            val targetVisibility = if (visible) View.VISIBLE else View.GONE
-            if (adminSlot.visibility != targetVisibility) {
-                adminSlot.visibility = targetVisibility
-                goToAdminButton.visibility = targetVisibility
-            }
-        }
-        
-        // Set initial state based on cache or role check
-        // Also check if user has Role 3 (Admin)
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val userId = sessionManager.getUserId()
-                if (userId != -1L) {
-                    val syncRepo = getSyncRepository()
-                    
-                    // Check specifically for Role 3 (Admin)
-                    val isAdminRole = withContext(Dispatchers.IO) {
-                        syncRepo.hasUserRole(userId, 3) // 3 = Admin Role ID
-                    }
-                    
-                    if (isAdminRole || isCachedAdmin) {
-                        updateVisibility(true)
-                        if (isAdminRole && !isCachedAdmin) {
-                            sessionManager.setAdminStatus(true)
-                        }
-                    } else {
-                        updateVisibility(false)
-                    }
-                } else {
-                    updateVisibility(false)
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("ExploreFragment", "Error checking admin status", e)
-                updateVisibility(isCachedAdmin) // Fallback to cache
-            }
+        // Inicializa como INVISIBLE para evitar salto al inflar
+        goToAdminButton.visibility = View.INVISIBLE
+
+        val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        if (!sess.isAdmin()) {
+            // Ocultar el slot antes del render para que no quede hueco visible
+            adminSlot.visibility = View.GONE
+            return
         }
 
-        // Click listener
+        // Usuario admin: mostrar botón y asignar listener
+        goToAdminButton.visibility = View.VISIBLE
         goToAdminButton.setOnClickListener {
             findNavController().navigate(R.id.action_exploreFragment_to_homeFragment)
         }
