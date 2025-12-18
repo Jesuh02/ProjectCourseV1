@@ -4,6 +4,11 @@ package com.example.tareamov.util
 import android.content.Context
 import android.content.SharedPreferences
 
+/**
+ * SessionManager - singleton for storing simple user session info in SharedPreferences.
+ * This implementation centralizes role handling and keeps backward compatibility
+ * with legacy keys. It exposes helper methods used across the app.
+ */
 class SessionManager private constructor(private val context: Context) {
     private val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
     private val editor: SharedPreferences.Editor = sharedPreferences.edit()
@@ -14,16 +19,21 @@ class SessionManager private constructor(private val context: Context) {
         private const val KEY_USER_ID = "user_id"
         private const val KEY_PERSONA_ID = "persona_id"
         private const val KEY_IS_LOGGED_IN = "is_logged_in"
-        private const val KEY_USER_ROLE = "user_role" // New key for user role
-        private const val KEY_USER_AVATAR = "user_avatar" // Key for storing avatar URI
+        private const val KEY_USER_ROLE = "user_role" // legacy single-role string (eg "admin")
+        private const val KEY_USER_AVATAR = "user_avatar"
         private const val KEY_SUBSCRIPTIONS_PREFIX = "subscription_"
-        private const val KEY_LAST_ACTIVE_USER = "last_active_user" // Para detectar cambios de usuario
-        private const val KEY_USER_SESSION_TIMESTAMP = "user_session_timestamp" // Timestamp de sesión
+        private const val KEY_LAST_ACTIVE_USER = "last_active_user"
+        private const val KEY_USER_SESSION_TIMESTAMP = "user_session_timestamp"
+
+        // Newer keys / canonical keys
+        private const val KEY_USER_ROLE_IDS = "user_role_ids" // set of role id strings (backwards-compatible)
+        private const val KEY_USER_ROLES = "user_roles" // alias set name used in some code paths
+        private const val KEY_IS_ADMIN = "is_admin" // explicit boolean quick-check
 
         @Volatile
         private var instance: SessionManager? = null
-        
-        // Listeners para cambios de usuario
+
+        // Listeners for user changes
         private val userChangeListeners = mutableListOf<UserChangeListener>()
 
         fun getInstance(context: Context): SessionManager {
@@ -31,27 +41,18 @@ class SessionManager private constructor(private val context: Context) {
                 instance ?: SessionManager(context.applicationContext).also { instance = it }
             }
         }
-        
-        /**
-         * Interface para escuchar cambios de usuario
-         */
+
         interface UserChangeListener {
             fun onUserChanged(previousUser: String?, newUser: String?)
             fun onUserLoggedOut(previousUser: String?)
         }
-        
-        /**
-         * Añadir listener para cambios de usuario
-         */
+
         fun addUserChangeListener(listener: UserChangeListener) {
             synchronized(userChangeListeners) {
                 userChangeListeners.add(listener)
             }
         }
-        
-        /**
-         * Remover listener para cambios de usuario
-         */
+
         fun removeUserChangeListener(listener: UserChangeListener) {
             synchronized(userChangeListeners) {
                 userChangeListeners.remove(listener)
@@ -60,202 +61,130 @@ class SessionManager private constructor(private val context: Context) {
     }
 
     /**
-     * Save user login session
+     * Create a login session. roleName is legacy and kept for compatibility.
      */
-    fun createLoginSession(username: String, userId: Long, personaId: Long = userId, roleName: String, avatarUri: String?) { 
+    fun createLoginSession(username: String, userId: Long, personaId: Long = userId, roleName: String = "", avatarUri: String? = null) {
         val previousUser = getLastActiveUser()
-        
+
         editor.putString(KEY_USERNAME, username)
         editor.putLong(KEY_USER_ID, userId)
         editor.putLong(KEY_PERSONA_ID, personaId)
-        editor.putString(KEY_USER_ROLE, roleName) // Store role name for compatibility
-        editor.putString(KEY_USER_AVATAR, avatarUri) // Store avatar URI
-        editor.putString(KEY_LAST_ACTIVE_USER, username) // Track last active user
-        editor.putLong(KEY_USER_SESSION_TIMESTAMP, System.currentTimeMillis()) // Session timestamp
+        if (roleName.isNotBlank()) editor.putString(KEY_USER_ROLE, roleName)
+        if (avatarUri != null) editor.putString(KEY_USER_AVATAR, avatarUri)
+        editor.putString(KEY_LAST_ACTIVE_USER, username)
+        editor.putLong(KEY_USER_SESSION_TIMESTAMP, System.currentTimeMillis())
         editor.putBoolean(KEY_IS_LOGGED_IN, true)
         editor.apply()
-        
-        // Notificar cambio de usuario si es diferente
+
         if (previousUser != username) {
             notifyUserChanged(previousUser, username)
         }
     }
 
+    /**
+     * Unified isAdmin check (explicit flag, role-id sets, or legacy role string)
+     */
     fun isAdmin(): Boolean {
-        // First check explicit admin flag
-        val explicit = sharedPreferences.getBoolean(KEY_IS_ADMIN, false)
-        if (explicit) {
-            android.util.Log.d("SessionManager", "isAdmin() called - explicit admin flag = true")
-            return true
-        }
-
-        // Then check role IDs (e.g., role id 3 is admin in the app)
-        val roles = sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet()
-        if (roles.contains("3")) {
-            android.util.Log.d("SessionManager", "isAdmin() called - role id 3 present in roles set")
-            return true
-        }
-
-        // Fallback to role name check for backward compatibility
-        val role = getUserRole()
-        val isAdmin = role?.equals("admin", ignoreCase = true) == true
-        android.util.Log.d("SessionManager", "isAdmin() called - role: '$role', isAdmin: $isAdmin")
-        return isAdmin
-    }
-
-    /**
-     * Check if user has a specific role ID
-     */
-    fun hasRole(roleId: Int): Boolean {
+        if (sharedPreferences.getBoolean(KEY_IS_ADMIN, false)) return true
         val roleIds = sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet())
-        if (roleIds != null && roleIds.contains(roleId.toString())) {
-            return true
-        }
-        // Fallback for Admin (3) if only legacy role string is set
-        if (roleId == 3 && isAdmin()) {
-            return true
-        }
+        if (roleIds != null && roleIds.contains("3")) return true
+        val roles = sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet())
+        if (roles != null && roles.contains("3")) return true
+        val legacy = getUserRole()
+        if (legacy?.equals("admin", ignoreCase = true) == true) return true
         return false
-    }
-
-    /**
-     * Add a role ID to the user's session
-     */
-    fun addRole(roleId: Int) {
-        val roleIds = sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet())?.toMutableSet() ?: mutableSetOf()
-        roleIds.add(roleId.toString())
-        editor.putStringSet(KEY_USER_ROLE_IDS, roleIds)
-        editor.apply()
-        
-        // If roleId is 3 (Admin), also update the legacy role string for compatibility
-        if (roleId == 3) {
-             editor.putString(KEY_USER_ROLE, "admin")
-             editor.apply()
-        }
-    }
-
-    /**
-     * Remove a role ID from the user's session
-     */
-    fun removeRole(roleId: Int) {
-        val roleIds = sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet())?.toMutableSet() ?: mutableSetOf()
-        roleIds.remove(roleId.toString())
-        editor.putStringSet(KEY_USER_ROLE_IDS, roleIds)
-        editor.apply()
-        
-        // If removing admin role (3), revert legacy role to "user" if it was "admin"
-        if (roleId == 3 && getUserRole() == "admin") {
-            editor.putString(KEY_USER_ROLE, "user")
-            editor.apply()
-        }
-    }
-    
-    /**
-     * Update admin status helper
-     */
-    fun setAdminStatus(isAdmin: Boolean) {
-        if (isAdmin) {
-            addRole(3) // Assuming 3 is Admin ID
-        } else {
-            removeRole(3)
-        }
-    }
-
-    /**
-     * Get stored username
-     */
-    fun getUsername(): String? {
-        return sharedPreferences.getString(KEY_USERNAME, null)
-    }
-
-    /**
-     * Get stored user ID
-     */
-    fun getUserId(): Long {
-        return sharedPreferences.getLong(KEY_USER_ID, -1)
-    }
-
-    /**
-     * Get stored persona ID
-     */
-    fun getPersonaId(): Long {
-        return sharedPreferences.getLong(KEY_PERSONA_ID, -1)
-    }
-
-    /**
-     * Get stored user role
-     */
-    fun getUserRole(): String? {
-        return sharedPreferences.getString(KEY_USER_ROLE, null)
-    }
-
-    /**
-     * Get stored user avatar
-     */
-    fun getUserAvatar(): String? {
-        return sharedPreferences.getString(KEY_USER_AVATAR, null)
     }
 
     /**
      * Check whether the stored roles contain the given role id.
      */
     fun hasRole(roleId: Int): Boolean {
-        val roles = sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet()
-        return roles.contains(roleId.toString())
+        val idStr = roleId.toString()
+        val set1 = sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet()) ?: emptySet()
+        if (set1.contains(idStr)) return true
+        val set2 = sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet()
+        if (set2.contains(idStr)) return true
+        // fallback: admin string
+        if (roleId == 3) {
+            val legacy = getUserRole()
+            if (legacy?.equals("admin", ignoreCase = true) == true) return true
+        }
+        return false
     }
 
-    /**
-     * Add a numeric role id to the stored roles set.
-     */
+    /** Add role id to canonical sets (keeps backwards compatibility). */
     fun addRole(roleId: Int) {
-        val existing = HashSet(sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet())
-        if (existing.add(roleId.toString())) {
-            editor.putStringSet(KEY_USER_ROLES, existing)
+        val idStr = roleId.toString()
+        val set = HashSet(sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet())
+        if (set.add(idStr)) {
+            editor.putStringSet(KEY_USER_ROLES, set)
+            editor.apply()
+        }
+        // also update legacy/key alias
+        val setIds = HashSet(sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet()) ?: emptySet())
+        if (setIds.add(idStr)) {
+            editor.putStringSet(KEY_USER_ROLE_IDS, setIds)
+            editor.apply()
+        }
+        // If admin role added, set legacy fields for compatibility
+        if (roleId == 3) {
+            editor.putString(KEY_USER_ROLE, "admin")
+            editor.putBoolean(KEY_IS_ADMIN, true)
             editor.apply()
         }
     }
 
-    /**
-     * Remove a numeric role id from the stored roles set.
-     */
+    /** Remove role id from canonical sets. */
     fun removeRole(roleId: Int) {
-        val existing = HashSet(sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet())
-        if (existing.remove(roleId.toString())) {
-            editor.putStringSet(KEY_USER_ROLES, existing)
+        val idStr = roleId.toString()
+        val set = HashSet(sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet())
+        if (set.remove(idStr)) {
+            editor.putStringSet(KEY_USER_ROLES, set)
+            editor.apply()
+        }
+        val setIds = HashSet(sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet()) ?: emptySet())
+        if (setIds.remove(idStr)) {
+            editor.putStringSet(KEY_USER_ROLE_IDS, setIds)
+            editor.apply()
+        }
+        if (roleId == 3) {
+            val legacy = getUserRole()
+            if (legacy == "admin") {
+                editor.putString(KEY_USER_ROLE, "user")
+            }
+            editor.putBoolean(KEY_IS_ADMIN, false)
             editor.apply()
         }
     }
 
-    /**
-     * Explicitly set/unset admin status. This sets a boolean flag used by quick checks.
-     */
+    /** Explicitly set/unset admin status. */
     fun setAdminStatus(isAdmin: Boolean) {
         editor.putBoolean(KEY_IS_ADMIN, isAdmin)
         editor.apply()
+        if (isAdmin) addRole(3) else removeRole(3)
     }
 
-    /**
-     * Refresh the stored session info from Supabase for the current username.
-     * This will fetch the usuario and its role and update SharedPreferences.
-     * Returns true if refresh succeeded and data was updated.
-     */
+    // Simple getters
+    fun getUsername(): String? = sharedPreferences.getString(KEY_USERNAME, null)
+    fun getUserId(): Long = sharedPreferences.getLong(KEY_USER_ID, -1)
+    fun getPersonaId(): Long = sharedPreferences.getLong(KEY_PERSONA_ID, -1)
+    fun getUserRole(): String? = sharedPreferences.getString(KEY_USER_ROLE, null)
+    fun getUserAvatar(): String? = sharedPreferences.getString(KEY_USER_AVATAR, null)
+
+    /** Refresh session from Supabase (keeps existing logic). */
     suspend fun refreshFromSupabase(): Boolean {
         val current = getUsername() ?: return false
         try {
-            // Call SupabaseClient directly to avoid circular dependency on SyncRepository
             val (u, r) = com.example.tareamov.service.SupabaseClient.fetchUsuarioWithRoleByUsername(current)
             if (u == null) return false
-
             val roleName = r?.nombre ?: getUserRole() ?: ""
             val avatar = u.avatar
-
             editor.putString(KEY_USERNAME, u.usuario)
             editor.putLong(KEY_USER_ID, u.id)
             editor.putLong(KEY_PERSONA_ID, u.persona_id)
             editor.putString(KEY_USER_ROLE, roleName)
             if (avatar != null) editor.putString(KEY_USER_AVATAR, avatar)
             editor.apply()
-
             notifyUserChanged(getLastActiveUser(), u.usuario)
             return true
         } catch (e: Exception) {
@@ -264,77 +193,34 @@ class SessionManager private constructor(private val context: Context) {
         }
     }
 
-    /**
-     * Check if user is logged in
-     */
-    fun isLoggedIn(): Boolean {
-        return sharedPreferences.getBoolean(KEY_IS_LOGGED_IN, false)
-    }
+    fun isLoggedIn(): Boolean = sharedPreferences.getBoolean(KEY_IS_LOGGED_IN, false)
 
-    /**
-     * Clear session details
-     */
     fun logout() {
         val previousUser = getUsername()
         editor.clear()
         editor.apply()
-        
-        // Notificar logout
-        if (previousUser != null) {
-            notifyUserLoggedOut(previousUser)
-        }
+        if (previousUser != null) notifyUserLoggedOut(previousUser)
     }
-    
-    /**
-     * Get last active user
-     */
-    fun getLastActiveUser(): String? {
-        return sharedPreferences.getString(KEY_LAST_ACTIVE_USER, null)
-    }
-    
-    /**
-     * Get user session timestamp
-     */
-    fun getUserSessionTimestamp(): Long {
-        return sharedPreferences.getLong(KEY_USER_SESSION_TIMESTAMP, 0)
-    }
-    
-    /**
-     * Check if current user is different from last active user
-     */
-    fun hasUserChanged(): Boolean {
-        val currentUser = getUsername()
-        val lastActiveUser = getLastActiveUser()
-        return currentUser != lastActiveUser
-    }
-    
-    /**
-     * Generate unique chat preference key for current user
-     */
+
+    fun getLastActiveUser(): String? = sharedPreferences.getString(KEY_LAST_ACTIVE_USER, null)
+    fun getUserSessionTimestamp(): Long = sharedPreferences.getLong(KEY_USER_SESSION_TIMESTAMP, 0)
+    fun hasUserChanged(): Boolean = getUsername() != getLastActiveUser()
+
     fun getChatPreferenceKey(baseKey: String): String {
         val username = getUsername() ?: "anonymous"
         return "${baseKey}_user_${username}"
     }
-    
-    /**
-     * Get SharedPreferences for chat persistence per user
-     */
+
     fun getChatPreferences(context: Context): android.content.SharedPreferences {
         val username = getUsername() ?: "anonymous"
         return context.getSharedPreferences("chat_persistence_$username", Context.MODE_PRIVATE)
     }
-    
-    /**
-     * Clear chat data for current user only
-     */
+
     fun clearUserChatData(context: Context) {
         val chatPrefs = getChatPreferences(context)
         chatPrefs.edit().clear().apply()
     }
-    
-    /**
-     * Notify listeners of user change
-     */
+
     private fun notifyUserChanged(previousUser: String?, newUser: String?) {
         synchronized(userChangeListeners) {
             userChangeListeners.forEach { listener ->
@@ -346,10 +232,7 @@ class SessionManager private constructor(private val context: Context) {
             }
         }
     }
-    
-    /**
-     * Notify listeners of user logout
-     */
+
     private fun notifyUserLoggedOut(previousUser: String) {
         synchronized(userChangeListeners) {
             userChangeListeners.forEach { listener ->
@@ -362,74 +245,38 @@ class SessionManager private constructor(private val context: Context) {
         }
     }
 
-    /**
-     * Subscribe to a creator
-     * @param creatorUsername The username of the creator to subscribe to
-     * @return true if subscription was successful, false if already subscribed
-     */
     fun subscribeToCreator(creatorUsername: String): Boolean {
         val currentUsername = getUsername() ?: return false
-
-        // Don't allow subscribing to yourself
-        if (currentUsername == creatorUsername) {
-            return false
-        }
-
-        // Check if already subscribed
-        if (isSubscribedTo(creatorUsername)) {
-            return false
-        }
-
-        // Add subscription
+        if (currentUsername == creatorUsername) return false
+        if (isSubscribedTo(creatorUsername)) return false
         val subscriptionKey = KEY_SUBSCRIPTIONS_PREFIX + creatorUsername
         editor.putBoolean(subscriptionKey, true)
         editor.apply()
         return true
     }
 
-    /**
-     * Unsubscribe from a creator
-     * @param creatorUsername The username of the creator to unsubscribe from
-     * @return true if unsubscription was successful, false if not subscribed
-     */
     fun unsubscribeFromCreator(creatorUsername: String): Boolean {
-        // Check if subscribed
-        if (!isSubscribedTo(creatorUsername)) {
-            return false
-        }
-
-        // Remove subscription
+        if (!isSubscribedTo(creatorUsername)) return false
         val subscriptionKey = KEY_SUBSCRIPTIONS_PREFIX + creatorUsername
         editor.remove(subscriptionKey)
         editor.apply()
         return true
     }
 
-    /**
-     * Check if the current user is subscribed to a creator
-     * @param creatorUsername The username of the creator
-     * @return true if subscribed, false otherwise
-     */
     fun isSubscribedTo(creatorUsername: String): Boolean {
         val subscriptionKey = KEY_SUBSCRIPTIONS_PREFIX + creatorUsername
         return sharedPreferences.getBoolean(subscriptionKey, false)
     }
 
-    /**
-     * Get all subscriptions for the current user
-     * @return List of creator usernames the current user is subscribed to
-     */
     fun getAllSubscriptions(): List<String> {
         val subscriptions = mutableListOf<String>()
         val allPrefs = sharedPreferences.all
-
         for ((key, value) in allPrefs) {
             if (key.startsWith(KEY_SUBSCRIPTIONS_PREFIX) && value == true) {
                 val creatorUsername = key.substring(KEY_SUBSCRIPTIONS_PREFIX.length)
                 subscriptions.add(creatorUsername)
             }
         }
-
         return subscriptions
     }
 }

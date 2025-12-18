@@ -28,7 +28,8 @@ import androidx.compose.ui.platform.LocalDensity
 
 @Composable
 fun EvaluativeReinforcementScreen(
-    onContinueClick: () -> Unit
+    onContinueClick: () -> Unit,
+    onCourseSelectionClick: () -> Unit
 ) {
     // Animation state for the robot (bobbing up and down)
     val infiniteTransition = rememberInfiniteTransition(label = "robotAnimation")
@@ -53,6 +54,18 @@ fun EvaluativeReinforcementScreen(
         label = "scale"
     )
 
+    // Typewriter effect state
+    var displayedText by remember { mutableStateOf("") }
+    val fullText = "¡Hola amigo! Soy tu asistente."
+
+    LaunchedEffect(key1 = fullText) {
+        displayedText = ""
+        fullText.forEachIndexed { index, char ->
+            displayedText += char
+            kotlinx.coroutines.delay(50) // Adjust speed here (lower is faster)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -69,7 +82,7 @@ fun EvaluativeReinforcementScreen(
                 .padding(bottom = 24.dp)
                 .offset(y = dy.dp) // Move bubble with robot or independently? Maybe independently looks better or static.
         ) {
-            SpeechBubble(text = "¡Hola amigo! Soy tu asistente.")
+            SpeechBubble(text = displayedText)
         }
 
         // Robot Character
@@ -87,7 +100,7 @@ fun EvaluativeReinforcementScreen(
 
         // Continue Button
         Button(
-            onClick = onContinueClick,
+            onClick = onCourseSelectionClick, // Navigate to course selection instead of going back
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),

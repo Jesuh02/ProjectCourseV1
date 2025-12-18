@@ -615,7 +615,37 @@
     <fragment
         android:id="@+id/evaluativeReinforcementFragment"
         android:name="com.example.tareamov.ui.EvaluativeReinforcementFragment"
-        android:label="Evaluative Reinforcement" />
+        android:label="Evaluative Reinforcement">
+        <action
+            android:id="@+id/action_evaluativeReinforcementFragment_to_courseSelectionFragment"
+            app:destination="@id/courseSelectionFragment" />
+    </fragment>
+
+    <!-- Course Selection Fragment -->
+    <fragment
+        android:id="@+id/courseSelectionFragment"
+        android:name="com.example.tareamov.ui.CourseSelectionFragment"
+        android:label="Seleccionar Curso">
+        <action
+            android:id="@+id/action_courseSelectionFragment_to_reinforcementLearningFragment"
+            app:destination="@id/reinforcementLearningFragment" />
+    </fragment>
+
+    <!-- Reinforcement Learning Fragment -->
+    <fragment
+        android:id="@+id/reinforcementLearningFragment"
+        android:name="com.example.tareamov.ui.ReinforcementLearningFragment"
+        android:label="Refuerzo de Aprendizaje">
+        <argument
+            android:name="courseId"
+            app:argType="long" />
+        <argument
+            android:name="courseName"
+            app:argType="string" />
+        <argument
+            android:name="instructorName"
+            app:argType="string" />
+    </fragment>
 
 
 </navigation>

@@ -8,6 +8,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import com.example.tareamov.ui.compose.EvaluativeReinforcementScreen
+import com.example.tareamov.R
 
 class EvaluativeReinforcementFragment : Fragment() {
 
@@ -21,6 +22,10 @@ class EvaluativeReinforcementFragment : Fragment() {
                 EvaluativeReinforcementScreen(
                     onContinueClick = {
                         findNavController().popBackStack()
+                    },
+                    onCourseSelectionClick = {
+                        // Navigate to course selection screen
+                        findNavController().navigate(R.id.action_evaluativeReinforcementFragment_to_courseSelectionFragment)
                     }
                 )
             }

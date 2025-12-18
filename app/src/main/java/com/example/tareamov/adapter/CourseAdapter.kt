@@ -504,7 +504,7 @@ class CourseAdapter(
         if (currentUserIdCached == null) {
             // No user logged in
             holder.subscriberCountTextView.text = "0 suscriptores"
-            holder.subscribeButton.text = "Iniciar sesión"
+            holder.subscribeButton.text = "Suscribirse"
             holder.subscribeButton.isEnabled = false
             return
         }
@@ -556,9 +556,9 @@ class CourseAdapter(
      */
     private fun checkEnrollmentStatus(holder: CourseViewHolder, course: Course) {
         if (currentUsername == null) {
-            holder.enrollButton?.text = "Iniciar sesión para inscribirse"
-            holder.enrollButton?.isEnabled = false
-            holder.enrollButton?.alpha = 0.6f
+            // Guest mode: Hide enrollment button
+            holder.enrollButtonContainer?.visibility = View.GONE
+            holder.enrollButton?.visibility = View.GONE
             return
         }
 

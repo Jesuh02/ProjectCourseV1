@@ -217,8 +217,11 @@ class VideoHomeFragment : Fragment() {
 
         // Setup search functionality
         setupSearchBar(view)
+        
+        // Setup More Options Button
+        setupMoreOptionsButton()
 
-        // Setup AI Assistant Icon with animation and click listener
+        // Setup AI Assistant Icon with animation and click listener (hidden from main bar but kept for reference or if logic changes)
         aiAssistantIconImageView.setOnClickListener {
             try {
                 findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
@@ -265,12 +268,22 @@ class VideoHomeFragment : Fragment() {
         pulseAnimatorSet.playTogether(pulseScaleX, pulseScaleY)
         pulseAnimatorSet.start()
 
-        // Evaluative Reinforcement Click Listener
+        // Evaluative Reinforcement Click Listener — navigate with zero-duration animations for instant transition
         evaluativeReinforcementIconImageView.setOnClickListener {
             try {
-                findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment)
+                val opts = androidx.navigation.navOptions {
+                    anim {
+                        enter = 0
+                        exit = 0
+                        popEnter = 0
+                        popExit = 0
+                    }
+                }
+                findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment, null, opts)
             } catch (e: Exception) {
                 Log.e("VideoHomeFragment", "Error navigating to EvaluativeReinforcementFragment", e)
+                // Fallback: try plain navigate without options
+                try { findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment) } catch (_: Exception) { }
             }
         }
 
@@ -378,35 +391,22 @@ class VideoHomeFragment : Fragment() {
         
         // Function to update admin UI elements
         fun updateAdminUi(isAdmin: Boolean) {
-            // New Logic: Check if user has explicit role ID 2 (AiAssistant access)
-            val hasAiRole = sess.hasRole(2)
+            // Check if user has role ID 2 (for AI Assistant, Evaluative Reinforcement, and Database)
+            val hasRole2 = sess.hasRole(2)
             
-            if (hasAiRole) {
-                // Show AI Assistant icon for Role 2
-                aiAssistantIconImageView.visibility = View.VISIBLE
-                aiAssistantIconImageView.setOnClickListener {
-                     // Navigate to AI Assistant or ChatBot
-                     findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
-                }
-            } else {
-                 aiAssistantIconImageView.visibility = View.GONE
-            }
+            // Hide individual icons from top nav as they are now in the 3-dot menu
+            aiAssistantIconImageView.visibility = View.GONE
+            evaluativeReinforcementIconImageView.visibility = View.GONE
+            databaseIconImageView.visibility = View.GONE
+            
+            // Show more options button always (it contains tools for various roles)
+            moreOptionsButton.visibility = View.VISIBLE
 
-            if (isAdmin) {
-                // Admin: Show database icon with animated drawable
-                databaseIconImageView.visibility = View.VISIBLE
-                databaseIconImageView.setImageResource(R.drawable.ic_database_orbit_animated_anim)
-                
-                // Start animation automatically
-                val drawable = databaseIconImageView.drawable
-                if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
-                    drawable.start()
-                }
-                
-                databaseIconImageView.setOnClickListener {
-                    findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
-                }
-                
+            // Handle admin-specific elements (separate from role 2)
+            // Check for Role 3 (Admin) explicitly
+            val hasAdminRole = sess.hasRole(3)
+            
+            if (isAdmin || hasAdminRole) {
                 // Admin: Show admin slot and button
                 adminSlot?.visibility = View.VISIBLE
                 goToAdminButton?.visibility = View.VISIBLE
@@ -506,8 +506,9 @@ class VideoHomeFragment : Fragment() {
             true
         )
         
-        // Set background and animation
-        popupWindow.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        // Set background and animation — make background less translucent so options are more visible
+        val popupBgColor = android.graphics.Color.parseColor("#DD1F222B") // darker semi-opaque panel
+        popupWindow.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(popupBgColor))
         popupWindow.animationStyle = android.R.style.Animation_Dialog
         popupWindow.isOutsideTouchable = true
         popupWindow.isFocusable = true
@@ -528,9 +529,19 @@ class VideoHomeFragment : Fragment() {
         val reinforcementIcon = popupView.findViewById<android.widget.ImageView>(R.id.reinforcementMenuIcon)
         
         // Show/hide options based on roles
-        llmDatabaseOption.visibility = if (hasRole2) View.VISIBLE else View.GONE
+        llmDatabaseOption.visibility = if (isAdmin) View.VISIBLE else View.GONE
         llmTasksOption.visibility = if (hasRole2) View.VISIBLE else View.GONE
-        llmReinforcementOption.visibility = if (hasRole2) View.VISIBLE else View.GONE
+        llmReinforcementOption.visibility = View.VISIBLE
+
+        // Make option backgrounds less translucent (more visible)
+        try {
+            val optionBgColor = android.graphics.Color.parseColor("#DD2B303B") // semi-opaque dark
+            if (llmDatabaseOption.visibility == View.VISIBLE) llmDatabaseOption.setBackgroundColor(optionBgColor)
+            if (llmTasksOption.visibility == View.VISIBLE) llmTasksOption.setBackgroundColor(optionBgColor)
+            if (llmReinforcementOption.visibility == View.VISIBLE) llmReinforcementOption.setBackgroundColor(optionBgColor)
+        } catch (e: Exception) {
+            // Fall back silently if color parsing or setting fails
+        }
         
         // Add staggered entrance animation for menu items
         val menuItems = listOf(llmDatabaseOption, llmTasksOption, llmReinforcementOption).filter { it.visibility == View.VISIBLE }
@@ -637,22 +648,30 @@ class VideoHomeFragment : Fragment() {
         }
         
         llmReinforcementOption.setOnClickListener {
-            // Add click animation
+            // Visual feedback (non-blocking)
             it.animate()
                 .scaleX(0.95f)
                 .scaleY(0.95f)
-                .setDuration(100)
-                .withEndAction {
-                    it.animate()
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .setDuration(100)
-                        .start()
-                    popupWindow.dismiss()
-                    // Add navigation for reinforcement when available
-                    findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment)
-                }
+                .setDuration(50)
                 .start()
+
+            popupWindow.dismiss()
+            
+            // Navigate IMMEDIATELY with NO animation for instant transition
+            try {
+                val opts = androidx.navigation.navOptions {
+                    anim {
+                        enter = 0
+                        exit = 0
+                        popEnter = 0
+                        popExit = 0
+                    }
+                    launchSingleTop = true
+                }
+                findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment, null, opts)
+            } catch (e: Exception) {
+                Log.e("VideoHomeFragment", "Error navigating to EvaluativeReinforcementFragment", e)
+            }
         }
         
         // Show popup below the anchor view with offset

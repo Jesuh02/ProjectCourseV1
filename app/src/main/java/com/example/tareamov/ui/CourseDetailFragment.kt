@@ -275,6 +275,42 @@ class CourseDetailFragment : Fragment() {
         val courseTitle = view.findViewById<TextView>(R.id.courseTitleTextView)
         val courseDescription = view.findViewById<TextView>(R.id.courseDescriptionTextView)
         val subscribeButton = view.findViewById<Button>(R.id.subscribeButton)
+        // Optional: button to start reinforcement directly from course detail (may not exist in all layouts)
+        val startReinforceBtn: Button? = run {
+            val resId = resources.getIdentifier("startReinforcementButton", "id", requireContext().packageName)
+            if (resId != 0) view.findViewById<Button>(resId) else null
+        }
+        startReinforceBtn?.setOnClickListener {
+            if (courseId == -1L) {
+                Toast.makeText(requireContext(), "ID de curso inválido", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            lifecycleScope.launch {
+                Toast.makeText(requireContext(), "Generando preguntas...", Toast.LENGTH_SHORT).show()
+                val titleText = courseTitle.text.toString().ifBlank { courseName }
+                val questions = withContext(Dispatchers.IO) { syncRepository.requestReinforcementQuiz(courseId, titleText) }
+
+                if (questions.isEmpty()) {
+                    Toast.makeText(requireContext(), "No hay suficiente contenido o hubo un error generando preguntas.", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+
+                // Pass preloaded questions JSON via savedStateHandle and navigate
+                val json = com.google.gson.Gson().toJson(questions)
+                val navEntry = findNavController().currentBackStackEntry
+                navEntry?.savedStateHandle?.set("preloaded_questions_json", json)
+
+                val bundle = Bundle().apply {
+                    putLong("courseId", courseId)
+                    putString("courseName", titleText)
+                    putString("instructorName", courseCreatorUsername ?: "Docente no especificado")
+                }
+                // nav action from CourseDetailFragment to reinforcement may not exist in nav graph;
+                // navigate directly to the destination fragment id instead
+                findNavController().navigate(R.id.reinforcementLearningFragment, bundle)
+            }
+        }
 
         // Observe course details
         courseViewModel.course.observe(viewLifecycleOwner) { course ->

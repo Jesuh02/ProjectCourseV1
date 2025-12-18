@@ -202,7 +202,8 @@
                     android:contentDescription="Refuerzo Evaluativo"
                     android:background="@android:color/transparent"
                     android:scaleType="centerInside"
-                    android:padding="6dp" />
+                    android:padding="6dp"
+                    android:visibility="gone" />
 
                 <!-- AI Assistant Button (Grading) -->
                 <ImageView
@@ -214,7 +215,8 @@
                     android:contentDescription="Asistente de Calificación"
                     android:background="@android:color/transparent"
                     android:scaleType="centerInside"
-                    android:padding="6dp" />
+                    android:padding="6dp"
+                    android:visibility="gone" />
 
                 <!-- Database Orbit Button -->
                 <ImageView
@@ -226,7 +228,8 @@
                     android:contentDescription="Database"
                     android:background="@android:color/transparent"
                     android:scaleType="centerInside"
-                    android:padding="4dp" />
+                    android:padding="4dp"
+                    android:visibility="gone" />
 
                 <!-- Profile Avatar -->
                 <de.hdodenhof.circleimageview.CircleImageView
@@ -248,7 +251,7 @@
                     android:src="@drawable/ic_more_vert"
                     android:scaleType="centerInside"
                     android:padding="6dp"
-                    android:visibility="gone"
+                    android:visibility="visible"
                     app:tint="#FFFFFF" />
             </LinearLayout>
 

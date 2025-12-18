@@ -14,6 +14,9 @@ interface CourseDao {
 
     @Query("SELECT * FROM courses WHERE creatorUserId = :userId ORDER BY creationDate DESC")
     suspend fun getCoursesByCreator(userId: Long): List<Course>
+    
+    @Query("SELECT * FROM courses WHERE creatorUserId = :creatorId ORDER BY creationDate DESC")
+    suspend fun getCoursesByCreatorId(creatorId: Long): List<Course>
 
     @Query("SELECT * FROM courses WHERE id = :courseId")
     suspend fun getCourseById(courseId: Long): Course?

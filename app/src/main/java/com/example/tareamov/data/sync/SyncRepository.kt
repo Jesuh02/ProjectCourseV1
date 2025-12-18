@@ -38,6 +38,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import com.example.tareamov.data.repository.SupabaseRepository
 import kotlinx.coroutines.withContext
+import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class SyncRepository(
     private val usuarioDao: UsuarioDao,
@@ -59,19 +62,12 @@ class SyncRepository(
     private val videoCommentDao: VideoCommentDao? = null
 ) {
     // SharedPreferences-based cache to store last remote 'updated_at' per table
-    private val prefs by lazy {
-        // Use application context from one of the DAOs by reflection isn't reliable; expect caller to call `initWithContext` if needed.
-        null as android.content.SharedPreferences?
-    }
+    private var prefs: android.content.SharedPreferences? = null
 
     // Optional: initialize with Context to enable caching
     fun initWithContext(context: android.content.Context) {
         try {
-            val p = context.getSharedPreferences("supabase_sync_cache", android.content.Context.MODE_PRIVATE)
-            (this::class.java.getDeclaredField("prefs")).apply {
-                isAccessible = true
-                set(this@SyncRepository, p)
-            }
+            prefs = context.getSharedPreferences("supabase_sync_cache", android.content.Context.MODE_PRIVATE)
         } catch (e: Exception) {
             Log.w("SyncRepository", "Could not initialize prefs for caching", e)
         }
@@ -742,6 +738,102 @@ class SyncRepository(
         } catch (e: Exception) {
             Log.w("SyncRepository", "fetchContentItemsByTaskIdFromSupabase failed for taskId=$taskId", e)
             emptyList()
+        }
+    }
+
+    /**
+     * Gather course topics & tasks, build a prompt and call the local microservice
+     * to generate multiple-choice reinforcement questions.
+     * Returns an empty list on error.
+     */
+    suspend fun requestReinforcementQuiz(courseId: Long, courseName: String, questionCount: Int = 5): List<com.example.tareamov.ui.compose.QuizQuestion> {
+        try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "requestReinforcementQuiz: Supabase not configured, aborting")
+                return emptyList()
+            }
+
+            // Fetch topics and tasks from Supabase
+            val topics = fetchTopicsByCourseFromSupabase(courseId)
+            val topicIds = topics.map { it.id }
+            val tasks = if (topicIds.isNotEmpty()) fetchTasksByTopicIdsFromSupabase(topicIds) else emptyList()
+            val contentItems = if (topicIds.isNotEmpty()) fetchContentItemsByTopicIdsFromSupabase(topicIds) else emptyList()
+
+            if (topics.isEmpty() && tasks.isEmpty() && contentItems.isEmpty()) return emptyList()
+
+            val contextBuilder = StringBuilder()
+            contextBuilder.append("Curso: $courseName\n")
+            contextBuilder.append("Temas:\n")
+            topics.forEach { contextBuilder.append("- ${it.name}: ${it.description ?: ""}\n") }
+            contextBuilder.append("\nTareas:\n")
+            tasks.forEach { contextBuilder.append("- ${it.name}: ${it.description ?: ""}\n") }
+
+            // Prepare jsonContent with course files for LLM analysis
+            val jsonContentList = contentItems.map { item ->
+                mapOf(
+                    "uri" to item.uriString,
+                    "name" to (item.name ?: "archivo_sin_nombre"),
+                    "type" to (item.contentType ?: "unknown")
+                )
+            }
+            val jsonContentString = com.google.gson.Gson().toJson(jsonContentList)
+
+            val prompt = """
+                Genera $questionCount preguntas de selección múltiple (A, B, C, D) para reforzar el conocimiento de PROGRAMACIÓN de este curso.
+                IMPORTANTE: Solo genera preguntas basadas en el contenido proporcionado por el docente (temas, tareas y archivos adjuntos).
+                NO uses ni menciones ningún contenido de entregas de estudiantes.
+                Todo el refuerzo debe ser exclusivamente del material docente.
+
+               
+                Contexto del curso:
+                $contextBuilder
+
+                Materiales (Documentos/Videos/Imágenes) adjuntos para análisis: ${jsonContentList.size} archivos
+
+                Formato de respuesta estrictamente JSON array, sin markdown, sin texto extra:
+                [
+                  {
+                    "question": "¿Pregunta técnica sobre programación?",
+                    "options": ["Opción A (código correcto)", "Opción B (error común)", "Opción C (alternativa válida)", "Opción D (incorrecta)"],
+                    "correctIndex": 0,
+                    "explanation": "Explicación técnica detallada con referencia al código o concepto."
+                  }
+                ]
+            """.trimIndent()
+
+            // Call local microservice (assume emulator default)
+            val serviceUrl = "http://10.0.2.2:3001/procesar-prompt"
+            val client = okhttp3.OkHttpClient.Builder().build()
+            val gson = com.google.gson.Gson()
+            val reqBody = mapOf("prompt" to prompt, "ollamaUrl" to "", "model" to "", "jsonContent" to jsonContentString)
+            val bodyJson = gson.toJson(reqBody)
+            val request = okhttp3.Request.Builder()
+                .url(serviceUrl)
+                .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+
+            val resp = withContext(Dispatchers.IO) { client.newCall(request).execute() }
+            resp.use { r ->
+                if (!r.isSuccessful) {
+                    Log.w("SyncRepository", "requestReinforcementQuiz: microservice returned ${r.code}")
+                    return emptyList()
+                }
+                val body = r.body?.string() ?: return emptyList()
+                val map = gson.fromJson(body, Map::class.java)
+                val respuesta = map["respuesta_texto"]?.toString() ?: map["respuestaText"]?.toString() ?: body
+                val cleanJson = respuesta.replace("```json", "").replace("```", "").trim()
+
+                return try {
+                    val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, com.example.tareamov.ui.compose.QuizQuestion::class.java).type
+                    gson.fromJson<List<com.example.tareamov.ui.compose.QuizQuestion>>(cleanJson, type)
+                } catch (e: Exception) {
+                    Log.e("SyncRepository", "requestReinforcementQuiz: failed to parse JSON", e)
+                    emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "requestReinforcementQuiz failed", e)
+            return emptyList()
         }
     }
 
@@ -1857,6 +1949,75 @@ class SyncRepository(
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error fetching progresos by curso from Supabase", e)
             emptyList()
+        }
+    }
+
+    /**
+     * Obtiene los progresos de un usuario (usuario_estudiante) desde Supabase
+     */
+    suspend fun fetchProgresosByUsuarioFromSupabase(usuarioId: Long): List<com.example.tareamov.data.entity.ProgresoEstudiante> {
+        return try {
+            withContext(Dispatchers.IO) { supabaseClient.fetchProgresosByUsuario(usuarioId) }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error fetching progresos by usuario from Supabase", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Devuelve la lista de `Course` en los que el usuario está registrado según `progreso_estudiante`.
+     */
+    suspend fun fetchEnrolledCoursesForUserFromSupabase(usuarioId: Long): List<Course> {
+        return try {
+            if (!supabaseClient.isConfigured()) return emptyList()
+            val progresos = fetchProgresosByUsuarioFromSupabase(usuarioId)
+            val courses = mutableListOf<Course>()
+            for (p in progresos) {
+                try {
+                    val cursoId = p.cursoId.takeIf { it != null } ?: continue
+                    val course = fetchCourseById(cursoId!!)
+                    if (course != null) courses.add(course)
+                } catch (e: Exception) {
+                    Log.w("SyncRepository", "Failed to resolve course for progreso entry", e)
+                }
+            }
+            courses
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "fetchEnrolledCoursesForUserFromSupabase failed", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Busca cursos en los que el usuario está inscrito y filtra por `query` (título, descripción o creador).
+     * Realiza las llamadas necesarias a SupabaseClient/DB y devuelve Course coincidientes.
+     */
+    suspend fun searchEnrolledCoursesForUserFromSupabase(usuarioId: Long, query: String): List<Course> {
+        try {
+            if (!supabaseClient.isConfigured()) return emptyList()
+            val lowerQ = query.trim().lowercase()
+            if (lowerQ.isEmpty()) return fetchEnrolledCoursesForUserFromSupabase(usuarioId)
+
+            val progresos = fetchProgresosByUsuarioFromSupabase(usuarioId)
+            val results = mutableListOf<Course>()
+            for (p in progresos) {
+                try {
+                    val cursoId = p.cursoId ?: continue
+                    val course = fetchCourseById(cursoId)
+                    if (course == null) continue
+                    val matches = listOfNotNull(
+                        course.title.lowercase(),
+                        course.description?.lowercase()
+                    ).any { it.contains(lowerQ) }
+                    if (matches) results.add(course)
+                } catch (e: Exception) {
+                    Log.w("SyncRepository", "searchEnrolledCourses: failed resolving course for progreso", e)
+                }
+            }
+            return results
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "searchEnrolledCoursesForUserFromSupabase failed", e)
+            return emptyList()
         }
     }
 

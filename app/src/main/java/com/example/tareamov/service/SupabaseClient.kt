@@ -1905,6 +1905,17 @@ object SupabaseClient {
     
     suspend fun fetchSubscriptions(): List<Subscription> = fetchList("subscriptions", Array<Subscription>::class.java)
 
+    // Fetch progreso_estudiante rows for a given usuario_estudiante (user id)
+    suspend fun fetchProgresosByUsuario(usuarioId: Long): List<com.example.tareamov.data.entity.ProgresoEstudiante> =
+        withContext(Dispatchers.IO) {
+            try {
+                fetchList("progreso_estudiante?usuario_estudiante=eq.$usuarioId", Array<com.example.tareamov.data.entity.ProgresoEstudiante>::class.java)
+            } catch (e: Exception) {
+                Log.w("SupabaseClient", "fetchProgresosByUsuario failed", e)
+                emptyList()
+            }
+        }
+
     // Insert a subscription record into Supabase
     suspend fun insertSubscriptionToSupabase(sub: Subscription): Boolean = withContext(Dispatchers.IO) {
         try {
