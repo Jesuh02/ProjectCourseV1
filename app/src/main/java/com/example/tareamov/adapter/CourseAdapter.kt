@@ -673,12 +673,18 @@ class CourseAdapter(
     }
 
     private fun applyDarkModeTheme(view: View) {
-        // Set dark background for the card
-        view.setBackgroundColor(ContextCompat.getColor(context, R.color.dark_card_background))
-        
-        // Apply rounded corners and elevation
-        view.elevation = 8f
-        view.clipToOutline = true
+        // Set dark background for the card using CardView method to preserve corners
+        if (view is androidx.cardview.widget.CardView) {
+            view.setCardBackgroundColor(ContextCompat.getColor(context, R.color.dark_card_background))
+            // Apply rounded corners and elevation
+            view.cardElevation = 8f
+            // Ensure radius from XML is respected or updated if needed
+            // view.radius = dpToPx(32).toFloat() 
+        } else {
+            view.setBackgroundColor(ContextCompat.getColor(context, R.color.dark_card_background))
+            view.elevation = 8f
+        }
+        // view.clipToOutline = true // Let CardView handle clipping
     }
 
     private fun applyDarkModeTextColors(holder: CourseViewHolder) {
@@ -711,7 +717,7 @@ class CourseAdapter(
                 .placeholder(R.drawable.bg_course_placeholder_card)
                 .error(R.drawable.bg_course_placeholder_card)
                 .centerCrop()
-                .transform(RoundedCorners(dpToPx(16)))
+                // .transform(RoundedCorners(dpToPx(24))) // Removed to rely on CardView clipping
             
             Glide.with(context)
                 .load(thumbnailUri)

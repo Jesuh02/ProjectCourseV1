@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_dark_popup_menu"
+    android:padding="8dp"
+    android:elevation="8dp">
+
+    <!-- LLM Database Option -->
+    <LinearLayout
+        android:id="@+id/llmDatabaseOption"
+        android:layout_width="200dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="@drawable/bg_liquid_glass_menu_item"
+        android:clickable="true"
+        android:layout_marginBottom="8dp">
+
+        <!-- Icon Container with Liquid Glass Background -->
+        <FrameLayout
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/bg_liquid_glass_icon_selector"
+            android:layout_marginEnd="12dp"
+            android:clickable="true"
+            android:focusable="true">
+            
+            <ImageView
+                android:id="@+id/databaseMenuIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_database_orbit_animated_avd"
+                android:scaleType="centerInside"
+                android:layout_gravity="center" />
+                
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LLM db"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Base de datos"
+                android:textColor="#CCCCCC"
+                android:textSize="11sp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- LLM Tasks Option -->
+    <LinearLayout
+        android:id="@+id/llmTasksOption"
+        android:layout_width="200dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="@drawable/bg_liquid_glass_menu_item"
+        android:clickable="true"
+        android:layout_marginBottom="8dp">
+
+        <!-- Icon Container with Liquid Glass Background -->
+        <FrameLayout
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/bg_liquid_glass_icon_selector"
+            android:layout_marginEnd="12dp"
+            android:clickable="true"
+            android:focusable="true">
+            
+            <ImageView
+                android:id="@+id/tasksMenuIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_task_grading"
+                android:scaleType="centerInside"
+                android:layout_gravity="center" />
+                
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LLM de tareas"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Asistente de tareas"
+                android:textColor="#CCCCCC"
+                android:textSize="11sp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- LLM Reinforcement Option -->
+    <LinearLayout
+        android:id="@+id/llmReinforcementOption"
+        android:layout_width="200dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="@drawable/bg_liquid_glass_menu_item"
+        android:clickable="true">
+
+        <!-- Icon Container with Liquid Glass Background -->
+        <FrameLayout
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/bg_liquid_glass_icon_selector"
+            android:layout_marginEnd="12dp"
+            android:clickable="true"
+            android:focusable="true">
+            
+            <ImageView
+                android:id="@+id/reinforcementMenuIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_evaluative_reinforcement"
+                android:scaleType="centerInside"
+                android:layout_gravity="center" />
+                
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LLM de refuerzo"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Refuerzo evaluativo"
+                android:textColor="#CCCCCC"
+                android:textSize="11sp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</LinearLayout>

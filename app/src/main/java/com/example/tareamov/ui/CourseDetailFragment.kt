@@ -2731,17 +2731,21 @@ class CourseDetailFragment : Fragment() {
 
         // Prefer synchronous SessionManager check so the slot can be hidden before first render
         val sess = SessionManager.getInstance(requireContext())
-        if (!sess.isAdmin()) {
+        
+        // Verificar rol 3
+        if (!sess.hasRole(3)) {
             // Hide the entire slot before drawing to prevent any gap for non-admin users
             adminSlot.visibility = View.GONE
             return
-            }
-        // User is admin according to SessionManager: show button and wire listener
+        }
+        
+        // User has role 3: show button and wire listener
+        adminSlot.visibility = View.VISIBLE
         goToAdminButton.visibility = View.VISIBLE
         goToAdminButton.setOnClickListener {
             Log.d("CourseDetailFragment", "Admin button clicked, navigating to HomeFragment")
             findNavController().navigate(R.id.action_courseDetailFragment_to_homeFragment)
-            }
+        }
     }
 
     private fun checkAdminStatus(callback: (Boolean) -> Unit) {

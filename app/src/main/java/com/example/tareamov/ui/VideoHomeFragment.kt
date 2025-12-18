@@ -70,6 +70,8 @@ class VideoHomeFragment : Fragment() {
     private lateinit var profileIconImageView: ImageView
     private lateinit var databaseIconImageView: ImageView // New database icon for admins
     private lateinit var aiAssistantIconImageView: ImageView // New AI Assistant icon
+    private lateinit var evaluativeReinforcementIconImageView: ImageView // New Evaluative Reinforcement icon
+    private lateinit var moreOptionsButton: ImageButton // More options button (3 dots)
     private var notificationBadge: TextView? = null // Badge de notificaciones
 
     private var isLiked = false
@@ -167,6 +169,8 @@ class VideoHomeFragment : Fragment() {
         profileIconImageView = view.findViewById(R.id.profileIconImageView)
         databaseIconImageView = view.findViewById(R.id.databaseIconImageView) // Initialize new icon
         aiAssistantIconImageView = view.findViewById(R.id.aiAssistantIconImageView) // Initialize AI icon
+        evaluativeReinforcementIconImageView = view.findViewById(R.id.evaluativeReinforcementIconImageView) // Initialize Evaluative Reinforcement icon
+        moreOptionsButton = view.findViewById(R.id.moreOptionsButton) // Initialize more options button
         notificationBadge = view.findViewById(R.id.notificationBadge) // Badge de notificaciones
 
         // Setup initial colors for bottom navigation icons
@@ -207,6 +211,32 @@ class VideoHomeFragment : Fragment() {
         val animatorSet = android.animation.AnimatorSet()
         animatorSet.playTogether(scaleX, scaleY, rotate)
         animatorSet.start()
+
+        // Professional Animation for Evaluative Reinforcement Icon (Pulse/Heartbeat)
+        val pulseScaleX = ObjectAnimator.ofFloat(evaluativeReinforcementIconImageView, "scaleX", 1f, 1.2f, 1f)
+        val pulseScaleY = ObjectAnimator.ofFloat(evaluativeReinforcementIconImageView, "scaleY", 1f, 1.2f, 1f)
+        
+        pulseScaleX.repeatCount = ObjectAnimator.INFINITE
+        pulseScaleY.repeatCount = ObjectAnimator.INFINITE
+        
+        pulseScaleX.duration = 2000
+        pulseScaleY.duration = 2000
+        
+        pulseScaleX.interpolator = AccelerateDecelerateInterpolator()
+        pulseScaleY.interpolator = AccelerateDecelerateInterpolator()
+        
+        val pulseAnimatorSet = android.animation.AnimatorSet()
+        pulseAnimatorSet.playTogether(pulseScaleX, pulseScaleY)
+        pulseAnimatorSet.start()
+
+        // Evaluative Reinforcement Click Listener
+        evaluativeReinforcementIconImageView.setOnClickListener {
+            try {
+                findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment)
+            } catch (e: Exception) {
+                Log.e("VideoHomeFragment", "Error navigating to EvaluativeReinforcementFragment", e)
+            }
+        }
 
         // Initial setup for database icon (will be updated by updateAdminUi)
         databaseIconImageView.visibility = View.GONE
@@ -310,37 +340,54 @@ class VideoHomeFragment : Fragment() {
         // Check if the current user is admin
         val sess = SessionManager.getInstance(requireContext())
         
+        // Check if user has role 3 (admin role)
+        if (sess.hasRole(3)) {
+            adminSlot?.visibility = View.VISIBLE
+            goToAdminButton?.visibility = View.VISIBLE
+            goToAdminButton?.setOnClickListener {
+                findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
+            }
+            
+            // Set icon for admin button if needed (it is already set in XML but we can enforce it)
+            val adminIcon = goToAdminButton?.findViewById<ImageView>(R.id.homeIconImageView) // Assuming ID, check XML if needed or use childAt
+            // Note: The ID in component_bottom_navigation.xml for admin button icon is likely generic or needs checking
+            // Based on XML: <ImageView ... src="@drawable/ic_home" ... /> inside goToAdminButton
+        } else {
+             adminSlot?.visibility = View.GONE
+        }
+        
         // Function to update admin UI elements
         fun updateAdminUi(isAdmin: Boolean) {
-            // New Logic: Check if user has explicit role ID 2 (AiAssistant access)
-            val hasAiRole = sess.hasRole(2)
+            // Check if user has role ID 2 (for AI Assistant, Evaluative Reinforcement, and Database)
+            val hasRole2 = sess.hasRole(2)
             
-            if (hasAiRole) {
-                // Show AI Assistant icon for Role 2
-                aiAssistantIconImageView.visibility = View.VISIBLE
-                aiAssistantIconImageView.setOnClickListener {
-                     // Navigate to AI Assistant or ChatBot
-                     findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
-                }
-            } else {
-                 aiAssistantIconImageView.visibility = View.GONE
+            // Count visible icons for role-based icons
+            var roleBasedIconCount = 0
+            
+            if (hasRole2) {
+                roleBasedIconCount++ // AI Assistant
+                roleBasedIconCount++ // Evaluative Reinforcement  
+                roleBasedIconCount++ // Database
             }
-
-            if (isAdmin) {
-                // Admin: Show database icon with animated drawable
-                databaseIconImageView.visibility = View.VISIBLE
-                databaseIconImageView.setImageResource(R.drawable.ic_database_orbit_animated_anim)
-                
-                // Start animation automatically
-                val drawable = databaseIconImageView.drawable
-                if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
-                    drawable.start()
-                }
-                
-                databaseIconImageView.setOnClickListener {
-                    findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
-                }
-                
+            
+            // Hide all individual role-based icons initially
+            aiAssistantIconImageView.visibility = View.GONE
+            evaluativeReinforcementIconImageView.visibility = View.GONE
+            databaseIconImageView.visibility = View.GONE
+            
+            // Show more options button if user has role 2 (to group all role 2 icons)
+            if (hasRole2) {
+                moreOptionsButton.visibility = View.VISIBLE
+                setupMoreOptionsButton()
+            } else {
+                moreOptionsButton.visibility = View.GONE
+            }
+            
+            // Handle admin-specific elements (separate from role 2)
+            // Check for Role 3 (Admin) explicitly
+            val hasAdminRole = sess.hasRole(3)
+            
+            if (isAdmin || hasAdminRole) {
                 // Admin: Show admin slot and button
                 adminSlot?.visibility = View.VISIBLE
                 goToAdminButton?.visibility = View.VISIBLE
@@ -349,9 +396,9 @@ class VideoHomeFragment : Fragment() {
                     findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
                 }
             } else {
-                // Non-admin: Hide elements
-                databaseIconImageView.visibility = View.GONE
+                // Non-admin: Hide admin elements
                 adminSlot?.visibility = View.GONE
+                goToAdminButton?.visibility = View.GONE
             }
         }
 
@@ -506,6 +553,221 @@ class VideoHomeFragment : Fragment() {
             Log.e("VideoHomeFragment", "Error checking remote subscription", e)
             // Fallback to local if remote fails
             syncRepository.isSubscribedLocal(currentUserId, creatorId)
+        }
+    }
+    
+    private fun setupMoreOptionsButton() {
+        moreOptionsButton.setOnClickListener { anchorView ->
+            showLLMOptionsMenu(anchorView)
+        }
+    }
+    
+    private fun showLLMOptionsMenu(anchorView: View) {
+        // Create a custom popup window with better styling
+        val popupView = layoutInflater.inflate(R.layout.popup_menu_llm_options, null)
+        val popupWindow = android.widget.PopupWindow(
+            popupView,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+            true
+        )
+        
+        // Set background and animation
+        popupWindow.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        popupWindow.animationStyle = android.R.style.Animation_Dialog
+        popupWindow.isOutsideTouchable = true
+        popupWindow.isFocusable = true
+        
+        // Get current user roles
+        val sess = SessionManager.getInstance(requireContext())
+        val hasRole2 = sess.hasRole(2) // Role 2 for all LLM features
+        val isAdmin = sess.isAdmin() // Separate admin role
+        
+        // Configure menu items based on user roles
+        val llmDatabaseOption = popupView.findViewById<android.widget.LinearLayout>(R.id.llmDatabaseOption)
+        val llmTasksOption = popupView.findViewById<android.widget.LinearLayout>(R.id.llmTasksOption)
+        val llmReinforcementOption = popupView.findViewById<android.widget.LinearLayout>(R.id.llmReinforcementOption)
+        
+        // Get icon ImageViews for animations using correct IDs
+        val databaseIcon = popupView.findViewById<android.widget.ImageView>(R.id.databaseMenuIcon)
+        val tasksIcon = popupView.findViewById<android.widget.ImageView>(R.id.tasksMenuIcon)
+        val reinforcementIcon = popupView.findViewById<android.widget.ImageView>(R.id.reinforcementMenuIcon)
+        
+        // Show/hide options based on roles
+        llmDatabaseOption.visibility = if (hasRole2) View.VISIBLE else View.GONE
+        llmTasksOption.visibility = if (hasRole2) View.VISIBLE else View.GONE
+        llmReinforcementOption.visibility = if (hasRole2) View.VISIBLE else View.GONE
+        
+        // Add staggered entrance animation for menu items
+        val menuItems = listOf(llmDatabaseOption, llmTasksOption, llmReinforcementOption).filter { it.visibility == View.VISIBLE }
+        menuItems.forEachIndexed { index, item ->
+            item.alpha = 0f
+            item.translationY = 20f
+            item.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setStartDelay((index * 50).toLong()) // Stagger by 50ms
+                .setDuration(200)
+                .setInterpolator(android.view.animation.DecelerateInterpolator())
+                .start()
+        }
+        
+        // Add icon-specific animations after menu items appear
+        popupView.postDelayed({
+            try {
+                // Setup liquid glass icon press animations
+                setupIconPressAnimation(databaseIcon.parent as View, databaseIcon)
+                setupIconPressAnimation(tasksIcon.parent as View, tasksIcon)
+                setupIconPressAnimation(reinforcementIcon.parent as View, reinforcementIcon)
+                
+                // Database icon particle animation (without movement)
+                if (databaseIcon.visibility == View.VISIBLE) {
+                    val particleAnimation = android.view.animation.AnimationUtils.loadAnimation(requireContext(), R.anim.particle_float)
+                    databaseIcon.startAnimation(particleAnimation)
+                }
+                
+                // Tasks icon pulse animation
+                if (tasksIcon.visibility == View.VISIBLE) {
+                    val pulseX = ObjectAnimator.ofFloat(tasksIcon, "scaleX", 1f, 1.2f, 1f)
+                    val pulseY = ObjectAnimator.ofFloat(tasksIcon, "scaleY", 1f, 1.2f, 1f)
+                    
+                    // Set repeat count for individual animators
+                    pulseX.setRepeatCount(android.animation.ValueAnimator.INFINITE)
+                    pulseY.setRepeatCount(android.animation.ValueAnimator.INFINITE)
+                    
+                    val pulseSet = android.animation.AnimatorSet()
+                    pulseSet.playTogether(pulseX, pulseY)
+                    pulseSet.duration = 1500
+                    pulseSet.start()
+                }
+                
+                // Reinforcement icon glow animation
+                if (reinforcementIcon.visibility == View.VISIBLE) {
+                    val glowAlpha = ObjectAnimator.ofFloat(reinforcementIcon, "alpha", 1f, 0.6f, 1f)
+                    glowAlpha.duration = 2000
+                    glowAlpha.setRepeatCount(android.animation.ValueAnimator.INFINITE)
+                    glowAlpha.start()
+                }
+            } catch (e: Exception) {
+                Log.d("VideoHomeFragment", "Error starting icon animations: ${e.message}")
+            }
+        }, 300) // Start icon animations after menu animation
+        
+        // Add entrance animation
+        popupView.alpha = 0f
+        popupView.scaleX = 0.8f
+        popupView.scaleY = 0.8f
+        popupView.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(200)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .start()
+        
+        // Set click listeners with animation
+        llmDatabaseOption.setOnClickListener {
+            // Add click animation
+            it.animate()
+                .scaleX(0.95f)
+                .scaleY(0.95f)
+                .setDuration(100)
+                .withEndAction {
+                    it.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(100)
+                        .start()
+                    popupWindow.dismiss()
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
+                }
+                .start()
+        }
+        
+        llmTasksOption.setOnClickListener {
+            // Add click animation
+            it.animate()
+                .scaleX(0.95f)
+                .scaleY(0.95f)
+                .setDuration(100)
+                .withEndAction {
+                    it.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(100)
+                        .start()
+                    popupWindow.dismiss()
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
+                }
+                .start()
+        }
+        
+        llmReinforcementOption.setOnClickListener {
+            // Add click animation
+            it.animate()
+                .scaleX(0.95f)
+                .scaleY(0.95f)
+                .setDuration(100)
+                .withEndAction {
+                    it.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(100)
+                        .start()
+                    popupWindow.dismiss()
+                    // Add navigation for reinforcement when available
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment)
+                }
+                .start()
+        }
+        
+        // Show popup below the anchor view with offset
+        popupWindow.showAsDropDown(anchorView, 0, 8) // 8dp offset from anchor
+        
+        // Add exit animation when dismissed
+        popupWindow.setOnDismissListener {
+            popupView.animate()
+                .alpha(0f)
+                .scaleX(0.8f)
+                .scaleY(0.8f)
+                .setDuration(150)
+                .start()
+        }
+    }
+
+    private fun setupIconPressAnimation(iconContainer: View, icon: View) {
+        iconContainer.setOnTouchListener { v, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    // Scale down animation when pressed
+                    icon.animate()
+                        .scaleX(0.85f)
+                        .scaleY(0.85f)
+                        .setDuration(100)
+                        .start()
+                    
+                    // Also animate the container background
+                    val background = iconContainer.background
+                    if (background is android.graphics.drawable.StateListDrawable) {
+                        iconContainer.isPressed = true
+                    }
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    // Scale back up when released
+                    icon.animate()
+                        .scaleX(1.0f)
+                        .scaleY(1.0f)
+                        .setDuration(100)
+                        .start()
+                    
+                    // Reset background state
+                    val background = iconContainer.background
+                    if (background is android.graphics.drawable.StateListDrawable) {
+                        iconContainer.isPressed = false
+                    }
+                }
+            }
+            false // Let the click event pass through
         }
     }
 

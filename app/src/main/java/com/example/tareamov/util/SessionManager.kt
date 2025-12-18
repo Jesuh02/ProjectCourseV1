@@ -15,6 +15,7 @@ class SessionManager private constructor(private val context: Context) {
         private const val KEY_PERSONA_ID = "persona_id"
         private const val KEY_IS_LOGGED_IN = "is_logged_in"
         private const val KEY_USER_ROLE = "user_role" // New key for user role
+        private const val KEY_USER_ROLE_IDS = "user_role_ids" // New key for storing multiple role IDs
         private const val KEY_USER_AVATAR = "user_avatar" // Key for storing avatar URI
         private const val KEY_SUBSCRIPTIONS_PREFIX = "subscription_"
         private const val KEY_LAST_ACTIVE_USER = "last_active_user" // Para detectar cambios de usuario
@@ -87,6 +88,65 @@ class SessionManager private constructor(private val context: Context) {
         android.util.Log.d("SessionManager", "isAdmin() called - role: '$role', isAdmin: $isAdmin")
         return isAdmin
     }
+
+    /**
+     * Check if user has a specific role ID
+     */
+    fun hasRole(roleId: Int): Boolean {
+        val roleIds = sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet())
+        if (roleIds != null && roleIds.contains(roleId.toString())) {
+            return true
+        }
+        // Fallback for Admin (3) if only legacy role string is set
+        if (roleId == 3 && isAdmin()) {
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Add a role ID to the user's session
+     */
+    fun addRole(roleId: Int) {
+        val roleIds = sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet())?.toMutableSet() ?: mutableSetOf()
+        roleIds.add(roleId.toString())
+        editor.putStringSet(KEY_USER_ROLE_IDS, roleIds)
+        editor.apply()
+        
+        // If roleId is 3 (Admin), also update the legacy role string for compatibility
+        if (roleId == 3) {
+             editor.putString(KEY_USER_ROLE, "admin")
+             editor.apply()
+        }
+    }
+
+    /**
+     * Remove a role ID from the user's session
+     */
+    fun removeRole(roleId: Int) {
+        val roleIds = sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet())?.toMutableSet() ?: mutableSetOf()
+        roleIds.remove(roleId.toString())
+        editor.putStringSet(KEY_USER_ROLE_IDS, roleIds)
+        editor.apply()
+        
+        // If removing admin role (3), revert legacy role to "user" if it was "admin"
+        if (roleId == 3 && getUserRole() == "admin") {
+            editor.putString(KEY_USER_ROLE, "user")
+            editor.apply()
+        }
+    }
+    
+    /**
+     * Update admin status helper
+     */
+    fun setAdminStatus(isAdmin: Boolean) {
+        if (isAdmin) {
+            addRole(3) // Assuming 3 is Admin ID
+        } else {
+            removeRole(3)
+        }
+    }
+
     /**
      * Get stored username
      */

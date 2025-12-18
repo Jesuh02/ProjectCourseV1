@@ -3021,6 +3021,8 @@ class SyncRepository(
                 val docenteRole = Rol.createDocenteRole()
                 rolDao.insertRol(docenteRole)
                 Log.d("SyncRepository", "Created docente role")
+            } else {
+                // Return unit if role exists
             }
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error initializing docente role", e)

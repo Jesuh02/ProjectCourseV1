@@ -891,10 +891,11 @@ class LoginFragment : Fragment() {
                     Log.d(TAG, "Usuario sincronizado desde Supabase a local")
                 } else {
                     // Usuario existe localmente, actualizar avatar si cambió
-                    if (avatarUrl != null && localUser.avatar != avatarUrl) {
+                    val currentUser = localUser
+                    if (currentUser != null && avatarUrl != null && currentUser.avatar != avatarUrl) {
                         withContext(Dispatchers.IO) {
                             // Create a copy with updated avatar
-                            val updatedUser = localUser!!.copy(avatar = avatarUrl)
+                            val updatedUser = currentUser.copy(avatar = avatarUrl)
                             usuarioDao.updateUsuario(updatedUser)
                             
                             // Sincronizar cambio a Supabase
@@ -905,7 +906,7 @@ class LoginFragment : Fragment() {
                             }
                         }
                     }
-                    Log.d(TAG, "Usuario ya existe localmente: ${localUser!!.usuario}")
+                    Log.d(TAG, "Usuario ya existe localmente: ${currentUser?.usuario}")
                 }
                 
                 // Crear sesión con el usuario local

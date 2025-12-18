@@ -6,11 +6,4 @@
         android:toAlpha="1.0"
         android:interpolator="@android:anim/accelerate_decelerate_interpolator"
         android:fillAfter="true" />
-    <translate
-        android:duration="2000"
-        android:fromYDelta="0dp"
-        android:toYDelta="-10dp"
-        android:repeatCount="infinite"
-        android:repeatMode="reverse"
-        android:interpolator="@android:anim/accelerate_decelerate_interpolator" />
 </set>

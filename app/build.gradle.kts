@@ -66,6 +66,8 @@ android {
         buildConfig = true
         viewBinding = true
         dataBinding = true
+        // Enable Jetpack Compose
+        compose = true
     }
     namespace = "com.example.tareamov"
     compileSdk = 35
@@ -133,6 +135,12 @@ android {
     }
     kotlinOptions {
         jvmTarget = "11"
+    }
+
+    // Compose compiler options
+    composeOptions {
+        // Use a compiler extension compatible with the Compose BOM used in dependencies
+        kotlinCompilerExtensionVersion = "1.5.3"
     }
 
     // Update deprecated packagingOptions to packaging
@@ -238,6 +246,18 @@ dependencies {
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+
+    // Jetpack Compose
+    val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
+    implementation(composeBom)
+    androidTestImplementation(composeBom)
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.activity:activity-compose:1.9.3")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
 // Apply Google Services plugin only when google-services.json exists in the app module.

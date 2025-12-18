@@ -192,6 +192,18 @@
                     android:layout_height="0dp"
                     android:visibility="gone" />
 
+                <!-- Evaluative Reinforcement Icon -->
+                <ImageView
+                    android:id="@+id/evaluativeReinforcementIconImageView"
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:layout_marginEnd="2dp"
+                    android:src="@drawable/ic_evaluative_reinforcement"
+                    android:contentDescription="Refuerzo Evaluativo"
+                    android:background="@android:color/transparent"
+                    android:scaleType="centerInside"
+                    android:padding="6dp" />
+
                 <!-- AI Assistant Button (Grading) -->
                 <ImageView
                     android:id="@+id/aiAssistantIconImageView"
@@ -224,6 +236,20 @@
                     android:src="@drawable/ic_profile_avatars"
                     app:civ_border_color="#FFFFFF"
                     app:civ_border_width="1.5dp" />
+
+                <!-- More Options Button (3 dots) -->
+                <ImageButton
+                    android:id="@+id/moreOptionsButton"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="4dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Más opciones"
+                    android:src="@drawable/ic_more_vert"
+                    android:scaleType="centerInside"
+                    android:padding="6dp"
+                    android:visibility="gone"
+                    app:tint="#FFFFFF" />
             </LinearLayout>
 
         </androidx.constraintlayout.widget.ConstraintLayout>
@@ -293,7 +319,8 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         app:singleSelection="true"
-                        app:selectionRequired="false">
+                        app:selectionRequired="false"
+                        app:chipSpacingHorizontal="12dp">
 
                         <com.google.android.material.chip.Chip
                             android:id="@+id/filterAllChip"
@@ -301,6 +328,10 @@
                             android:layout_height="wrap_content"
                             android:text="Todos"
                             android:checked="true"
+                            android:textColor="@color/selector_chip_text_color"
+                            app:chipBackgroundColor="@android:color/transparent"
+                            android:background="@drawable/selector_chip_liquid_glass"
+                            app:chipStrokeWidth="0dp"
                             style="@style/Widget.MaterialComponents.Chip.Choice" />
 
                         <com.google.android.material.chip.Chip
@@ -308,6 +339,10 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Título"
+                            android:textColor="@color/selector_chip_text_color"
+                            app:chipBackgroundColor="@android:color/transparent"
+                            android:background="@drawable/selector_chip_liquid_glass"
+                            app:chipStrokeWidth="0dp"
                             style="@style/Widget.MaterialComponents.Chip.Choice" />
 
                         <com.google.android.material.chip.Chip
@@ -315,6 +350,10 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Usuario"
+                            android:textColor="@color/selector_chip_text_color"
+                            app:chipBackgroundColor="@android:color/transparent"
+                            android:background="@drawable/selector_chip_liquid_glass"
+                            app:chipStrokeWidth="0dp"
                             style="@style/Widget.MaterialComponents.Chip.Choice" />
 
                         <com.google.android.material.chip.Chip
@@ -322,6 +361,10 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Categoría"
+                            android:textColor="@color/selector_chip_text_color"
+                            app:chipBackgroundColor="@android:color/transparent"
+                            android:background="@drawable/selector_chip_liquid_glass"
+                            app:chipStrokeWidth="0dp"
                             style="@style/Widget.MaterialComponents.Chip.Choice" />
                     </com.google.android.material.chip.ChipGroup>
                 </HorizontalScrollView>

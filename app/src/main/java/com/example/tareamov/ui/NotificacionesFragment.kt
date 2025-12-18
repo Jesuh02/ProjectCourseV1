@@ -241,13 +241,16 @@ class NotificacionesFragment : Fragment() {
 
         // Si SessionManager ya conoce el rol del usuario, podemos decidir antes del primer render
         val sess = SessionManager.getInstance(requireContext())
-        if (!sess.isAdmin()) {
+        
+        // Verificar rol 3
+        if (!sess.hasRole(3)) {
             // Ocultar completamente el slot antes de que se dibuje para que no quede hueco
             adminSlot.visibility = View.GONE
             return
         }
 
-        // Si llegó aquí, el usuario es admin según SessionManager: mostrar y asignar listener
+        // Si llegó aquí, el usuario tiene rol 3: mostrar y asignar listener
+        adminSlot.visibility = View.VISIBLE
         goToAdminButton.visibility = View.VISIBLE
         goToAdminButton.setOnClickListener {
             findNavController().navigate(R.id.action_notificacionesFragment_to_homeFragment)

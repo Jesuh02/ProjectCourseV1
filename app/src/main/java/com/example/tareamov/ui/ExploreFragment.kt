@@ -228,13 +228,16 @@ class ExploreFragment : Fragment() {
         goToAdminButton.visibility = View.INVISIBLE
 
         val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        if (!sess.isAdmin()) {
+        
+        // Verificar específicamente el rol 3
+        if (!sess.hasRole(3)) {
             // Ocultar el slot antes del render para que no quede hueco visible
             adminSlot.visibility = View.GONE
             return
         }
 
-        // Usuario admin: mostrar botón y asignar listener
+        // Usuario tiene rol 3: mostrar botón y asignar listener
+        adminSlot.visibility = View.VISIBLE
         goToAdminButton.visibility = View.VISIBLE
         goToAdminButton.setOnClickListener {
             findNavController().navigate(R.id.action_exploreFragment_to_homeFragment)

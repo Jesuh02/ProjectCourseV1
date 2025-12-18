@@ -376,7 +376,7 @@ class ProfileFragment : Fragment() {
     }
 
     private fun setupAdminButton(bottomNavBinding: ComponentBottomNavigationBinding) {
-         // Mostrar el botón de admin solo si el usuario es admin
+         // Mostrar el botón de admin solo si el usuario es admin (rol 3)
         val adminSlot = bottomNavBinding.adminSlot
         val goToAdminButton = bottomNavBinding.goToAdminButton
 
@@ -384,12 +384,13 @@ class ProfileFragment : Fragment() {
         goToAdminButton.visibility = View.INVISIBLE
 
         val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        if (!sess.isAdmin()) {
+        if (!sess.hasRole(3)) {
             adminSlot.visibility = View.GONE
             return
         }
 
-        // Usuario es admin según SessionManager: mostrar el botón y asignar listener
+        // Usuario tiene rol 3: mostrar el botón y asignar listener
+        adminSlot.visibility = View.VISIBLE
         goToAdminButton.visibility = View.VISIBLE
         goToAdminButton.setOnClickListener {
             findNavController().navigate(R.id.action_profileFragment_to_homeFragment)
@@ -439,6 +440,7 @@ class ProfileFragment : Fragment() {
             else -> false
         }
     }
+    
 
     /**
      * Actualiza el badge de notificaciones no leídas

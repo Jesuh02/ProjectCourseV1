@@ -1749,7 +1749,10 @@ class UserProfileViewFragment : Fragment() {
 
         // Decidir con SessionManager antes del primer render para evitar hueco
         val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        if (!sess.isAdmin()) {
+        val isAdmin = sess.isAdmin()
+        val hasAdminRole = sess.hasRole(3)
+
+        if (!isAdmin && !hasAdminRole) {
             // Ocultar slot completo antes del render para que no quede hueco
             adminSlot.visibility = View.GONE
             Log.d("UserProfileViewFragment", "Admin slot hidden (user not admin)")

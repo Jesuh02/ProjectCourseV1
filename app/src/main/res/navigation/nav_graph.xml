@@ -80,6 +80,9 @@
         <action
             android:id="@+id/action_videoHomeFragment_to_chatBotFragment"
             app:destination="@id/chatBotFragment" />
+        <action
+            android:id="@+id/action_videoHomeFragment_to_evaluativeReinforcementFragment"
+            app:destination="@id/evaluativeReinforcementFragment" />
     </fragment>
 
     <!-- Single exploreFragment definition -->
@@ -607,5 +610,12 @@
             android:id="@+id/action_chatBotFragment_to_videoHomeFragment"
             app:destination="@id/videoHomeFragment" />
     </fragment>
+
+    <!-- Add Evaluative Reinforcement Fragment -->
+    <fragment
+        android:id="@+id/evaluativeReinforcementFragment"
+        android:name="com.example.tareamov.ui.EvaluativeReinforcementFragment"
+        android:label="Evaluative Reinforcement" />
+
 
 </navigation>

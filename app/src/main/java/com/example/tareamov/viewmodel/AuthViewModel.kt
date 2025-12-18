@@ -167,6 +167,16 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                                         roleName,
                                         avatarUri
                                     )
+                                    
+                                    // Save role ID to session for hasRole(id) checks
+                                    // If role ID is not present in remoteUsuario or fetch fails, default to 0
+                                    // Assuming remoteUsuario.rol_id is available and correct
+                                    sessionManager.addRole(remoteUsuario.rol_id.toInt())
+                                    
+                                    // Ensure admin role (3) is set if the role name is 'admin' or ID is 3
+                                    if (roleName.equals("admin", ignoreCase = true) || remoteUsuario.rol_id == 3L) {
+                                        sessionManager.addRole(3)
+                                    }
 
                                     _loginResult.value = LoginResult(success = true, userId = remoteUsuario.id, userRole = roleName)
                                     _currentUserId.value = remoteUsuario.id
