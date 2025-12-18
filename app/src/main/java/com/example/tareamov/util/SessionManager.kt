@@ -15,7 +15,6 @@ class SessionManager private constructor(private val context: Context) {
         private const val KEY_PERSONA_ID = "persona_id"
         private const val KEY_IS_LOGGED_IN = "is_logged_in"
         private const val KEY_USER_ROLE = "user_role" // New key for user role
-        private const val KEY_USER_ROLE_IDS = "user_role_ids" // New key for storing multiple role IDs
         private const val KEY_USER_AVATAR = "user_avatar" // Key for storing avatar URI
         private const val KEY_SUBSCRIPTIONS_PREFIX = "subscription_"
         private const val KEY_LAST_ACTIVE_USER = "last_active_user" // Para detectar cambios de usuario
@@ -83,6 +82,21 @@ class SessionManager private constructor(private val context: Context) {
     }
 
     fun isAdmin(): Boolean {
+        // First check explicit admin flag
+        val explicit = sharedPreferences.getBoolean(KEY_IS_ADMIN, false)
+        if (explicit) {
+            android.util.Log.d("SessionManager", "isAdmin() called - explicit admin flag = true")
+            return true
+        }
+
+        // Then check role IDs (e.g., role id 3 is admin in the app)
+        val roles = sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet()
+        if (roles.contains("3")) {
+            android.util.Log.d("SessionManager", "isAdmin() called - role id 3 present in roles set")
+            return true
+        }
+
+        // Fallback to role name check for backward compatibility
         val role = getUserRole()
         val isAdmin = role?.equals("admin", ignoreCase = true) == true
         android.util.Log.d("SessionManager", "isAdmin() called - role: '$role', isAdmin: $isAdmin")
@@ -180,6 +194,44 @@ class SessionManager private constructor(private val context: Context) {
      */
     fun getUserAvatar(): String? {
         return sharedPreferences.getString(KEY_USER_AVATAR, null)
+    }
+
+    /**
+     * Check whether the stored roles contain the given role id.
+     */
+    fun hasRole(roleId: Int): Boolean {
+        val roles = sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet()
+        return roles.contains(roleId.toString())
+    }
+
+    /**
+     * Add a numeric role id to the stored roles set.
+     */
+    fun addRole(roleId: Int) {
+        val existing = HashSet(sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet())
+        if (existing.add(roleId.toString())) {
+            editor.putStringSet(KEY_USER_ROLES, existing)
+            editor.apply()
+        }
+    }
+
+    /**
+     * Remove a numeric role id from the stored roles set.
+     */
+    fun removeRole(roleId: Int) {
+        val existing = HashSet(sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet())
+        if (existing.remove(roleId.toString())) {
+            editor.putStringSet(KEY_USER_ROLES, existing)
+            editor.apply()
+        }
+    }
+
+    /**
+     * Explicitly set/unset admin status. This sets a boolean flag used by quick checks.
+     */
+    fun setAdminStatus(isAdmin: Boolean) {
+        editor.putBoolean(KEY_IS_ADMIN, isAdmin)
+        editor.apply()
     }
 
     /**

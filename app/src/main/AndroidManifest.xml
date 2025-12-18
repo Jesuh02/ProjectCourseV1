@@ -58,7 +58,6 @@
 
         <activity
             android:name=".MainActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
             android:launchMode="singleTop"
             android:windowSoftInputMode="adjustNothing"
@@ -90,7 +89,6 @@
         <!-- VideoPlayerActivity with enhanced intent filters -->
         <activity
             android:name=".ui.VideoPlayerActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
             android:exported="true"
             android:screenOrientation="sensorLandscape"
             android:theme="@style/Theme.AppCompat.NoActionBar"

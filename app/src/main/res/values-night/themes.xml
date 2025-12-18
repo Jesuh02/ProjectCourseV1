@@ -1,6 +1,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
-    <style name="Base.Theme.CourseV" parent="Theme.Material3.DayNight.NoActionBar">
+    <!-- Force Light theme even in night mode to preserve original colors -->
+    <style name="Base.Theme.CourseV" parent="Theme.Material3.Light.NoActionBar">
         <!-- Customize your dark theme here. -->
         <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
         
