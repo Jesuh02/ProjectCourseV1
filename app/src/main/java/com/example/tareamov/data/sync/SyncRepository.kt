@@ -3368,4 +3368,23 @@ class SyncRepository(
         }
     }
 
+    suspend fun fetchCreatorUsernameByCourseId(courseId: Long): String? = withContext(Dispatchers.IO) {
+        try {
+            // 1. Get course from local DB
+            val course = courseDao.getCourseById(courseId)
+            if (course != null) {
+                val userId = course.creatorUserId
+                // 2. Get user from local DB
+                val user = usuarioDao.getUsuarioById(userId)
+                if (user != null && !user.usuario.isNullOrBlank()) {
+                    return@withContext user.usuario
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error fetching creator username for course $courseId", e)
+            null
+        }
+    }
+
 }

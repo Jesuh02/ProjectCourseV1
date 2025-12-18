@@ -72,9 +72,15 @@ class ReinforcementLearningFragment : Fragment() {
                     var resolvedUsername: String? = initialUsername
                     var avatarUrl: String? = null
 
-                    if (resolvedUsername.isNullOrBlank() && courseId > 0) {
+                    if ((resolvedUsername.isNullOrBlank() || resolvedUsername == "Docente no especificado") && courseId > 0) {
                         try {
-                            resolvedUsername = syncRepository.fetchCreatorNameByCourseTitle(courseName)
+                            // Try new method: fetch by course ID directly
+                            val username = syncRepository.fetchCreatorUsernameByCourseId(courseId)
+                            if (username != null) {
+                                resolvedUsername = username
+                            } else {
+                                resolvedUsername = syncRepository.fetchCreatorNameByCourseTitle(courseName)
+                            }
                         } catch (e: Exception) {
                             android.util.Log.w("ReinforceFrag", "couldn't fetch creator name: ${e.message}")
                         }

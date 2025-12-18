@@ -44,7 +44,8 @@ data class MicroservicioPromptRequest(
     val submissionId: Long? = null,       // ID de la submission para obtener contenido desde R2/Supabase
     val taskId: Long? = null,             // ID de la tarea para buscar submission
     val studentId: Long? = null,          // ID del estudiante para buscar submission
-    val fileUri: String? = null           // URI del archivo en R2 para descarga directa
+    val fileUri: String? = null,          // URI del archivo en R2 para descarga directa
+    val requestNonce: String? = null      // Optional nonce to force unique LLM prompts
 )
 
 // Data class para la respuesta procesarPrompt

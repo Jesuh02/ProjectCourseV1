@@ -149,6 +149,12 @@ android {
             excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/license.txt", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/notice.txt", "META-INF/ASL2.0")
         }
     }
+    // Lint baseline: keep existing lint issues in a baseline file so builds
+    // can focus on new issues. Generate the baseline by running
+    // `./gradlew :app:updateLintBaseline` after this change.
+    lint {
+        baseline = file("lint-baseline.xml")
+    }
 }
 
 dependencies {
