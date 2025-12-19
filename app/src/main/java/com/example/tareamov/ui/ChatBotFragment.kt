@@ -2695,6 +2695,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
     /**
      * Carga solo los cursos donde el usuario ha enviado tareas (submissions)
+     * MODIFICADO: Ahora carga cursos CREADOS por el usuario actual que tengan entregas de estudiantes (para calificar)
      */
     private suspend fun loadAllUserCourses(): List<TaskItem> {
         return withContext(Dispatchers.IO) {
@@ -2705,59 +2706,78 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             }
             
             try {
-                // Fetch courses where the user has submitted tasks
+                // Fetch courses where the current user is the CREATOR (Owner)
                 val supabaseClient = com.example.tareamov.service.SupabaseClient
-                val courses = if (supabaseClient.isConfigured()) {
+                if (supabaseClient.isConfigured()) {
                     try {
-                        supabaseClient.fetchCoursesWithUserSubmissions(userId)
+                        // 1. Get courses created by me
+                        val myCourses = supabaseClient.fetchCoursesByCreatorUserId(userId)
+                        
+                        // 2. Filter: only keep courses that have submissions from students
+                        val coursesWithSubmissions = mutableListOf<com.example.tareamov.data.entity.Course>()
+                        
+                        for (course in myCourses) {
+                             // Use SyncRepository to check for submissions
+                             try {
+                                 // fetchCourseSubmissionsWithUsernames returns a list of submissions
+                                 // If this list is not empty, it means there are submissions.
+                                 val submissions = syncRepository.fetchCourseSubmissionsWithUsernames(course.id)
+                                 if (submissions.isNotEmpty()) {
+                                     coursesWithSubmissions.add(course)
+                                 }
+                             } catch (e: Exception) {
+                                 Log.w("ChatBotFragment", "Error checking submissions for course ${course.id}: ${e.message}")
+                             }
+                        }
+                        
+                        Log.d("ChatBotFragment", "Loaded ${coursesWithSubmissions.size} courses created by user $userId that have submissions")
+
+                        coursesWithSubmissions.mapIndexed { index, course ->
+                            TaskItem(
+                                taskId = course.id, // Using course.id as taskId/itemId
+                                taskName = course.title,
+                                taskDescription = course.description ?: "Sin descripción",
+                                topicName = course.category ?: "Sin categoría", // category for filtering
+                                index = index + 1
+                            )
+                        }
                     } catch (e: Exception) {
-                        Log.w("ChatBotFragment", "Error fetching courses with submissions from Supabase: ${e.message}")
-                        // Fallback: get courses from local submissions
-                        val localSubmissions = database.taskSubmissionDao().getSubmissionsByStudent(userId)
-                        val taskIds = localSubmissions.map { it.taskId }.distinct()
-                        val courseIdsFromLocal = mutableSetOf<Long>()
-                        for (taskId in taskIds) {
-                            val task = database.taskDao().getTaskById(taskId)
-                            if (task != null) {
-                                val topic = database.topicDao().getTopicById(task.topicId)
-                                if (topic != null) {
-                                    courseIdsFromLocal.add(topic.courseId)
-                                }
-                            }
-                        }
-                        courseIdsFromLocal.mapNotNull { courseId ->
-                            database.courseDao().getCourseById(courseId)
-                        }
+                        Log.w("ChatBotFragment", "Error fetching courses by creator from Supabase: ${e.message}")
+                        emptyList()
                     }
                 } else {
-                    // Local fallback when Supabase is not configured
-                    val localSubmissions = database.taskSubmissionDao().getSubmissionsByStudent(userId)
-                    val taskIds = localSubmissions.map { it.taskId }.distinct()
-                    val courseIdsFromLocal = mutableSetOf<Long>()
-                    for (taskId in taskIds) {
-                        val task = database.taskDao().getTaskById(taskId)
-                        if (task != null) {
-                            val topic = database.topicDao().getTopicById(task.topicId)
-                            if (topic != null) {
-                                courseIdsFromLocal.add(topic.courseId)
+                    // Local fallback: courses created by user AND having submissions
+                    val allCourses = database.courseDao().getAllCourses()
+                    val myLocalCourses = allCourses.filter { it.creatorUserId == userId }
+                    
+                    val filtered = mutableListOf<com.example.tareamov.data.entity.Course>()
+                    
+                    for (course in myLocalCourses) {
+                        val topics = database.topicDao().getTopicsByCourse(course.id)
+                        var hasSubs = false
+                        for (topic in topics) {
+                            val tasks = database.taskDao().getTasksByTopicId(topic.id)
+                            for (task in tasks) {
+                                val subs = database.taskSubmissionDao().getSubmissionsByTask(task.id)
+                                if (subs.isNotEmpty()) {
+                                    hasSubs = true
+                                    break
+                                }
                             }
+                            if (hasSubs) break
                         }
+                        if (hasSubs) filtered.add(course)
                     }
-                    courseIdsFromLocal.mapNotNull { courseId ->
-                        database.courseDao().getCourseById(courseId)
+                    
+                    filtered.mapIndexed { index, course ->
+                         TaskItem(
+                            taskId = course.id,
+                            taskName = course.title,
+                            taskDescription = course.description ?: "Sin descripción",
+                            topicName = course.category ?: "Sin categoría",
+                            index = index + 1
+                        )
                     }
-                }
-                
-                Log.d("ChatBotFragment", "Loaded ${courses.size} courses with submissions for user $userId")
-                
-                courses.mapIndexed { index, course ->
-                    TaskItem(
-                        taskId = course.id,
-                        taskName = course.title,
-                        taskDescription = course.description ?: "Sin descripción",
-                        topicName = course.category ?: "Sin categoría", // category for filtering
-                        index = index + 1
-                    )
                 }
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error loading courses with submissions", e)
