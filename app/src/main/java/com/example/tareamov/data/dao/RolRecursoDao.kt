@@ -20,60 +20,60 @@ interface RolRecursoDao {
     @Delete
     suspend fun deleteRolRecurso(rolRecurso: RolRecurso)
     
-    @Query("DELETE FROM rol_recursos WHERE rolId = :rolId")
+    @Query("DELETE FROM rol_recursos WHERE rol_id = :rolId")
     suspend fun deleteRecursosByRol(rolId: Long)
     
-    @Query("DELETE FROM rol_recursos WHERE recursoId = :recursoId")
+    @Query("DELETE FROM rol_recursos WHERE recurso_id = :recursoId")
     suspend fun deleteRolesByRecurso(recursoId: Long)
     
     @Query("""
         SELECT r.* FROM recursos r 
-        INNER JOIN rol_recursos rr ON r.id = rr.recursoId 
-        WHERE rr.rolId = :rolId 
+        INNER JOIN rol_recursos rr ON r.id = rr.recurso_id 
+        WHERE rr.rol_id = :rolId 
         ORDER BY r.orden ASC
     """)
     suspend fun getRecursosByRol(rolId: Long): List<Recurso>
     
     @Query("""
         SELECT r.* FROM recursos r 
-        INNER JOIN rol_recursos rr ON r.id = rr.recursoId 
-        WHERE rr.rolId = :rolId AND r.padreId IS NULL 
+        INNER JOIN rol_recursos rr ON r.id = rr.recurso_id 
+        WHERE rr.rol_id = :rolId AND r.padre_id IS NULL 
         ORDER BY r.orden ASC
     """)
     suspend fun getRecursosPrincipalesByRol(rolId: Long): List<Recurso>
     
     @Query("""
         SELECT r.* FROM recursos r 
-        INNER JOIN rol_recursos rr ON r.id = rr.recursoId 
-        WHERE rr.rolId = :rolId AND r.padreId = :padreId 
+        INNER JOIN rol_recursos rr ON r.id = rr.recurso_id 
+        WHERE rr.rol_id = :rolId AND r.padre_id = :padreId 
         ORDER BY r.orden ASC
     """)
     suspend fun getSubRecursosByRol(rolId: Long, padreId: Long): List<Recurso>
     
     @Query("""
         SELECT COUNT(*) > 0 FROM rol_recursos 
-        WHERE rolId = :rolId AND recursoId = :recursoId
+        WHERE rol_id = :rolId AND recurso_id = :recursoId
     """)
     suspend fun hasAccess(rolId: Long, recursoId: Long): Boolean
     
     @Query("""
         SELECT COUNT(*) > 0 FROM recursos r 
-        INNER JOIN rol_recursos rr ON r.id = rr.recursoId 
-        WHERE rr.rolId = :rolId AND r.icono = :icono
+        INNER JOIN rol_recursos rr ON r.id = rr.recurso_id 
+        WHERE rr.rol_id = :rolId AND r.icono = :icono
     """)
     suspend fun hasAccessToIcon(rolId: Long, icono: String): Boolean
     
     @Query("""
         SELECT COUNT(*) > 0 FROM recursos r 
-        INNER JOIN rol_recursos rr ON r.id = rr.recursoId 
-        WHERE rr.rolId = :rolId AND r.icono = :icono AND r.interfaz = :interfaz
+        INNER JOIN rol_recursos rr ON r.id = rr.recurso_id 
+        WHERE rr.rol_id = :rolId AND r.icono = :icono AND r.interfaz = :interfaz
     """)
     suspend fun hasAccessToIconInInterface(rolId: Long, icono: String, interfaz: String): Boolean
     
     @Query("""
         SELECT r.* FROM recursos r 
-        INNER JOIN rol_recursos rr ON r.id = rr.recursoId 
-        WHERE rr.rolId = :rolId AND r.interfaz = :interfaz 
+        INNER JOIN rol_recursos rr ON r.id = rr.recurso_id 
+        WHERE rr.rol_id = :rolId AND r.interfaz = :interfaz 
         ORDER BY r.orden ASC
     """)
     suspend fun getRecursosByRolAndInterfaz(rolId: Long, interfaz: String): List<Recurso>

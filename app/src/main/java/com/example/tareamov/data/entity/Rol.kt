@@ -9,7 +9,9 @@ data class Rol(
     val id: Long = 0,
     val nombre: String,
     val nivel: Float,
-    val default: Boolean = false
+    val default: Boolean = false,
+    @androidx.room.ColumnInfo(name = "created_at")
+    val createdAt: Long = System.currentTimeMillis()
 ) {
     companion object {
         const val NOMBRE_USUARIO = "usuario"

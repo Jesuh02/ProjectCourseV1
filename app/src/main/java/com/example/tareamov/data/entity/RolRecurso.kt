@@ -6,27 +6,29 @@ import androidx.room.Index
 
 @Entity(
     tableName = "rol_recursos",
-    primaryKeys = ["rolId", "recursoId"],
+    primaryKeys = ["rol_id", "recurso_id"],
     foreignKeys = [
         ForeignKey(
             entity = Rol::class,
             parentColumns = ["id"],
-            childColumns = ["rolId"],
+            childColumns = ["rol_id"],
             onDelete = ForeignKey.CASCADE
         ),
         ForeignKey(
             entity = Recurso::class,
             parentColumns = ["id"],
-            childColumns = ["recursoId"],
+            childColumns = ["recurso_id"],
             onDelete = ForeignKey.CASCADE
         )
     ],
     indices = [
-        Index(value = ["rolId"]),
-        Index(value = ["recursoId"])
+        Index(value = ["rol_id"]),
+        Index(value = ["recurso_id"])
     ]
 )
 data class RolRecurso(
+    @androidx.room.ColumnInfo(name = "rol_id")
     val rolId: Long,      // FK a tabla roles
+    @androidx.room.ColumnInfo(name = "recurso_id")
     val recursoId: Long   // FK a tabla recursos
 )

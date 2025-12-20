@@ -97,12 +97,10 @@ class SyncRepository(
                 username = u.usuario,
                 contrasena = u.contrasena,
                 persona_id = u.persona_id,
-                rol_id = u.rol_id,
+                rol_id = r?.id ?: 0L,
                 email = u.email,
                 avatar = u.avatar,
                 isActive = u.isActive,
-                emailVerified = u.emailVerified,
-                lastLogin = u.lastLogin,
                 createdAt = u.createdAt,
                 rolNombre = rolNombre,
                 rolNivel = rolNivel
@@ -503,7 +501,6 @@ class SyncRepository(
 
                         val v = com.example.tareamov.data.entity.VideoData(
                             id = id,
-                            username = username,
                             description = description,
                             title = title,
                             videoUriString = videoUriString,
@@ -514,6 +511,7 @@ class SyncRepository(
                             price = price,
                             courseId = courseId
                         )
+                        v.username = username
                         repaired.add(v)
                     } catch (t: Exception) {
                         Log.w("SyncRepository", "Failed to parse video json element", t)
@@ -771,9 +769,9 @@ class SyncRepository(
             // Prepare jsonContent with course files for LLM analysis
             val jsonContentList = contentItems.map { item ->
                 mapOf(
-                    "uri" to item.uriString,
-                    "name" to (item.name ?: "archivo_sin_nombre"),
-                    "type" to (item.contentType ?: "unknown")
+                    "uri" to item.body,
+                    "name" to (item.title ?: "archivo_sin_nombre"),
+                    "type" to item.contentType
                 )
             }
             val jsonContentString = com.google.gson.Gson().toJson(jsonContentList)
@@ -891,7 +889,9 @@ class SyncRepository(
             // We can get it from the user ID if needed, but for now let's try to get it from SupabaseClient helper
             val username = withContext(Dispatchers.IO) { supabaseClient.getUsernameFromUserId(userId) } ?: ""
             
-            val result = videos.map { it.copy(username = username) }
+            val result = videos.map { v ->
+                v.copy().apply { this.username = username }
+            }
             result
         } catch (e: Exception) {
             Log.w("SyncRepository", "fetchVideosByCreatorUserIdFromSupabase failed for userId=$userId", e)
@@ -1365,7 +1365,7 @@ class SyncRepository(
     // Insert a ContentItem into Supabase and return remote id (or null)
     suspend fun insertContentItemRemote(contentItem: com.example.tareamov.data.entity.ContentItem): Long? {
         return try {
-            Log.d("SyncRepository", "Inserting ContentItem: name=${contentItem.name}, type=${contentItem.contentType}, creator_id=${contentItem.creator_usuario_id}, creator_username=${contentItem.creator_username}")
+            Log.d("SyncRepository", "Inserting ContentItem: title=${contentItem.title}, type=${contentItem.contentType}, creator_id=${contentItem.creator_usuario_id}, creator_username=${contentItem.creator_username}")
             val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertContentItem(contentItem) }
             Log.d("SyncRepository", "ContentItem inserted successfully with remote ID: $remoteId")
             remoteId
@@ -2802,11 +2802,12 @@ class SyncRepository(
                         val remoteVideo = supabaseClient.fetchVideoById(videoId)
                         if (remoteVideo != null) {
                             // Sanitize remote video
-                            val safeVideo = remoteVideo.copy(
-                                username = remoteVideo.username ?: "Unknown",
-                                description = remoteVideo.description ?: "",
-                                title = remoteVideo.title ?: "Untitled Video"
-                            )
+                            val safeVideo = remoteVideo
+                                .copy(
+                                    description = remoteVideo.description,
+                                    title = remoteVideo.title.ifBlank { "Untitled Video" }
+                                )
+                                .apply { this.username = remoteVideo.username ?: "Unknown" }
                             videoDao.insertVideo(safeVideo)
                         } else {
                             // If video doesn't exist remotely either, we can't store the like count locally
@@ -2857,11 +2858,12 @@ class SyncRepository(
                 val remoteVideo = supabaseClient.fetchVideoById(videoId)
                 if (remoteVideo != null) {
                     // Sanitize remote video to prevent NPE on non-null fields
-                    val safeVideo = remoteVideo.copy(
-                        username = remoteVideo.username ?: "Unknown",
-                        description = remoteVideo.description ?: "",
-                        title = remoteVideo.title ?: "Untitled Video"
-                    )
+                    val safeVideo = remoteVideo
+                        .copy(
+                            description = remoteVideo.description,
+                            title = remoteVideo.title.ifBlank { "Untitled Video" }
+                        )
+                        .apply { this.username = remoteVideo.username ?: "Unknown" }
                     videoDao.insertVideo(safeVideo)
                 } else {
                     Log.e("SyncRepository", "Cannot toggle like: Video $videoId not found locally or remotely")
@@ -2936,11 +2938,12 @@ class SyncRepository(
                 val remoteVideo = supabaseClient.fetchVideoById(videoId)
                 if (remoteVideo != null) {
                     // Sanitize remote video to prevent NPE on non-null fields
-                    val safeVideo = remoteVideo.copy(
-                        username = remoteVideo.username ?: "Unknown",
-                        description = remoteVideo.description ?: "",
-                        title = remoteVideo.title ?: "Untitled Video"
-                    )
+                    val safeVideo = remoteVideo
+                        .copy(
+                            description = remoteVideo.description,
+                            title = remoteVideo.title.ifBlank { "Untitled Video" }
+                        )
+                        .apply { this.username = remoteVideo.username ?: "Unknown" }
                     videoDao.insertVideo(safeVideo)
                     localVideo = safeVideo
                 } else {
@@ -2979,10 +2982,9 @@ class SyncRepository(
                 // --- NOTIFICATION LOGIC ---
                 try {
                     // 1. Notify Video Owner
-                    if (localVideo != null && localVideo.username != null) {
-                        val ownerUsername = localVideo.username
-                        // Try local then remote
-                        val owner = usuarioDao.getUsuarioByUsername(ownerUsername) 
+                    val ownerUsername = localVideo?.username
+                    if (!ownerUsername.isNullOrEmpty()) {
+                        val owner = usuarioDao.getUsuarioByUsername(ownerUsername)
                             ?: supabaseClient.fetchUsuarioByUsername(ownerUsername)
                             
                         if (owner != null && owner.id != usuarioId) {
@@ -3049,11 +3051,12 @@ class SyncRepository(
                     val remoteVideo = supabaseClient.fetchVideoById(videoId)
                     if (remoteVideo != null) {
                         // Sanitize remote video to prevent NPE on non-null fields
-                        val safeVideo = remoteVideo.copy(
-                            username = remoteVideo.username ?: "Unknown",
-                            description = remoteVideo.description ?: "",
-                            title = remoteVideo.title ?: "Untitled Video"
-                        )
+                        val safeVideo = remoteVideo
+                            .copy(
+                                description = remoteVideo.description,
+                                title = remoteVideo.title.ifBlank { "Untitled Video" }
+                            )
+                            .apply { this.username = remoteVideo.username ?: "Unknown" }
                         videoDao.insertVideo(safeVideo)
                     }
                 }
@@ -3159,10 +3162,7 @@ class SyncRepository(
                 // Update local
                 val docenteRole = rolDao.getDocenteRole()
                 if (docenteRole != null) {
-                    val user = usuarioDao.getUsuarioById(userId)
-                    if (user != null) {
-                        usuarioDao.updateUsuario(user.copy(rol_id = docenteRole.id))
-                    }
+                    usuarioDao.updateUserRolId(userId, docenteRole.id)
                 }
             }
             

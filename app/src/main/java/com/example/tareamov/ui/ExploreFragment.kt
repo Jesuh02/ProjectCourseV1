@@ -361,7 +361,6 @@ class ExploreFragment : Fragment() {
         
         return VideoData(
             id = course.id,
-            username = creatorUsername,
             description = course.description ?: "", // Asegurar que no sea null
             title = course.title,
             videoUriString = course.videoUri ?: "",
@@ -370,7 +369,9 @@ class ExploreFragment : Fragment() {
             isPaid = course.isPremium,
             thumbnailUri = course.thumbnailUri,
             price = if (course.price > 0.0) course.price else null
-        )
+        ).apply {
+            this.username = creatorUsername
+        }
     }
 
     private fun getCurrentUsername(): String? {

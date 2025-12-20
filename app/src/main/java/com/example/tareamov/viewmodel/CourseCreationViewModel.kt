@@ -92,7 +92,6 @@ class CourseCreationViewModel : ViewModel() {
     fun toCourseEntity(): VideoData {
         return VideoData(
             id = courseId,
-            username = "current_user",
             title = courseName,
             description = "$courseDescription\nCategoría: $courseCategory",
             videoUriString = "content://media/external/video/dummy_${System.currentTimeMillis()}",
@@ -136,8 +135,7 @@ class CourseCreationViewModel : ViewModel() {
                 id = id,
                 topicId = topicId,
                 name = name,
-                description = if (description.isBlank()) null else description,
-                orderIndex = orderIndex
+                description = if (description.isBlank()) null else description
             )
         }
     }
@@ -156,8 +154,8 @@ class CourseCreationViewModel : ViewModel() {
                 id = id,
                 topicId = topicId,
                 taskId = taskId,
-                name = name,
-                uriString = uriString,
+                title = name,
+                body = uriString,
                 contentType = contentType,
                 orderIndex = orderIndex
             )

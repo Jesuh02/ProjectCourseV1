@@ -77,7 +77,7 @@ object CertificateGenerator {
                 val studentName = withContext(Dispatchers.IO) {
                     val user = db.usuarioDao().getUsuarioByUsername(studentUsername)
                     if (user != null) {
-                        val persona = db.personaDao().getPersonaById(user.personaId)
+                        val persona = user.personaId?.let { db.personaDao().getPersonaById(it) }
                         "${persona?.nombres ?: ""} ${persona?.apellidos ?: ""}".trim().ifEmpty { studentUsername }
                     } else {
                         studentUsername
@@ -87,7 +87,7 @@ object CertificateGenerator {
                 var creatorName = withContext(Dispatchers.IO) {
                     val user = db.usuarioDao().getUsuarioByUsername(creatorUsername)
                     if (user != null) {
-                        val persona = db.personaDao().getPersonaById(user.personaId)
+                        val persona = user.personaId?.let { db.personaDao().getPersonaById(it) }
                         "${persona?.nombres ?: ""} ${persona?.apellidos ?: ""}".trim().ifEmpty { creatorUsername }
                     } else {
                         creatorUsername
@@ -123,7 +123,7 @@ object CertificateGenerator {
                             com.example.tareamov.service.SupabaseClient.fetchUsuarioByUsername(creatorUsername)
                         }
                         if (remoteUser != null) {
-                            val personaId = try { remoteUser.persona_id } catch (e: Exception) { 0L }
+                            val personaId = remoteUser.persona_id ?: 0L
                             if (personaId > 0) {
                                 val persona = withContext(Dispatchers.IO) {
                                     com.example.tareamov.service.SupabaseClient.fetchPersonas().firstOrNull { p -> p.id == personaId }

@@ -24,11 +24,18 @@ import com.google.gson.annotations.SerializedName
             parentColumns = ["id"],
             childColumns = ["usuario_id"],
             onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = VideoComment::class,
+            parentColumns = ["id"],
+            childColumns = ["parent_id"],
+            onDelete = ForeignKey.CASCADE
         )
     ],
     indices = [
         Index(value = ["video_id"]),
-        Index(value = ["usuario_id"])
+        Index(value = ["usuario_id"]),
+        Index(value = ["parent_id"])
     ]
 )
 data class VideoComment(
@@ -53,7 +60,7 @@ data class VideoComment(
     
     @ColumnInfo(name = "created_at")
     @SerializedName("created_at")
-    val createdAt: String? = null
+    val createdAt: Long = System.currentTimeMillis()
 )
 
 /**
@@ -64,7 +71,7 @@ data class VideoCommentWithUser(
     val videoId: Long,
     val usuarioId: Long,
     val comment: String,
-    val createdAt: String?,
+    val createdAt: Long?,
     val username: String?,
     val avatar: String?
 )

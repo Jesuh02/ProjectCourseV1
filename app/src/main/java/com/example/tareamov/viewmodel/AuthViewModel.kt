@@ -97,7 +97,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         sessionManager.createLoginSession(
                             usuarioWithRole.username, 
                             usuarioWithRole.id, 
-                            usuarioWithRole.persona_id, 
+                            usuarioWithRole.persona_id ?: usuarioWithRole.id, 
                             usuarioWithRole.rolNombre, 
                             avatarUri
                         )
@@ -154,27 +154,40 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                                 if (passwordMatches) {
                                     val avatarUri = remoteUsuario.avatar
+                                    val roleId = withContext(Dispatchers.IO) {
+                                        try {
+                                            val rows = supabaseClient.executeRawQuery("SELECT rol_id FROM usuarios_roles WHERE usuario_id = ${remoteUsuario.id}")
+                                            val value = rows.firstOrNull()?.get("rol_id")
+                                            when (value) {
+                                                is Number -> value.toLong()
+                                                is String -> value.toLongOrNull()
+                                                else -> null
+                                            }
+                                        } catch (_: Exception) {
+                                            null
+                                        }
+                                    }
+
                                     val roleName = withContext(Dispatchers.IO) {
                                         try {
-                                            supabaseClient.fetchRoles().firstOrNull { r -> r.id == remoteUsuario.rol_id }?.nombre ?: ""
-                                        } catch (e: Exception) { "" }
+                                            roleId?.let { supabaseClient.fetchRolById(it) }?.nombre ?: ""
+                                        } catch (_: Exception) {
+                                            ""
+                                        }
                                     }
 
                                     sessionManager.createLoginSession(
                                         remoteUsuario.usuario,
                                         remoteUsuario.id,
-                                        remoteUsuario.persona_id,
+                                        remoteUsuario.persona_id ?: remoteUsuario.id,
                                         roleName,
                                         avatarUri
                                     )
                                     
-                                    // Save role ID to session for hasRole(id) checks
-                                    // If role ID is not present in remoteUsuario or fetch fails, default to 0
-                                    // Assuming remoteUsuario.rol_id is available and correct
-                                    sessionManager.addRole(remoteUsuario.rol_id.toInt())
+                                    roleId?.toInt()?.let { sessionManager.addRole(it) }
                                     
                                     // Ensure admin role (3) is set if the role name is 'admin' or ID is 3
-                                    if (roleName.equals("admin", ignoreCase = true) || remoteUsuario.rol_id == 3L) {
+                                    if (roleName.equals("admin", ignoreCase = true) || roleId == 3L) {
                                         sessionManager.addRole(3)
                                     }
 

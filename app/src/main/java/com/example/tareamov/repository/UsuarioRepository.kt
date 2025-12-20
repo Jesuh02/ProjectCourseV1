@@ -128,10 +128,12 @@ class UsuarioRepository(
         val usuario = getUsuarioById(userId)
         return if (usuario != null) {
             val updatedUsuario = usuario.copy(
-                usuario = newUsername,
-                rol_id = rolId ?: usuario.rol_id
+                usuario = newUsername
             )
             update(updatedUsuario)
+            if (rolId != null) {
+                usuarioDao.updateUserRolId(userId, rolId)
+            }
             true
         } else {
             false

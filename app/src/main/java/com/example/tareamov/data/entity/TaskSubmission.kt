@@ -12,28 +12,41 @@ import com.google.gson.annotations.SerializedName
         ForeignKey(
             entity = Task::class,
             parentColumns = ["id"],
-            childColumns = ["taskId"],
+            childColumns = ["task_id"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = Usuario::class,
+            parentColumns = ["id"],
+            childColumns = ["student_id"],
             onDelete = ForeignKey.CASCADE
         )
     ],
     indices = [
-        Index("taskId"),
-        Index("studentId")
+        Index("task_id"),
+        Index("student_id")
     ]
 )
 data class TaskSubmission(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    @androidx.room.ColumnInfo(name = "task_id")
     @SerializedName("task_id")
     val taskId: Long = 0,
+    @androidx.room.ColumnInfo(name = "student_id")
     @SerializedName("student_id")
     val studentId: Long = 0,
+    @androidx.room.ColumnInfo(name = "submission_date")
     @SerializedName("submission_date")
     val submissionDate: Long = 0,
+    @androidx.room.ColumnInfo(name = "file_uri")
     @SerializedName("file_uri")
     val fileUri: String = "",
+    @androidx.room.ColumnInfo(name = "file_name")
     @SerializedName("file_name")
     val fileName: String = "",
     val grade: Float? = null,
-    val feedback: String? = null
+    val feedback: String? = null,
+    @androidx.room.ColumnInfo(name = "created_at")
+    val createdAt: Long = System.currentTimeMillis()
 ) 

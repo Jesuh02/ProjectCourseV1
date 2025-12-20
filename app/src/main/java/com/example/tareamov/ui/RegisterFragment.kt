@@ -958,7 +958,15 @@ class RegisterFragment : Fragment() {
                 withContext(Dispatchers.IO) {
                     // Insert directly without re-hashing
                     val db = AppDatabase.getDatabase(requireContext())
-                    db.usuarioDao().insertUsuario(usuarioLocal)
+                    val insertedUserId = db.usuarioDao().insertUsuario(usuarioLocal)
+                    val usuarioRole = db.rolDao().getRolByNombre(com.example.tareamov.data.entity.Rol.NOMBRE_USUARIO)
+                        ?: run {
+                            val id = db.rolDao().insertRol(com.example.tareamov.data.entity.Rol.createUsuarioRole())
+                            db.rolDao().getRolById(id)
+                        }
+                    if (usuarioRole != null) {
+                        db.usuarioDao().updateUserRolId(insertedUserId, usuarioRole.id)
+                    }
                 }
 
                 // Navegar según el modo de registro
@@ -979,7 +987,7 @@ class RegisterFragment : Fragment() {
                             sessionManager.createLoginSession(
                                 username = user.usuario,
                                 userId = user.id,
-                                personaId = user.persona_id,
+                                personaId = user.persona_id ?: user.id,
                                 roleName = "user",
                                 avatarUri = user.avatar
                             )

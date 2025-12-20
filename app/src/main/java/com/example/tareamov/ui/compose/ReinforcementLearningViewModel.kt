@@ -133,9 +133,9 @@ class ReinforcementLearningViewModel(
                 // Serialize content items to JSON for backend processing
                 val contentList = contentItems.map { 
                     mapOf(
-                        "name" to (it.name ?: "Sin nombre"),
-                        "uri" to (it.uriString ?: ""),
-                        "type" to (it.contentType ?: "application/octet-stream")
+                        "name" to (it.title ?: "Sin nombre"),
+                        "uri" to it.body,
+                        "type" to it.contentType.ifBlank { "application/octet-stream" }
                     )
                 }
                 val jsonContentString = Gson().toJson(contentList)

@@ -187,7 +187,7 @@ class VideoAdapter(
                             com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
                         }
                     } else {
-                        videoData.username // Fallback para compatibilidad
+                        null // Fallback para compatibilidad (username removed from entity)
                     }
 
                     // If creatorId is still not set but we have a username, try to find the user

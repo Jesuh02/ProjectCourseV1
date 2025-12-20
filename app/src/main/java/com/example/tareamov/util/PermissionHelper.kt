@@ -19,7 +19,7 @@ class PermissionHelper(
     ): Boolean {
         return try {
             // Obtener el rol del usuario
-            val usuario = rolRepository.getUsuarioByUsername(username) ?: return false
+            val usuario = rolRepository.getUsuarioWithRoleByUsername(username) ?: return false
             val rolId = usuario.rol_id
             
             // Verificar acceso
@@ -52,7 +52,7 @@ class PermissionHelper(
      */
     suspend fun getUserResourcesForInterface(username: String, interfaz: String): List<Recurso> {
         return try {
-            val usuario = rolRepository.getUsuarioByUsername(username) ?: return emptyList()
+            val usuario = rolRepository.getUsuarioWithRoleByUsername(username) ?: return emptyList()
             val rolId = usuario.rol_id
             
             recursoRepository.getRecursosByRolAndInterfaz(rolId, interfaz)

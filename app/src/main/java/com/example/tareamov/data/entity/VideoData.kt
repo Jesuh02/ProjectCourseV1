@@ -23,36 +23,58 @@ import java.io.File
  * @property timestamp When the video was uploaded
  * @property isPaid Whether the course is paid or free
  */
-@Entity(tableName = "videos")
+@Entity(
+    tableName = "videos",
+    foreignKeys = [
+        androidx.room.ForeignKey(
+            entity = Course::class,
+            parentColumns = ["id"],
+            childColumns = ["course_id"],
+            onDelete = androidx.room.ForeignKey.CASCADE
+        )
+    ],
+    indices = [androidx.room.Index("course_id")]
+)
 data class VideoData(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    @SerializedName("username") val username: String, // This is the creator's username
     val description: String,
     val title: String,
+    @androidx.room.ColumnInfo(name = "video_uri_string")
     @SerializedName("video_uri_string") val videoUriString: String? = null,
+    @androidx.room.ColumnInfo(name = "local_file_path")
     @SerializedName("local_file_path") val localFilePath: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
+    @androidx.room.ColumnInfo(name = "is_paid")
     val isPaid: Boolean = false,
+    @androidx.room.ColumnInfo(name = "thumbnail_uri")
     @SerializedName("thumbnail_uri") val thumbnailUri: String? = null,
     val price: Double? = null,
-    @SerializedName("course_id") val courseId: Long? = null // ID del curso asociado
+    @androidx.room.ColumnInfo(name = "course_id")
+    @SerializedName("course_id") val courseId: Long? = null, // ID del curso asociado
+    @androidx.room.ColumnInfo(name = "remote_id")
+    val remoteId: Long? = null,
+    @androidx.room.ColumnInfo(name = "created_at")
+    val createdAt: Long = System.currentTimeMillis()
 ) {
+    @Ignore
+    var username: String? = null // Added back as ignored for UI compatibility
+
     // Transient property that's not stored in the database
     @Ignore
     val videoUri: Uri? = if (videoUriString != null) Uri.parse(videoUriString) else null
 
     // Secondary constructor for creating from URI
+    @Ignore
     constructor(
-        username: String,
         description: String,
         title: String,
         videoUri: Uri?,
         isPaid: Boolean = false,
         thumbnailUri: String? = null,
-        courseId: Long? = null
+        courseId: Long? = null,
+        username: String? = null
     ) : this(
         0,
-        username,
         description,
         title,
         videoUri?.toString(),
@@ -61,8 +83,12 @@ data class VideoData(
         isPaid,
         thumbnailUri,
         null,
-        courseId
-    )
+        courseId,
+        null,
+        System.currentTimeMillis()
+    ) {
+        this.username = username
+    }
 
     // Check if the video file exists
     fun videoFileExists(): Boolean {

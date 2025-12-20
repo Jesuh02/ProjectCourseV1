@@ -314,21 +314,14 @@ class CourseTaskFragment : Fragment() {
                                 if (localTopic != null) {
                                     mappedTopicId = localTopic.id
                                 } else if (argCourseId > 0) {
-                                    // Try to find a topic with the same orderIndex under the local course
-                                    val byOrder = withContext(Dispatchers.IO) { topicDao.getTopicByCourseIdAndOrderIndex(argCourseId, remote.orderIndex ?: 0) }
-                                    if (byOrder != null) {
-                                        mappedTopicId = byOrder.id
-                                    } else {
-                                        // Create a new local Topic tied to the local course id
-                                        val newTopic = com.example.tareamov.data.entity.Topic(
-                                            courseId = argCourseId,
-                                            name = "Tema (migrado)",
-                                            description = "",
-                                            orderIndex = remote.orderIndex ?: 0
-                                        )
-                                        mappedTopicId = withContext(Dispatchers.IO) { topicDao.insertTopic(newTopic) }
-                                        Log.i("CourseTaskFragment", "Created placeholder local topic id=$mappedTopicId for remote topic ${remote.topicId}")
-                                    }
+                                    val newTopic = com.example.tareamov.data.entity.Topic(
+                                        courseId = argCourseId,
+                                        name = "Tema (migrado)",
+                                        description = "",
+                                        orderIndex = 0
+                                    )
+                                    mappedTopicId = withContext(Dispatchers.IO) { topicDao.insertTopic(newTopic) }
+                                    Log.i("CourseTaskFragment", "Created placeholder local topic id=$mappedTopicId for remote topic ${remote.topicId}")
                                 }
                             } catch (e: Exception) {
                                 Log.w("CourseTaskFragment", "Failed to map remote topic id to local", e)
@@ -338,9 +331,8 @@ class CourseTaskFragment : Fragment() {
                             existingTask = Task(
                                 id = remote.id,
                                 topicId = mappedTopicId,
-                                name = remote.name ?: "",
-                                description = remote.description ?: null,
-                                orderIndex = remote.orderIndex ?: 0
+                                name = remote.name,
+                                description = remote.description
                             )
                             val tmpTask = existingTask
                             Log.i("CourseTaskFragment", "Loaded task $taskId from Supabase fallback. Mapped topicId=${tmpTask?.topicId}")
@@ -388,11 +380,11 @@ class CourseTaskFragment : Fragment() {
             
             // Add content items to the UI
             for (contentItem in contentItems) {
-                val r2Url = if (CloudflareR2Service.isR2Url(contentItem.uriString)) contentItem.uriString else null
+                val r2Url = if (CloudflareR2Service.isR2Url(contentItem.body)) contentItem.body else null
                 addContentItemView(
-                    Uri.parse(contentItem.uriString), 
+                    Uri.parse(contentItem.body), 
                     contentItem.contentType, 
-                    contentItem.name,
+                    contentItem.title,
                     contentItem.id,
                     r2Url
                 )
@@ -464,10 +456,10 @@ class CourseTaskFragment : Fragment() {
         val typeView = contentView.findViewById<TextView>(R.id.contentTypeView)
 
         // Show cloud icon if it's an R2 URL
-        val displayName = if (CloudflareR2Service.isR2Url(item.uriString)) {
-            "☁️ ${item.name ?: "Archivo adjunto"}"
+        val displayName = if (CloudflareR2Service.isR2Url(item.body)) {
+            "☁️ ${item.title ?: "Archivo adjunto"}"
         } else {
-            item.name ?: "Archivo adjunto"
+            item.title ?: "Archivo adjunto"
         }
         nameView?.text = displayName
 
@@ -497,35 +489,35 @@ class CourseTaskFragment : Fragment() {
         }
 
         container.addView(contentView)
-        Log.d("CourseTaskFragment", "📄 Added topic content view: ${item.name}")
+        Log.d("CourseTaskFragment", "📄 Added topic content view: ${item.title}")
     }
     
     // Open a content item (video or document)
     private fun openContentItem(item: ContentItem) {
         try {
-            Log.d("CourseTaskFragment", "🎬 Opening content: ${item.name}, Type: ${item.contentType}, URI: ${item.uriString}")
+            Log.d("CourseTaskFragment", "🎬 Opening content: ${item.title}, Type: ${item.contentType}, URI: ${item.body}")
             
             if (item.contentType.lowercase() == "video") {
                 // Open video in VideoPlayerActivity
                 val intent = Intent(requireContext(), VideoPlayerActivity::class.java)
-                intent.putExtra("video_path", item.uriString)
-                intent.putExtra("video_title", item.name ?: "Video")
+                intent.putExtra("video_path", item.body)
+                intent.putExtra("video_title", item.title ?: "Video")
                 intent.putExtra("video_description", "")
                 intent.putExtra("username", sessionManager.getUsername() ?: "")
                 
-                if (!item.uriString.startsWith("http://") && !item.uriString.startsWith("https://")) {
+                if (!item.body.startsWith("http://") && !item.body.startsWith("https://")) {
                     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 
                 startActivity(intent)
             } else {
                 // For documents and other content types
-                val uri = if (CloudflareR2Service.isR2Url(item.uriString) || 
-                             item.uriString.startsWith("http://") || 
-                             item.uriString.startsWith("https://")) {
-                    Uri.parse(item.uriString)
+                val uri = if (CloudflareR2Service.isR2Url(item.body) || 
+                             item.body.startsWith("http://") || 
+                             item.body.startsWith("https://")) {
+                    Uri.parse(item.body)
                 } else {
-                    Uri.parse(item.uriString)
+                    Uri.parse(item.body)
                 }
                 
                 val intent = Intent(Intent.ACTION_VIEW, uri)
@@ -534,7 +526,7 @@ class CourseTaskFragment : Fragment() {
             }
         } catch (e: Exception) {
             Log.e("CourseTaskFragment", "Error opening content: ${e.message}", e)
-            Toast.makeText(context, "No se puede abrir el contenido: ${item.name}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "No se puede abrir el contenido: ${item.title}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -669,8 +661,7 @@ class CourseTaskFragment : Fragment() {
                     id = if (taskId > 0) taskId else 0,
                     topicId = topicId,
                     name = taskName,
-                    description = taskDescription.ifBlank { null },
-                    orderIndex = 0
+                    description = taskDescription.ifBlank { null }
                 )
 
                 Log.d("CourseTaskFragment", "Attempting to save task: id=${remoteTask.id}, name=${remoteTask.name}, topicId=${remoteTask.topicId}, isUpdate=${taskId > 0}")
@@ -738,9 +729,9 @@ class CourseTaskFragment : Fragment() {
                                 id = 0,
                                 topicId = 0, // Se deja en 0 porque pertenece a una tarea
                                 taskId = savedTaskId,
-                                name = getFileName(contentUri) ?: "Contenido sin título",
+                                title = getFileName(contentUri) ?: "Contenido sin título",
                                 contentType = contentType,
-                                uriString = contentUri.toString(),
+                                body = contentUri.toString(),
                                 orderIndex = i,
                                 creator_usuario_id = currentUserId,
                                 creator_username = currentUsername
@@ -758,12 +749,12 @@ class CourseTaskFragment : Fragment() {
                                 val remoteId = syncRepo.insertContentItemRemote(item)
                                 if (remoteId != null) {
                                     successCount++
-                                    Log.d("CourseTaskFragment", "Saved content item to Supabase: ${item.name} with id=$remoteId")
+                                    Log.d("CourseTaskFragment", "Saved content item to Supabase: ${item.title} with id=$remoteId")
                                 } else {
-                                    Log.w("CourseTaskFragment", "Failed to save content item to Supabase: ${item.name}")
+                                    Log.w("CourseTaskFragment", "Failed to save content item to Supabase: ${item.title}")
                                 }
                             } catch (e: Exception) {
-                                Log.e("CourseTaskFragment", "Error saving content item to Supabase: ${item.name}", e)
+                                Log.e("CourseTaskFragment", "Error saving content item to Supabase: ${item.title}", e)
                             }
                         }
                     }

@@ -45,6 +45,8 @@ import com.example.tareamov.data.entity.ProgresoEstudiante
 import com.example.tareamov.data.entity.VideoLike
 import com.example.tareamov.data.entity.UserVideoLike
 import com.example.tareamov.data.entity.VideoComment
+import com.example.tareamov.data.entity.UsuariosRoles
+import com.example.tareamov.data.entity.UserFcmToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -66,12 +68,14 @@ import kotlinx.coroutines.launch
         Rol::class,
         Recurso::class,
         RolRecurso::class,
+        UsuariosRoles::class,
         ProgresoEstudiante::class,
         VideoLike::class,
         UserVideoLike::class,
-        VideoComment::class
+        VideoComment::class,
+        UserFcmToken::class
     ],
-    version = 32, // Updated version to add parent_id to video_comments
+    version = 36, // Updated version for FileContext.jsonContent
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
