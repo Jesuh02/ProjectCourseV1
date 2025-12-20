@@ -1168,7 +1168,7 @@ class CourseDetailFragment : Fragment() {
                         }
                         Log.d("CourseDetailFragment", "🔍 DEBUG: ALL content_items in Supabase: ${allContentItems.size} items")
                         allContentItems.forEach { item ->
-                            Log.d("CourseDetailFragment", "   📦 ContentItem: id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, name='${item.name}', type=${item.contentType}")
+                            Log.d("CourseDetailFragment", "   📦 ContentItem: id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, title='${item.title}', type=${item.contentType}")
                         }
                     } catch (e: Exception) {
                         Log.w("CourseDetailFragment", "DEBUG fetch failed", e)
@@ -1264,8 +1264,8 @@ class CourseDetailFragment : Fragment() {
                                     } else {
                                         fetched.forEachIndexed { index, item ->
                                             Log.d("CourseDetailFragment", "📄 [$index] id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, type=${item.contentType}")
-                                            Log.d("CourseDetailFragment", "       name='${item.name}'")
-                                            Log.d("CourseDetailFragment", "       uri='${item.uriString.take(80)}...'")
+                                            Log.d("CourseDetailFragment", "       title='${item.title}'")
+                                            Log.d("CourseDetailFragment", "       body='${item.body.take(80)}...'")
                                         }
                                     }
                                     
@@ -1281,7 +1281,7 @@ class CourseDetailFragment : Fragment() {
                                         val items = contentByTopic[topicId] ?: emptyList()
                                         Log.d("CourseDetailFragment", "   📖 TopicId=$topicId -> ${items.size} items")
                                         items.forEach { item ->
-                                            Log.d("CourseDetailFragment", "      📄 id=${item.id}, name='${item.name}', type=${item.contentType}")
+                                            Log.d("CourseDetailFragment", "      📄 id=${item.id}, title='${item.title}', type=${item.contentType}")
                                         }
                                     }
                                     Log.d("CourseDetailFragment", "📦 =============================================")
@@ -1426,7 +1426,7 @@ class CourseDetailFragment : Fragment() {
 
             if (usuario != null) {
                 val persona = withContext(Dispatchers.IO) {
-                    personaDao.getPersonaById(usuario.personaId)
+                    usuario.personaId?.let { personaDao.getPersonaById(it) }
                 }
 
                 if (persona != null) {
@@ -1715,7 +1715,11 @@ class CourseDetailFragment : Fragment() {
         container.removeAllViews()
         
         if (tasks.isNotEmpty()) {
-            val sortedTasks = tasks.sortedBy { it.orderIndex }
+            val sortedTasks = tasks.sortedWith(
+                compareBy<Task> { it.dueDate ?: Long.MAX_VALUE }
+                    .thenBy { it.createdAt }
+                    .thenBy { it.id }
+            )
             for (task in sortedTasks) {
                 addTaskViewFast(task, container)
             }
@@ -1754,7 +1758,7 @@ class CourseDetailFragment : Fragment() {
 
     // Fast content view creation (simplified)
     private fun addContentViewFast(item: ContentItem, container: LinearLayout) {
-        Log.d("CourseDetailFragment", "addContentViewFast - Name: ${item.name}, Type: ${item.contentType}")
+        Log.d("CourseDetailFragment", "addContentViewFast - Title: ${item.title}, Type: ${item.contentType}")
         
         val contentView = LayoutInflater.from(context).inflate(
             R.layout.item_content_mini,
@@ -1766,7 +1770,7 @@ class CourseDetailFragment : Fragment() {
         val nameView = contentView.findViewById<TextView>(R.id.contentNameView)
         val typeView = contentView.findViewById<TextView>(R.id.contentTypeView)
         
-        nameView?.text = item.name ?: "Archivo adjunto"
+        nameView?.text = item.title ?: "Archivo adjunto"
         
         // Set icon and type based on content type
         when (item.contentType.lowercase()) {
@@ -1875,7 +1879,7 @@ class CourseDetailFragment : Fragment() {
             if (sortedContent.isNotEmpty()) {
                 Log.d("CourseDetailFragment", "📄 ✅ Showing ${sortedContent.size} content items for topic ${topic.id}")
                 for (item in sortedContent) {
-                    Log.d("CourseDetailFragment", "   📦 Content: id=${item.id}, name='${item.name}', uri='${item.uriString.take(60)}...', type=${item.contentType}")
+                    Log.d("CourseDetailFragment", "   📦 Content: id=${item.id}, title='${item.title}', body='${item.body.take(60)}...', type=${item.contentType}")
                     addContentView(item, topicContentContainer)
                 }
             } else {
@@ -1896,7 +1900,11 @@ class CourseDetailFragment : Fragment() {
             tasksContainer.removeAllViews() // Clear container before adding header/tasks/button
             tasksContainer.addView(tasksHeader)
 
-            val sortedTasks = tasks.sortedBy { it.orderIndex }
+            val sortedTasks = tasks.sortedWith(
+                compareBy<Task> { it.dueDate ?: Long.MAX_VALUE }
+                    .thenBy { it.createdAt }
+                    .thenBy { it.id }
+            )
             if (sortedTasks.isNotEmpty()) {
                 for (task in sortedTasks) {
                     addTaskView(task, tasksContainer) // Add the task view
@@ -2031,7 +2039,7 @@ class CourseDetailFragment : Fragment() {
                 
                 if (contentItems.isNotEmpty()) {
                     for (contentItem in contentItems) {
-                        Log.d("CourseDetailFragment", "Adding content item: name=${contentItem.name}, type=${contentItem.contentType}, uri=${contentItem.uriString}, isR2=${CloudflareR2Service.isR2Url(contentItem.uriString)}")
+                        Log.d("CourseDetailFragment", "Adding content item: title=${contentItem.title}, type=${contentItem.contentType}, body=${contentItem.body}, isR2=${CloudflareR2Service.isR2Url(contentItem.body)}")
                         
                         val contentItemView = LayoutInflater.from(context).inflate(
                             R.layout.item_content_mini,
@@ -2044,10 +2052,10 @@ class CourseDetailFragment : Fragment() {
                         val typeView = contentItemView.findViewById<TextView>(R.id.contentTypeView)
                         
                         // Show cloud emoji if it's an R2 URL
-                        val displayName = if (CloudflareR2Service.isR2Url(contentItem.uriString)) {
-                            "☁️ ${contentItem.name ?: "Archivo adjunto"}"
+                        val displayName = if (CloudflareR2Service.isR2Url(contentItem.body)) {
+                            "☁️ ${contentItem.title ?: "Archivo adjunto"}"
                         } else {
-                            contentItem.name ?: "Archivo adjunto"
+                            contentItem.title ?: "Archivo adjunto"
                         }
                         nameView?.text = displayName
                         
@@ -2283,7 +2291,7 @@ class CourseDetailFragment : Fragment() {
         Log.d("CourseDetailFragment", "loadTaskContentItems: Container removed from layout")
     }// Modify addContentView to use item_content_mini.xml for consistent display
     private fun addContentView(item: ContentItem, container: LinearLayout, isTaskContent: Boolean = false) {
-        Log.d("CourseDetailFragment", "📄 Adding content view - Name: ${item.name}, Type: ${item.contentType}, URI: ${item.uriString}")
+        Log.d("CourseDetailFragment", "📄 Adding content view - Title: ${item.title}, Type: ${item.contentType}, Body: ${item.body}")
         
         val inflater = LayoutInflater.from(context)
         val contentView = inflater.inflate(R.layout.item_content_mini, container, false)
@@ -2293,10 +2301,10 @@ class CourseDetailFragment : Fragment() {
         val typeView = contentView.findViewById<TextView>(R.id.contentTypeView)
 
         // Show cloud icon if it's an R2 URL
-        val displayName = if (CloudflareR2Service.isR2Url(item.uriString)) {
-            "☁️ ${item.name ?: "Archivo adjunto"}"
+        val displayName = if (CloudflareR2Service.isR2Url(item.body)) {
+            "☁️ ${item.title ?: "Archivo adjunto"}"
         } else {
-            item.name ?: "Archivo adjunto"
+            item.title ?: "Archivo adjunto"
         }
         nameView?.text = displayName
 
@@ -2334,7 +2342,7 @@ class CourseDetailFragment : Fragment() {
         contentView.layoutParams = params
         container.addView(contentView)
         
-        Log.d("CourseDetailFragment", "✅ Content view added successfully for: ${item.name}")
+        Log.d("CourseDetailFragment", "✅ Content view added successfully for: ${item.title}")
     }
 
     // Helper method to get content type description
@@ -2351,7 +2359,7 @@ class CourseDetailFragment : Fragment() {
     // Helper method to load content thumbnail
     private fun loadContentThumbnail(item: ContentItem, imageView: ImageView) {
         try {
-            val uri = Uri.parse(item.uriString)
+            val uri = Uri.parse(item.body)
             
             when (item.contentType.lowercase()) {
                 "video" -> {
@@ -2378,7 +2386,7 @@ class CourseDetailFragment : Fragment() {
                 }
             }
         } catch (e: Exception) {
-            Log.e("CourseDetailFragment", "Error loading thumbnail for content: ${item.name}", e)
+            Log.e("CourseDetailFragment", "Error loading thumbnail for content: ${item.title}", e)
             imageView.setImageResource(R.drawable.content_thumbnail_placeholder)
         }
     }    // Helper method to set content type icon
@@ -2548,17 +2556,17 @@ class CourseDetailFragment : Fragment() {
     private fun openContent(item: ContentItem) {
         try {
             Log.d("CourseDetailFragment", "🎬 openContent called:")
-            Log.d("CourseDetailFragment", "   - Name: ${item.name}")
+            Log.d("CourseDetailFragment", "   - Name: ${item.title}")
             Log.d("CourseDetailFragment", "   - Type: ${item.contentType}")
-            Log.d("CourseDetailFragment", "   - URI: ${item.uriString}")
-            Log.d("CourseDetailFragment", "   - Is R2 URL: ${CloudflareR2Service.isR2Url(item.uriString)}")
+            Log.d("CourseDetailFragment", "   - URI: ${item.body}")
+            Log.d("CourseDetailFragment", "   - Is R2 URL: ${CloudflareR2Service.isR2Url(item.body)}")
             
             // For videos, use our custom VideoPlayerActivity
             if (item.contentType == "video") {
-                Log.d("CourseDetailFragment", "Opening video content: ${item.name}, URI: ${item.uriString}")
+                Log.d("CourseDetailFragment", "Opening video content: ${item.title}, URI: ${item.body}")
 
                 // Validate and process the URI
-                var processedUri = item.uriString
+                var processedUri = item.body
                 
                 // Handle different URI formats
                 if (processedUri.isNotEmpty()) {
@@ -2592,7 +2600,7 @@ class CourseDetailFragment : Fragment() {
                         }
                     }
                 } else {
-                    Log.e("CourseDetailFragment", "Empty URI string for content item: ${item.name}")
+                    Log.e("CourseDetailFragment", "Empty URI string for content item: ${item.title}")
                     Toast.makeText(context, "URI del video no válida", Toast.LENGTH_SHORT).show()
                     return
                 }
@@ -2602,7 +2610,7 @@ class CourseDetailFragment : Fragment() {
 
                 // Pass all necessary information with the correct keys that VideoPlayerActivity expects
                 intent.putExtra("video_path", processedUri)  // Use processed URI
-                intent.putExtra("video_title", item.name ?: "Video")
+                intent.putExtra("video_title", item.title ?: "Video")
                 intent.putExtra("video_description", "")  // ContentItem doesn't have description
                 intent.putExtra("username", currentUsername ?: "")
 
@@ -2623,7 +2631,7 @@ class CourseDetailFragment : Fragment() {
             }
 
             // For other content types (documents), handle remote URLs
-            val uriString = item.uriString
+            val uriString = item.body
             
             // Check if it's a remote URL (R2 or other HTTP/HTTPS)
             if (CloudflareR2Service.isR2Url(uriString) || 
@@ -2637,7 +2645,7 @@ class CourseDetailFragment : Fragment() {
                     startActivity(intent)
                 } catch (e: Exception) {
                     Log.e("CourseDetailFragment", "Error opening remote document: ${e.message}", e)
-                    Toast.makeText(context, "No se puede abrir el documento: ${item.name}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "No se puede abrir el documento: ${item.title}", Toast.LENGTH_SHORT).show()
                 }
                 return
             }
@@ -2673,18 +2681,18 @@ class CourseDetailFragment : Fragment() {
                 startActivity(intent)
             } catch (e: Exception) {
                 Log.e("CourseDetailFragment", "Error opening content: ${e.message}", e)
-                Toast.makeText(context, "No se puede abrir el contenido: ${item.name}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "No se puede abrir el contenido: ${item.title}", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
-            Log.e("CourseDetailFragment", "Error opening content URI: ${item.uriString}", e)
-            Toast.makeText(context, "No se puede abrir el contenido: ${item.name}", Toast.LENGTH_SHORT).show()
+            Log.e("CourseDetailFragment", "Error opening content URI: ${item.body}", e)
+            Toast.makeText(context, "No se puede abrir el contenido: ${item.title}", Toast.LENGTH_SHORT).show()
         }
     }
 
     // Open a video in the in-app floating player (MainActivity.showFloatingPlayer)
     private fun openFloatingPlayer(item: ContentItem) {
         try {
-            var processedUri = item.uriString ?: ""
+            var processedUri = item.body
             if (processedUri.isNotEmpty()) {
                 // Check if it's a remote URL (R2 or HTTP/HTTPS) - use directly
                 if (CloudflareR2Service.isR2Url(processedUri) || 

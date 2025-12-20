@@ -7,13 +7,13 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface FileContextDao {
     
-    @Query("SELECT * FROM file_contexts WHERE submissionId = :submissionId")
+    @Query("SELECT * FROM file_contexts WHERE submission_id = :submissionId")
     suspend fun getFileContextBySubmission(submissionId: Long): FileContext?
     
-    @Query("SELECT * FROM file_contexts ORDER BY timestamp DESC")
+    @Query("SELECT * FROM file_contexts ORDER BY created_at DESC")
     fun getAllFileContexts(): Flow<List<FileContext>>
     
-    @Query("SELECT contentSummary FROM file_contexts WHERE contentSummary IS NOT NULL AND contentSummary != '' ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT content_summary FROM file_contexts WHERE content_summary IS NOT NULL AND content_summary != '' ORDER BY created_at DESC LIMIT 1")
     suspend fun getLatestContentSummary(): String?
     
     @Insert
@@ -22,7 +22,7 @@ interface FileContextDao {
     @Update
     suspend fun updateFileContext(fileContext: FileContext)
     
-    @Query("DELETE FROM file_contexts WHERE submissionId = :submissionId")
+    @Query("DELETE FROM file_contexts WHERE submission_id = :submissionId")
     suspend fun deleteFileContextBySubmission(submissionId: Long)
     
     @Query("DELETE FROM file_contexts")

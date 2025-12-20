@@ -181,7 +181,7 @@ class SessionManager private constructor(private val context: Context) {
             val avatar = u.avatar
             editor.putString(KEY_USERNAME, u.usuario)
             editor.putLong(KEY_USER_ID, u.id)
-            editor.putLong(KEY_PERSONA_ID, u.persona_id)
+            editor.putLong(KEY_PERSONA_ID, u.persona_id ?: u.id)
             editor.putString(KEY_USER_ROLE, roleName)
             if (avatar != null) editor.putString(KEY_USER_AVATAR, avatar)
             editor.apply()

@@ -6,16 +6,16 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface CourseDao {
-    @Query("SELECT * FROM courses ORDER BY creationDate DESC")
+    @Query("SELECT * FROM courses ORDER BY creation_date DESC")
     suspend fun getAllCourses(): List<Course>
     
-    @Query("SELECT * FROM courses ORDER BY creationDate DESC")
+    @Query("SELECT * FROM courses ORDER BY creation_date DESC")
     fun getAllCoursesSync(): List<Course>
 
-    @Query("SELECT * FROM courses WHERE creatorUserId = :userId ORDER BY creationDate DESC")
+    @Query("SELECT * FROM courses WHERE creator_user_id = :userId ORDER BY creation_date DESC")
     suspend fun getCoursesByCreator(userId: Long): List<Course>
     
-    @Query("SELECT * FROM courses WHERE creatorUserId = :creatorId ORDER BY creationDate DESC")
+    @Query("SELECT * FROM courses WHERE creator_user_id = :creatorId ORDER BY creation_date DESC")
     suspend fun getCoursesByCreatorId(creatorId: Long): List<Course>
 
     @Query("SELECT * FROM courses WHERE id = :courseId")
@@ -24,19 +24,19 @@ interface CourseDao {
     @Query("SELECT * FROM courses WHERE title = :title LIMIT 1")
     suspend fun getCourseByTitle(title: String): Course?
 
-    @Query("SELECT * FROM courses WHERE isPublished = 1 ORDER BY creationDate DESC")
+    @Query("SELECT * FROM courses WHERE is_published = 1 ORDER BY creation_date DESC")
     suspend fun getPublishedCourses(): List<Course>
 
     @Query("SELECT * FROM courses WHERE title LIKE :query OR description LIKE :query OR category LIKE :query")
     suspend fun searchCourses(query: String): List<Course>
 
-    @Query("SELECT * FROM courses WHERE category = :category AND isPublished = 1")
+    @Query("SELECT * FROM courses WHERE category = :category AND is_published = 1")
     suspend fun getCoursesByCategory(category: String): List<Course>
 
-    @Query("SELECT * FROM courses WHERE isPremium = 0 AND isPublished = 1")
+    @Query("SELECT * FROM courses WHERE is_premium = 0 AND is_published = 1")
     suspend fun getFreeCourses(): List<Course>
 
-    @Query("SELECT * FROM courses WHERE isPremium = 1 AND isPublished = 1")
+    @Query("SELECT * FROM courses WHERE is_premium = 1 AND is_published = 1")
     suspend fun getPremiumCourses(): List<Course>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -51,17 +51,17 @@ interface CourseDao {
     @Query("DELETE FROM courses WHERE id = :courseId")
     suspend fun deleteCourseById(courseId: Long)
 
-    @Query("UPDATE courses SET enrollmentCount = enrollmentCount + 1 WHERE id = :courseId")
+    @Query("UPDATE courses SET enrollment_count = enrollment_count + 1 WHERE id = :courseId")
     suspend fun incrementEnrollmentCount(courseId: Long)
 
     @Query("UPDATE courses SET rating = :rating WHERE id = :courseId")
     suspend fun updateCourseRating(courseId: Long, rating: Float)
 
     // Flow-based queries for real-time updates
-    @Query("SELECT * FROM courses ORDER BY creationDate DESC")
+    @Query("SELECT * FROM courses ORDER BY creation_date DESC")
     fun getAllCoursesFlow(): Flow<List<Course>>
 
-    @Query("SELECT * FROM courses WHERE creatorUserId = :userId ORDER BY creationDate DESC")
+    @Query("SELECT * FROM courses WHERE creator_user_id = :userId ORDER BY creation_date DESC")
     fun getCoursesByCreatorFlow(userId: Long): Flow<List<Course>>
 
     // Add this method to get the maximum course ID for consecutive ID generation

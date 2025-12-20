@@ -12,16 +12,21 @@ import com.google.gson.annotations.SerializedName
         ForeignKey(
             entity = Topic::class, // Link Task to Topic
             parentColumns = ["id"],
-            childColumns = ["topicId"], // Changed from courseId
+            childColumns = ["topic_id"], // Changed from courseId
             onDelete = ForeignKey.CASCADE // Delete tasks if the parent topic is deleted
         )
     ],
-    indices = [Index(value = ["topicId"])] // Index for faster queries by topicId
+    indices = [Index(value = ["topic_id"])] // Index for faster queries by topicId
 )
 data class Task(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @androidx.room.ColumnInfo(name = "topic_id")
     val topicId: Long = 0,
+    @androidx.room.ColumnInfo(name = "title")
     @SerializedName("title") val name: String = "",
     val description: String? = null,
-    val orderIndex: Int = 0
+    @androidx.room.ColumnInfo(name = "due_date")
+    val dueDate: Long? = null,
+    @androidx.room.ColumnInfo(name = "created_at")
+    val createdAt: Long = System.currentTimeMillis()
 )

@@ -35,7 +35,7 @@ class CourseContentAdapter(
     override fun onBindViewHolder(holder: ContentViewHolder, position: Int) {
         val contentItem = contentItems[position]
 
-        holder.nameTextView.text = contentItem.name
+        holder.nameTextView.text = contentItem.title ?: "Archivo adjunto"
 
         // Set appropriate icon based on content type
         val iconResource = when (contentItem.contentType) {
@@ -77,7 +77,6 @@ class CourseContentAdapter(
         val accentColor = ContextCompat.getColor(context, R.color.purple_500)
         
         holder.nameTextView.setTextColor(primaryTextColor)
-        
         // Tint the icon with accent color
         holder.iconView.setColorFilter(accentColor)
     }

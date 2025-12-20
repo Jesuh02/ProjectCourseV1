@@ -15,19 +15,23 @@ import com.google.gson.annotations.SerializedName
         ForeignKey(
             entity = Course::class,
             parentColumns = ["id"],
-            childColumns = ["courseId"],
+            childColumns = ["course_id"],
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("courseId")]
+    indices = [Index("course_id")]
 )
 data class Topic(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    @androidx.room.ColumnInfo(name = "course_id")
     @SerializedName("course_id")
     val courseId: Long = 0,
     val name: String = "",
     val description: String = "",
+    @androidx.room.ColumnInfo(name = "order_index")
     @SerializedName("order_index")
-    val orderIndex: Int = 0
+    val orderIndex: Int = 0,
+    @androidx.room.ColumnInfo(name = "created_at")
+    val createdAt: Long = System.currentTimeMillis()
 ) 

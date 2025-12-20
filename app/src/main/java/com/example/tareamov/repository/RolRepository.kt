@@ -2,6 +2,7 @@ package com.example.tareamov.repository
 
 import com.example.tareamov.data.dao.RolDao
 import com.example.tareamov.data.dao.UsuarioDao
+import com.example.tareamov.data.dao.UsuarioWithRole
 import com.example.tareamov.data.entity.Rol
 import com.example.tareamov.data.entity.Usuario
 
@@ -50,6 +51,10 @@ class RolRepository(
     suspend fun getUsuarioByUsername(username: String): Usuario? {
         return usuarioDao.getUsuarioByUsername(username)
     }
+    
+    suspend fun getUsuarioWithRoleByUsername(username: String): UsuarioWithRole? {
+        return usuarioDao.getUsuarioWithRoleByUsername(username)
+    }
 
     suspend fun initializeDefaultRoles() {
         val count = getRoleCount()
@@ -74,8 +79,7 @@ class RolRepository(
     }
     
     suspend fun isUserDocente(userId: Long): Boolean {
-        val usuario = usuarioDao.getUsuarioById(userId) ?: return false
-        val rol = getRolById(usuario.rol_id) ?: return false
-        return Rol.isDocenteOrHigher(rol.nivel)
+        val usuario = usuarioDao.getUsuarioWithRoleById(userId) ?: return false
+        return Rol.isDocenteOrHigher(usuario.rolNivel)
     }
 }

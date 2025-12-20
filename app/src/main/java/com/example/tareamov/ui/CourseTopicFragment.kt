@@ -603,8 +603,8 @@ class CourseTopicFragment : Fragment() {
                                 id = 0, // Supabase will auto-generate
                                 topicId = savedTopicId,
                                 taskId = null, // Not associated with a task - THIS IS IMPORTANT
-                                name = contentName,
-                                uriString = contentUri.toString(),
+                                title = contentName,
+                                body = contentUri.toString(),
                                 contentType = contentType,
                                 orderIndex = i
                             )

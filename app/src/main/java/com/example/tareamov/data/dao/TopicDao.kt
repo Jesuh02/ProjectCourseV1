@@ -15,10 +15,10 @@ interface TopicDao {
     @Update
     suspend fun updateTopic(topic: Topic)
 
-    @Query("SELECT * FROM topics ORDER BY orderIndex ASC")
+    @Query("SELECT * FROM topics ORDER BY order_index ASC")
     suspend fun getAllTopics(): List<Topic>
 
-    @Query("SELECT * FROM topics WHERE courseId = :courseId")
+    @Query("SELECT * FROM topics WHERE course_id = :courseId")
     fun getTopicsByCourse(courseId: Long): List<Topic>
 
     @Query("SELECT * FROM topics WHERE id = :topicId")
@@ -30,15 +30,15 @@ interface TopicDao {
     @Query("DELETE FROM topics WHERE id = :topicId")
     suspend fun deleteTopic(topicId: Long)
 
-    @Query("DELETE FROM topics WHERE courseId = :courseId")
+    @Query("DELETE FROM topics WHERE course_id = :courseId")
     suspend fun deleteTopicsByCourse(courseId: Long)
 
-    @Query("SELECT COUNT(*) FROM topics WHERE courseId = :courseId")
+    @Query("SELECT COUNT(*) FROM topics WHERE course_id = :courseId")
     suspend fun getTopicCountForCourse(courseId: Long): Int
 
     @Query("SELECT COUNT(*) FROM topics")
     suspend fun getTopicCount(): Int
 
-    @Query("SELECT * FROM topics WHERE courseId = :courseId AND orderIndex = :orderIndex LIMIT 1")
+    @Query("SELECT * FROM topics WHERE course_id = :courseId AND order_index = :orderIndex LIMIT 1")
     suspend fun getTopicByCourseIdAndOrderIndex(courseId: Long, orderIndex: Int): Topic?
 }

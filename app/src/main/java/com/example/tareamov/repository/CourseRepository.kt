@@ -181,9 +181,8 @@ class CourseRepository(private val context: Context) {
                     val videoDataList = courses.map { course ->
                         // Fetch username from user_id
                         val username = com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId) ?: "unknown"
-                        VideoData(
+                        val v = VideoData(
                             id = course.id,
-                            username = username,
                             description = course.description,
                             title = course.title,
                             videoUriString = course.videoUri,
@@ -193,6 +192,8 @@ class CourseRepository(private val context: Context) {
                             thumbnailUri = course.thumbnailUri,
                             price = course.price
                         )
+                        v.username = username
+                        v
                     }
                     emit(videoDataList)
                 }
@@ -212,7 +213,10 @@ class CourseRepository(private val context: Context) {
     }
 
     suspend fun getVideosByCreator(username: String): List<VideoData> = withContext(Dispatchers.IO) {
-        return@withContext videoDao.getVideosByUsername(username)
+        val videos = videoDao.getVideosByUsername(username)
+        // Populate the username field which is @Ignore-d by Room
+        videos.forEach { it.username = username }
+        return@withContext videos
     }
 
     suspend fun saveVideo(course: VideoData): VideoData = withContext(Dispatchers.IO) {
@@ -289,13 +293,14 @@ class CourseRepository(private val context: Context) {
     // Enhanced conversion that includes automatic categorization
     private suspend fun convertVideoDataToCourseWithCategory(video: VideoData): Course {
         // Get user ID from username OR from courseId (new approach)
+        val creatorUsername = video.username
         val userId = if (video.courseId != null && video.courseId!! > 0) {
             // Nuevo: obtener userId desde courseId
             val course = com.example.tareamov.service.SupabaseClient.fetchCourseById(video.courseId!!)
             course?.creatorUserId ?: 0L
-        } else if (!video.username.isNullOrEmpty()) {
+        } else if (!creatorUsername.isNullOrEmpty()) {
             // Fallback: obtener userId desde username (compatibilidad)
-            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
+            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(creatorUsername) ?: 0L
         } else {
             0L
         }
@@ -357,13 +362,14 @@ class CourseRepository(private val context: Context) {
 
     private suspend fun convertVideoDataToCourse(video: VideoData): Course {
         // Get user ID from username OR from courseId (new approach)
+        val creatorUsername = video.username
         val userId = if (video.courseId != null && video.courseId!! > 0) {
             // Nuevo: obtener userId desde courseId
             val course = com.example.tareamov.service.SupabaseClient.fetchCourseById(video.courseId!!)
             course?.creatorUserId ?: 0L
-        } else if (!video.username.isNullOrEmpty()) {
+        } else if (!creatorUsername.isNullOrEmpty()) {
             // Fallback: obtener userId desde username (compatibilidad)
-            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
+            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(creatorUsername) ?: 0L
         } else {
             0L
         }
@@ -496,9 +502,8 @@ class CourseRepository(private val context: Context) {
         // Fetch username from user_id
         val username = com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId) ?: "unknown"
         
-        return VideoData(
+        val v = VideoData(
             id = course.id,
-            username = username,
             description = course.description,
             title = course.title,
             videoUriString = course.videoUri,
@@ -508,6 +513,8 @@ class CourseRepository(private val context: Context) {
             thumbnailUri = course.thumbnailUri,
             price = if (course.price > 0.0) course.price else null
         )
+        v.username = username
+        return v
     }
 
     // Public helper methods for external use
