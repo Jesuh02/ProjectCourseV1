@@ -116,18 +116,14 @@ class ReinforcementLearningViewModel(
                 // 3. Build Prompt (Concise)
                 val contextBuilder = StringBuilder()
                 contextBuilder.append("Curso: $courseName\n")
-                
-                // Add content items (Files) FIRST to give them priority in context
-                if (contentItems.isNotEmpty()) {
-                    contextBuilder.append("Materiales del Docente (Documentos/Videos/Imágenes) adjuntos - PRIORIDAD ALTA:\n")
-                    // Note: Actual content is appended by backend, this is just a marker
-                }
-
                 if (topics.isNotEmpty()) {
                     contextBuilder.append("Temas (Plan de estudios): ${topics.joinToString { it.name }}\n")
                 }
                 if (tasks.isNotEmpty()) {
-                    contextBuilder.append("Tareas (Instrucciones del docente) - PRIORIDAD BAJA: ${tasks.joinToString { it.name }}\n")
+                    contextBuilder.append("Tareas (Instrucciones del docente): ${tasks.joinToString { it.name }}\n")
+                }
+                if (contentItems.isNotEmpty()) {
+                    contextBuilder.append("Materiales del Docente (Documentos/Videos/Imágenes) adjuntos.\n")
                 }
 
                 // Serialize content items to JSON for backend processing
@@ -141,53 +137,31 @@ class ReinforcementLearningViewModel(
                 val jsonContentString = Gson().toJson(contentList)
 
                 val prompt = """
-                    Eres un profesor experto en Programación y Desarrollo de Software. Tu tarea es crear una progresión de 15 preguntas de opción múltiple, divididas equitativamente en 3 niveles de dificultad creciente (5 Introductivas, 5 Técnicas, 5 Avanzadas), basadas EXCLUSIVAMENTE en el material proporcionado.
+                    Eres un profesor experto en Programación y Desarrollo de Software. Tu tarea es crear 5 preguntas de opción múltiple EXCLUSIVAMENTE basadas en el material proporcionado por el docente (Temas, Tareas y Archivos adjuntos).
                     
-                    ESTRUCTURA DE DIFICULTAD REQUERIDA (ORDEN ESTRICTO):
-                    1. Preguntas 1-5 (Nivel Introductorio): Conceptos básicos y definiciones técnicas del lenguaje o tecnología tratada (ej. ¿Qué es una variable?, ¿Qué hace esta función básica?).
-                    2. Preguntas 6-10 (Nivel Técnico): Sintaxis específica, lógica de código, estructuras de datos, patrones de diseño o implementación práctica basada en el código/texto de los archivos.
-                    3. Preguntas 11-15 (Nivel Avanzado): Análisis complejo, optimización, seguridad, arquitectura de sistemas, manejo de errores críticos o casos borde sobre el contenido de los archivos.
-                    
-                    ENFOQUE PRIORITARIO:
-                    1. BASA TUS PREGUNTAS ÚNICA Y EXCLUSIVAMENTE EN EL CONTENIDO DE LOS ARCHIVOS ADJUNTOS (PDFs, Documentos, Código).
-                    2. Si hay código, las preguntas técnicas y avanzadas deben retar al estudiante a entender qué hace, encontrar un error o predecir la salida.
-                    3. SI EL CONTEXTO INCLUYE ARCHIVOS, IGNORA LOS NOMBRES DE LAS TAREAS. Céntrate solo en el código y texto de los archivos.
+                    ENFOQUE PRIORITARIO (IMPORTANTE):
+                    1. Céntrate fuertemente en conceptos técnicos de programación, lógica de código, sintaxis y arquitectura de software presentes en el material.
+                    2. Prioriza preguntas que evalúen la comprensión del código o la teoría técnica sobre preguntas administrativas o generales.
+                    3. Si hay código en los materiales, haz preguntas sobre su funcionamiento, errores potenciales o salida esperada.
                     
                     RESTRICCIONES ESTRICTAS:
-                    1. NO utilices datos de estudiantes.
-                    2. NO generes preguntas sobre pedagogía, instrucciones del docente, qué debe hacer el profesor, o gestión del curso.
-                    3. NO preguntes "según el archivo...", pregunta directamente sobre el concepto técnico.
-                    4. Las preguntas deben ser 100% TÉCNICAS (Programación, Lógica, Sintaxis, Conceptos).
-                    5. Solo utiliza la información del contexto abajo.
+                    1. NO utilices, menciones ni analices ninguna entrega, respuesta o trabajo de estudiantes.
+                    2. Solo utiliza la información contenida en el contexto proporcionado abajo.
+                    3. Si el contexto incluye ejemplos de entregas (lo cual no debería), ignóralos por completo.
                     
                     REGLAS DE FORMATO:
                     1. Responde ÚNICAMENTE con el JSON. Nada de texto antes ni después.
-                    2. NO uses bloques de código markdown.
-                    3. El formato debe ser un array de objetos JSON exacto con 15 elementos.
+                    2. NO uses bloques de código markdown (no uses ```json).
+                    3. El formato debe ser un array de objetos JSON exacto.
                     
                     Estructura requerida:
                     [
                       {
-                        "question": "¿Pregunta Introductoria 1?",
+                        "question": "¿Pregunta técnica?",
                         "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
                         "correctIndex": 0,
-                        "explanation": "Nivel Básico: Explicación sencilla..."
-                      },
-                      ... (4 más introductorias)
-                      {
-                        "question": "¿Pregunta Técnica 1?",
-                        "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-                        "correctIndex": 0,
-                        "explanation": "Nivel Técnico: Explicación del código/lógica..."
-                      },
-                      ... (4 más técnicas)
-                      {
-                        "question": "¿Pregunta Avanzada 1?",
-                        "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-                        "correctIndex": 0,
-                        "explanation": "Nivel Avanzado: Explicación profunda..."
-                      },
-                      ... (4 más avanzadas)
+                        "explanation": "Explicación técnica detallada..."
+                      }
                     ]
                     
                     Contexto (Material del Docente):
