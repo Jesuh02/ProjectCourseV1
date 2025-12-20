@@ -31,6 +31,10 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
     
+    // Cache for subscription status
+    private val _subscriptionStatus = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
+    val subscriptionStatus: StateFlow<Map<Long, Boolean>> = _subscriptionStatus.asStateFlow()
+    
     private val database by lazy { AppDatabase.getDatabase(getApplication()) }
     
     // Create SyncRepository instance manually since we don't have DI
@@ -60,11 +64,92 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     
     init {
         loadEnrolledCourses()
+        loadSubscriptionStatus()
     }
     
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
         filterCourses(query)
+    }
+    
+    /**
+     * Load subscription status for enrolled courses
+     */
+    private fun loadSubscriptionStatus() {
+        viewModelScope.launch {
+            try {
+                val session = com.example.tareamov.util.SessionManager.getInstance(getApplication())
+                val userId = session.getUserId()
+                
+                if (userId > 0L) {
+                    val subscriptionMap = mutableMapOf<Long, Boolean>()
+                    
+                    // Check subscription status for each course creator
+                    allEnrolledCourses.forEach { course ->
+                        val isSubscribed = withContext(Dispatchers.IO) {
+                            database.subscriptionDao().isUserSubscribedToCreator(userId, course.creatorUserId)
+                        }
+                        subscriptionMap[course.creatorUserId] = isSubscribed
+                    }
+                    
+                    _subscriptionStatus.value = subscriptionMap
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    /**
+     * Check if user is subscribed to a specific course creator
+     */
+    fun isUserSubscribedToCreator(creatorUserId: Long): Boolean {
+        return _subscriptionStatus.value[creatorUserId] ?: false
+    }
+    
+    /**
+     * Handle subscription button click
+     */
+    fun handleSubscriptionClick(course: Course, isCurrentlySubscribed: Boolean) {
+        viewModelScope.launch {
+            try {
+                val session = com.example.tareamov.util.SessionManager.getInstance(getApplication())
+                val userId = session.getUserId()
+                val currentUsername = session.getUsername()
+                
+                if (userId == -1L || currentUsername == null) {
+                    // Handle error - user not logged in
+                    return@launch
+                }
+                
+                val creatorUserId = course.creatorUserId
+                
+                // Prevent self-subscription
+                if (userId == creatorUserId) {
+                    return@launch
+                }
+                
+                if (isCurrentlySubscribed) {
+                    // Unsubscribe
+                    database.subscriptionDao().unsubscribeFromCreator(userId, creatorUserId)
+                    // Sync to Supabase
+                    com.example.tareamov.service.SupabaseClient.unsubscribeFromCreator(userId, creatorUserId)
+                } else {
+                    // Subscribe
+                    database.subscriptionDao().subscribeToCreator(userId, creatorUserId)
+                    // Sync to Supabase
+                    com.example.tareamov.service.SupabaseClient.subscribeToCreator(userId, creatorUserId)
+                }
+                
+                // Update local subscription status
+                val updatedStatus = _subscriptionStatus.value.toMutableMap()
+                updatedStatus[creatorUserId] = !isCurrentlySubscribed
+                _subscriptionStatus.value = updatedStatus
+                
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
     
     private fun filterCourses(query: String) {
@@ -115,6 +200,9 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                     // Update master list and displayed list
                     allEnrolledCourses = enrolledCoursesList
                     _enrolledCourses.value = enrolledCoursesList
+                    
+                    // Update subscription status after loading courses
+                    loadSubscriptionStatus()
                     
                     // 4. Update completion status
                     updateCompletedStatus(enrolledCoursesList)

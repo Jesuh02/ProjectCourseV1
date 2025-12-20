@@ -36,6 +36,7 @@ fun CourseSelectionScreen(
     val enrolledCourses by viewModel.enrolledCourses.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val currentUsername by viewModel.currentUsername.collectAsState()
+    val subscriptionStatus by viewModel.subscriptionStatus.collectAsState()
     
     val context = LocalContext.current
 
@@ -184,7 +185,12 @@ fun CourseSelectionScreen(
                             courses = enrolledCourses,
                             onCourseClickListener = { course -> onCourseSelected(course) },
                             currentUsername = currentUsername,
-                            onCreatorClickListener = { /* Optional: Handle creator click */ }
+                            onCreatorClickListener = { /* Optional: Handle creator click */ },
+                            onSubscriptionClickListener = { course, isCurrentlySubscribed ->
+                                // Handle subscription click
+                                viewModel.handleSubscriptionClick(course, isCurrentlySubscribed)
+                            },
+                            subscriptionStatus = subscriptionStatus
                         )
                     } else {
                         val adapter = recyclerView.adapter as CourseAdapter

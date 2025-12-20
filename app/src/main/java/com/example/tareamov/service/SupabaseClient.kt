@@ -336,6 +336,46 @@ object SupabaseClient {
         }
     }
 
+    /**
+     * Insert a new reinforcement question history record for a user in a course.
+     * This creates a new row instead of updating an existing one, preserving history.
+     */
+    suspend fun insertReinforcementHistory(userId: Long, courseId: Long, newQuestions: List<Any>): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Simply insert the new batch of questions as a new record
+            val payload = mapOf(
+                "user_id" to userId,
+                "course_id" to courseId,
+                "questions" to newQuestions
+            )
+            
+            val body = gson.toJson(payload).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/reinforcement_question_history"
+            
+            val requestPost = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(requestPost).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val b = resp.body?.string()
+                    Log.e("SupabaseClient", "insertReinforcementHistory failed: ${resp.code} ${resp.message} body=$b")
+                    return@withContext false
+                }
+                return@withContext true
+            }
+
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "insertReinforcementHistory exception", e)
+            return@withContext false
+        }
+    }
+
     suspend fun insertCourse(course: com.example.tareamov.data.entity.Course): Long? = withContext(Dispatchers.IO) {
         try {
             // Build map with creator_user_id as foreign key (NOT NULL required)

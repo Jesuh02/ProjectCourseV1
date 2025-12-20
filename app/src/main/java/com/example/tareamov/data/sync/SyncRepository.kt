@@ -202,6 +202,22 @@ class SyncRepository(
         }
     }
 
+    suspend fun saveReinforcementHistory(userId: Long, courseId: Long, questions: List<Any>) {
+        try {
+            if (userId > 0 && courseId > 0 && questions.isNotEmpty()) {
+                // Change to insertReinforcementHistory to create new records instead of upserting
+                val success = supabaseClient.insertReinforcementHistory(userId, courseId, questions)
+                if (success) {
+                    Log.d("SyncRepository", "Successfully saved reinforcement history for user $userId course $courseId")
+                } else {
+                    Log.w("SyncRepository", "Failed to save reinforcement history for user $userId course $courseId")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Exception saving reinforcement history", e)
+        }
+    }
+
     // Public helper to upsert a Course to Supabase. This will try the dedicated
     // SupabaseClient.insertCourse first (which returns the remote id), and fall
     // back to SupabaseRepository.upsert if needed.
@@ -746,7 +762,7 @@ class SyncRepository(
      * to generate multiple-choice reinforcement questions.
      * Returns an empty list on error.
      */
-    suspend fun requestReinforcementQuiz(courseId: Long, courseName: String, questionCount: Int = 5): List<com.example.tareamov.ui.compose.QuizQuestion> {
+    suspend fun requestReinforcementQuiz(courseId: Long, courseName: String, questionCount: Int = 5, userId: Long? = null): List<com.example.tareamov.ui.compose.QuizQuestion> {
         try {
             if (!supabaseClient.isConfigured()) {
                 Log.w("SyncRepository", "requestReinforcementQuiz: Supabase not configured, aborting")
@@ -805,7 +821,14 @@ class SyncRepository(
             val serviceUrl = "http://10.0.2.2:3001/procesar-prompt"
             val client = okhttp3.OkHttpClient.Builder().build()
             val gson = com.google.gson.Gson()
-            val reqBody = mapOf("prompt" to prompt, "ollamaUrl" to "", "model" to "", "jsonContent" to jsonContentString)
+            val reqBody = mapOf(
+                "prompt" to prompt,
+                "ollamaUrl" to "",
+                "model" to "",
+                "jsonContent" to jsonContentString,
+                "courseId" to courseId,
+                "userId" to userId
+            )
             val bodyJson = gson.toJson(reqBody)
             val request = okhttp3.Request.Builder()
                 .url(serviceUrl)
@@ -834,6 +857,21 @@ class SyncRepository(
         } catch (e: Exception) {
             Log.e("SyncRepository", "requestReinforcementQuiz failed", e)
             return emptyList()
+        }
+    }
+
+    /**
+     * Guarda/actualiza el historial de preguntas de refuerzo para un usuario y curso en Supabase.
+     */
+    suspend fun saveReinforcementHistory(userId: Long, courseId: Long, questionsJson: String): Boolean {
+        return try {
+            Log.d("SyncRepository", "Saving reinforcement history for user=$userId course=$courseId")
+            val ok = withContext(Dispatchers.IO) { supabaseRepo.upsertReinforcementHistory(userId, courseId, questionsJson) }
+            Log.d("SyncRepository", "Reinforcement history saved: $ok")
+            ok
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "saveReinforcementHistory failed", e)
+            false
         }
     }
 

@@ -41,11 +41,32 @@ data class MicroservicioPromptRequest(
     val jsonContent: String? = null,      // Contenido estructurado en JSON del archivo
     val metadata: String? = null,         // Metadatos adicionales del archivo
     val userId: Long? = null,             // ID del usuario para notificaciones push
+    val courseId: Long? = null,           // ID del curso para historial de preguntas
     val submissionId: Long? = null,       // ID de la submission para obtener contenido desde R2/Supabase
     val taskId: Long? = null,             // ID de la tarea para buscar submission
     val studentId: Long? = null,          // ID del estudiante para buscar submission
     val fileUri: String? = null,          // URI del archivo en R2 para descarga directa
     val requestNonce: String? = null      // Optional nonce to force unique LLM prompts
+)
+
+// Request para guardar historial de preguntas de refuerzo
+data class SaveReinforcementHistoryRequest(
+    val userId: Long,
+    val courseId: Long,
+    val questions: Any // JSON serializable (List/Array of questions)
+)
+
+data class SaveReinforcementHistoryResponse(
+    val success: Boolean,
+    val message: String? = null,
+    val error: String? = null
+)
+
+// Response para obtener historial
+data class ReinforcementHistoryResponse(
+    val success: Boolean,
+    val data: List<Any>? = null,
+    val error: String? = null
 )
 
 // Data class para la respuesta procesarPrompt
@@ -156,4 +177,11 @@ interface MicroservicioApi {
     // Endpoint para enviar notificación por push y email
     @POST("send-notification")
     suspend fun sendNotification(@Body request: SendNotificationRequest): SendNotificationResponse
+
+    // Guardar historial de preguntas generadas para un usuario/curso
+    @POST("reinforcement-history")
+    suspend fun saveReinforcementHistory(@Body request: SaveReinforcementHistoryRequest): SaveReinforcementHistoryResponse
+
+    @retrofit2.http.GET("reinforcement-history/{userId}/{courseId}")
+    suspend fun getReinforcementHistory(@retrofit2.http.Path("userId") userId: Long, @retrofit2.http.Path("courseId") courseId: Long): ReinforcementHistoryResponse
 }

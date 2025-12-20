@@ -31,7 +31,8 @@ class CourseAdapter(
     private val onEditClickListener: ((Course) -> Unit)? = null, // Edit callback
     private val onDeleteClickListener: ((Course) -> Unit)? = null, // Delete callback
     private val onEnrollClickListener: ((Course) -> Unit)? = null, // Enrollment callback
-    private val onCreatorClickListener: ((String) -> Unit)? = null // Creator profile callback
+    private val onCreatorClickListener: ((String) -> Unit)? = null, // Creator profile callback
+    private val subscriptionStatus: Map<Long, Boolean> = emptyMap() // Subscription status map
 ) : RecyclerView.Adapter<CourseAdapter.CourseViewHolder>() {
 
     // Cache current user's id to avoid blocking lookups during bind
@@ -509,6 +510,9 @@ class CourseAdapter(
             return
         }
 
+        // Use cached subscription status if available
+        val isSubscribed = subscriptionStatus[creatorUserId] ?: false
+        
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val db = AppDatabase.getDatabase(context)
@@ -516,15 +520,12 @@ class CourseAdapter(
                 // Get subscriber count for this creator
                 val subscriberCount = db.subscriptionDao().getSubscriptionCountForCreator(creatorUserId)
                 
-                // Check if current user is subscribed to this creator
-                val isSubscribed = db.subscriptionDao().isUserSubscribedToCreator(currentUserIdCached!!, creatorUserId)
-                
                 withContext(Dispatchers.Main) {
                     // Update subscriber count
                     val countText = if (subscriberCount == 1) "1 suscriptor" else "$subscriberCount suscriptores"
                     holder.subscriberCountTextView.text = countText
                     
-                    // Update subscription button
+                    // Update subscription button based on cached status
                     if (isSubscribed) {
                         holder.subscribeButton.text = "Suscrito"
                         holder.subscribeButton.setBackgroundResource(R.drawable.button_subscribed)
