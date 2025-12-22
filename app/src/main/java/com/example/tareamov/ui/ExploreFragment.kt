@@ -78,13 +78,6 @@ class ExploreFragment : Fragment() {
     // Current filter index (0=All, 1=My Created, 2=Other, 3=Premium, 4=Free, 5=Enrolled)
     private var currentFilterIndex = 0
 
-    // Pending filter index when navigating into this fragment (applied after load)
-    private var pendingFilterIndex: Int? = null
-
-    companion object {
-        const val ARG_FILTER_INDEX = "filter_index"
-    }
-
     // Network monitoring
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
@@ -167,16 +160,6 @@ class ExploreFragment : Fragment() {
 
         // Setup network monitoring to retry loading when internet returns
         setupNetworkMonitoring()
-
-        // If navigation passed a desired filter, cache it and apply after load
-        arguments?.getInt(ARG_FILTER_INDEX)?.let { argIndex ->
-            pendingFilterIndex = argIndex
-            if (argIndex == 1) {
-                // Keep UI state in sync that user requested "Mis cursos"
-                currentFilterIndex = 1
-                Log.d("ExploreFragment", "Pending filter set to My Courses (index=1)")
-            }
-        }
 
     // Cargar los cursos (forzar fetch remoto al entrar en el fragment)
     loadCourses(forceRemote = true)
@@ -1329,24 +1312,6 @@ class ExploreFragment : Fragment() {
                     
                     // 🎨 Generar miniaturas automáticas para cursos sin miniatura (en segundo plano)
                     generateMissingThumbnails(allCourses)
-
-                    // Apply any pending filter requested by navigation (e.g., from ProfileFragment)
-                    pendingFilterIndex?.let { idx ->
-                        try {
-                            when (idx) {
-                                1 -> filterMyCoursesOnly()
-                                5 -> filterEnrolledCourses()
-                                2 -> filterOtherCoursesOnly()
-                                3 -> filterPremiumCourses()
-                                4 -> filterFreeCourses()
-                                0 -> showAllCourses()
-                                else -> Log.d("ExploreFragment", "Unknown pending filter index: $idx")
-                            }
-                        } catch (t: Throwable) {
-                            Log.e("ExploreFragment", "Error applying pending filter index=$idx", t)
-                        }
-                        pendingFilterIndex = null
-                    }
                 }
 
             } catch (e: Exception) {
