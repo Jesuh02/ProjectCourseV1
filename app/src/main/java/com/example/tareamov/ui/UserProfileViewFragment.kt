@@ -1758,8 +1758,8 @@ class UserProfileViewFragment : Fragment() {
             Log.d("UserProfileViewFragment", "Admin slot hidden (user not admin)")
             return
         }
-
-        // Usuario admin: mostrar botón y asignar listener
+        // Usuario admin: mostrar slot y botón, y asignar listener
+        adminSlot.visibility = View.VISIBLE
         goToAdminButton.visibility = View.VISIBLE
         goToAdminButton.setOnClickListener {
             Log.d("UserProfileViewFragment", "Admin button clicked, navigating to HomeFragment")
