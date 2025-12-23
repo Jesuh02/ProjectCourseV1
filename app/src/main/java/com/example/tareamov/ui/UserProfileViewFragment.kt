@@ -360,7 +360,7 @@ class UserProfileViewFragment : Fragment() {
                         title = course.title,
                         description = course.description,
                         creatorUserId = -1L, // Will be resolved in handleSubscriptionClick
-                        category = "General",
+                        category = "Programación",
                         thumbnailUri = course.thumbnailUri,
                         videoUri = course.videoUriString,
                         price = course.price ?: 0.0,
@@ -396,7 +396,7 @@ class UserProfileViewFragment : Fragment() {
                         title = course.title,
                         description = course.description,
                         creatorUserId = -1L, // Will be resolved in handleEnrollmentClick
-                        category = "General",
+                        category = "Programación",
                         thumbnailUri = course.thumbnailUri,
                         videoUri = course.videoUriString,
                         price = course.price ?: 0.0,
@@ -1784,8 +1784,8 @@ class UserProfileViewFragment : Fragment() {
             Log.d("UserProfileViewFragment", "Admin slot hidden (user not admin)")
             return
         }
-
-        // Usuario admin: mostrar botón y asignar listener
+        // Usuario admin: mostrar slot y botón, y asignar listener
+        adminSlot.visibility = View.VISIBLE
         goToAdminButton.visibility = View.VISIBLE
         goToAdminButton.setOnClickListener {
             Log.d("UserProfileViewFragment", "Admin button clicked, navigating to HomeFragment")

@@ -57,9 +57,9 @@ class ReinforcementLearningViewModel(
 
     private fun createApi(): MicroservicioApi {
         val okHttpClient = okhttp3.OkHttpClient.Builder()
-            .connectTimeout(120, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
-            .writeTimeout(120, TimeUnit.SECONDS)
+            .connectTimeout(300, TimeUnit.SECONDS)
+            .readTimeout(300, TimeUnit.SECONDS)
+            .writeTimeout(300, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val originalRequest = chain.request()
                 val requestWithApiKey = originalRequest.newBuilder()
@@ -120,13 +120,19 @@ class ReinforcementLearningViewModel(
                     contextBuilder.append("Temas (Plan de estudios): ${topics.joinToString { it.name }}\n")
                 }
                 if (tasks.isNotEmpty()) {
-                    contextBuilder.append("Tareas (Instrucciones del docente): ${tasks.joinToString { it.name }}\n")
-                }
-                if (contentItems.isNotEmpty()) {
-                    contextBuilder.append("Materiales del Docente (Documentos/Videos/Imágenes) adjuntos.\n")
+                    // FILTERED: Only include tasks that belong to the course structure (Instructions), 
+                    // NOT user submissions. These tasks come from 'fetchTasksByTopicIdsFromSupabase'
+                    // which retrieves Teacher-defined tasks, so this is already correct by definition of the repository method.
+                    contextBuilder.append("Tareas (Instrucciones del docente) - PRIORIDAD BAJA: ${tasks.joinToString { it.name }}\n")
                 }
 
+                // Explicitly EXCLUDE any user submission content or other external context
+                // The 'contentItems' here are strictly Course Materials (PDFs/Docs uploaded by teacher)
+                // retrieved via 'fetchContentItemsByTopicIdsFromSupabase'.
+
                 // Serialize content items to JSON for backend processing
+                // NOTE: 'contentItems' comes from fetchContentItemsByTopicIdsFromSupabase (Teacher materials)
+                // It does NOT include FileContext (User submissions).
                 val contentList = contentItems.map { 
                     mapOf(
                         "name" to (it.title ?: "Sin nombre"),
@@ -136,32 +142,45 @@ class ReinforcementLearningViewModel(
                 }
                 val jsonContentString = Gson().toJson(contentList)
 
+                // LOGGING FILES FOR DEBUGGING (User Request)
+                Log.d("ReinforcementVM", "📂 Files prepared for LLM context: ${contentList.size} files")
+                contentList.forEachIndexed { index, file ->
+                    Log.d("ReinforcementVM", "   [$index] Name: ${file["name"]}, URI: ${file["uri"]}")
+                }
+
                 val prompt = """
-                    Eres un profesor experto en Programación y Desarrollo de Software. Tu tarea es crear 5 preguntas de opción múltiple EXCLUSIVAMENTE basadas en el material proporcionado por el docente (Temas, Tareas y Archivos adjuntos).
+                    Eres un profesor experto en Programación y Desarrollo de Software. Tu tarea es crear una progresión de 10 preguntas de opción múltiple, divididas en 3 niveles de dificultad creciente (3 Introductivas, 4 Técnicas, 3 Avanzadas), basadas EXCLUSIVAMENTE en el material proporcionado.
                     
-                    ENFOQUE PRIORITARIO (IMPORTANTE):
-                    1. Céntrate fuertemente en conceptos técnicos de programación, lógica de código, sintaxis y arquitectura de software presentes en el material.
-                    2. Prioriza preguntas que evalúen la comprensión del código o la teoría técnica sobre preguntas administrativas o generales.
-                    3. Si hay código en los materiales, haz preguntas sobre su funcionamiento, errores potenciales o salida esperada.
+                    ESTRUCTURA DE DIFICULTAD REQUERIDA (ORDEN ESTRICTO):
+                    1. Preguntas 1-3 (Nivel Introductorio): Conceptos básicos y definiciones técnicas.
+                    2. Preguntas 4-7 (Nivel Técnico): Sintaxis específica, lógica de código y estructuras de datos.
+                    3. Preguntas 8-10 (Nivel Avanzado): Análisis complejo, optimización y casos borde.
+                    
+                    ENFOQUE PRIORITARIO:
+                    1. BASA TUS PREGUNTAS ÚNICA Y EXCLUSIVAMENTE EN EL CONTENIDO DE LOS ARCHIVOS ADJUNTOS.
+                    2. Si hay código, las preguntas técnicas y avanzadas deben retar al estudiante a entender qué hace.
+                    3. SI EL CONTEXTO INCLUYE ARCHIVOS, IGNORA LOS NOMBRES DE LAS TAREAS.
                     
                     RESTRICCIONES ESTRICTAS:
-                    1. NO utilices, menciones ni analices ninguna entrega, respuesta o trabajo de estudiantes.
-                    2. Solo utiliza la información contenida en el contexto proporcionado abajo.
-                    3. Si el contexto incluye ejemplos de entregas (lo cual no debería), ignóralos por completo.
+                    1. NO utilices datos de estudiantes.
+                    2. NO generes preguntas sobre pedagogía.
+                    3. Las preguntas deben ser 100% TÉCNICAS.
+                    4. Solo utiliza la información del contexto abajo.
                     
                     REGLAS DE FORMATO:
                     1. Responde ÚNICAMENTE con el JSON. Nada de texto antes ni después.
-                    2. NO uses bloques de código markdown (no uses ```json).
-                    3. El formato debe ser un array de objetos JSON exacto.
+                    2. NO uses bloques de código markdown.
+                    3. El formato debe ser un array de objetos JSON exacto con 10 elementos.
                     
                     Estructura requerida:
                     [
                       {
-                        "question": "¿Pregunta técnica?",
+                        "question": "¿Pregunta 1?",
                         "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
                         "correctIndex": 0,
-                        "explanation": "Explicación técnica detallada..."
-                      }
+                        "explanation": "Explicación..."
+                      },
+                      ...
                     ]
                     
                     Contexto (Material del Docente):
@@ -169,12 +188,18 @@ class ReinforcementLearningViewModel(
                 """.trimIndent()
 
                 // 4. Call LLM via Backend
+                // Get User ID from SessionManager
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(getApplication())
+                val userId = sessionManager.getUserId()
+
                 val response = api.procesarPrompt(
                     MicroservicioPromptRequest(
                         prompt = prompt,
                         jsonContent = jsonContentString, // Pass file metadata here
                         ollamaUrl = OLLAMA_URL,
-                        model = "llama3" // Use llama3 for better JSON reliability if deepseek is unstable
+                        model = "llama3", // Use llama3 for better JSON reliability if deepseek is unstable
+                        userId = if (userId > 0) userId else null,
+                        courseId = if (courseId > 0) courseId else null
                     )
                 )
 
@@ -187,12 +212,23 @@ class ReinforcementLearningViewModel(
                 val startIndex = jsonText.indexOf('[')
                 val endIndex = jsonText.lastIndexOf(']')
 
-                val questions: List<QuizQuestion>
+                var questions: List<QuizQuestion> = emptyList()
+                var attemptedParse = false
 
-                if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
-                    // Backend returned a human-readable message (e.g., grading report) instead of the required JSON array.
-                    // Log and attempt a safe local fallback: generate simple questions from available topics/tasks.
-                    Log.w("ReinforcementVM", "No JSON array found in LLM response; using fallback. Raw response: $jsonText")
+                if (startIndex != -1 && endIndex != -1 && startIndex < endIndex) {
+                    try {
+                        val cleanJson = jsonText.substring(startIndex, endIndex + 1)
+                        val type = object : TypeToken<List<QuizQuestion>>() {}.type
+                        questions = Gson().fromJson(cleanJson, type)
+                        attemptedParse = true
+                    } catch (e: Exception) {
+                        Log.w("ReinforcementVM", "Failed to parse JSON: ${e.message}")
+                    }
+                }
+
+                // If parsing failed, returned empty (deduplication), or no JSON found -> Use Fallback
+                if (questions.isEmpty()) {
+                    Log.w("ReinforcementVM", "No valid questions from LLM (empty or parse error); using fallback. Raw: $jsonText")
 
                     val fallback = mutableListOf<QuizQuestion>()
                     val seeds: List<String> = when {
@@ -252,19 +288,16 @@ class ReinforcementLearningViewModel(
                             )
                         }
                         questions = fallback
-                    } else {
-                        throw Exception("No se encontró un array JSON válido en la respuesta y no hay contenido local para generar preguntas. Respuesta cruda: $jsonText")
                     }
-                } else {
-                    val cleanJson = jsonText.substring(startIndex, endIndex + 1)
-                    val type = object : TypeToken<List<QuizQuestion>>() {}.type
-                    questions = Gson().fromJson(cleanJson, type)
                 }
 
                 if (questions.isEmpty()) {
-                    _uiState.value = ReinforcementState.Error("El modelo no generó preguntas válidas.")
+                    _uiState.value = ReinforcementState.Error("El modelo no generó preguntas válidas y no hay contenido suficiente para el respaldo.")
                 } else {
                     _uiState.value = ReinforcementState.Success(questions)
+                    
+                    // Client-side saving removed to avoid duplication. 
+                    // Backend (llmRoutes.js) now handles saving valid, non-duplicate questions directly.
                 }
 
             } catch (e: Exception) {

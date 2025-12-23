@@ -45,12 +45,13 @@ data class ChatMessage(
     val createdAt: Long = System.currentTimeMillis(), // DDL timestamptz
 
     // MCP Tool metadata
-    @androidx.room.ColumnInfo(name = "tool_name")
-    val toolName: String? = null, // Mapped to tool_name
-    @androidx.room.ColumnInfo(name = "sql_script")
-    val sqlScript: String? = null, // Mapped to sql_script
-    @androidx.room.ColumnInfo(name = "tool_metadata")
-    val toolMetadata: String? = null // Mapped to tool_metadata
+    val toolName: String? = null, // Nombre de la herramienta MCP usada
+    val sqlScript: String? = null, // Script SQL ejecutado (si aplica)
+    val toolMetadata: String? = null // Metadata adicional en formato JSON
+    ,
+    // Optional sender metadata (used to show avatar/username when available)
+    val senderUsername: String? = null,
+    val senderAvatar: String? = null
 )
 
 //Hola Herazo...

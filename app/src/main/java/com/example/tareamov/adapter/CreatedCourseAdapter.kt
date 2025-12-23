@@ -378,7 +378,7 @@ class CreatedCourseAdapter(
                 creatorInfoContainer.visibility = View.GONE
                 
                 // Show owner status, hide enrollment stuff
-                ownerStatusContainer?.visibility = View.VISIBLE
+                this.ownerStatusContainer?.visibility = View.VISIBLE
                 enrollButtonContainer?.visibility = View.GONE
                 enrolledStatusContainer?.visibility = View.GONE
                 
@@ -406,7 +406,7 @@ class CreatedCourseAdapter(
                 creatorInfoContainer.visibility = View.VISIBLE
                 
                 // Hide owner status
-                ownerStatusContainer?.visibility = View.GONE
+                this.ownerStatusContainer?.visibility = View.GONE
                 
                 // Setup subscription data
                 creatorAvatarImageView.setImageResource(R.drawable.default_avatar)

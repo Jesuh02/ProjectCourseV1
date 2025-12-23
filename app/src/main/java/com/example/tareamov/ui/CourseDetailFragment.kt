@@ -289,7 +289,9 @@ class CourseDetailFragment : Fragment() {
             lifecycleScope.launch {
                 Toast.makeText(requireContext(), "Generando preguntas...", Toast.LENGTH_SHORT).show()
                 val titleText = courseTitle.text.toString().ifBlank { courseName }
-                val questions = withContext(Dispatchers.IO) { syncRepository.requestReinforcementQuiz(courseId, titleText) }
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                val currentUserId = sessionManager.getUserId()
+                val questions = withContext(Dispatchers.IO) { syncRepository.requestReinforcementQuiz(courseId, titleText, 5, currentUserId) }
 
                 if (questions.isEmpty()) {
                     Toast.makeText(requireContext(), "No hay suficiente contenido o hubo un error generando preguntas.", Toast.LENGTH_LONG).show()

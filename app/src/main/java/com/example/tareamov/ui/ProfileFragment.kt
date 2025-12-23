@@ -180,9 +180,19 @@ class ProfileFragment : Fragment() {
         )
 
         menuItems.forEach { (id, message) ->
-            view.findViewById<LinearLayout>(id)?.setOnClickListener {
-                animateButtonPress(it)
-                Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+            val itemView = view.findViewById<LinearLayout>(id) ?: return@forEach
+            if (id == R.id.myChannelItem) {
+                itemView.setOnClickListener {
+                    animateButtonPress(it)
+                    // Navigate to ExploreFragment and request "Mis cursos" filter (index 1)
+                    val bundle = Bundle().apply { putInt("filter_index", 1) }
+                    findNavController().navigate(R.id.action_profileFragment_to_exploreFragment, bundle)
+                }
+            } else {
+                itemView.setOnClickListener {
+                    animateButtonPress(it)
+                    Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

@@ -39,7 +39,7 @@ import androidx.core.view.WindowInsetsCompat
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 
-class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeListener {
+class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
 
     private var _binding: FragmentDatabaseQueryBinding? = null
     private val binding get() = _binding!!
@@ -51,7 +51,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
 
     private lateinit var sessionManager: SessionManager
     
-    // MCP HTTP Client for tareamov-mcp-server (connects via HTTP to Node.js server)
+    // MCP HTTP Client for CourseV by YisusFactory MCP Server (connects via HTTP to Node.js server)
     private lateinit var mcpHttpClient: com.example.tareamov.service.MCPHttpClient
     
     // Enhanced chat state management per user
@@ -118,7 +118,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
                 Log.d(TAG, "✅ MCP HTTP client connected to server at http://10.0.2.2:3000")
                 
                 withContext(Dispatchers.Main) {
-                    addMessageToChat("✅ Conectado a servidor MCP tareamov-mcp-server (HTTP)", false)
+                    addMessageToChat("✅ Conectado a servidor MCP CourseV by YisusFactory (HTTP)", false)
                 }
             } else {
                 Log.w(TAG, "⚠️ MCP HTTP client connection failed, using fallback")
@@ -285,6 +285,11 @@ class DatabaseQueryFragment : Fragment(), SessionManager.Companion.UserChangeLis
         chatAdapter = DatabaseChatAdapter { message ->
             handleEditUserMessage(message)
         }
+        
+        // Set user avatar from session
+        val userAvatar = sessionManager.getUserAvatar()
+        chatAdapter.setUserAvatarUrl(userAvatar)
+
         binding.chatRecyclerView.apply {
             layoutManager = LinearLayoutManager(context).apply {
                 stackFromEnd = true // Messages appear from bottom

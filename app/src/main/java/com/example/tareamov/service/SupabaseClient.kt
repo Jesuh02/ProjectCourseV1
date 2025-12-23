@@ -45,7 +45,7 @@ object SupabaseClient {
     private val rawBaseUrl = BuildConfig.SUPABASE_URL.trim()
     // Use provided URL when available, otherwise fall back to DEFAULT_SUPABASE_URL
     private val baseUrl = if (rawBaseUrl.isNotEmpty()) rawBaseUrl.trimEnd('/') else DEFAULT_SUPABASE_URL
-    private val apiKey = BuildConfig.SUPABASE_KEY
+    private val apiKey = BuildConfig.SUPABASE_ANON_KEY
     // Optional: runtime-injected API key (useful when BuildConfig wasn't populated)
     @Volatile
     private var runtimeApiKey: String? = null
@@ -335,6 +335,46 @@ object SupabaseClient {
         }
     }
 
+    /**
+     * Insert a new reinforcement question history record for a user in a course.
+     * This creates a new row instead of updating an existing one, preserving history.
+     */
+    suspend fun insertReinforcementHistory(userId: Long, courseId: Long, newQuestions: List<Any>): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Simply insert the new batch of questions as a new record
+            val payload = mapOf(
+                "user_id" to userId,
+                "course_id" to courseId,
+                "questions" to newQuestions
+            )
+            
+            val body = gson.toJson(payload).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/reinforcement_question_history"
+            
+            val requestPost = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(requestPost).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val b = resp.body?.string()
+                    Log.e("SupabaseClient", "insertReinforcementHistory failed: ${resp.code} ${resp.message} body=$b")
+                    return@withContext false
+                }
+                return@withContext true
+            }
+
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "insertReinforcementHistory exception", e)
+            return@withContext false
+        }
+    }
+
     suspend fun insertCourse(course: com.example.tareamov.data.entity.Course): Long? = withContext(Dispatchers.IO) {
         try {
             // Build map with creator_user_id as foreign key (NOT NULL required)
@@ -352,9 +392,6 @@ object SupabaseClient {
                 "is_published" to course.isPublished,
                 "creation_date" to course.creationDate,
                 "last_modified_date" to course.lastModifiedDate,
-                "enrollment_count" to course.enrollmentCount,
-                "rating" to course.rating,
-                "tags" to course.tags,
                 "timestamp" to course.timestamp
             )
 
@@ -415,9 +452,6 @@ object SupabaseClient {
                 "is_published" to course.isPublished,
                 "creation_date" to course.creationDate,
                 "last_modified_date" to course.lastModifiedDate,
-                "enrollment_count" to course.enrollmentCount,
-                "rating" to course.rating,
-                "tags" to course.tags,
                 "timestamp" to course.timestamp
             )
 
@@ -2882,7 +2916,7 @@ object SupabaseClient {
     suspend fun fetchCoursesSummary(
         limit: Int = 10,
         offset: Int = 0,
-        orderBy: String = "enrollment_count",
+        orderBy: String = "timestamp",
         direction: String = "desc"
     ): Pair<List<Course>, Int> = withContext(Dispatchers.IO) {
         try {
@@ -4734,6 +4768,124 @@ object SupabaseClient {
             }
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error counting unread notifications for user $userId", e)
+            0
+        }
+    }
+
+    /**
+     * Fetch a single page of courses using limit/offset (server-side pagination)
+     */
+    suspend fun fetchCoursesPage(limit: Int, offset: Int): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            val path = "courses?select=*&order=timestamp.desc&limit=$limit&offset=$offset"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchCoursesPage failed status=${resp.code}")
+                    return@withContext emptyList()
+                }
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                val arr = underscoredGson.fromJson(body, Array<Course>::class.java)
+                return@withContext arr?.toList() ?: emptyList()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "fetchCoursesPage exception", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Get total count of courses using Prefer: count=exact and Content-Range header
+     */
+    suspend fun fetchCoursesCount(): Int = withContext(Dispatchers.IO) {
+        try {
+            val path = "courses?select=id"
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/$path")
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Prefer", "count=exact")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchCoursesCount failed: ${response.code}")
+                    return@withContext 0
+                }
+                val contentRange = response.header("Content-Range")
+                if (contentRange != null) {
+                    return@withContext contentRange.substringAfter("/").toIntOrNull() ?: 0
+                }
+                val body = response.body?.string()
+                if (!body.isNullOrEmpty()) {
+                    val arr = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    return@withContext arr.size()
+                }
+                0
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching courses count", e)
+            0
+        }
+    }
+
+    /** Count popular courses (fallback: count published courses) server-side */
+    suspend fun countPopularCourses(): Int = withContext(Dispatchers.IO) {
+        try {
+            // Use a safe query that exists on the current DB schema
+            val path = "courses?is_published=eq.true&select=id"
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/$path")
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Prefer", "count=exact")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext 0
+                val cr = response.header("Content-Range")
+                if (cr != null) return@withContext cr.substringAfter("/").toIntOrNull() ?: 0
+                val body = response.body?.string()
+                if (!body.isNullOrEmpty()) {
+                    val arr = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    return@withContext arr.size()
+                }
+                0
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching popular courses count", e)
+            0
+        }
+    }
+
+    /** Count courses created in the last `days` days server-side */
+    suspend fun countNewCourses(days: Int = 30): Int = withContext(Dispatchers.IO) {
+        try {
+            val threshold = System.currentTimeMillis() - days * 24L * 60L * 60L * 1000L
+            val path = "courses?timestamp=gte.$threshold&select=id"
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/$path")
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Prefer", "count=exact")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext 0
+                val cr = response.header("Content-Range")
+                if (cr != null) return@withContext cr.substringAfter("/").toIntOrNull() ?: 0
+                val body = response.body?.string()
+                if (!body.isNullOrEmpty()) {
+                    val arr = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    return@withContext arr.size()
+                }
+                0
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "countNewCourses error", e)
             0
         }
     }

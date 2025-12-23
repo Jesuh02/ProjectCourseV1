@@ -94,7 +94,7 @@ class MainActivity : AppCompatActivity() {
         // Inject Supabase API key at runtime if possible so requests include the apikey header.
         try {
             // Prefer build-time value if present
-            val bcKey = com.example.tareamov.BuildConfig.SUPABASE_KEY?.trim()
+            val bcKey = com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY?.trim()
             if (!bcKey.isNullOrEmpty()) {
                 SupabaseClient.setApiKeyAtRuntime(bcKey)
                 println("MainActivity: injected Supabase API key from BuildConfig at runtime")
@@ -166,7 +166,7 @@ class MainActivity : AppCompatActivity() {
                 // Helpful debug: print masked BuildConfig values so developer can verify props
                 try {
                     val supUrl = com.example.tareamov.BuildConfig.SUPABASE_URL
-                    val supKey = com.example.tareamov.BuildConfig.SUPABASE_KEY
+                    val supKey = com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY
                     val hostIp = com.example.tareamov.BuildConfig.HOST_IP
                     val maskedUrl = if (supUrl.length > 20) supUrl.take(12) + "..." else supUrl
                     val maskedKey = if (supKey.length > 8) supKey.take(6) + "..." + supKey.takeLast(4) else "(hidden)"

@@ -15,7 +15,7 @@ import java.net.SocketTimeoutException
 // over headers. It performs simple upserts to Supabase tables via the PostgREST interface.
 class SupabaseRepository(
     private val supabaseUrl: String = BuildConfig.SUPABASE_URL,
-    private val supabaseKey: String = BuildConfig.SUPABASE_KEY
+    private val supabaseKey: String = BuildConfig.SUPABASE_ANON_KEY
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -46,6 +46,79 @@ class SupabaseRepository(
             }
         }
         return null
+    }
+
+    /**
+     * Upsert reinforcement question history for a user+course.
+     * Uses INSERT ... ON CONFLICT to avoid duplicates.
+     */
+    suspend fun upsertReinforcementHistory(userId: Long, courseId: Long, questionsJson: String): Boolean {
+        return try {
+            // Try to fetch existing questions for this user+course
+            val selectSql = "SELECT questions FROM public.reinforcement_question_history WHERE user_id = $userId AND course_id = $courseId LIMIT 1;"
+            val existing = try {
+                executeRawQuery(selectSql).firstOrNull()
+            } catch (e: Exception) {
+                null
+            }
+
+            val combinedArray = com.google.gson.JsonArray()
+
+            // Parse existing questions if present
+            if (existing != null && existing.containsKey("questions")) {
+                val existingVal = existing["questions"]
+                try {
+                    val existingJson = when (existingVal) {
+                        is String -> gson.fromJson(existingVal, com.google.gson.JsonElement::class.java)
+                        else -> gson.toJsonTree(existingVal)
+                    }
+                    if (existingJson != null && existingJson.isJsonArray) {
+                        existingJson.asJsonArray.forEach { combinedArray.add(it) }
+                    }
+                } catch (e: Exception) {
+                    Log.w("SupabaseRepository", "Failed to parse existing reinforcement questions", e)
+                }
+            }
+
+            // Parse incoming questions JSON
+            try {
+                val incoming = gson.fromJson(questionsJson, com.google.gson.JsonElement::class.java)
+                if (incoming != null && incoming.isJsonArray) {
+                    incoming.asJsonArray.forEach { combinedArray.add(it) }
+                }
+            } catch (e: Exception) {
+                // If incoming isn't a JSON array, try to wrap it
+                try {
+                    val single = gson.fromJson(questionsJson, com.google.gson.JsonObject::class.java)
+                    combinedArray.add(single)
+                } catch (ex: Exception) {
+                    Log.w("SupabaseRepository", "Incoming questions JSON invalid", ex)
+                }
+            }
+
+            // Keep only the most recent 50 entries
+            val start = if (combinedArray.size() > 50) combinedArray.size() - 50 else 0
+            val recent = com.google.gson.JsonArray()
+            for (i in start until combinedArray.size()) {
+                recent.add(combinedArray.get(i))
+            }
+
+            val combinedJson = gson.toJson(recent)
+            val safeJson = combinedJson.replace("'", "''")
+
+            val sql = """
+                INSERT INTO public.reinforcement_question_history (user_id, course_id, questions, created_at)
+                VALUES ($userId, $courseId, '$safeJson'::jsonb, now())
+                ON CONFLICT (user_id, course_id)
+                DO UPDATE SET questions = EXCLUDED.questions, created_at = now();
+            """.trimIndent()
+
+            executeRawQuery(sql)
+            true
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Failed upsertReinforcementHistory", e)
+            false
+        }
     }
 
     // Helper to coerce various incoming types (Double, Int, String) to Long for bigint columns
@@ -103,6 +176,11 @@ class SupabaseRepository(
     // This avoids schema drift between Room entities and Postgres and requires only
     // creating one table on the Supabase side.
     fun upsert(table: String, payload: Any) : Boolean {
+        // Prevent client from performing upserts when no anon key is configured
+        if (supabaseKey.isBlank()) {
+            Log.e("SupabaseRepository", "upsert blocked: SUPABASE_ANON_KEY is not set. Perform upserts via a secure backend.")
+            return false
+        }
         try {
             // If the helper table `app_documents` exists, wrap payload to the single-table storage
             if (tableExists("app_documents")) {
@@ -462,6 +540,11 @@ class SupabaseRepository(
      * This allows direct SQL execution for MCP tools
      */
     suspend fun executeRawQuery(sql: String): List<Map<String, Any?>> {
+        // Prevent arbitrary SQL execution from client builds without a configured key
+        if (supabaseKey.isBlank()) {
+            Log.e("SupabaseRepository", "executeRawQuery blocked: SUPABASE_ANON_KEY is not set. Move raw SQL execution to a trusted backend.")
+            throw Exception("Raw SQL execution is disabled in client builds. Use a secure backend endpoint.")
+        }
         return try {
             // Basic validation to catch common LLM-generated syntax issues
             val (ok, reason) = validateSql(sql)
@@ -537,6 +620,10 @@ class SupabaseRepository(
      * Útil para aplicar triggers y funciones en Supabase
      */
     suspend fun executeMigrationFile(sqlContent: String): Boolean {
+        if (supabaseKey.isBlank()) {
+            Log.e("SupabaseRepository", "executeMigrationFile blocked: SUPABASE_ANON_KEY is not set. Migrations must run on backend.")
+            return false
+        }
         return try {
             Log.d("SupabaseRepository", "Executing migration file...")
             
