@@ -7,6 +7,14 @@ import android.animation.ObjectAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
 
 import android.app.Activity
+import android.app.Dialog
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.WindowManager
+import android.animation.AnimatorSet
+import androidx.appcompat.app.AlertDialog
+import android.widget.ImageView
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
@@ -17,8 +25,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
-import android.view.LayoutInflater
+// LayoutInflater already available via android.view import above
 import android.view.View
+import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.LinearLayout
@@ -47,7 +56,7 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.widget.EditText
 import com.google.android.material.bottomsheet.BottomSheetDialog
-import android.widget.ImageView
+// ImageView already imported earlier
 
 class ExploreFragment : Fragment() {
     private lateinit var videoManager: VideoManager
@@ -69,6 +78,8 @@ class ExploreFragment : Fragment() {
     private var totalCourses = 0
     private var isLoadingCourses = false
     private var hasTriggeredLoadAtPosition5 = false // Evita cargar múltiples veces al pasar curso 5
+    // When an explicit search/filter is active, prevent infinite/pagination loads
+    private var isFilterActive = false
 
     // Variables for thumbnail change functionality
     private var currentCourseForThumbnailChange: VideoData? = null
@@ -425,6 +436,59 @@ class ExploreFragment : Fragment() {
     }
 
     /**
+     * Show a short floating message dialog with a professional animation
+     * Uses `bg_header_gradient` as background (set in layout)
+     */
+    private fun showFloatingMessage(message: String, durationMs: Long = 1800L) {
+        val dialog = Dialog(requireContext())
+        val view = layoutInflater.inflate(R.layout.dialog_floating_message, null)
+        val messageTv = view.findViewById<TextView>(R.id.floatingMessageTextView)
+        val iconIv = view.findViewById<ImageView>(R.id.floatingIconImageView)
+        messageTv.text = message
+
+        dialog.setContentView(view)
+        dialog.setCancelable(false)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT)
+        val params = dialog.window?.attributes
+        params?.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        // small offset from top to avoid overlap with status bar
+        params?.y = (48 * resources.displayMetrics.density).toInt()
+        dialog.window?.attributes = params
+        dialog.show()
+
+        // Entrance animation
+        view.alpha = 0f
+        view.scaleX = 0.92f
+        view.scaleY = 0.92f
+        val alphaIn = ObjectAnimator.ofFloat(view, "alpha", 0f, 1f)
+        val sx = ObjectAnimator.ofFloat(view, "scaleX", 0.92f, 1f)
+        val sy = ObjectAnimator.ofFloat(view, "scaleY", 0.92f, 1f)
+        val inSet = AnimatorSet()
+        inSet.playTogether(alphaIn, sx, sy)
+        inSet.duration = 360
+        inSet.interpolator = AccelerateDecelerateInterpolator()
+        inSet.start()
+
+        // Dismiss with exit animation after duration
+        Handler(Looper.getMainLooper()).postDelayed({
+            val alphaOut = ObjectAnimator.ofFloat(view, "alpha", 1f, 0f)
+            val sxOut = ObjectAnimator.ofFloat(view, "scaleX", 1f, 0.96f)
+            val syOut = ObjectAnimator.ofFloat(view, "scaleY", 1f, 0.96f)
+            val outSet = AnimatorSet()
+            outSet.playTogether(alphaOut, sxOut, syOut)
+            outSet.duration = 260
+            outSet.interpolator = AccelerateDecelerateInterpolator()
+            outSet.start()
+            outSet.addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    try { dialog.dismiss() } catch (_: Exception) {}
+                }
+            })
+        }, durationMs)
+    }
+
+    /**
      * Handle subscription button click
      */
     private fun handleSubscriptionClick(course: Course, isCurrentlySubscribed: Boolean) {
@@ -627,20 +691,13 @@ class ExploreFragment : Fragment() {
             requireContext(),
             coursesList,
             onCourseClickListener = { course ->
-                lifecycleScope.launch {
-                    val creatorUsername = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
-                    }
-                    Log.d("ExploreFragment", "Course clicked: ${course.title} by $creatorUsername")
-                    navigateToCourseDetail(course)
-                }
+                navigateToCourseDetail(course)
             },
-            currentUsername = currentUsername, // Pass current username for subscription logic
+            currentUsername = currentUsername,
             onSubscriptionClickListener = { course, isCurrentlySubscribed ->
                 handleSubscriptionClick(course, isCurrentlySubscribed)
             },
             onEditClickListener = { course ->
-                // Navigate to CourseCreationFragment with course data for editing
                 val bundle = Bundle().apply {
                     putLong("courseId", course.id)
                     putBoolean("isEditing", true)
@@ -648,20 +705,83 @@ class ExploreFragment : Fragment() {
                 findNavController().navigate(R.id.action_exploreFragment_to_courseCreationFragment, bundle)
             },
             onDeleteClickListener = { course ->
-                lifecycleScope.launch {
-                    val creatorUsername = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                // Custom floating confirmation dialog with animated entrance/exit
+                val dlg = Dialog(requireContext())
+                val dlgView = layoutInflater.inflate(R.layout.dialog_confirm_delete, null)
+                val titleTv = dlgView.findViewById<TextView>(R.id.confirmDeleteTitle)
+                val msgTv = dlgView.findViewById<TextView>(R.id.confirmDeleteMessage)
+                val btnCancel = dlgView.findViewById<TextView>(R.id.cancelDeleteButton)
+                val btnDelete = dlgView.findViewById<TextView>(R.id.confirmDeleteButton)
+
+                titleTv.text = "Eliminar curso"
+                msgTv.text = "¿Deseas eliminar el curso \"${course.title}\"? Esta acción no se puede deshacer."
+
+                dlg.setContentView(dlgView)
+                dlg.setCancelable(true)
+                dlg.window?.setBackgroundDrawableResource(android.R.color.transparent)
+                dlg.window?.setLayout(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT)
+                dlg.window?.attributes = dlg.window?.attributes?.apply { gravity = Gravity.CENTER }
+
+                // Entrance animation
+                dlgView.alpha = 0f
+                dlgView.scaleX = 0.92f
+                dlgView.scaleY = 0.92f
+                val aIn = ObjectAnimator.ofFloat(dlgView, "alpha", 0f, 1f)
+                val sxIn = ObjectAnimator.ofFloat(dlgView, "scaleX", 0.92f, 1f)
+                val syIn = ObjectAnimator.ofFloat(dlgView, "scaleY", 0.92f, 1f)
+                AnimatorSet().apply {
+                    playTogether(aIn, sxIn, syIn)
+                    duration = 360
+                    interpolator = AccelerateDecelerateInterpolator()
+                    start()
+                }
+
+                fun dismissWithAnimation(onEnd: (() -> Unit)? = null) {
+                    val aOut = ObjectAnimator.ofFloat(dlgView, "alpha", 1f, 0f)
+                    val sxOut = ObjectAnimator.ofFloat(dlgView, "scaleX", 1f, 0.96f)
+                    val syOut = ObjectAnimator.ofFloat(dlgView, "scaleY", 1f, 0.96f)
+                    AnimatorSet().apply {
+                        playTogether(aOut, sxOut, syOut)
+                        duration = 260
+                        interpolator = AccelerateDecelerateInterpolator()
+                        addListener(object : android.animation.AnimatorListenerAdapter() {
+                            override fun onAnimationEnd(animation: android.animation.Animator) {
+                                try { dlg.dismiss() } catch (_: Exception) {}
+                                onEnd?.invoke()
+                            }
+                        })
+                        start()
                     }
-                    deleteCourseFromTable(course.id, creatorUsername ?: "")
                 }
+
+                btnCancel.setOnClickListener { dismissWithAnimation() }
+
+                btnDelete.setOnClickListener {
+                    btnDelete.isEnabled = false
+                    btnCancel.isEnabled = false
+                    lifecycleScope.launch {
+                        try {
+                            val creatorUsername = withContext(Dispatchers.IO) {
+                                com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                            } ?: ""
+
+                            deleteCourseFromTable(course.id, creatorUsername) {
+                                dismissWithAnimation { showFloatingMessage("Curso eliminado") }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ExploreFragment", "Error deleting course", e)
+                            showDarkToast("❌ Error al eliminar el curso")
+                            btnDelete.isEnabled = true
+                            btnCancel.isEnabled = true
+                        }
+                    }
+                }
+
+                dlg.show()
             },
-            onEnrollClickListener = { course ->
-                handleEnrollmentClick(course)
-            },
+            onEnrollClickListener = { course -> handleEnrollmentClick(course) },
             onCreatorClickListener = { username ->
-                val bundle = Bundle().apply {
-                    putString("username", username)
-                }
+                val bundle = Bundle().apply { putString("username", username) }
                 findNavController().navigate(R.id.action_exploreFragment_to_userProfileViewFragment, bundle)
             }
         )
@@ -762,7 +882,7 @@ class ExploreFragment : Fragment() {
     }
 
     // Method to delete course - Only for course creators
-    private fun deleteCourseFromTable(courseId: Long, creatorUsername: String) {
+    private fun deleteCourseFromTable(courseId: Long, creatorUsername: String, onDeleted: (() -> Unit)? = null) {
         // Check if current user is the creator before allowing deletion
         if (currentUsername != null && currentUsername == creatorUsername) {
             viewLifecycleOwner.lifecycleScope.launch {
@@ -803,6 +923,9 @@ class ExploreFragment : Fragment() {
                         // Show success message
                         Toast.makeText(requireContext(), "Curso eliminado exitosamente", Toast.LENGTH_SHORT).show()
                         Log.d("ExploreFragment", "Course deleted successfully: $courseId")
+
+                        // Invoke callback after successful deletion (UI thread)
+                        try { onDeleted?.invoke() } catch (t: Throwable) { /* ignore */ }
 
                         // Trigger remote delete (non-blocking)
                         try {
@@ -856,7 +979,7 @@ class ExploreFragment : Fragment() {
 
             dialogBuilder
                 .setTitle("✏️ Editar Curso")
-                .setView(dialogView)
+                    .setView(dialogView as View)
                 .setPositiveButton("💾 Guardar") { _, _ ->
                     val newTitle = titleEdit.text.toString().trim()
                     val newDesc = descEdit.text.toString().trim()
@@ -982,10 +1105,19 @@ class ExploreFragment : Fragment() {
             com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
         }
         
-        return if (currentUserId != null) {
-            allCoursesList.filter { it.creatorUserId == currentUserId }
-        } else {
-            emptyList()
+        return try {
+            if (currentUserId == null) return emptyList()
+            // Prefer authoritative server-side list of courses created by this user
+            withContext(Dispatchers.IO) {
+                com.example.tareamov.service.SupabaseClient.fetchCoursesByCreatorUserId(currentUserId)
+            }
+        } catch (e: Exception) {
+            // Fallback to locally loaded list when network or server fails
+            if (currentUserId != null) {
+                allCoursesList.filter { it.creatorUserId == currentUserId }
+            } else {
+                emptyList()
+            }
         }
     }
 
@@ -1390,6 +1522,11 @@ class ExploreFragment : Fragment() {
      * Note: Currently all courses are loaded at once, but this is kept for future pagination
      */
     private fun loadMoreCourses() {
+        // Do not load more while a manual search/filter is active
+        if (isFilterActive) {
+            Log.d("ExploreFragment", "loadMoreCourses: filter active, skipping load")
+            return
+        }
         // Load next page from Supabase when available
         if (isLoadingCourses) return
         // If we already loaded all known courses, nothing to do
@@ -1439,8 +1576,8 @@ class ExploreFragment : Fragment() {
         // Sort by timestamp DESC (most recent first)
         val sortedCourses = courses.sortedByDescending { it.timestamp }
         
-        // Store ALL courses for search (only when showing all, not when filtering)
-        if (currentFilterIndex == 0) {
+        // Store ALL courses for search (only when showing all and NOT during an active filter)
+        if (currentFilterIndex == 0 && !isFilterActive) {
             allCoursesList.clear()
             allCoursesList.addAll(sortedCourses)
         }
@@ -1458,7 +1595,7 @@ class ExploreFragment : Fragment() {
         // Update stats based on currently displayed courses
         updateCourseStats()
     }
-
+    
     // Helper to obtain a SyncRepository instance (uses current AppDatabase)
     private fun getSyncRepository(): com.example.tareamov.data.sync.SyncRepository {
         val db = AppDatabase.getDatabase(requireContext())
@@ -1471,49 +1608,76 @@ class ExploreFragment : Fragment() {
 
     // Filter courses by name or category
     private fun filterCourses(query: String) {
-        if (query.isBlank()) {
-            // When search is empty, show all loaded courses sorted by most recent
+        val q = query.trim()
+
+        // If query is empty, clear filter and show all
+        if (q.isEmpty()) {
+            isFilterActive = false
             val sorted = allCoursesList.sortedByDescending { it.timestamp }
-            coursesList.clear()
-            coursesList.addAll(sorted)
-            Log.d("ExploreFragment", "filterCourses -> query empty, showing all ${sorted.size} courses")
-            if (::coursesAdapter.isInitialized) {
-                coursesAdapter.updateCourses(coursesList)
-            }
-            updateCourseStats()
-        } else {
-            // When searching, search remotely in Supabase
-            Log.d("ExploreFragment", "filterCourses -> query='$query', searching remotely...")
-            viewLifecycleOwner.lifecycleScope.launch {
-                try {
-                    val searchResults = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.searchCourses(query)
-                    }
-                    
-                    withContext(Dispatchers.Main) {
-                        coursesList.clear()
-                        coursesList.addAll(searchResults.sortedByDescending { it.timestamp })
-                        Log.d("ExploreFragment", "filterCourses -> found ${searchResults.size} results")
-                        if (::coursesAdapter.isInitialized) {
-                            coursesAdapter.updateCourses(coursesList)
-                        }
-                        updateCourseStats()
-                    }
-                } catch (e: Exception) {
-                    Log.e("ExploreFragment", "Error searching courses remotely", e)
-                    // Fallback to local search
-                    val filtered = allCoursesList.filter { course ->
-                        course.title.contains(query, ignoreCase = true) ||
-                                course.description?.contains(query, ignoreCase = true) == true ||
-                                course.category?.contains(query, ignoreCase = true) == true
-                    }.sortedByDescending { it.timestamp }
-                    coursesList.clear()
-                    coursesList.addAll(filtered)
-                    if (::coursesAdapter.isInitialized) {
-                        coursesAdapter.updateCourses(coursesList)
-                    }
-                    updateCourseStats()
+            displayCourses(sorted)
+            Log.d("ExploreFragment", "filterCourses -> cleared filter, showing all ${sorted.size} courses")
+            return
+        }
+
+        // Mark filter active to prevent further pagination
+        isFilterActive = true
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // 1) Exact local match (case-insensitive)
+                val exactLocal = allCoursesList.filter { it.title.equals(q, ignoreCase = true) }
+                if (exactLocal.isNotEmpty()) {
+                    displayCourses(exactLocal)
+                    showDarkToast("Mostrando ${exactLocal.size} resultado(s)")
+                    return@launch
                 }
+
+                // 2) Remote exact match via SyncRepository wrapper
+                val repo = getSyncRepository()
+                val serverExact = withContext(Dispatchers.IO) {
+                    try {
+                        repo.fetchCourseByTitleFromSupabase(q)
+                    } catch (e: Exception) {
+                        Log.w("ExploreFragment", "repo.fetchCourseByTitleFromSupabase failed", e)
+                        null
+                    }
+                }
+
+                if (serverExact != null) {
+                    displayCourses(listOf(serverExact))
+                    showDarkToast("Mostrando 1 resultado (servidor)")
+                    return@launch
+                }
+
+                // 3) Remote broad search fallback
+                val remoteMatches = withContext(Dispatchers.IO) {
+                    try {
+                        repo.searchCoursesInSupabase(q)
+                    } catch (e: Exception) {
+                        Log.w("ExploreFragment", "repo.searchCoursesInSupabase failed", e)
+                        emptyList<Course>()
+                    }
+                }
+
+                if (remoteMatches.isNotEmpty()) {
+                    displayCourses(remoteMatches)
+                    showDarkToast("Mostrando ${remoteMatches.size} resultado(s) remotos")
+                    return@launch
+                }
+
+                // 4) Local contains fallback (title, description, category)
+                val containsLocal = allCoursesList.filter {
+                    it.title.contains(q, ignoreCase = true) ||
+                            (it.description?.contains(q, ignoreCase = true) == true) ||
+                            (it.category?.contains(q, ignoreCase = true) == true)
+                }.sortedByDescending { it.timestamp }
+
+                displayCourses(containsLocal)
+                showDarkToast("No hubo coincidencias exactas; mostrando ${containsLocal.size} por contenido")
+
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error filterCourses", e)
+                showDarkToast("❌ Error en la búsqueda")
             }
         }
     }
@@ -1818,11 +1982,17 @@ class ExploreFragment : Fragment() {
 
             Log.d("ExploreFragment", "Updating course stats - Displayed courses: ${coursesList.size}")
 
-            // Show total count (use server-side total if available)
-            if (totalCourses > 0) {
-                totalCoursesCount?.text = totalCourses.toString()
-            } else {
+            // Show total count. If a search or filter is active, show currently displayed count.
+            val hasActiveSearch = ::searchEditText.isInitialized && searchEditText.text.isNotBlank()
+            if (hasActiveSearch || currentFilterIndex != 0) {
                 totalCoursesCount?.text = coursesList.size.toString()
+            } else {
+                // Use server-side total if available, otherwise show loaded count
+                if (totalCourses > 0) {
+                    totalCoursesCount?.text = totalCourses.toString()
+                } else {
+                    totalCoursesCount?.text = coursesList.size.toString()
+                }
             }
 
             // Fetch aggregated stats from server when possible to avoid loading everything client-side
@@ -1903,6 +2073,27 @@ class ExploreFragment : Fragment() {
             maxOf(courseTime, creationTime) > thirtyDaysAgo
         }
         newCoursesCount?.text = newLocal.toString()
+
+        // Quick server-side total count to show in header gradient when available
+        viewLifecycleOwner.lifecycleScope.launch {
+            if (!isNetworkAvailable()) return@launch
+            try {
+                val serverTotal = withContext(Dispatchers.IO) {
+                    try {
+                        com.example.tareamov.service.SupabaseClient.fetchCoursesCount()
+                    } catch (t: Throwable) {
+                        0
+                    }
+                }
+                if (serverTotal > 0) {
+                    totalCourses = serverTotal
+                    totalCoursesCount?.text = serverTotal.toString()
+                    Log.d("ExploreFragment", "fetchAndDisplayCourseStats: server total=$serverTotal")
+                }
+            } catch (e: Exception) {
+                Log.w("ExploreFragment", "Failed quick fetchCoursesCount", e)
+            }
+        }
 
         // Fetch authoritative counts in background. Use server-side counts matching current filter.
         viewLifecycleOwner.lifecycleScope.launch {
@@ -2182,6 +2373,7 @@ class ExploreFragment : Fragment() {
 
     private fun clearActiveFilter() {
         // Clear any active filter and reload all courses
+        isFilterActive = false
         currentFilterIndex = 0
         showAllCourses()
         updateActiveFilterUI(null)

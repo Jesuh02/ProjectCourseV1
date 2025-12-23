@@ -2305,13 +2305,15 @@ object SupabaseClient {
         }
     }
     
-    // Fetch a single course by exact title (server-side filter). Returns null if not found.
+    // Fetch a single course by exact title (server-side filter, case-insensitive).
+    // Uses `ilike` without wildcards so the match is case-insensitive but exact.
     suspend fun fetchCourseByTitle(title: String): Course? = withContext(Dispatchers.IO) {
         try {
             val table = "courses"
-            // Use eq for exact match. URL-encode value to be safe.
-            val escaped = java.net.URLEncoder.encode(title, "UTF-8")
-            val path = "$table?title=eq.$escaped&select=*"
+            // Encode safely (spaces -> %20)
+            val escaped = java.net.URLEncoder.encode(title, "UTF-8").replace("+", "%20")
+            val path = "$table?title=ilike.$escaped&select=*"
+            requestListener?.invoke("$baseUrl/rest/v1/$path")
             val req = buildGetRequest(path)
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {

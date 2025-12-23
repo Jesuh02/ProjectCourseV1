@@ -685,6 +685,28 @@ class SyncRepository(
         }
     }
 
+    // Public wrapper: fetch a single Course by exact title from Supabase (case-insensitive exact match).
+    suspend fun fetchCourseByTitleFromSupabase(title: String): Course? {
+        return try {
+            if (!supabaseClient.isConfigured()) return null
+            withContext(Dispatchers.IO) { supabaseClient.fetchCourseByTitle(title) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchCourseByTitleFromSupabase failed for title=$title", e)
+            null
+        }
+    }
+
+    // Wrapper to perform a broader search for courses on Supabase (used as fallback).
+    suspend fun searchCoursesInSupabase(query: String): List<Course> {
+        return try {
+            if (!supabaseClient.isConfigured()) return emptyList()
+            withContext(Dispatchers.IO) { supabaseClient.searchCourses(query) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "searchCoursesInSupabase failed for query=$query", e)
+            emptyList()
+        }
+    }
+
     // New wrappers that use SupabaseClient server-side filters when available
     suspend fun fetchTopicsByCourseFromSupabase(courseId: Long): List<Topic> {
         Log.d("SyncRepository", "📚 fetchTopicsByCourseFromSupabase called for courseId=$courseId")
