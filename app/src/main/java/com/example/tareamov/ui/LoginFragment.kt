@@ -604,8 +604,8 @@ class LoginFragment : Fragment() {
         lifecycleScope.launch {
             try {
                 val supabaseUrl = com.example.tareamov.BuildConfig.SUPABASE_URL
-                val supabaseKey = com.example.tareamov.BuildConfig.SUPABASE_KEY
-                
+                val supabaseKey = com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY
+
                 if (supabaseUrl.isBlank() || supabaseKey.isBlank()) {
                     Log.w(TAG, "Supabase not configured, creating local account")
                     createOrLoginLocalUser(email, displayName, avatarUrl)

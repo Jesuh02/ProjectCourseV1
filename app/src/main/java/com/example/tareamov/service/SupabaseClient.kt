@@ -45,7 +45,7 @@ object SupabaseClient {
     private val rawBaseUrl = BuildConfig.SUPABASE_URL.trim()
     // Use provided URL when available, otherwise fall back to DEFAULT_SUPABASE_URL
     private val baseUrl = if (rawBaseUrl.isNotEmpty()) rawBaseUrl.trimEnd('/') else DEFAULT_SUPABASE_URL
-    private val apiKey = BuildConfig.SUPABASE_KEY
+    private val apiKey = BuildConfig.SUPABASE_ANON_KEY
     // Optional: runtime-injected API key (useful when BuildConfig wasn't populated)
     @Volatile
     private var runtimeApiKey: String? = null

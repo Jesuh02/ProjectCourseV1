@@ -50,13 +50,24 @@ val supabaseUrl = if (supabaseUrlProp.isNotBlank()) {
     "https://${supabaseProjectId}.supabase.co"
 } else ""
 
-val supabaseKey = (project.findProperty("SUPABASE_KEY") as? String)
+// Prefer only the public/anon key for client builds. Do NOT embed service_role or other secret keys.
+// Recognized public key properties (in order): SUPABASE_ANON_KEY, SUPABASE_KEY, supabaseapi
+val supabaseAnonKey = (project.findProperty("SUPABASE_ANON_KEY") as? String)
+    ?: localPropsMap["SUPABASE_ANON_KEY"]
+    ?: (project.findProperty("SUPABASE_KEY") as? String)
     ?: localPropsMap["SUPABASE_KEY"]
     ?: (project.findProperty("supabaseapi") as? String)
     ?: localPropsMap["supabaseapi"]
-    ?: (project.findProperty("service_role") as? String)
-    ?: localPropsMap["service_role"]
     ?: ""
+
+// Detect presence of a service_role key but DO NOT embed it into BuildConfig.
+val serviceRolePresent = ((project.findProperty("service_role") as? String)
+    ?: localPropsMap["service_role"]
+    ?: "").isNotBlank()
+
+if (serviceRolePresent) {
+    println("WARNING: service_role key detected in project properties/local.properties. This build will NOT embed service_role into the APK. Move privileged ops to a backend.")
+}
 
 // Leer la IP del host (útil para emuladores). Por defecto 10.0.2.2 para Android Emulator
 val hostIp = project.findProperty("HOST_IP") as? String ?: localPropsMap["HOST_IP"] ?: "10.0.2.2"
@@ -90,7 +101,8 @@ android {
 
     // Exponer variables de Supabase y HOST_IP como BuildConfig
     buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
-    buildConfigField("String", "SUPABASE_KEY", "\"$supabaseKey\"")
+    // Expose only the anon/public key to the client. If empty, the app must obtain a key at runtime or use backend endpoints.
+    buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
     buildConfigField("String", "HOST_IP", "\"$hostIp\"")
     
     // DeepSeek API Key para LLM

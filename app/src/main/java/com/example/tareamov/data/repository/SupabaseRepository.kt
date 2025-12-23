@@ -15,7 +15,7 @@ import java.net.SocketTimeoutException
 // over headers. It performs simple upserts to Supabase tables via the PostgREST interface.
 class SupabaseRepository(
     private val supabaseUrl: String = BuildConfig.SUPABASE_URL,
-    private val supabaseKey: String = BuildConfig.SUPABASE_KEY
+    private val supabaseKey: String = BuildConfig.SUPABASE_ANON_KEY
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -176,6 +176,11 @@ class SupabaseRepository(
     // This avoids schema drift between Room entities and Postgres and requires only
     // creating one table on the Supabase side.
     fun upsert(table: String, payload: Any) : Boolean {
+        // Prevent client from performing upserts when no anon key is configured
+        if (supabaseKey.isBlank()) {
+            Log.e("SupabaseRepository", "upsert blocked: SUPABASE_ANON_KEY is not set. Perform upserts via a secure backend.")
+            return false
+        }
         try {
             // If the helper table `app_documents` exists, wrap payload to the single-table storage
             if (tableExists("app_documents")) {
@@ -535,6 +540,11 @@ class SupabaseRepository(
      * This allows direct SQL execution for MCP tools
      */
     suspend fun executeRawQuery(sql: String): List<Map<String, Any?>> {
+        // Prevent arbitrary SQL execution from client builds without a configured key
+        if (supabaseKey.isBlank()) {
+            Log.e("SupabaseRepository", "executeRawQuery blocked: SUPABASE_ANON_KEY is not set. Move raw SQL execution to a trusted backend.")
+            throw Exception("Raw SQL execution is disabled in client builds. Use a secure backend endpoint.")
+        }
         return try {
             // Basic validation to catch common LLM-generated syntax issues
             val (ok, reason) = validateSql(sql)
@@ -610,6 +620,10 @@ class SupabaseRepository(
      * Útil para aplicar triggers y funciones en Supabase
      */
     suspend fun executeMigrationFile(sqlContent: String): Boolean {
+        if (supabaseKey.isBlank()) {
+            Log.e("SupabaseRepository", "executeMigrationFile blocked: SUPABASE_ANON_KEY is not set. Migrations must run on backend.")
+            return false
+        }
         return try {
             Log.d("SupabaseRepository", "Executing migration file...")
             
