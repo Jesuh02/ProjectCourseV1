@@ -39,8 +39,7 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.io.File
-import com.bumptech.glide.Glide
-import de.hdodenhof.circleimageview.CircleImageView
+// Avatar removed from item layout; CircleImageView no longer required here
 
 class TaskSubmissionsFragment : Fragment() {
     private lateinit var recyclerView: RecyclerView
@@ -66,10 +65,14 @@ class TaskSubmissionsFragment : Fragment() {
     private var courseTitle: String = ""
     private var courseDescription: String = ""
 
-    // Progress UI elements
-    private lateinit var progressBar: ProgressBar
-    private lateinit var progressTextView: TextView
-    private lateinit var progressSection: LinearLayout
+    // Progress UI elements removed from layout; access via safe findViewById when needed
+
+    // Helper to find views by resource name to avoid direct references to removed IDs
+    private inline fun <reified T : View> findViewByName(name: String): T? {
+        val pkg = context?.packageName ?: return null
+        val id = context?.resources?.getIdentifier(name, "id", pkg) ?: 0
+        return if (id != 0) view?.findViewById(id) as? T else null
+    }
 
     private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -77,7 +80,7 @@ class TaskSubmissionsFragment : Fragment() {
             selectedFileUri = uri
             // Usar getFileName() para mostrar el nombre real del archivo
             val displayFileName = getFileName(uri) ?: uri.lastPathSegment ?: "Archivo seleccionado"
-            view?.findViewById<TextView>(R.id.selectedFileNameTextView)?.text = displayFileName
+            findViewByName<TextView>("selectedFileNameTextView")?.text = displayFileName
             Log.d("TaskSubmissionsFragment", "📎 Archivo seleccionado: $displayFileName")
             Log.d("TaskSubmissionsFragment", "📎 URI: $uri")
             Log.d("TaskSubmissionsFragment", "📎 URI scheme: ${uri.scheme}, authority: ${uri.authority}")
@@ -143,10 +146,7 @@ class TaskSubmissionsFragment : Fragment() {
         val titleTextView = view.findViewById<TextView>(R.id.taskTitleTextView)
         titleTextView.text = taskName
 
-        // Initialize progress UI elements
-        progressSection = view.findViewById(R.id.progressSection)
-        progressBar = view.findViewById(R.id.taskProgressBar)
-        progressTextView = view.findViewById(R.id.progressTextView)
+        // Progress and upload UI are managed dynamically; views may be absent after removal
 
         recyclerView = view.findViewById(R.id.submissionsRecyclerView)
         recyclerView.layoutManager = LinearLayoutManager(context)
@@ -161,33 +161,18 @@ class TaskSubmissionsFragment : Fragment() {
             findNavController().navigateUp()
         }
 
-        // Setup file upload section
-        val uploadSection = view.findViewById<LinearLayout>(R.id.uploadSection)
-        val selectFileButton = view.findViewById<Button>(R.id.selectFileButton)
-        val submitFileButton = view.findViewById<Button>(R.id.submitFileButton)
-        val selectedFileNameTextView = view.findViewById<TextView>(R.id.selectedFileNameTextView)
-        val mySubmissionStatusTextView = view.findViewById<TextView>(R.id.mySubmissionStatusTextView)
-        
-        // GitHub repository section
-        val githubUrlEditText = view.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.githubUrlEditText)
-        val submitGitHubButton = view.findViewById<Button>(R.id.submitGitHubButton)
-        
         // Configure visibility based on user role
         if (isCourseCreator) {
             // Course creator sees progress of all students
-            progressSection.visibility = View.VISIBLE
-            uploadSection.visibility = View.GONE
+            findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
+            findViewByName<LinearLayout>("uploadSection")?.visibility = View.GONE
             loadTaskProgress()
         } else {
-            // Regular student sees their own progress
-            progressSection.visibility = View.VISIBLE
-            uploadSection.visibility = View.VISIBLE
-            selectFileButton.setOnClickListener { openFilePicker() }
-            submitFileButton.setOnClickListener { submitTaskFile() }
-            submitGitHubButton.setOnClickListener { submitGitHubRepository(githubUrlEditText) }
+            // Regular student: upload UI removed from layout
+            findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
 
-            // Check if user has already submitted this task
-            checkUserSubmission(mySubmissionStatusTextView)
+            // Check if user has already submitted this task (no status TextView available)
+            checkUserSubmission(null)
         }
 
         loadSubmissions()
@@ -401,19 +386,20 @@ class TaskSubmissionsFragment : Fragment() {
                 // Calculate progress
                 val totalStudents = students.size
                 val submittedCount = submissions.size
-                val gradedCount = submissions.count { it.grade != null && it.grade > 0 } // Solo contar como calificado si la nota es mayor a 0
+                val gradedCount = submissions.count { it.grade != null } // Contar como calificado si tiene nota (incluso 0)
 
                 // Update UI
-                if (totalStudents > 0) {
+                    if (totalStudents > 0) {
                     val submissionPercentage = (submittedCount * 100) / totalStudents
-                    progressBar.max = 100
-                    progressBar.progress = submissionPercentage
+                    findViewByName<ProgressBar>("taskProgressBar")?.let {
+                        it.max = 100
+                        it.progress = submissionPercentage
+                    }
 
-                    progressTextView.text = "$submittedCount de $totalStudents estudiantes han entregado " +
-                            "($gradedCount calificados)"
+                    findViewByName<TextView>("progressTextView")?.text = "$submittedCount de $totalStudents estudiantes han entregado ($gradedCount calificados)"
                 } else {
-                    progressBar.progress = 0
-                    progressTextView.text = "No hay estudiantes inscritos en este curso"
+                    findViewByName<ProgressBar>("taskProgressBar")?.progress = 0
+                    findViewByName<TextView>("progressTextView")?.text = "No hay estudiantes inscritos en este curso"
                 }
 
             } catch (e: Exception) {
@@ -422,7 +408,7 @@ class TaskSubmissionsFragment : Fragment() {
         }
     }
 
-    private fun checkUserSubmission(statusTextView: TextView) {
+    private fun checkUserSubmission(statusTextView: TextView?) {
         val currentUserId = sessionManager.getUserId()
         if (currentUserId == -1L) return
 
@@ -446,39 +432,49 @@ class TaskSubmissionsFragment : Fragment() {
                     val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
                     val dateString = dateFormat.format(submission.submissionDate)
 
-                    val gradeText = if (submission.grade != null && submission.grade > 0) {
+                    val gradeText = if (submission.grade != null) {
                         "Calificación: ${submission.grade}/10"
                     } else {
                         "Pendiente de calificación"
                     }
 
-                    statusTextView.text = "Enviado el $dateString\n$gradeText"
-                    statusTextView.setTextColor(resources.getColor(android.R.color.holo_green_light, null))
+                    statusTextView?.text = "Enviado el $dateString\n$gradeText"
+                    statusTextView?.setTextColor(resources.getColor(android.R.color.holo_green_light, null))
 
-                    // Update progress for student
-                    progressBar.max = 100
-                    progressBar.progress = if (submission.grade != null && submission.grade > 0) 100 else 50
-                    progressTextView.text = if (submission.grade != null && submission.grade > 0)
+                    // Update progress for student (views may be absent)
+                    findViewByName<ProgressBar>("taskProgressBar")?.let {
+                        it.max = 100
+                        it.progress = if (submission.grade != null) 100 else 50
+                    }
+                    findViewByName<TextView>("progressTextView")?.text = if (submission.grade != null)
                         "Tarea completada y calificada"
                     else
                         "Tarea entregada, pendiente de calificación"
 
-                    // Disable submit buttons (file and GitHub) - no permitir duplicados
-                    view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
-                    view?.findViewById<Button>(R.id.submitFileButton)?.text = "Ya enviado"
-                    view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = false
-                    view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Ya enviado"
-                    view?.findViewById<Button>(R.id.selectFileButton)?.isEnabled = false
+                    // If the submission is already graded, hide the upload and progress sections
+                    if (submission.grade != null) {
+                        findViewByName<LinearLayout>("uploadSection")?.visibility = View.GONE
+                        findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+                    } else {
+                        // Not graded yet: disable duplicate actions if upload controls exist
+                        findViewByName<Button>("submitFileButton")?.isEnabled = false
+                        findViewByName<Button>("submitFileButton")?.text = "Ya enviado"
+                        findViewByName<Button>("submitGitHubButton")?.isEnabled = false
+                        findViewByName<Button>("submitGitHubButton")?.text = "Ya enviado"
+                        findViewByName<Button>("selectFileButton")?.isEnabled = false
+                    }
                 } else {
                     // User hasn't submitted yet
                     hasUserSubmitted = false
-                    statusTextView.text = "No has enviado ninguna tarea aún"
-                    statusTextView.setTextColor(resources.getColor(android.R.color.darker_gray, null))
+                    statusTextView?.text = "No has enviado ninguna tarea aún"
+                    statusTextView?.setTextColor(resources.getColor(android.R.color.darker_gray, null))
 
-                    // Update progress for student
-                    progressBar.max = 100
-                    progressBar.progress = 0
-                    progressTextView.text = "Tarea pendiente de entrega"
+                    // Update progress for student (views may be absent)
+                    findViewByName<ProgressBar>("taskProgressBar")?.let {
+                        it.max = 100
+                        it.progress = 0
+                    }
+                    findViewByName<TextView>("progressTextView")?.text = "Tarea pendiente de entrega"
                 }
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "Error checking user submission", e)
@@ -613,7 +609,7 @@ class TaskSubmissionsFragment : Fragment() {
                 Log.d("TaskSubmissionsFragment", "📬 Enviando notificación de calificación al estudiante...")
                 
                 // Detectar si es una modificación de nota (ya tenía calificación previa)
-                val isModification = submission.grade != null && submission.grade > 0f
+                val isModification = submission.grade != null
                 
                 // Obtener información de la tarea y curso
                 val task = withContext(Dispatchers.IO) {
@@ -826,7 +822,7 @@ class TaskSubmissionsFragment : Fragment() {
 
             // Calcular métricas
             val tareasTotales = allTasks.size
-            val tareasCompletadas = submissions.count { (it.grade ?: 0f) > 0f }
+            val tareasCompletadas = submissions.count { it.grade != null }
             val porcentajeProgreso = if (tareasTotales > 0) {
                 (tareasCompletadas.toFloat() / tareasTotales.toFloat()) * 100f
             } else {
@@ -927,11 +923,11 @@ class TaskSubmissionsFragment : Fragment() {
             uri
         }
         
-        // Mostrar progreso mientras se procesa
-        progressSection.visibility = View.VISIBLE
-        progressBar.isIndeterminate = false
-        progressBar.progress = 0
-        progressTextView.text = "Preparando archivo $fileName..."
+        // Mostrar progreso mientras se procesa (views may be absent)
+        findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
+        findViewByName<ProgressBar>("taskProgressBar")?.isIndeterminate = false
+        findViewByName<ProgressBar>("taskProgressBar")?.progress = 0
+        findViewByName<TextView>("progressTextView")?.text = "Preparando archivo $fileName..."
         
         CoroutineScope(Dispatchers.Main).launch {
             try {
@@ -942,7 +938,7 @@ class TaskSubmissionsFragment : Fragment() {
                 }
                 isSubmitting = true
                 // disable button to avoid duplicate taps
-                view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = false
+                findViewByName<Button>("submitFileButton")?.isEnabled = false
                 
                 // VERIFICACIÓN ADICIONAL EN SUPABASE: Asegurar que no existe entrega duplicada
                 val existingSubmission = withContext(Dispatchers.IO) {
@@ -959,11 +955,11 @@ class TaskSubmissionsFragment : Fragment() {
                 if (existingSubmission != null) {
                     Log.w("TaskSubmissionsFragment", "🚫 Entrega duplicada detectada en Supabase - submissionId=${existingSubmission.id}")
                     Toast.makeText(context, "⚠️ Ya existe una entrega registrada para esta tarea. No se permiten entregas duplicadas.", Toast.LENGTH_LONG).show()
-                    progressSection.visibility = View.GONE
+                    findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
                     hasUserSubmitted = true
                     userSubmission = existingSubmission
                     isSubmitting = false
-                    view?.findViewById<Button>(R.id.submitFileButton)?.text = "Ya enviado"
+                    findViewByName<Button>("submitFileButton")?.text = "Ya enviado"
                     return@launch
                 }
                 
@@ -972,8 +968,8 @@ class TaskSubmissionsFragment : Fragment() {
                 val currentUsername = sessionManager.getUsername() ?: "unknown"
                 
                 if (com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
-                    progressTextView.text = "Subiendo archivo a la nube..."
-                    progressBar.progress = 10
+                    findViewByName<TextView>("progressTextView")?.text = "Subiendo archivo a la nube..."
+                    findViewByName<ProgressBar>("taskProgressBar")?.progress = 10
 
                     // Preferir el content:// URI original cuando sea posible — evita problemas con contentResolver y file://
                     val uploadUri = if (uri.scheme == "content") uri else finalUri
@@ -987,8 +983,8 @@ class TaskSubmissionsFragment : Fragment() {
                                 username = currentUsername
                             ) { progress ->
                                 CoroutineScope(Dispatchers.Main).launch {
-                                    progressBar.progress = 10 + (progress * 0.3).toInt() // 10-40%
-                                    progressTextView.text = "Subiendo archivo: $progress%"
+                                    findViewByName<ProgressBar>("taskProgressBar")?.progress = 10 + (progress * 0.3).toInt() // 10-40%
+                                    findViewByName<TextView>("progressTextView")?.text = "Subiendo archivo: $progress%"
                                 }
                             }
                         }
@@ -1008,8 +1004,8 @@ class TaskSubmissionsFragment : Fragment() {
                                     username = currentUsername
                                 ) { progress ->
                                     CoroutineScope(Dispatchers.Main).launch {
-                                        progressBar.progress = 10 + (progress * 0.3).toInt()
-                                        progressTextView.text = "Subiendo archivo (fallback): $progress%"
+                                        findViewByName<ProgressBar>("taskProgressBar")?.progress = 10 + (progress * 0.3).toInt()
+                                        findViewByName<TextView>("progressTextView")?.text = "Subiendo archivo (fallback): $progress%"
                                     }
                                 }
                             }
@@ -1022,7 +1018,7 @@ class TaskSubmissionsFragment : Fragment() {
                     if (uploadResult is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success) {
                         cloudFileUri = uploadResult.url
                         Log.d("TaskSubmissionsFragment", "✅ Archivo subido a R2: $cloudFileUri")
-                        progressTextView.text = "Archivo subido, procesando..."
+                        findViewByName<TextView>("progressTextView")?.text = "Archivo subido, procesando..."
                     } else if (uploadResult is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error) {
                         Log.w("TaskSubmissionsFragment", "⚠️ R2 upload failed: ${uploadResult.message}")
                     } else {
@@ -1030,7 +1026,7 @@ class TaskSubmissionsFragment : Fragment() {
                     }
                 }
                 
-                progressBar.progress = 40
+                findViewByName<ProgressBar>("taskProgressBar")?.progress = 40
 
                 // Check if user already has a submission for this task in LOCAL DB; if so, update it instead of inserting a new one
                 val existingLocalSubmission = withContext(Dispatchers.IO) {
@@ -1074,7 +1070,7 @@ class TaskSubmissionsFragment : Fragment() {
                     // Provide feedback and continue using the updated local submission as 'created'
                     withContext(Dispatchers.Main) {
                         Toast.makeText(context, "Entrega actualizada", Toast.LENGTH_SHORT).show()
-                        view?.findViewById<Button>(R.id.submitFileButton)?.text = "Actualizar entrega"
+                        findViewByName<Button>("submitFileButton")?.text = "Actualizar entrega"
                     }
 
                     updated
@@ -1142,15 +1138,15 @@ class TaskSubmissionsFragment : Fragment() {
                 }
 
                 // PASO 1: Extraer el contenido del archivo ANTES de subirlo
-                progressTextView.text = "Analizando contenido del archivo..."
+                findViewByName<TextView>("progressTextView")?.text = "Analizando contenido del archivo..."
                 Log.d("TaskSubmissionsFragment", "🔄 Extrayendo contenido del archivo antes de subir...")
                 val analysisResult = withContext(Dispatchers.IO) {
                     fileAnalysisService.extractFileContent(uri, fileName)
                 }
                 Log.d("TaskSubmissionsFragment", "📊 Contenido extraído: ${analysisResult.content.take(100)}...")
 
-                progressTextView.text = "Generando contexto estructurado..."
-                progressBar.progress = 50
+                findViewByName<TextView>("progressTextView")?.text = "Generando contexto estructurado..."
+                findViewByName<ProgressBar>("taskProgressBar")?.progress = 50
                 var structuredFileContext: FileContext? = null
                 try {
                     structuredFileContext = withContext(Dispatchers.IO) {
@@ -1177,8 +1173,8 @@ class TaskSubmissionsFragment : Fragment() {
                 }
 
                 // Use the previously computed `created` submission (either updated or newly created)
-                progressTextView.text = "Guardando contexto del archivo..."
-                progressBar.progress = 80
+                findViewByName<TextView>("progressTextView")?.text = "Guardando contexto del archivo..."
+                findViewByName<ProgressBar>("taskProgressBar")?.progress = 80
 
                 if (created != null) {
                     val createdSubmissionId = created.id
@@ -1238,8 +1234,8 @@ class TaskSubmissionsFragment : Fragment() {
                         }
                     }
 
-                    progressTextView.text = "¡Tarea enviada exitosamente!"
-                    progressBar.progress = 100
+                    findViewByName<TextView>("progressTextView")?.text = "¡Tarea enviada exitosamente!"
+                    findViewByName<ProgressBar>("taskProgressBar")?.progress = 100
 
                     // IMPORTANTE: Recalcular y sincronizar progreso del estudiante
                     recalculateAndSyncStudentProgress(currentUserId)
@@ -1254,10 +1250,10 @@ class TaskSubmissionsFragment : Fragment() {
 
                 // Final UI updates
                 selectedFileUri = null
-                view?.findViewById<TextView>(R.id.selectedFileNameTextView)?.text = "Ningún archivo seleccionado"
+                findViewByName<TextView>("selectedFileNameTextView")?.text = "Ningún archivo seleccionado"
 
                 // Update submission status (UI only)
-                val statusTextView = view?.findViewById<TextView>(R.id.mySubmissionStatusTextView)
+                val statusTextView = findViewByName<TextView>("mySubmissionStatusTextView")
                 if (statusTextView != null) {
                     val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
                     val dateString = dateFormat.format(System.currentTimeMillis())
@@ -1267,17 +1263,19 @@ class TaskSubmissionsFragment : Fragment() {
 
                 // Update progress after submission - ocultar barra después de 2 segundos
                 kotlinx.coroutines.delay(2000)
-                progressSection.visibility = View.GONE
+                findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
 
-                // Reset progress bar for next submission
-                progressBar.max = 100
-                progressBar.progress = 0
-                progressBar.isIndeterminate = false
-                progressTextView.text = "0% completado"
+                // Reset progress bar for next submission (views may be absent)
+                findViewByName<ProgressBar>("taskProgressBar")?.let {
+                    it.max = 100
+                    it.progress = 0
+                    it.isIndeterminate = false
+                }
+                findViewByName<TextView>("progressTextView")?.text = "0% completado"
 
                 // Allow resubmission: keep submit button enabled for updates
-                view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = true
-                view?.findViewById<Button>(R.id.submitFileButton)?.text = "Actualizar entrega"
+                findViewByName<Button>("submitFileButton")?.isEnabled = true
+                findViewByName<Button>("submitFileButton")?.text = "Actualizar entrega"
 
                 // Reload submissions to show the new one
                 loadSubmissions()
@@ -1287,10 +1285,10 @@ class TaskSubmissionsFragment : Fragment() {
             } finally {
                 // Always reset submitting flag and re-enable button
                 isSubmitting = false
-                view?.findViewById<Button>(R.id.submitFileButton)?.isEnabled = true
+                findViewByName<Button>("submitFileButton")?.isEnabled = true
                 // Ensure progress section hidden if something failed
                 try {
-                    progressSection.visibility = View.GONE
+                    findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
                 } catch (ignored: Exception) {
                 }
             }
@@ -1437,13 +1435,13 @@ class TaskSubmissionsFragment : Fragment() {
                 val taskIdsInCourse = allTasksInCourse.map { it.id }.toSet()
                 val courseSubmissions = allSubmissions.filter { it.taskId in taskIdsInCourse }
                 
-                val completedTasks = courseSubmissions.count { (it.grade ?: 0f) > 0 }
+                val completedTasks = courseSubmissions.count { it.grade != null }
                 
                 val progressPct = if (totalTasks > 0) {
                     (completedTasks.toFloat() / totalTasks.toFloat()) * 100
                 } else 0f
                 
-                val gradesOnly = courseSubmissions.mapNotNull { it.grade }.filter { it > 0 }
+                val gradesOnly = courseSubmissions.mapNotNull { it.grade }
                 val avgGrade = if (gradesOnly.isNotEmpty()) {
                     gradesOnly.average().toFloat()
                 } else 0f
@@ -1550,9 +1548,9 @@ class TaskSubmissionsFragment : Fragment() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 Log.d("TaskSubmissionsFragment", "🔄 Iniciando análisis de archivo: ${submission.fileName}")
-                progressSection.visibility = View.VISIBLE
-                progressBar.isIndeterminate = true
-                progressTextView.text = "Procesando archivo ${submission.fileName}..."
+                findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
+                findViewByName<ProgressBar>("taskProgressBar")?.isIndeterminate = true
+                findViewByName<TextView>("progressTextView")?.text = "Procesando archivo ${submission.fileName}..."
                 val uri = Uri.parse(submission.fileUri)
                 Log.d("TaskSubmissionsFragment", "📂 URI del archivo: $uri")
                 val analysisResult = withContext(Dispatchers.IO) {
@@ -1616,16 +1614,16 @@ class TaskSubmissionsFragment : Fragment() {
                 Log.d("TaskSubmissionsFragment", "fileContext.contentSummary: '${fileContext.contentSummary}'")
                 Log.d("TaskSubmissionsFragment", "==============================================")
                 
-                progressTextView.text = "Archivo procesado. Preparando interfaz de chat..."
-                progressBar.isIndeterminate = false
-                progressBar.progress = 90
+                findViewByName<TextView>("progressTextView")?.text = "Archivo procesado. Preparando interfaz de chat..."
+                findViewByName<ProgressBar>("taskProgressBar")?.isIndeterminate = false
+                findViewByName<ProgressBar>("taskProgressBar")?.progress = 90
                 navigateToChatWithFileContext(fileContext)
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "❌ Error procesando archivo: ${e.message}", e)
                 
                 // Mostrar error al usuario
                 withContext(Dispatchers.Main) {
-                    progressBar.visibility = View.GONE
+                    findViewByName<ProgressBar>("taskProgressBar")?.visibility = View.GONE
                     Toast.makeText(
                         context,
                         "Error procesando archivo: ${e.message}",
@@ -1812,8 +1810,8 @@ class TaskSubmissionsFragment : Fragment() {
             
             // El resto del código debe ejecutarse en el hilo principal para UI
             withContext(Dispatchers.Main) {
-                // Ocultar progreso
-                progressSection.visibility = View.GONE
+                // Ocultar progreso (view may be absent)
+                findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
                 
                 // Determinar el mensaje según el tipo de archivo
                 val message = when {
@@ -1929,7 +1927,7 @@ class TaskSubmissionsFragment : Fragment() {
         override fun getItemCount() = submissions.size
 
         inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-            private val avatarImageView: CircleImageView = itemView.findViewById(R.id.avatarImageView)
+            // Avatar removed from item layout
             private val studentNameTextView: TextView = itemView.findViewById(R.id.studentNameTextView)
             private val submissionDateTextView: TextView = itemView.findViewById(R.id.submissionDateTextView)
             private val fileNameTextView: TextView = itemView.findViewById(R.id.fileNameTextView)
@@ -1981,8 +1979,7 @@ class TaskSubmissionsFragment : Fragment() {
                     }
                     val displayName = usernameResolved ?: "Usuario ${submission.studentId}"
                     studentNameTextView.text = displayName
-                    // Load avatar using resolved username (or fallback)
-                    loadUserAvatar(usernameResolved ?: "")
+                    // Avatar removed from item layout
                 }
 
                 val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
@@ -1991,8 +1988,8 @@ class TaskSubmissionsFragment : Fragment() {
 
                 fileNameTextView.text = submission.fileName
                 
-                // Manejar calificación IA - solo mostrar si hay calificación real del usuario (mayor a 0)
-                if (submission.grade != null && submission.grade > 0) {
+                // Manejar calificación IA - mostrar si hay calificación (incluso 0)
+                if (submission.grade != null) {
                     // Asegurar que la calificación esté en el rango 0-10
                     val aiGrade = submission.grade.coerceIn(0f, 10f)
                     
@@ -2031,7 +2028,7 @@ class TaskSubmissionsFragment : Fragment() {
                     qualityLabelTextView.text = "⏳ Pendiente de calificación"
                 }
 
-                // Avatar is loaded as part of username resolution above
+                // Avatar removed from item layout; no per-item avatar handling needed
 
                 viewFileButton.setOnClickListener {
                     openSubmissionFile(submission.fileUri)
@@ -2096,8 +2093,8 @@ class TaskSubmissionsFragment : Fragment() {
                 } else {
                     gradeSection.visibility = View.GONE
 
-                    // For students, show their grade if available and greater than 0
-                    if (submission.grade != null && submission.grade > 0) {
+                    // For students, show their grade if available
+                    if (submission.grade != null) {
                         gradeDisplayTextView.visibility = View.VISIBLE
                         gradeDisplayTextView.text = "Calificación: ${submission.grade}/10"
 
@@ -2116,41 +2113,7 @@ class TaskSubmissionsFragment : Fragment() {
                 }
             }
 
-            private fun loadUserAvatar(username: String) {
-                CoroutineScope(Dispatchers.Main).launch {
-                    try {
-                        val avatarUrl = withContext(Dispatchers.IO) {
-                            try {
-                                // Try find usuario -> persona -> avatar
-                                val usuarios = SupabaseClient.fetchUsuarios()
-                                val usuario = usuarios.firstOrNull { it.usuario?.equals(username, ignoreCase = true) == true }
-                                usuario?.avatar
-                            } catch (e: Exception) {
-                                Log.e("TaskSubmissionsFragment", "Error fetching avatar from Supabase", e)
-                                null
-                            }
-                        }
-
-                        if (!avatarUrl.isNullOrEmpty()) {
-                            try {
-                                Glide.with(requireContext())
-                                    .load(Uri.parse(avatarUrl))
-                                    .placeholder(R.drawable.default_avatar)
-                                    .error(R.drawable.default_avatar)
-                                    .into(avatarImageView)
-                            } catch (e: Exception) {
-                                Log.e("TaskSubmissionsFragment", "Error loading avatar image", e)
-                                avatarImageView.setImageResource(R.drawable.default_avatar)
-                            }
-                        } else {
-                            avatarImageView.setImageResource(R.drawable.default_avatar)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Error loading avatar", e)
-                        avatarImageView.setImageResource(R.drawable.default_avatar)
-                    }
-                }
-            }
+            // Avatar loading removed
 
             private fun openSubmissionFile(uriString: String) {
                 try {
@@ -2205,10 +2168,10 @@ class TaskSubmissionsFragment : Fragment() {
             return
         }
         
-        // Mostrar progreso
-        progressSection.visibility = View.VISIBLE
-        progressBar.isIndeterminate = true
-        progressTextView.text = "📤 Enviando repositorio de GitHub..."
+        // Mostrar progreso (views may be absent)
+        findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
+        findViewByName<ProgressBar>("taskProgressBar")?.isIndeterminate = true
+        findViewByName<TextView>("progressTextView")?.text = "📤 Enviando repositorio de GitHub..."
         
         Log.d("TaskSubmissionsFragment", "🚀 Enviando URL de repositorio: $repoUrl")
         
@@ -2229,11 +2192,11 @@ class TaskSubmissionsFragment : Fragment() {
                 if (existingSubmission != null) {
                     Log.w("TaskSubmissionsFragment", "🚫 Entrega duplicada de GitHub detectada - submissionId=${existingSubmission.id}")
                     Toast.makeText(context, "⚠️ Ya existe una entrega registrada para esta tarea. No se permiten entregas duplicadas.", Toast.LENGTH_LONG).show()
-                    progressSection.visibility = View.GONE
+                    findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
                     hasUserSubmitted = true
                     userSubmission = existingSubmission
-                    view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = false
-                    view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Ya enviado"
+                    findViewByName<Button>("submitGitHubButton")?.isEnabled = false
+                    findViewByName<Button>("submitGitHubButton")?.text = "Ya enviado"
                     return@launch
                 }
                 
@@ -2275,7 +2238,7 @@ class TaskSubmissionsFragment : Fragment() {
                     githubUrlEditText.text?.clear()
                     
                     // Actualizar UI
-                    progressTextView.text = "✅ ¡Repositorio enviado!"
+                    findViewByName<TextView>("progressTextView")?.text = "✅ ¡Repositorio enviado!"
                     Toast.makeText(
                         context,
                         "✅ Repositorio enviado exitosamente",
@@ -2287,16 +2250,16 @@ class TaskSubmissionsFragment : Fragment() {
                     
                     // Ocultar barra de progreso después de 1 segundo
                     kotlinx.coroutines.delay(1000)
-                    progressSection.visibility = View.GONE
-                    
+                    findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+
                     // Deshabilitar botón
-                    view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = false
-                    view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Ya enviado"
+                    findViewByName<Button>("submitGitHubButton")?.isEnabled = false
+                    findViewByName<Button>("submitGitHubButton")?.text = "Ya enviado"
                     
                 } else {
                     Log.w("TaskSubmissionsFragment", "❌ insertTaskSubmission retornó null")
                     Toast.makeText(context, "Error al enviar repositorio al servidor", Toast.LENGTH_SHORT).show()
-                    progressSection.visibility = View.GONE
+                    findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
                 }
                 
             } catch (e: Exception) {
@@ -2306,7 +2269,7 @@ class TaskSubmissionsFragment : Fragment() {
                     "Error al enviar el repositorio:\n${e.message}",
                     Toast.LENGTH_LONG
                 ).show()
-                progressSection.visibility = View.GONE
+                findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
             }
         }
     }

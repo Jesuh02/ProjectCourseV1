@@ -3705,7 +3705,7 @@ object SupabaseClient {
             if (!isConfigured()) return@withContext emptyList()
 
             // Step 1: Fetch submissions with task info (without usuarios join to avoid FK issues)
-            val url = "$baseUrl/rest/v1/task_submissions?select=id,grade,student_id,task_id,submission_date,tasks!inner(title,topics!inner(course_id))&tasks.topics.course_id=eq.$courseId&grade=gt.0"
+            val url = "$baseUrl/rest/v1/task_submissions?select=id,grade,student_id,task_id,submission_date,tasks!inner(title,topics!inner(course_id))&tasks.topics.course_id=eq.$courseId&grade=is.not.null"
             
             val request = Request.Builder()
                 .url(url)

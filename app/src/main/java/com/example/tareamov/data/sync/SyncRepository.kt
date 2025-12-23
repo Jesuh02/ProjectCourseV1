@@ -2352,8 +2352,8 @@ class SyncRepository(
                 // Calcular tareas totales
                 val tareasTotales = allTasks.size
                 
-                // Calcular tareas completadas (submissions con grade > 0)
-                val tareasCompletadas = submissions.count { (it.grade ?: 0f) > 0f }
+                // Calcular tareas completadas (submissions con nota registrada)
+                val tareasCompletadas = submissions.count { it.grade != null }
                 
                 // Calcular porcentaje de progreso
                 val porcentajeProgreso = if (tareasTotales > 0) {
@@ -2458,7 +2458,7 @@ class SyncRepository(
                     }
                     
                     // Calcular métricas
-                    val tareasCompletadas = studentSubmissions.count { (it.grade ?: 0f) > 0f }
+                    val tareasCompletadas = studentSubmissions.count { it.grade != null }
                     val porcentajeProgreso = if (tareasTotales > 0) {
                         (tareasCompletadas.toFloat() / tareasTotales.toFloat()) * 100f
                     } else {
@@ -2578,7 +2578,7 @@ class SyncRepository(
                     
                     // Calcular métricas actualizadas
                     val tareasTotales = allTasks.size
-                    val tareasCompletadas = submissions.count { (it.grade ?: 0f) > 0f }
+                    val tareasCompletadas = submissions.count { it.grade != null }
                     val porcentajeProgreso = if (tareasTotales > 0) {
                         (tareasCompletadas.toFloat() / tareasTotales.toFloat()) * 100f
                     } else {

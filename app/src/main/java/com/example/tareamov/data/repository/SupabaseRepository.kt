@@ -801,7 +801,7 @@ class SupabaseRepository(
                         JOIN topics t ON tk.topic_id = t.id
                         WHERE ts.student_id = $studentId
                         AND t.course_id = $courseId
-                        AND ts.grade > 0
+                        AND ts.grade IS NOT NULL
                     """.trimIndent()
                     
                     val completedResult = executeRawQuery(completedSql)
