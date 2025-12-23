@@ -35,7 +35,7 @@ class VideoDetailsFragment : Fragment() {
     private lateinit var sessionManager: SessionManager
     private var videoId: Long = 0L // Store the video ID from the previous fragment
     private var thumbnailUri: Uri? = null // URI de la miniatura seleccionada
-    private lateinit var thumbnailPickerLauncher: androidx.activity.result.ActivityResultLauncher<Intent>
+    private lateinit var thumbnailPickerLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
     
     // Brain loading animator
     private var brainLoadingAnimator: com.example.tareamov.util.BrainLoadingAnimator? = null
@@ -56,38 +56,54 @@ class VideoDetailsFragment : Fragment() {
         // Initialize thumbnail extractor
         thumbnailExtractor = com.example.tareamov.util.VideoThumbnailExtractor(requireContext())
         
-        // Initialize thumbnail picker launcher
+        // Initialize thumbnail picker launcher using OpenDocument to obtain proper URI permissions
         thumbnailPickerLauncher = registerForActivityResult(
-            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
-        ) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                result.data?.data?.let { uri ->
-                    thumbnailUri = uri
-                    
-                    // Load thumbnail with Glide for optimized memory usage
-                    lifecycleScope.launch(Dispatchers.Main) {
-                        try {
-                            val thumbnailPreview = view?.findViewById<android.widget.ImageView>(R.id.thumbnailPreview)
-                            val thumbnailPlaceholder = view?.findViewById<android.view.ViewGroup>(R.id.thumbnailPlaceholder)
-                            val thumbnailSelectedText = view?.findViewById<android.widget.TextView>(R.id.thumbnailSelectedText)
-                            
-                            if (thumbnailPreview != null) {
-                                // Use Glide to load with memory optimization
-                                com.bumptech.glide.Glide.with(requireContext())
-                                    .load(uri)
-                                    .override(1280, 720) // Max size
-                                    .centerCrop()
-                                    .into(thumbnailPreview)
-                                
-                                thumbnailPreview.visibility = View.VISIBLE
-                                thumbnailPlaceholder?.visibility = View.GONE
-                                thumbnailSelectedText?.visibility = View.VISIBLE
+            androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+        ) { uri: Uri? ->
+            if (uri != null) {
+                // Copy selected SAF URI into app cache and use the copied file for preview and upload.
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val copied = try {
+                        copyUriToCacheFile(uri)
+                    } catch (e: Exception) {
+                        Log.e("VideoDetailsFragment", "Error copiando URI a cache", e)
+                        null
+                    }
+
+                    if (copied != null) {
+                        thumbnailUri = androidx.core.content.FileProvider.getUriForFile(
+                            requireContext(),
+                            requireContext().packageName + ".fileprovider",
+                            copied
+                        )
+
+                        withContext(Dispatchers.Main) {
+                            try {
+                                val thumbnailPreview = view?.findViewById<android.widget.ImageView>(R.id.thumbnailPreview)
+                                val thumbnailPlaceholder = view?.findViewById<android.view.ViewGroup>(R.id.thumbnailPlaceholder)
+                                val thumbnailSelectedText = view?.findViewById<android.widget.TextView>(R.id.thumbnailSelectedText)
+
+                                if (thumbnailPreview != null) {
+                                    com.bumptech.glide.Glide.with(requireContext())
+                                        .load(thumbnailUri)
+                                        .override(1280, 720)
+                                        .centerCrop()
+                                        .into(thumbnailPreview)
+
+                                    thumbnailPreview.visibility = View.VISIBLE
+                                    thumbnailPlaceholder?.visibility = View.GONE
+                                    thumbnailSelectedText?.visibility = View.VISIBLE
+                                }
+
+                                Log.d("VideoDetailsFragment", "✅ Thumbnail copied and preview loaded: $thumbnailUri")
+                            } catch (e: Exception) {
+                                Log.e("VideoDetailsFragment", "Error mostrando miniatura copiada", e)
+                                Toast.makeText(requireContext(), "Error cargando vista previa", Toast.LENGTH_SHORT).show()
                             }
-                            
-                            Log.d("VideoDetailsFragment", "✅ Thumbnail preview loaded: $uri")
-                        } catch (e: Exception) {
-                            Log.e("VideoDetailsFragment", "Error loading thumbnail preview", e)
-                            Toast.makeText(requireContext(), "Error cargando vista previa", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "No se pudo copiar la miniatura seleccionada", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -156,10 +172,13 @@ class VideoDetailsFragment : Fragment() {
      * Abre el selector de imágenes para elegir una miniatura
      */
     private fun openThumbnailPicker() {
-        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
-            type = "image/*"
+        // Launch system file picker using Storage Access Framework for images
+        try {
+            thumbnailPickerLauncher.launch(arrayOf("image/*"))
+        } catch (e: Exception) {
+            Log.e("VideoDetailsFragment", "Error launching thumbnail picker", e)
+            Toast.makeText(requireContext(), "No se pudo abrir el selector de miniaturas", Toast.LENGTH_SHORT).show()
         }
-        thumbnailPickerLauncher.launch(intent)
     }
     
     /**
@@ -646,5 +665,21 @@ class VideoDetailsFragment : Fragment() {
                 Log.w("VideoDetailsFragment", "Error limpiando miniaturas antiguas", e)
             }
         }
+    }
+
+    // Copia el contenido de un URI (Storage Access Framework) a un archivo en cache interno
+    @Throws(Exception::class)
+    private fun copyUriToCacheFile(uri: Uri): java.io.File? {
+        val resolver = requireContext().contentResolver
+        val input = resolver.openInputStream(uri) ?: return null
+        val cacheDir = java.io.File(requireContext().cacheDir, "thumbnails")
+        if (!cacheDir.exists()) cacheDir.mkdirs()
+        val outFile = java.io.File(cacheDir, "thumb_${System.currentTimeMillis()}.jpg")
+        input.use { inputStream ->
+            outFile.outputStream().use { output ->
+                inputStream.copyTo(output)
+            }
+        }
+        return outFile
     }
 }

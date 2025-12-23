@@ -393,9 +393,6 @@ object SupabaseClient {
                 "is_published" to course.isPublished,
                 "creation_date" to course.creationDate,
                 "last_modified_date" to course.lastModifiedDate,
-                "enrollment_count" to course.enrollmentCount,
-                "rating" to course.rating,
-                "tags" to course.tags,
                 "timestamp" to course.timestamp
             )
 
@@ -456,9 +453,6 @@ object SupabaseClient {
                 "is_published" to course.isPublished,
                 "creation_date" to course.creationDate,
                 "last_modified_date" to course.lastModifiedDate,
-                "enrollment_count" to course.enrollmentCount,
-                "rating" to course.rating,
-                "tags" to course.tags,
                 "timestamp" to course.timestamp
             )
 
@@ -2879,7 +2873,7 @@ object SupabaseClient {
     suspend fun fetchCoursesSummary(
         limit: Int = 10,
         offset: Int = 0,
-        orderBy: String = "enrollment_count",
+        orderBy: String = "timestamp",
         direction: String = "desc"
     ): Pair<List<Course>, Int> = withContext(Dispatchers.IO) {
         try {
@@ -4692,10 +4686,11 @@ object SupabaseClient {
         }
     }
 
-    /** Count popular courses (rating>=4.5 or enrollments>=10) server-side */
+    /** Count popular courses (fallback: count published courses) server-side */
     suspend fun countPopularCourses(): Int = withContext(Dispatchers.IO) {
         try {
-            val path = "courses?or=(rating.gte.4.5,enrollment_count.gte.10)&select=id"
+            // Use a safe query that exists on the current DB schema
+            val path = "courses?is_published=eq.true&select=id"
             val request = Request.Builder()
                 .url("$baseUrl/rest/v1/$path")
                 .get()
@@ -4716,7 +4711,7 @@ object SupabaseClient {
                 0
             }
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "countPopularCourses error", e)
+            Log.e("SupabaseClient", "Error fetching popular courses count", e)
             0
         }
     }
