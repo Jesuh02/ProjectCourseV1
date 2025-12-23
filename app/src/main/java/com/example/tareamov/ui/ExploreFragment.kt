@@ -708,6 +708,13 @@ class ExploreFragment : Fragment() {
                 // Custom floating confirmation dialog with animated entrance/exit
                 val dlg = Dialog(requireContext())
                 val dlgView = layoutInflater.inflate(R.layout.dialog_confirm_delete, null)
+                // Apply gradient background (bg_header_gradient) to the dialog root to avoid white box
+                try {
+                    dlgView.setBackgroundResource(R.drawable.bg_liquid_glass)
+                    dlgView.clipToOutline = true
+                } catch (t: Throwable) {
+                    Log.w("ExploreFragment", "Failed to set bg_liquid_glass on dlgView", t)
+                }
                 val titleTv = dlgView.findViewById<TextView>(R.id.confirmDeleteTitle)
                 val msgTv = dlgView.findViewById<TextView>(R.id.confirmDeleteMessage)
                 val btnCancel = dlgView.findViewById<TextView>(R.id.cancelDeleteButton)
@@ -721,16 +728,27 @@ class ExploreFragment : Fragment() {
                 dlg.window?.setBackgroundDrawableResource(android.R.color.transparent)
                 dlg.window?.setLayout(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT)
                 dlg.window?.attributes = dlg.window?.attributes?.apply { gravity = Gravity.CENTER }
+                // Dim background behind dialog for stronger visual focus
+                dlg.window?.setDimAmount(0.75f)
+                // Ensure text contrast when using the gradient background
+                try {
+                    titleTv.setTextColor(android.graphics.Color.WHITE)
+                    msgTv.setTextColor(android.graphics.Color.WHITE)
+                    btnCancel.setTextColor(android.graphics.Color.WHITE)
+                    btnDelete.setTextColor(android.graphics.Color.WHITE)
+                } catch (_: Exception) {}
 
-                // Entrance animation
+                // Entrance animation: slide + fade + subtle pop
                 dlgView.alpha = 0f
-                dlgView.scaleX = 0.92f
-                dlgView.scaleY = 0.92f
-                val aIn = ObjectAnimator.ofFloat(dlgView, "alpha", 0f, 1f)
-                val sxIn = ObjectAnimator.ofFloat(dlgView, "scaleX", 0.92f, 1f)
-                val syIn = ObjectAnimator.ofFloat(dlgView, "scaleY", 0.92f, 1f)
+                dlgView.translationY = -24f * resources.displayMetrics.density
+                dlgView.scaleX = 0.96f
+                dlgView.scaleY = 0.96f
+                val alphaIn = ObjectAnimator.ofFloat(dlgView, "alpha", 0f, 1f)
+                val transIn = ObjectAnimator.ofFloat(dlgView, "translationY", dlgView.translationY, 0f)
+                val sx = ObjectAnimator.ofFloat(dlgView, "scaleX", 0.96f, 1f)
+                val sy = ObjectAnimator.ofFloat(dlgView, "scaleY", 0.96f, 1f)
                 AnimatorSet().apply {
-                    playTogether(aIn, sxIn, syIn)
+                    playTogether(alphaIn, transIn, sx, sy)
                     duration = 360
                     interpolator = AccelerateDecelerateInterpolator()
                     start()
@@ -738,10 +756,11 @@ class ExploreFragment : Fragment() {
 
                 fun dismissWithAnimation(onEnd: (() -> Unit)? = null) {
                     val aOut = ObjectAnimator.ofFloat(dlgView, "alpha", 1f, 0f)
-                    val sxOut = ObjectAnimator.ofFloat(dlgView, "scaleX", 1f, 0.96f)
-                    val syOut = ObjectAnimator.ofFloat(dlgView, "scaleY", 1f, 0.96f)
+                    val transOut = ObjectAnimator.ofFloat(dlgView, "translationY", 0f, -12f * resources.displayMetrics.density)
+                    val sxOut = ObjectAnimator.ofFloat(dlgView, "scaleX", 1f, 0.98f)
+                    val syOut = ObjectAnimator.ofFloat(dlgView, "scaleY", 1f, 0.98f)
                     AnimatorSet().apply {
-                        playTogether(aOut, sxOut, syOut)
+                        playTogether(aOut, transOut, sxOut, syOut)
                         duration = 260
                         interpolator = AccelerateDecelerateInterpolator()
                         addListener(object : android.animation.AnimatorListenerAdapter() {

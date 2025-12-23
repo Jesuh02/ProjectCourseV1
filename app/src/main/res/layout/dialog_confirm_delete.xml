@@ -1,25 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:card_view="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:padding="24dp">
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:padding="8dp">
 
     <androidx.cardview.widget.CardView
         android:id="@+id/confirmCard"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         card_view:cardCornerRadius="16dp"
-        card_view:cardUseCompatPadding="true"
-        android:background="@drawable/bg_header_gradient"
-        android:padding="20dp">
+        card_view:cardUseCompatPadding="false"
+        card_view:cardBackgroundColor="@android:color/transparent"
+        android:padding="0dp">
 
-        <LinearLayout
-            android:layout_width="match_parent"
+            <LinearLayout
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:gravity="center_vertical">
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_liquid_glass_dark"
+            android:padding="20dp">
 
             <TextView
                 android:id="@+id/confirmDeleteTitle"
@@ -49,20 +51,30 @@
                     android:id="@+id/cancelDeleteButton"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:padding="10dp"
+                    android:paddingLeft="12dp"
+                    android:paddingRight="12dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:minHeight="40dp"
+                    android:gravity="center"
                     android:text="Cancelar"
                     android:textColor="@android:color/white"
-                    android:backgroundTint="#33000000" />
+                    android:background="@drawable/bg_button_outline_light" />
 
                 <TextView
                     android:id="@+id/confirmDeleteButton"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="12dp"
-                    android:padding="10dp"
+                    android:paddingLeft="12dp"
+                    android:paddingRight="12dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:minHeight="40dp"
+                    android:gravity="center"
                     android:text="Eliminar"
                     android:textColor="@android:color/white"
-                    android:backgroundTint="#88000000"
+                    android:background="@drawable/bg_button_red"
                     android:textStyle="bold" />
 
             </LinearLayout>
