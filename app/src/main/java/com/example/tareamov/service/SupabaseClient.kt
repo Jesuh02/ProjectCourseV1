@@ -4635,6 +4635,123 @@ object SupabaseClient {
     }
 
     /**
+     * Fetch a single page of courses using limit/offset (server-side pagination)
+     */
+    suspend fun fetchCoursesPage(limit: Int, offset: Int): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            val path = "courses?select=*&order=timestamp.desc&limit=$limit&offset=$offset"
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchCoursesPage failed status=${resp.code}")
+                    return@withContext emptyList()
+                }
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                val arr = underscoredGson.fromJson(body, Array<Course>::class.java)
+                return@withContext arr?.toList() ?: emptyList()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "fetchCoursesPage exception", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Get total count of courses using Prefer: count=exact and Content-Range header
+     */
+    suspend fun fetchCoursesCount(): Int = withContext(Dispatchers.IO) {
+        try {
+            val path = "courses?select=id"
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/$path")
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Prefer", "count=exact")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchCoursesCount failed: ${response.code}")
+                    return@withContext 0
+                }
+                val contentRange = response.header("Content-Range")
+                if (contentRange != null) {
+                    return@withContext contentRange.substringAfter("/").toIntOrNull() ?: 0
+                }
+                val body = response.body?.string()
+                if (!body.isNullOrEmpty()) {
+                    val arr = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    return@withContext arr.size()
+                }
+                0
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching courses count", e)
+            0
+        }
+    }
+
+    /** Count popular courses (rating>=4.5 or enrollments>=10) server-side */
+    suspend fun countPopularCourses(): Int = withContext(Dispatchers.IO) {
+        try {
+            val path = "courses?or=(rating.gte.4.5,enrollment_count.gte.10)&select=id"
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/$path")
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Prefer", "count=exact")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext 0
+                val cr = response.header("Content-Range")
+                if (cr != null) return@withContext cr.substringAfter("/").toIntOrNull() ?: 0
+                val body = response.body?.string()
+                if (!body.isNullOrEmpty()) {
+                    val arr = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    return@withContext arr.size()
+                }
+                0
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "countPopularCourses error", e)
+            0
+        }
+    }
+
+    /** Count courses created in the last `days` days server-side */
+    suspend fun countNewCourses(days: Int = 30): Int = withContext(Dispatchers.IO) {
+        try {
+            val threshold = System.currentTimeMillis() - days * 24L * 60L * 60L * 1000L
+            val path = "courses?timestamp=gte.$threshold&select=id"
+            val request = Request.Builder()
+                .url("$baseUrl/rest/v1/$path")
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Prefer", "count=exact")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext 0
+                val cr = response.header("Content-Range")
+                if (cr != null) return@withContext cr.substringAfter("/").toIntOrNull() ?: 0
+                val body = response.body?.string()
+                if (!body.isNullOrEmpty()) {
+                    val arr = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    return@withContext arr.size()
+                }
+                0
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "countNewCourses error", e)
+            0
+        }
+    }
+
+    /**
      * Fetch courses where the user has submitted tasks (as a student).
      * This uses the task_submissions table to find unique course_ids for the given student.
      */

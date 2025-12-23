@@ -161,11 +161,11 @@ class ExploreFragment : Fragment() {
         // Setup network monitoring to retry loading when internet returns
         setupNetworkMonitoring()
 
+        // Mostrar estadísticas inmediatamente (agregados server-side con fallback offline)
+        fetchAndDisplayCourseStats()
+
     // Cargar los cursos (forzar fetch remoto al entrar en el fragment)
     loadCourses(forceRemote = true)
-
-        // Initialize stats with 0 values initially
-        updateCourseStats()
 
         // Add debug functionality - remove this in production
         view.findViewById<View>(R.id.welcomeTitle)?.setOnLongClickListener {
@@ -665,7 +665,11 @@ class ExploreFragment : Fragment() {
 
                     // Cargar más cuando el usuario vea el 5to desde el final
                     if (!isLoadingCourses && totalItemCount > 0 && lastVisibleItemPosition >= totalItemCount - 5) {
-                        loadMoreCourses()
+                        // mark trigger to avoid duplicate calls while loading
+                        if (!hasTriggeredLoadAtPosition5) {
+                            hasTriggeredLoadAtPosition5 = true
+                            loadMoreCourses()
+                        }
                     }
                 }
             }
@@ -1258,60 +1262,49 @@ class ExploreFragment : Fragment() {
             try {
                 Log.d("ExploreFragment", "loadCourses: Starting to load courses from Supabase (forceRemote=$forceRemote)")
                 
-                // Load ALL courses from Supabase for filtering (but display paginated)
-                val allCourses = withContext(Dispatchers.IO) {
-                    Log.d("ExploreFragment", "loadCourses: Calling SupabaseClient.fetchCourses()")
-                    val courses = com.example.tareamov.service.SupabaseClient.fetchCourses()
-                    Log.d("ExploreFragment", "loadCourses: Received ${courses.size} courses from Supabase")
-                    courses
+                // Load first page only (server-side pagination)
+                val firstPage = withContext(Dispatchers.IO) {
+                    Log.d("ExploreFragment", "loadCourses: Calling SupabaseClient.fetchCoursesPage(pageSize,0)")
+                    com.example.tareamov.service.SupabaseClient.fetchCoursesPage(pageSize, 0)
                 }
-                
-                totalCourses = allCourses.size
+
+                // Fetch total counts and stats server-side (so UI stats remain accurate)
+                val fetchedTotal = withContext(Dispatchers.IO) {
+                    try { com.example.tareamov.service.SupabaseClient.fetchCoursesCount() } catch (t: Throwable) { 0 }
+                }
+
+                totalCourses = fetchedTotal
                 currentPage = 0
                 hasTriggeredLoadAtPosition5 = false
-                
-                Log.d("ExploreFragment", "loadCourses: Total courses fetched = $totalCourses")
-                
+
                 withContext(Dispatchers.Main) {
-                    // Store ALL courses sorted by most recent for filtering
-                    val sortedCourses = allCourses.sortedByDescending { it.timestamp }
+                    // Store only the loaded page; further pages will be appended on demand
                     allCoursesList.clear()
-                    allCoursesList.addAll(sortedCourses)
-                    
-                    Log.d("ExploreFragment", "loadCourses: Stored ${allCoursesList.size} courses in allCoursesList")
-                    
-                    // Display ALL courses immediately (no pagination needed for small lists)
+                    allCoursesList.addAll(firstPage.sortedByDescending { it.timestamp })
+
+                    // Display first page
                     coursesList.clear()
-                    coursesList.addAll(sortedCourses)
-                    
-                    Log.d("ExploreFragment", "loadCourses: Displaying ${coursesList.size} courses in RecyclerView")
-                    
-                    // Log first few courses for verification
-                    coursesList.take(5).forEachIndexed { index, course ->
-                        Log.d("ExploreFragment", "  Course #$index: ${course.title} (ID: ${course.id}, creatorUserId: ${course.creatorUserId})")
-                    }
-                    
+                    coursesList.addAll(firstPage.sortedByDescending { it.timestamp })
+
                     if (::coursesAdapter.isInitialized) {
                         coursesAdapter.updateCourses(coursesList)
-                        Log.d("ExploreFragment", "loadCourses: Adapter updated with ${coursesList.size} courses")
+                        Log.d("ExploreFragment", "loadCourses: Adapter updated with ${coursesList.size} courses (first page)")
                     } else {
                         Log.w("ExploreFragment", "loadCourses: coursesAdapter not initialized yet!")
                     }
-                    
+
+                    // Update stats (this will call server-side aggregations)
                     updateCourseStats()
-                    Log.d("ExploreFragment", "Loaded and displaying all ${allCourses.size} courses")
-                    
-                    // Stop skeleton animation ONLY if we have data OR if we have network (meaning it's a genuine empty list)
-                    if (allCourses.isNotEmpty() || isNetworkAvailable()) {
+
+                    // Stop skeleton if we have at least one page or network
+                    if (coursesList.isNotEmpty() || isNetworkAvailable()) {
                         stopSkeletonAnimation()
                     } else {
-                        // List is empty AND no network -> likely a fetch error masked by SupabaseClient
-                        Log.w("ExploreFragment", "Empty list returned while offline. Keeping skeleton.")
                         startSkeletonAnimation()
                     }
-                    
-                    // 🎨 Generar miniaturas automáticas para cursos sin miniatura (en segundo plano)
-                    generateMissingThumbnails(allCourses)
+
+                    // Generate thumbnails for the first page in background
+                    generateMissingThumbnails(firstPage)
                 }
 
             } catch (e: Exception) {
@@ -1337,9 +1330,45 @@ class ExploreFragment : Fragment() {
      * Note: Currently all courses are loaded at once, but this is kept for future pagination
      */
     private fun loadMoreCourses() {
-        // All courses are already loaded and displayed, no pagination needed
-        Log.d("ExploreFragment", "All courses already loaded (${coursesList.size} courses displayed)")
-        return
+        // Load next page from Supabase when available
+        if (isLoadingCourses) return
+        // If we already loaded all known courses, nothing to do
+        if (totalCourses > 0 && coursesList.size >= totalCourses) {
+            Log.d("ExploreFragment", "No more courses to load: displayed=${coursesList.size}, total=$totalCourses")
+            return
+        }
+
+        isLoadingCourses = true
+        val nextOffset = (currentPage + 1) * pageSize
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val nextPage = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.fetchCoursesPage(pageSize, nextOffset)
+                }
+
+                if (nextPage.isEmpty()) {
+                    Log.d("ExploreFragment", "loadMoreCourses: no items returned for offset=$nextOffset")
+                } else {
+                    val sorted = nextPage.sortedByDescending { it.timestamp }
+                    allCoursesList.addAll(sorted)
+                    coursesList.addAll(sorted)
+                    withContext(Dispatchers.Main) {
+                        if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
+                    }
+                    currentPage += 1
+                    Log.d("ExploreFragment", "Loaded page ${currentPage} with ${sorted.size} courses; displayed=${coursesList.size}")
+                }
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error loading next page of courses", e)
+            } finally {
+                isLoadingCourses = false
+                // allow the trigger to re-fire on next scroll
+                hasTriggeredLoadAtPosition5 = false
+                // update stats if needed
+                updateCourseStats()
+            }
+        }
     }
 
     /**
@@ -1685,32 +1714,112 @@ class ExploreFragment : Fragment() {
 
             Log.d("ExploreFragment", "Updating course stats - Displayed courses: ${coursesList.size}")
 
-            // Show count of currently displayed courses
-            totalCoursesCount?.text = coursesList.size.toString()
-            
-            // Count popular courses (rating >= 4.5 or enrollments >= 10) from displayed courses
-            val popularCount = coursesList.count { course ->
-                course.rating >= 4.5 || (course.enrollmentCount ?: 0) >= 10
+            // Show total count (use server-side total if available)
+            if (totalCourses > 0) {
+                totalCoursesCount?.text = totalCourses.toString()
+            } else {
+                totalCoursesCount?.text = coursesList.size.toString()
             }
-            popularCoursesCount?.text = popularCount.toString()
-            Log.d("ExploreFragment", "Popular courses count: $popularCount")
-            
-            // Count recent courses (last 30 days) from displayed courses as "new"
-            val currentTime = System.currentTimeMillis()
-            val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
-            val newCount = coursesList.count { course ->
-                val courseTime = course.timestamp
-                val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
-                val mostRecentTime = maxOf(courseTime, creationTime)
-                val isNew = mostRecentTime > thirtyDaysAgo
-                isNew
-            }
-            newCoursesCount?.text = newCount.toString()
-            Log.d("ExploreFragment", "New courses count (last 30 days): $newCount")
 
-            Log.d("ExploreFragment", "Stats updated - Displayed: ${coursesList.size}, Popular: $popularCount, New: $newCount")
+            // Fetch aggregated stats from server when possible to avoid loading everything client-side
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    if (isNetworkAvailable()) {
+                        val popular = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.countPopularCourses()
+                        }
+                        val recent = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.countNewCourses(30)
+                        }
+                        withContext(Dispatchers.Main) {
+                            popularCoursesCount?.text = popular.toString()
+                            newCoursesCount?.text = recent.toString()
+                            Log.d("ExploreFragment", "Popular courses count (server): $popular")
+                            Log.d("ExploreFragment", "New courses count (server): $recent")
+                        }
+                    } else {
+                        // Offline fallback: compute from loaded items only
+                        val popularCount = coursesList.count { course ->
+                            course.rating >= 4.5 || (course.enrollmentCount ?: 0) >= 10
+                        }
+                        val currentTime = System.currentTimeMillis()
+                        val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
+                        val newCount = coursesList.count { course ->
+                            val courseTime = course.timestamp
+                            val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
+                            val mostRecentTime = maxOf(courseTime, creationTime)
+                            mostRecentTime > thirtyDaysAgo
+                        }
+                        popularCoursesCount?.text = popularCount.toString()
+                        newCoursesCount?.text = newCount.toString()
+                        Log.d("ExploreFragment", "Popular courses count (local): $popularCount")
+                        Log.d("ExploreFragment", "New courses count (local): $newCount")
+                    }
+                } catch (e: Exception) {
+                    Log.w("ExploreFragment", "Failed to fetch aggregated stats", e)
+                    // Best-effort fallback
+                    val popularCount = coursesList.count { course ->
+                        course.rating >= 4.5 || (course.enrollmentCount ?: 0) >= 10
+                    }
+                    val currentTime = System.currentTimeMillis()
+                    val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
+                    val newCount = coursesList.count { course ->
+                        val courseTime = course.timestamp
+                        val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
+                        val mostRecentTime = maxOf(courseTime, creationTime)
+                        mostRecentTime > thirtyDaysAgo
+                    }
+                    popularCoursesCount?.text = popularCount.toString()
+                    newCoursesCount?.text = newCount.toString()
+                }
+            }
         } ?: run {
             Log.w("ExploreFragment", "View is null, cannot update course stats")
+        }
+    }
+
+    /**
+     * Fetch aggregated stats (total, popular, new) and display them immediately.
+     * Uses server-side counts when network is available; otherwise falls back to local data.
+     */
+    private fun fetchAndDisplayCourseStats() {
+        val v = view ?: return
+        val totalCoursesCount = v.findViewById<TextView>(R.id.totalCoursesCount)
+        val popularCoursesCount = v.findViewById<TextView>(R.id.popularCoursesCount)
+        val newCoursesCount = v.findViewById<TextView>(R.id.newCoursesCount)
+
+        // Optimistically show local counts while background fetch runs
+        totalCoursesCount?.text = if (totalCourses > 0) totalCourses.toString() else coursesList.size.toString()
+        val popularLocal = coursesList.count { it.rating >= 4.5 || (it.enrollmentCount ?: 0) >= 10 }
+        popularCoursesCount?.text = popularLocal.toString()
+        val currentTime = System.currentTimeMillis()
+        val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
+        val newLocal = coursesList.count { course ->
+            val courseTime = course.timestamp
+            val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
+            maxOf(courseTime, creationTime) > thirtyDaysAgo
+        }
+        newCoursesCount?.text = newLocal.toString()
+
+        // Fetch authoritative counts in background
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                if (isNetworkAvailable()) {
+                    val total = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.fetchCoursesCount() }
+                    val popular = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.countPopularCourses() }
+                    val recent = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.countNewCourses(30) }
+                    withContext(Dispatchers.Main) {
+                        totalCoursesCount?.text = total.toString()
+                        popularCoursesCount?.text = popular.toString()
+                        newCoursesCount?.text = recent.toString()
+                    }
+                } else {
+                    // No network: keep local optimistic values
+                    Log.d("ExploreFragment", "fetchAndDisplayCourseStats: offline, using local counts")
+                }
+            } catch (e: Exception) {
+                Log.w("ExploreFragment", "fetchAndDisplayCourseStats failed", e)
+            }
         }
     }
     
