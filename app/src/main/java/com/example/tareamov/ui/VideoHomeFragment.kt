@@ -63,6 +63,7 @@ import com.example.tareamov.viewmodel.VideoHomeViewModel
 class VideoHomeFragment : Fragment() {
     private lateinit var viewModel: VideoHomeViewModel
     private lateinit var profileAvatars: CircleImageView
+    private lateinit var moreOptionsButton: ImageButton
     private lateinit var videoManager: VideoManager
     private lateinit var sessionManager: SessionManager // Add SessionManager instance
     private lateinit var skeletonContainer: ShimmerFrameLayout // Skeleton container
@@ -194,6 +195,7 @@ class VideoHomeFragment : Fragment() {
 
         // Initialize views
         profileAvatars = view.findViewById(R.id.profileAvatars)
+        moreOptionsButton = view.findViewById(R.id.moreOptionsButton)
         skeletonContainer = view.findViewById(R.id.skeletonContainer)
 
         // Initialize bottom navigation icons
@@ -213,6 +215,8 @@ class VideoHomeFragment : Fragment() {
 
         // Setup search functionality
         setupSearchBar(view)
+
+        setupMoreOptionsButton()
 
         // Setup AI Assistant Icon with animation and click listener
         aiAssistantIconImageView.setOnClickListener {

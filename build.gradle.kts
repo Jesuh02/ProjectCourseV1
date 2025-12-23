@@ -3,7 +3,7 @@ plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.android) apply false
     // Use a KSP release compatible with Kotlin 1.9.x
-    id("com.google.devtools.ksp") version "1.9.0-1.0.13" apply false
+    id("com.google.devtools.ksp") version "1.9.10-1.0.13" apply false
     // Changed to a version that should be available in the repositories
     id("com.google.gms.google-services") version "4.4.1" apply false
 } 

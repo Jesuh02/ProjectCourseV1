@@ -1284,6 +1284,94 @@ object SupabaseClient {
         return builder.build()
     }
 
+    private fun parseSupabaseTimestampMillis(element: com.google.gson.JsonElement?): Long {
+        if (element == null || element.isJsonNull) return System.currentTimeMillis()
+        return try {
+            when {
+                element.isJsonPrimitive && element.asJsonPrimitive.isNumber -> element.asLong
+                element.isJsonPrimitive && element.asJsonPrimitive.isString -> {
+                    val raw = element.asString
+                    try {
+                        java.time.OffsetDateTime.parse(raw, java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                            .toInstant()
+                            .toEpochMilli()
+                    } catch (_: Exception) {
+                        try {
+                            java.time.Instant.parse(raw).toEpochMilli()
+                        } catch (_: Exception) {
+                            raw.toLongOrNull() ?: System.currentTimeMillis()
+                        }
+                    }
+                }
+                else -> System.currentTimeMillis()
+            }
+        } catch (_: Exception) {
+            System.currentTimeMillis()
+        }
+    }
+
+    private fun parseUsuarioFromJson(json: com.google.gson.JsonObject): Usuario {
+        fun safeString(key: String): String? {
+            val e = json.get(key)
+            return if (e != null && !e.isJsonNull) e.asString else null
+        }
+
+        fun safeLong(key: String, default: Long = 0L): Long {
+            val e = json.get(key)
+            return if (e != null && !e.isJsonNull) {
+                try {
+                    e.asLong
+                } catch (_: Exception) {
+                    e.asString.toLongOrNull() ?: default
+                }
+            } else default
+        }
+
+        fun safeLongOrNull(key: String): Long? {
+            val e = json.get(key)
+            return if (e != null && !e.isJsonNull) {
+                try {
+                    e.asLong
+                } catch (_: Exception) {
+                    e.asString.toLongOrNull()
+                }
+            } else null
+        }
+
+        fun safeBool(key: String, default: Boolean = true): Boolean {
+            val e = json.get(key)
+            return if (e != null && !e.isJsonNull) {
+                try {
+                    e.asBoolean
+                } catch (_: Exception) {
+                    e.asString.toBooleanStrictOrNull() ?: default
+                }
+            } else default
+        }
+
+        val username = safeString("username") ?: safeString("usuario") ?: ""
+        val password = safeString("contrasena")
+            ?: safeString("password")
+            ?: safeString("password_hash")
+            ?: ""
+
+        val email = safeString("email") ?: ""
+        val avatar = safeString("avatar")
+        val isActive = safeBool("is_active", true)
+        val createdAt = parseSupabaseTimestampMillis(json.get("created_at"))
+
+        return Usuario(
+            id = safeLong("id", 0L),
+            usuario = username,
+            contrasena = password,
+            persona_id = safeLongOrNull("persona_id"),
+            email = email,
+            avatar = avatar,
+            isActive = isActive,
+            createdAt = createdAt
+        )
+    }
+
     private suspend fun <T> fetchListOrThrow(path: String, clazz: Class<Array<T>>): List<T> = withContext(Dispatchers.IO) {
         val request = buildGetRequest(path)
         client.newCall(request).execute().use { resp ->
@@ -1334,7 +1422,31 @@ object SupabaseClient {
     }
 
     suspend fun fetchPersonas(): List<Persona> = fetchList("personas", Array<Persona>::class.java)
-    suspend fun fetchUsuarios(): List<Usuario> = fetchList("usuarios", Array<Usuario>::class.java)
+    suspend fun fetchUsuarios(): List<Usuario> = withContext(Dispatchers.IO) {
+        try {
+            val path = "usuarios"
+            client.newCall(buildGetRequest(path)).execute().use { resp ->
+                val body = resp.body?.string()
+                if (!resp.isSuccessful || body.isNullOrEmpty()) {
+                    android.util.Log.w("SupabaseClient", "GET $path failed: ${resp.code} body=$body")
+                    return@withContext emptyList()
+                }
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                val list = mutableListOf<Usuario>()
+                jsonArray.forEach { elem ->
+                    try {
+                        list.add(parseUsuarioFromJson(elem.asJsonObject))
+                    } catch (e: Exception) {
+                        android.util.Log.w("SupabaseClient", "Failed parsing usuario from JSON element", e)
+                    }
+                }
+                return@withContext list
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("SupabaseClient", "fetchUsuarios exception: ${e.message}", e)
+            emptyList()
+        }
+    }
     // Fetch a single Usuario by username using Supabase filter (case-sensitive on DB side).
     // We perform a case-insensitive match in the client by filtering the returned result.
     suspend fun fetchUsuarioByUsername(username: String): Usuario? = withContext(Dispatchers.IO) {
@@ -1371,8 +1483,14 @@ object SupabaseClient {
                 android.util.Log.d("SupabaseClient", "GET $pathIlike code=${resp.code} body_len=${body?.length ?: 0}")
                 if (resp.isSuccessful && !body.isNullOrEmpty()) {
                     try {
-                        val arr = gson.fromJson(body, Array<Usuario>::class.java)
-                        val list = arr?.toList() ?: emptyList()
+                        val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                        val list = jsonArray.mapNotNull { elem ->
+                            try {
+                                parseUsuarioFromJson(elem.asJsonObject)
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
                         val targetNorm = normalizeForCompare(username)
                         val found = list.firstOrNull { u -> normalizeForCompare(u.usuario) == targetNorm }
                         if (found != null) {
@@ -1395,8 +1513,14 @@ object SupabaseClient {
                     android.util.Log.d("SupabaseClient", "GET $pathEq code=${resp2.code} body_len=${body2?.length ?: 0}")
                     if (resp2.isSuccessful && !body2.isNullOrEmpty()) {
                         try {
-                            val arr2 = gson.fromJson(body2, Array<Usuario>::class.java)
-                            val list2 = arr2?.toList() ?: emptyList()
+                            val jsonArray2 = com.google.gson.JsonParser.parseString(body2).asJsonArray
+                            val list2 = jsonArray2.mapNotNull { elem ->
+                                try {
+                                    parseUsuarioFromJson(elem.asJsonObject)
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            }
                             val targetNorm = normalizeForCompare(username)
                             val found2 = list2.firstOrNull { u -> normalizeForCompare(u.usuario) == targetNorm }
                             if (found2 != null) {
@@ -1442,8 +1566,9 @@ object SupabaseClient {
                     return@use null
                 }
                 try {
-                    val arr = gson.fromJson(body, Array<Usuario>::class.java)
-                    arr?.firstOrNull()
+                    val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                    val obj = jsonArray.firstOrNull()?.asJsonObject ?: return@use null
+                    parseUsuarioFromJson(obj)
                 } catch (parse: Exception) {
                     android.util.Log.w("SupabaseClient", "fetchUsuarioById parse error for id=$userId", parse)
                     null
