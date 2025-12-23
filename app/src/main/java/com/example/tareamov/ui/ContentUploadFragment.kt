@@ -128,11 +128,11 @@ class ContentUploadFragment : Fragment() {
                         val username = sessionManager.getUsername() ?: "Usuario"
 
                         val tempVideoData = VideoData(
-                            username = username,
                             description = "",
                             title = "Mi video",
                             videoUriString = selectedVideoUri.toString()
                         )
+                        tempVideoData.username = username
 
                         val savedVideo = videoManager.saveVideo(tempVideoData)
                         Log.d("ContentUploadFragment", "Video saved with ID: ${savedVideo.id}, localPath: ${savedVideo.localFilePath}")

@@ -11,7 +11,6 @@ data class Course(
     val id: Long = 0,
     val title: String,
     val description: String,
-
     @SerializedName("creator_user_id")
     @ColumnInfo(name = "creator_user_id")
     val creatorUserId: Long, // Foreign key to usuarios.id
@@ -58,6 +57,7 @@ data class Course(
     val createdAt: String? = null,
 
     // Local-only properties kept for app logic/UI
+    @ColumnInfo(name = "enrollment_count")
     val enrollmentCount: Int = 0,
     val rating: Float = 0.0f,
     val tags: String? = null // Comma-separated tags

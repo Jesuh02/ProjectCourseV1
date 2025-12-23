@@ -247,13 +247,12 @@ object SupabaseClient {
     }
 
     suspend fun insertUsuario(usuario: Usuario): Long? {
-        Log.d("SupabaseClient", "insertUsuario called for username: ${usuario.usuario}, email: ${usuario.email}, persona_id: ${usuario.persona_id}, rol_id: ${usuario.rol_id}")
+        Log.d("SupabaseClient", "insertUsuario called for username: ${usuario.usuario}, email: ${usuario.email}, persona_id: ${usuario.persona_id}")
         // Only include fields that exist in the Supabase usuarios table
         val payload = mapOf(
             "username" to usuario.usuario,
             "contrasena" to usuario.contrasena,
             "persona_id" to usuario.persona_id,
-            "rol_id" to usuario.rol_id,
             "email" to usuario.email,
             "avatar" to usuario.avatar,
             "is_active" to usuario.isActive
@@ -714,16 +713,16 @@ object SupabaseClient {
             Log.d("SupabaseClient", "📤 Input ContentItem:")
             Log.d("SupabaseClient", "📤   - topicId: ${contentItem.topicId}")
             Log.d("SupabaseClient", "📤   - taskId: ${contentItem.taskId}")
-            Log.d("SupabaseClient", "📤   - name: '${contentItem.name}'")
-            Log.d("SupabaseClient", "📤   - uriString: '${contentItem.uriString}'")
+            Log.d("SupabaseClient", "📤   - title: '${contentItem.title}'")
+            Log.d("SupabaseClient", "📤   - body: '${contentItem.body}'")
             Log.d("SupabaseClient", "📤   - contentType: '${contentItem.contentType}'")
             Log.d("SupabaseClient", "📤   - orderIndex: ${contentItem.orderIndex}")
             
             // Map local ContentItem fields to Supabase content_items columns (title/body)
             val map = mutableMapOf<String, Any?>(
                 "topic_id" to contentItem.topicId,
-                "title" to (contentItem.name ?: ""),
-                "body" to contentItem.uriString,
+                "title" to (contentItem.title ?: ""),
+                "body" to contentItem.body,
                 "content_type" to contentItem.contentType,
                 "order_index" to (contentItem.orderIndex ?: 0)
             )
@@ -847,7 +846,6 @@ object SupabaseClient {
             map["username"] = usuario.usuario
             map["contrasena"] = usuario.contrasena
             map["persona_id"] = usuario.persona_id
-            map["rol_id"] = usuario.rol_id
             map["email"] = usuario.email
             map["avatar"] = usuario.avatar
             map["is_active"] = usuario.isActive
@@ -1066,7 +1064,7 @@ object SupabaseClient {
             map["file_content"] = fileContext.fileContent
             map["extracted_text"] = fileContext.extractedText
             map["metadata"] = fileContext.metadata
-            map["timestamp"] = fileContext.timestamp
+            map["created_at"] = fileContext.createdAt
             map["json_content"] = fileContext.jsonContent
             map["content_summary"] = fileContext.contentSummary
 
@@ -1286,6 +1284,94 @@ object SupabaseClient {
         return builder.build()
     }
 
+    private fun parseSupabaseTimestampMillis(element: com.google.gson.JsonElement?): Long {
+        if (element == null || element.isJsonNull) return System.currentTimeMillis()
+        return try {
+            when {
+                element.isJsonPrimitive && element.asJsonPrimitive.isNumber -> element.asLong
+                element.isJsonPrimitive && element.asJsonPrimitive.isString -> {
+                    val raw = element.asString
+                    try {
+                        java.time.OffsetDateTime.parse(raw, java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                            .toInstant()
+                            .toEpochMilli()
+                    } catch (_: Exception) {
+                        try {
+                            java.time.Instant.parse(raw).toEpochMilli()
+                        } catch (_: Exception) {
+                            raw.toLongOrNull() ?: System.currentTimeMillis()
+                        }
+                    }
+                }
+                else -> System.currentTimeMillis()
+            }
+        } catch (_: Exception) {
+            System.currentTimeMillis()
+        }
+    }
+
+    private fun parseUsuarioFromJson(json: com.google.gson.JsonObject): Usuario {
+        fun safeString(key: String): String? {
+            val e = json.get(key)
+            return if (e != null && !e.isJsonNull) e.asString else null
+        }
+
+        fun safeLong(key: String, default: Long = 0L): Long {
+            val e = json.get(key)
+            return if (e != null && !e.isJsonNull) {
+                try {
+                    e.asLong
+                } catch (_: Exception) {
+                    e.asString.toLongOrNull() ?: default
+                }
+            } else default
+        }
+
+        fun safeLongOrNull(key: String): Long? {
+            val e = json.get(key)
+            return if (e != null && !e.isJsonNull) {
+                try {
+                    e.asLong
+                } catch (_: Exception) {
+                    e.asString.toLongOrNull()
+                }
+            } else null
+        }
+
+        fun safeBool(key: String, default: Boolean = true): Boolean {
+            val e = json.get(key)
+            return if (e != null && !e.isJsonNull) {
+                try {
+                    e.asBoolean
+                } catch (_: Exception) {
+                    e.asString.toBooleanStrictOrNull() ?: default
+                }
+            } else default
+        }
+
+        val username = safeString("username") ?: safeString("usuario") ?: ""
+        val password = safeString("contrasena")
+            ?: safeString("password")
+            ?: safeString("password_hash")
+            ?: ""
+
+        val email = safeString("email") ?: ""
+        val avatar = safeString("avatar")
+        val isActive = safeBool("is_active", true)
+        val createdAt = parseSupabaseTimestampMillis(json.get("created_at"))
+
+        return Usuario(
+            id = safeLong("id", 0L),
+            usuario = username,
+            contrasena = password,
+            persona_id = safeLongOrNull("persona_id"),
+            email = email,
+            avatar = avatar,
+            isActive = isActive,
+            createdAt = createdAt
+        )
+    }
+
     private suspend fun <T> fetchListOrThrow(path: String, clazz: Class<Array<T>>): List<T> = withContext(Dispatchers.IO) {
         val request = buildGetRequest(path)
         client.newCall(request).execute().use { resp ->
@@ -1336,7 +1422,31 @@ object SupabaseClient {
     }
 
     suspend fun fetchPersonas(): List<Persona> = fetchList("personas", Array<Persona>::class.java)
-    suspend fun fetchUsuarios(): List<Usuario> = fetchList("usuarios", Array<Usuario>::class.java)
+    suspend fun fetchUsuarios(): List<Usuario> = withContext(Dispatchers.IO) {
+        try {
+            val path = "usuarios"
+            client.newCall(buildGetRequest(path)).execute().use { resp ->
+                val body = resp.body?.string()
+                if (!resp.isSuccessful || body.isNullOrEmpty()) {
+                    android.util.Log.w("SupabaseClient", "GET $path failed: ${resp.code} body=$body")
+                    return@withContext emptyList()
+                }
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                val list = mutableListOf<Usuario>()
+                jsonArray.forEach { elem ->
+                    try {
+                        list.add(parseUsuarioFromJson(elem.asJsonObject))
+                    } catch (e: Exception) {
+                        android.util.Log.w("SupabaseClient", "Failed parsing usuario from JSON element", e)
+                    }
+                }
+                return@withContext list
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("SupabaseClient", "fetchUsuarios exception: ${e.message}", e)
+            emptyList()
+        }
+    }
     // Fetch a single Usuario by username using Supabase filter (case-sensitive on DB side).
     // We perform a case-insensitive match in the client by filtering the returned result.
     suspend fun fetchUsuarioByUsername(username: String): Usuario? = withContext(Dispatchers.IO) {
@@ -1373,8 +1483,14 @@ object SupabaseClient {
                 android.util.Log.d("SupabaseClient", "GET $pathIlike code=${resp.code} body_len=${body?.length ?: 0}")
                 if (resp.isSuccessful && !body.isNullOrEmpty()) {
                     try {
-                        val arr = gson.fromJson(body, Array<Usuario>::class.java)
-                        val list = arr?.toList() ?: emptyList()
+                        val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                        val list = jsonArray.mapNotNull { elem ->
+                            try {
+                                parseUsuarioFromJson(elem.asJsonObject)
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
                         val targetNorm = normalizeForCompare(username)
                         val found = list.firstOrNull { u -> normalizeForCompare(u.usuario) == targetNorm }
                         if (found != null) {
@@ -1397,8 +1513,14 @@ object SupabaseClient {
                     android.util.Log.d("SupabaseClient", "GET $pathEq code=${resp2.code} body_len=${body2?.length ?: 0}")
                     if (resp2.isSuccessful && !body2.isNullOrEmpty()) {
                         try {
-                            val arr2 = gson.fromJson(body2, Array<Usuario>::class.java)
-                            val list2 = arr2?.toList() ?: emptyList()
+                            val jsonArray2 = com.google.gson.JsonParser.parseString(body2).asJsonArray
+                            val list2 = jsonArray2.mapNotNull { elem ->
+                                try {
+                                    parseUsuarioFromJson(elem.asJsonObject)
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            }
                             val targetNorm = normalizeForCompare(username)
                             val found2 = list2.firstOrNull { u -> normalizeForCompare(u.usuario) == targetNorm }
                             if (found2 != null) {
@@ -1444,8 +1566,9 @@ object SupabaseClient {
                     return@use null
                 }
                 try {
-                    val arr = gson.fromJson(body, Array<Usuario>::class.java)
-                    arr?.firstOrNull()
+                    val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                    val obj = jsonArray.firstOrNull()?.asJsonObject ?: return@use null
+                    parseUsuarioFromJson(obj)
                 } catch (parse: Exception) {
                     android.util.Log.w("SupabaseClient", "fetchUsuarioById parse error for id=$userId", parse)
                     null
@@ -1464,8 +1587,40 @@ object SupabaseClient {
 
 
     suspend fun isUserAdmin(userId: Long): Boolean = withContext(Dispatchers.IO) {
-        val user = fetchUsuarioById(userId)
-        return@withContext user?.isAdmin == true
+        try {
+            val url = "$baseUrl/rest/v1/usuarios?id=eq.$userId&select=rol_id,roles(nombre,nivel)"
+            val key = effectiveApiKey()
+
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+
+                val body = response.body?.string() ?: return@withContext false
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+
+                if (jsonArray.size() > 0) {
+                    val user = jsonArray[0].asJsonObject
+                    val roles = user.getAsJsonObject("roles")
+                    if (roles != null) {
+                        val nombre = roles.get("nombre")?.asString
+                        val nivel = roles.get("nivel")?.asFloat ?: 0f
+                        return@withContext nombre == "admin" || nivel >= 2.0f
+                    }
+                }
+
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error checking admin status for user $userId", e)
+            false
+        }
     }
 
     suspend fun getUserIdFromUsername(username: String): Long? {
@@ -1640,21 +1795,20 @@ object SupabaseClient {
                     val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
                     val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
 
-                    repaired.add(
-                        VideoData(
-                            id = id,
-                            username = username,
-                            description = description,
-                            title = title,
-                            videoUriString = videoUriString,
-                            localFilePath = localFilePath,
-                            timestamp = timestamp,
-                            isPaid = isPaid,
-                            thumbnailUri = thumbnailUri,
-                            price = price,
-                            courseId = courseId
-                        )
+                    val v = VideoData(
+                        id = id,
+                        description = description,
+                        title = title,
+                        videoUriString = videoUriString,
+                        localFilePath = localFilePath,
+                        timestamp = timestamp,
+                        isPaid = isPaid,
+                        thumbnailUri = thumbnailUri,
+                        price = price,
+                        courseId = courseId
                     )
+                    v.username = username
+                    repaired.add(v)
                 } catch (t: Exception) {
                     Log.w("SupabaseClient", "Failed to parse video element", t)
                 }
@@ -1720,21 +1874,20 @@ object SupabaseClient {
                             val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
                             val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
 
-                            repaired.add(
-                                VideoData(
-                                    id = id,
-                                    username = username,
-                                    description = description,
-                                    title = title,
-                                    videoUriString = videoUriString,
-                                    localFilePath = localFilePath,
-                                    timestamp = timestamp,
-                                    isPaid = isPaid,
-                                    thumbnailUri = thumbnailUri,
-                                    price = price,
-                                    courseId = courseId
-                                )
+                            val v = VideoData(
+                                id = id,
+                                description = description,
+                                title = title,
+                                videoUriString = videoUriString,
+                                localFilePath = localFilePath,
+                                timestamp = timestamp,
+                                isPaid = isPaid,
+                                thumbnailUri = thumbnailUri,
+                                price = price,
+                                courseId = courseId
                             )
+                            v.username = username
+                            repaired.add(v)
                         } catch (t: Exception) {
                             Log.w("SupabaseClient", "Failed to parse video element", t)
                         }
@@ -1761,7 +1914,7 @@ object SupabaseClient {
                 if (courseIds.isNotEmpty()) {
                     val videos = fetchVideosByCourseIds(courseIds)
                     // Manually set the username since it's not in the video table
-                    return@withContext videos.map { it.copy(username = username) }
+                    return@withContext videos.map { v -> v.copy().apply { this.username = username } }
                 }
             }
             
@@ -2400,7 +2553,7 @@ object SupabaseClient {
                 jsonArray.forEach { element ->
                     val item = parseContentItemFromJson(element.asJsonObject)
                     items.add(item)
-                    Log.d("SupabaseClient", "📦 Parsed ContentItem: id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, name='${item.name}', uri='${item.uriString.take(50)}...', type=${item.contentType}")
+                    Log.d("SupabaseClient", "📦 Parsed ContentItem: id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, title='${item.title}', body='${item.body.take(50)}...', type=${item.contentType}")
                 }
                 
                 // Return ALL items for the topic - don't filter by taskId here
@@ -2415,7 +2568,7 @@ object SupabaseClient {
         }
     }
     
-    // Manual parser for ContentItem to ensure 'body' maps to 'uriString' correctly
+    // Manual parser for ContentItem to ensure JSON fields map safely
     // Handles null JSON values safely
     private fun parseContentItemFromJson(json: com.google.gson.JsonObject): ContentItem {
         // Helper function to safely get string from JSON, handling nulls
@@ -2466,8 +2619,8 @@ object SupabaseClient {
             id = safeGetLong("id", 0),
             topicId = safeGetLong("topic_id", 0),
             taskId = safeGetLongOrNull("task_id"),
-            name = safeGetString("title"),
-            uriString = safeGetString("body") ?: "",  // Explicitly map 'body' to uriString
+            title = safeGetString("title"),
+            body = safeGetString("body") ?: "",
             contentType = safeGetString("content_type") ?: "",
             orderIndex = safeGetInt("order_index", 0),
             creator_usuario_id = safeGetLongOrNull("creator_usuario_id"),
@@ -2495,7 +2648,7 @@ object SupabaseClient {
                 jsonArray.forEach { element ->
                     val item = parseContentItemFromJson(element.asJsonObject)
                     items.add(item)
-                    Log.d("SupabaseClient", "📋 DEBUG item: id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, name='${item.name}'")
+                    Log.d("SupabaseClient", "📋 DEBUG item: id=${item.id}, topicId=${item.topicId}, taskId=${item.taskId}, title='${item.title}'")
                 }
                 return@withContext items
             }
@@ -2528,7 +2681,7 @@ object SupabaseClient {
                 jsonArray.forEach { element ->
                     val item = parseContentItemFromJson(element.asJsonObject)
                     items.add(item)
-                    Log.d("SupabaseClient", "📦 Parsed ContentItem: id=${item.id}, name=${item.name}, uriString='${item.uriString}', type=${item.contentType}")
+                    Log.d("SupabaseClient", "📦 Parsed ContentItem: id=${item.id}, title=${item.title}, body='${item.body}', type=${item.contentType}")
                 }
                 
                 Log.d("SupabaseClient", "fetchContentItemsByTaskId: Found ${items.size} items for taskId=$taskId")
@@ -2808,12 +2961,27 @@ object SupabaseClient {
      */
     suspend fun fetchUsuarioWithRoleByUsername(username: String): Pair<Usuario?, Rol?> = withContext(Dispatchers.IO) {
         val user = fetchUsuarioByUsername(username)
-        if (user != null && user.rol_id != null) {
-            val rol = fetchRolById(user.rol_id)
-            return@withContext Pair(user, rol)
-        } else {
-            return@withContext Pair(user, null)
+        if (user == null) return@withContext Pair(null, null)
+
+        val roleId = try {
+            val rows = executeRawQuery("SELECT rol_id FROM usuarios_roles WHERE usuario_id = ${user.id}")
+            val value = rows.firstOrNull()?.get("rol_id")
+            when (value) {
+                is Number -> value.toLong()
+                is String -> value.toLongOrNull()
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
         }
+
+        val rol = try {
+            roleId?.let { fetchRolById(it) }
+        } catch (_: Exception) {
+            null
+        }
+
+        return@withContext Pair(user, rol)
     }
 
     /**
@@ -2986,7 +3154,6 @@ object SupabaseClient {
                                                 
                                                 val video = VideoData(
                                                     id = id,
-                                                    username = uName,
                                                     description = description,
                                                     title = title,
                                                     videoUriString = videoUriString,
@@ -2996,7 +3163,9 @@ object SupabaseClient {
                                                     thumbnailUri = thumbnailUri,
                                                     price = price,
                                                     courseId = courseId
-                                                )
+                                                ).apply {
+                                                    this.username = uName
+                                                }
                                                 results.add(video)
                                             } catch (e: Exception) {
                                                 Log.e("SupabaseClient", "Error parsing video in username search", e)
@@ -3071,7 +3240,6 @@ object SupabaseClient {
 
                         val video = VideoData(
                             id = id,
-                            username = username,
                             description = description,
                             title = title,
                             videoUriString = videoUriString,
@@ -3081,7 +3249,9 @@ object SupabaseClient {
                             thumbnailUri = thumbnailUri,
                             price = price,
                             courseId = courseId
-                        )
+                        ).apply {
+                            this.username = username
+                        }
                         results.add(video)
                     } catch (e: Exception) {
                         Log.w("SupabaseClient", "Failed to parse video in search results", e)
@@ -3096,10 +3266,81 @@ object SupabaseClient {
     }
 
     suspend fun fetchVideosPaginatedOrThrow(offset: Int, limit: Int): Pair<List<VideoData>, Int> = withContext(Dispatchers.IO) {
-        val path = "videos?offset=$offset&limit=$limit&order=timestamp.desc"
-        var videos = fetchListOrThrow(path, Array<VideoData>::class.java).toList()
+        // Use embedding to fetch username in a single request: video -> course -> user
+        // Syntax: videos?select=*,courses(usuarios(username))
+        // Note: We need to handle the mapping manually since Gson won't flatten the nested object
+        val path = "videos?select=*,courses(usuarios(username))&offset=$offset&limit=$limit&order=timestamp.desc"
         
-        // Get total count
+        val request = buildGetRequest(path)
+        val videos = mutableListOf<VideoData>()
+        
+        try {
+            client.newCall(request).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string()
+                    if (!body.isNullOrEmpty()) {
+                        val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                        for (element in jsonArray) {
+                            try {
+                                val obj = element.asJsonObject
+                                
+                                // Extract basic fields
+                                val id = obj.get("id")?.takeIf { !it.isJsonNull }?.asLong ?: 0L
+                                val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                                
+                                // Extract nested username
+                                var username = "unknown"
+                                if (obj.has("courses") && !obj.get("courses").isJsonNull) {
+                                    val courseObj = obj.get("courses").asJsonObject
+                                    if (courseObj.has("usuarios") && !courseObj.get("usuarios").isJsonNull) {
+                                        val userObj = courseObj.get("usuarios").asJsonObject
+                                        if (userObj.has("username") && !userObj.get("username").isJsonNull) {
+                                            username = userObj.get("username").asString
+                                        }
+                                    }
+                                }
+                                
+                                val videoUriString = when {
+                                    obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
+                                    obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
+                                    obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
+                                    else -> null
+                                }
+                                
+                                val localFilePath = obj.get("local_file_path")?.takeIf { !it.isJsonNull }?.asString
+                                val thumbnailUri = obj.get("thumbnail_uri")?.takeIf { !it.isJsonNull }?.asString
+                                val timestamp = obj.get("timestamp")?.takeIf { !it.isJsonNull }?.asLong ?: System.currentTimeMillis()
+                                val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                                val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
+
+                                val v = VideoData(
+                                    id = id,
+                                    description = description,
+                                    title = title,
+                                    videoUriString = videoUriString,
+                                    localFilePath = localFilePath,
+                                    timestamp = timestamp,
+                                    isPaid = isPaid,
+                                    thumbnailUri = thumbnailUri,
+                                    price = price,
+                                    courseId = courseId
+                                )
+                                v.username = username
+                                videos.add(v)
+                            } catch (e: Exception) {
+                                Log.e("SupabaseClient", "Error parsing video with user", e)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+             Log.e("SupabaseClient", "Error fetching videos with users", e)
+        }
+        
+        // Get total count (separate request still needed for count)
         val countPath = "videos?select=count"
         val countRequest = buildGetRequest(countPath)
         var totalCount = videos.size
@@ -4298,8 +4539,22 @@ object SupabaseClient {
                         usuarioId = obj.get("usuario_id")?.asLong ?: 0,
                         comment = obj.get("comment")?.asString ?: "",
                         parentId = if (obj.has("parent_id") && !obj.get("parent_id").isJsonNull) obj.get("parent_id").asLong else null,
-                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
-                            obj.get("created_at").asString else null
+                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) {
+                            val raw = obj.get("created_at").asString
+                            try {
+                                java.time.OffsetDateTime.parse(raw, java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                                    .toInstant()
+                                    .toEpochMilli()
+                            } catch (_: Exception) {
+                                try {
+                                    obj.get("created_at").asLong
+                                } catch (_: Exception) {
+                                    System.currentTimeMillis()
+                                }
+                            }
+                        } else {
+                            System.currentTimeMillis()
+                        }
                     )
                 }
             }
@@ -4400,8 +4655,22 @@ object SupabaseClient {
                         usuarioId = obj.get("usuario_id")?.asLong ?: 0,
                         comment = obj.get("comment")?.asString ?: "",
                         parentId = if (obj.has("parent_id") && !obj.get("parent_id").isJsonNull) obj.get("parent_id").asLong else null,
-                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
-                            obj.get("created_at").asString else null
+                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) {
+                            val raw = obj.get("created_at").asString
+                            try {
+                                java.time.OffsetDateTime.parse(raw, java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                                    .toInstant()
+                                    .toEpochMilli()
+                            } catch (_: Exception) {
+                                try {
+                                    obj.get("created_at").asLong
+                                } catch (_: Exception) {
+                                    System.currentTimeMillis()
+                                }
+                            }
+                        } else {
+                            System.currentTimeMillis()
+                        }
                     )
                 }
             }

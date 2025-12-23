@@ -29,10 +29,10 @@ interface RecursoDao {
     @Query("SELECT * FROM recursos WHERE id = :id")
     suspend fun getRecursoById(id: Long): Recurso?
     
-    @Query("SELECT * FROM recursos WHERE padreId IS NULL ORDER BY orden ASC")
+    @Query("SELECT * FROM recursos WHERE padre_id IS NULL ORDER BY orden ASC")
     suspend fun getRecursosPrincipales(): List<Recurso>
     
-    @Query("SELECT * FROM recursos WHERE padreId = :padreId ORDER BY orden ASC")
+    @Query("SELECT * FROM recursos WHERE padre_id = :padreId ORDER BY orden ASC")
     suspend fun getSubRecursos(padreId: Long): List<Recurso>
     
     @Query("SELECT * FROM recursos WHERE icono = :icono")

@@ -23,5 +23,5 @@ data class Persona(
     val fechaNacimiento: String? = null,
     @ColumnInfo(name = "created_at")
     @SerializedName("created_at")
-    val createdAt: String? = null
+    val createdAt: Long = System.currentTimeMillis()
 )

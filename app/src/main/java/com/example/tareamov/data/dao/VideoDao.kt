@@ -18,7 +18,13 @@ interface VideoDao {
     @Query("SELECT * FROM videos WHERE id = :videoId")
     suspend fun getVideoById(videoId: Long): VideoData?
 
-    @Query("SELECT * FROM videos WHERE username = :username ORDER BY timestamp DESC")
+    @Query("""
+        SELECT v.* FROM videos v
+        INNER JOIN courses c ON v.course_id = c.id
+        INNER JOIN usuarios u ON c.creator_user_id = u.id
+        WHERE u.username = :username
+        ORDER BY v.timestamp DESC
+    """)
     suspend fun getVideosByUsername(username: String): List<VideoData>
 
     @Query("SELECT * FROM videos ORDER BY timestamp DESC")
@@ -27,10 +33,22 @@ interface VideoDao {
     @Query("DELETE FROM videos WHERE id = :videoId")
     suspend fun deleteVideo(videoId: Long)
 
-    @Query("DELETE FROM videos WHERE username = :username")
+    @Query("""
+        DELETE FROM videos 
+        WHERE course_id IN (
+            SELECT c.id FROM courses c 
+            INNER JOIN usuarios u ON c.creator_user_id = u.id 
+            WHERE u.username = :username
+        )
+    """)
     suspend fun deleteVideosByUsername(username: String)
 
-    @Query("SELECT COUNT(*) FROM videos WHERE username = :username")
+    @Query("""
+        SELECT COUNT(v.id) FROM videos v
+        INNER JOIN courses c ON v.course_id = c.id
+        INNER JOIN usuarios u ON c.creator_user_id = u.id
+        WHERE u.username = :username
+    """)
     suspend fun getVideoCountByUsername(username: String): Int
 
     @Query("SELECT COUNT(*) FROM videos")

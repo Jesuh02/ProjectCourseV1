@@ -135,7 +135,7 @@ class EditProfileFragment : Fragment() {
                 if (currentUser != null) {
                     // Get persona data
                     currentPersona = withContext(Dispatchers.IO) {
-                        db.personaDao().getPersonaById(currentUser!!.persona_id)
+                        currentUser!!.persona_id?.let { db.personaDao().getPersonaById(it) }
                     }
 
                     // Update UI with current data
@@ -295,20 +295,7 @@ class EditProfileFragment : Fragment() {
                         // Also try to update remote Usuario in Supabase with avatar URL
                         try {
                             if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                                val remoteUsuario = com.example.tareamov.data.entity.Usuario(
-                                    id = currentUser!!.id,
-                                    usuario = newUsername,
-                                    contrasena = currentUser!!.contrasena,
-                                    persona_id = currentUser!!.persona_id,
-                                    rol_id = currentUser!!.rol_id,
-                                    email = currentUser!!.email,
-                                    avatar = avatarUrl, // Include R2 avatar URL
-                                    isActive = currentUser!!.isActive,
-                                    emailVerified = currentUser!!.emailVerified,
-                                    lastLogin = currentUser!!.lastLogin,
-                                    createdAt = currentUser!!.createdAt
-                                )
-                                val updatedU = com.example.tareamov.service.SupabaseClient.updateUsuario(remoteUsuario)
+                                val updatedU = com.example.tareamov.service.SupabaseClient.updateUsuario(updatedUsuario)
                                 Log.d("EditProfileFragment", "Supabase updateUsuario result: $updatedU, avatar: $avatarUrl")
                             }
                         } catch (e: Exception) {

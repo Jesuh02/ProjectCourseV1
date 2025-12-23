@@ -6,6 +6,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.viewModelScope
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Persona
+import com.example.tareamov.data.entity.Rol
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.repository.PersonaRepository
 import com.example.tareamov.repository.UsuarioRepository
@@ -51,10 +52,15 @@ class PersonaViewModel(application: Application) : AndroidViewModel(application)
         val usuario = Usuario(
             usuario = username,
             contrasena = password, // store plain here; UsuarioRepository will hash before insert
-            persona_id = personaId,
-            rol_id = 1 // Default to estudiante role (ID 1)
+            persona_id = personaId
         )
-        usuarioRepository.insert(usuario)
+        val userId = usuarioRepository.insert(usuario)
+
+        val database = AppDatabase.getDatabase(getApplication())
+        val defaultRolId = database.rolDao().getDefaultRol()?.id
+            ?: database.rolDao().getRolByNombre(Rol.NOMBRE_USUARIO)?.id
+            ?: 1L
+        usuarioRepository.updateUserRolId(userId, defaultRolId)
 
     }
 

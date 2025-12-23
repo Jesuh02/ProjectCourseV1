@@ -296,7 +296,7 @@ class UserProfileViewFragment : Fragment() {
         val searchResults = searchSource.filter { content ->
             content.title.contains(currentSearchQuery, ignoreCase = true) ||
             content.description.contains(currentSearchQuery, ignoreCase = true) ||
-            content.username.contains(currentSearchQuery, ignoreCase = true)
+            (content.username ?: "").contains(currentSearchQuery, ignoreCase = true)
         }
 
         Log.d("UserProfileView", "Search performed for '$currentSearchQuery' in ${currentFilter} - Found ${searchResults.size} results")
@@ -373,8 +373,13 @@ class UserProfileViewFragment : Fragment() {
                     
                     // We need to resolve creatorUserId first
                     viewLifecycleOwner.lifecycleScope.launch {
+                        val creatorUsername = course.username
+                        if (creatorUsername.isNullOrBlank()) {
+                            showDarkToast("Error al procesar suscripción: Usuario no encontrado")
+                            return@launch
+                        }
                         val creatorId = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(creatorUsername)
                         }
                         if (creatorId != null) {
                             val updatedCourse = courseEntity.copy(creatorUserId = creatorId)
@@ -404,8 +409,13 @@ class UserProfileViewFragment : Fragment() {
                     
                     // We need to resolve creatorUserId first
                     viewLifecycleOwner.lifecycleScope.launch {
+                        val creatorUsername = course.username
+                        if (creatorUsername.isNullOrBlank()) {
+                            showDarkToast("Error al procesar inscripción: Usuario no encontrado")
+                            return@launch
+                        }
                         val creatorId = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(creatorUsername)
                         }
                         if (creatorId != null) {
                             val updatedCourse = courseEntity.copy(creatorUserId = creatorId)
@@ -783,30 +793,42 @@ class UserProfileViewFragment : Fragment() {
                 // Normalize and map remote Course entities to VideoData
                 // Use map instead of loop for better performance
                 val normalizedCourses = userCoursesList.map { course ->
-                    // We can optimize this by passing the username directly if we know it matches
-                    // or fetching it only if needed. For now, let's assume the username passed to the function is correct
-                    // to avoid an extra network call per course.
-                    val v = VideoData(
+                    val thumb = normalizePath(course.thumbnailUri)
+                    val local = normalizePath(course.localFilePath)
+                    VideoData(
                         id = course.id,
-                        username = username, // Use the username we already have
                         description = course.description ?: "",
                         title = course.title ?: "",
                         videoUriString = course.videoUri ?: "",
-                        localFilePath = course.localFilePath,
+                        localFilePath = local,
                         timestamp = course.timestamp,
                         isPaid = course.isPremium,
-                        thumbnailUri = course.thumbnailUri,
+                        thumbnailUri = thumb,
                         price = if (course.price > 0.0) course.price else null
-                    )
-                    val thumb = normalizePath(v.thumbnailUri)
-                    val local = normalizePath(v.localFilePath)
-                    v.copy(thumbnailUri = thumb, localFilePath = local)
+                    ).apply {
+                        this.username = username
+                    }
                 }
 
                 val normalizedVideos = userVideosList.map { video ->
                     val thumb = normalizePath(video.thumbnailUri)
                     val local = normalizePath(video.localFilePath)
-                    video.copy(thumbnailUri = thumb, localFilePath = local)
+                    VideoData(
+                        id = video.id,
+                        description = video.description,
+                        title = video.title,
+                        videoUriString = video.videoUriString,
+                        localFilePath = local,
+                        timestamp = video.timestamp,
+                        isPaid = video.isPaid,
+                        thumbnailUri = thumb,
+                        price = video.price,
+                        courseId = video.courseId,
+                        remoteId = video.remoteId,
+                        createdAt = video.createdAt
+                    ).apply {
+                        this.username = video.username
+                    }
                 }
 
                 // Replace local lists with remote-normalized lists (prefer remote freshness)
@@ -1122,7 +1144,9 @@ class UserProfileViewFragment : Fragment() {
                         com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
                     }
                     val creatorUserId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                        val creatorUsername = course.username
+                        if (creatorUsername.isNullOrBlank()) return@withContext null
+                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(creatorUsername)
                     }
                     currentUserId != null && currentUserId == creatorUserId
                 }
@@ -1265,7 +1289,9 @@ class UserProfileViewFragment : Fragment() {
                     com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
                 }
                 val creatorUserId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                    val creatorUsername = course.username
+                    if (creatorUsername.isNullOrBlank()) return@withContext null
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(creatorUsername)
                 }
                 currentUserId != null && currentUserId == creatorUserId
             } else {

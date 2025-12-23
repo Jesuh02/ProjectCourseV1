@@ -8,25 +8,25 @@ import com.example.tareamov.data.entity.Subscription
 
 @Dao
 interface SubscriptionDao {
-    @Query("SELECT EXISTS(SELECT 1 FROM subscriptions WHERE subscriberId = :subscriberId AND creatorId = :creatorId)")
+    @Query("SELECT EXISTS(SELECT 1 FROM subscriptions WHERE subscriber_id = :subscriberId AND creator_id = :creatorId)")
     suspend fun isSubscribed(subscriberId: Long, creatorId: Long): Boolean
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSubscription(subscription: Subscription)
 
-    @Query("DELETE FROM subscriptions WHERE subscriberId = :subscriberId AND creatorId = :creatorId")
+    @Query("DELETE FROM subscriptions WHERE subscriber_id = :subscriberId AND creator_id = :creatorId")
     suspend fun deleteSubscription(subscriberId: Long, creatorId: Long)
 
-    @Query("SELECT COUNT(*) FROM subscriptions WHERE creatorId = :creatorId")
+    @Query("SELECT COUNT(*) FROM subscriptions WHERE creator_id = :creatorId")
     suspend fun getSubscriptionCountForCreator(creatorId: Long): Int
 
-    @Query("SELECT COUNT(*) FROM subscriptions WHERE subscriberId = :subscriberId")
+    @Query("SELECT COUNT(*) FROM subscriptions WHERE subscriber_id = :subscriberId")
     suspend fun getSubscriptionCountForSubscriber(subscriberId: Long): Int
 
-    @Query("SELECT * FROM subscriptions WHERE subscriberId = :subscriberId")
+    @Query("SELECT * FROM subscriptions WHERE subscriber_id = :subscriberId")
     suspend fun getSubscriptionsBySubscriber(subscriberId: Long): List<Subscription>
 
-    @Query("SELECT * FROM subscriptions WHERE creatorId = :creatorId")
+    @Query("SELECT * FROM subscriptions WHERE creator_id = :creatorId")
     fun getSubscribersByCreator(creatorId: Long): List<Subscription>
 
     // Add this method to get all subscriptions

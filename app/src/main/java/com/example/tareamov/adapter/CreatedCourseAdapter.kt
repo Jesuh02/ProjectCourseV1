@@ -514,14 +514,23 @@ class CreatedCourseAdapter(
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val db = com.example.tareamov.data.AppDatabase.getDatabase(context)
+                    val creatorUsername = course.username
+                    if (creatorUsername.isNullOrBlank()) {
+                        withContext(Dispatchers.Main) {
+                            subscriberCountTextView.text = "0 suscriptores"
+                            subscribeButton.text = "Suscribirse"
+                            subscribeButton.isEnabled = false
+                        }
+                        return@launch
+                    }
                     
                     // Resolve creator ID from username
                     // Try local DB first, then Supabase
-                    var creatorUser = db.usuarioDao().getUsuarioByUsername(course.username)
+                    var creatorUser = db.usuarioDao().getUsuarioByUsername(creatorUsername)
                     var creatorId = creatorUser?.id ?: -1L
                     
                     if (creatorId == -1L) {
-                         creatorId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username) ?: -1L
+                         creatorId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(creatorUsername) ?: -1L
                     }
                     
                     if (creatorId != -1L) {

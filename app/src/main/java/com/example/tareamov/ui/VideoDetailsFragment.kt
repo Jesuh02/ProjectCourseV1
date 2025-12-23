@@ -602,7 +602,6 @@ class VideoDetailsFragment : Fragment() {
                 // NO incluir username - se obtiene desde course_id en el backend/app
                 val videoData = VideoData(
                     id = nextVideoId,
-                    username = "", // NO se envía a Supabase, se deriva desde course_id
                     description = description,
                     title = title,
                     videoUriString = finalVideoUri, // Use R2 URL or local URI

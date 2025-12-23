@@ -63,6 +63,7 @@ import com.example.tareamov.viewmodel.VideoHomeViewModel
 class VideoHomeFragment : Fragment() {
     private lateinit var viewModel: VideoHomeViewModel
     private lateinit var profileAvatars: CircleImageView
+    private lateinit var moreOptionsButton: ImageButton
     private lateinit var videoManager: VideoManager
     private lateinit var sessionManager: SessionManager // Add SessionManager instance
     private lateinit var skeletonContainer: ShimmerFrameLayout // Skeleton container
@@ -74,8 +75,6 @@ class VideoHomeFragment : Fragment() {
     private lateinit var profileIconImageView: ImageView
     private lateinit var databaseIconImageView: ImageView // New database icon for admins
     private lateinit var aiAssistantIconImageView: ImageView // New AI Assistant icon
-    private lateinit var evaluativeReinforcementIconImageView: ImageView // New Evaluative Reinforcement icon
-    private lateinit var moreOptionsButton: ImageButton // More options button (3 dots)
     private var notificationBadge: TextView? = null // Badge de notificaciones
 
     private var isLiked = false
@@ -196,6 +195,7 @@ class VideoHomeFragment : Fragment() {
 
         // Initialize views
         profileAvatars = view.findViewById(R.id.profileAvatars)
+        moreOptionsButton = view.findViewById(R.id.moreOptionsButton)
         skeletonContainer = view.findViewById(R.id.skeletonContainer)
 
         // Initialize bottom navigation icons
@@ -205,8 +205,6 @@ class VideoHomeFragment : Fragment() {
         profileIconImageView = view.findViewById(R.id.profileIconImageView)
         databaseIconImageView = view.findViewById(R.id.databaseIconImageView) // Initialize new icon
         aiAssistantIconImageView = view.findViewById(R.id.aiAssistantIconImageView) // Initialize AI icon
-        evaluativeReinforcementIconImageView = view.findViewById(R.id.evaluativeReinforcementIconImageView) // Initialize Evaluative Reinforcement icon
-        moreOptionsButton = view.findViewById(R.id.moreOptionsButton) // Initialize more options button
         notificationBadge = view.findViewById(R.id.notificationBadge) // Badge de notificaciones
 
         // Setup initial colors for bottom navigation icons
@@ -217,11 +215,10 @@ class VideoHomeFragment : Fragment() {
 
         // Setup search functionality
         setupSearchBar(view)
-        
-        // Setup More Options Button
+
         setupMoreOptionsButton()
 
-        // Setup AI Assistant Icon with animation and click listener (hidden from main bar but kept for reference or if logic changes)
+        // Setup AI Assistant Icon with animation and click listener
         aiAssistantIconImageView.setOnClickListener {
             try {
                 findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
@@ -250,42 +247,6 @@ class VideoHomeFragment : Fragment() {
         val animatorSet = android.animation.AnimatorSet()
         animatorSet.playTogether(scaleX, scaleY, rotate)
         animatorSet.start()
-
-        // Professional Animation for Evaluative Reinforcement Icon (Pulse/Heartbeat)
-        val pulseScaleX = ObjectAnimator.ofFloat(evaluativeReinforcementIconImageView, "scaleX", 1f, 1.2f, 1f)
-        val pulseScaleY = ObjectAnimator.ofFloat(evaluativeReinforcementIconImageView, "scaleY", 1f, 1.2f, 1f)
-        
-        pulseScaleX.repeatCount = ObjectAnimator.INFINITE
-        pulseScaleY.repeatCount = ObjectAnimator.INFINITE
-        
-        pulseScaleX.duration = 2000
-        pulseScaleY.duration = 2000
-        
-        pulseScaleX.interpolator = AccelerateDecelerateInterpolator()
-        pulseScaleY.interpolator = AccelerateDecelerateInterpolator()
-        
-        val pulseAnimatorSet = android.animation.AnimatorSet()
-        pulseAnimatorSet.playTogether(pulseScaleX, pulseScaleY)
-        pulseAnimatorSet.start()
-
-        // Evaluative Reinforcement Click Listener — navigate with zero-duration animations for instant transition
-        evaluativeReinforcementIconImageView.setOnClickListener {
-            try {
-                val opts = androidx.navigation.navOptions {
-                    anim {
-                        enter = 0
-                        exit = 0
-                        popEnter = 0
-                        popExit = 0
-                    }
-                }
-                findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment, null, opts)
-            } catch (e: Exception) {
-                Log.e("VideoHomeFragment", "Error navigating to EvaluativeReinforcementFragment", e)
-                // Fallback: try plain navigate without options
-                try { findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment) } catch (_: Exception) { }
-            }
-        }
 
         // Initial setup for database icon (will be updated by updateAdminUi)
         databaseIconImageView.visibility = View.GONE
@@ -388,25 +349,38 @@ class VideoHomeFragment : Fragment() {
 
         // Check if the current user is admin
         val sess = SessionManager.getInstance(requireContext())
-        
+
         // Function to update admin UI elements
         fun updateAdminUi(isAdmin: Boolean) {
-            // Check if user has role ID 2 (for AI Assistant, Evaluative Reinforcement, and Database)
-            val hasRole2 = sess.hasRole(2)
-            
-            // Hide individual icons from top nav as they are now in the 3-dot menu
-            aiAssistantIconImageView.visibility = View.GONE
-            evaluativeReinforcementIconImageView.visibility = View.GONE
-            databaseIconImageView.visibility = View.GONE
-            
-            // Show more options button always (it contains tools for various roles)
-            moreOptionsButton.visibility = View.VISIBLE
+            // New Logic: Check if user has explicit role ID 2 (AiAssistant access)
+            val hasAiRole = sess.hasRole(2)
 
-            // Handle admin-specific elements (separate from role 2)
-            // Check for Role 3 (Admin) explicitly
-            val hasAdminRole = sess.hasRole(3)
-            
-            if (isAdmin || hasAdminRole) {
+            if (hasAiRole) {
+                // Show AI Assistant icon for Role 2
+                aiAssistantIconImageView.visibility = View.VISIBLE
+                aiAssistantIconImageView.setOnClickListener {
+                    // Navigate to AI Assistant or ChatBot
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
+                }
+            } else {
+                aiAssistantIconImageView.visibility = View.GONE
+            }
+
+            if (isAdmin) {
+                // Admin: Show database icon with animated drawable
+                databaseIconImageView.visibility = View.VISIBLE
+                databaseIconImageView.setImageResource(R.drawable.ic_database_orbit_animated_anim)
+
+                // Start animation automatically
+                val drawable = databaseIconImageView.drawable
+                if (drawable is android.graphics.drawable.AnimatedVectorDrawable) {
+                    drawable.start()
+                }
+
+                databaseIconImageView.setOnClickListener {
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
+                }
+
                 // Admin: Show admin slot and button
                 adminSlot?.visibility = View.VISIBLE
                 goToAdminButton?.visibility = View.VISIBLE
@@ -415,9 +389,9 @@ class VideoHomeFragment : Fragment() {
                     findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
                 }
             } else {
-                // Non-admin: Hide admin elements
+                // Non-admin: Hide elements
+                databaseIconImageView.visibility = View.GONE
                 adminSlot?.visibility = View.GONE
-                goToAdminButton?.visibility = View.GONE
             }
         }
 
@@ -1242,12 +1216,20 @@ class VideoHomeFragment : Fragment() {
                         // Create a new VideoData with the file path
                         return VideoData(
                             id = videoData.id,
-                            username = videoData.username,
                             description = videoData.description,
                             title = videoData.title,
                             videoUriString = "file://$filePath",
-                            timestamp = videoData.timestamp
-                        )
+                            localFilePath = videoData.localFilePath,
+                            timestamp = videoData.timestamp,
+                            isPaid = videoData.isPaid,
+                            thumbnailUri = videoData.thumbnailUri,
+                            price = videoData.price,
+                            courseId = videoData.courseId,
+                            remoteId = videoData.remoteId,
+                            createdAt = videoData.createdAt
+                        ).apply {
+                            this.username = videoData.username
+                        }
                     } else {
                         Log.e("VideoHomeFragment", "File does not exist after conversion: $filePath")
                     }

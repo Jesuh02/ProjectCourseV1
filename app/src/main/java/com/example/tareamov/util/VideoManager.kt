@@ -67,7 +67,7 @@ class VideoManager(private val context: Context) {
                     if (localPath != null) {
                         val updatedVideo = VideoData(
                             id = videoId,
-                            username = videoData.username,
+                            // username removed
                             description = videoData.description,
                             title = videoData.title,
                             videoUriString = uriString,
@@ -75,7 +75,10 @@ class VideoManager(private val context: Context) {
                             timestamp = videoData.timestamp,
                             isPaid = videoData.isPaid,
                             thumbnailUri = videoData.thumbnailUri,
-                            price = videoData.price
+                            price = videoData.price,
+                            courseId = videoData.courseId,
+                            remoteId = videoData.remoteId,
+                            createdAt = videoData.createdAt
                         )
                         videoDao.updateVideo(updatedVideo)
                         updatedVideoData = updatedVideo
@@ -368,7 +371,7 @@ class VideoManager(private val context: Context) {
             val exists = video != null
             Log.d("VideoManager", "Video verification for ID $videoId: exists=$exists")
             if (exists && video != null) {
-                Log.d("VideoManager", "Verified video: title='${video.title}', username='${video.username}', localPath='${video.localFilePath}'")
+                Log.d("VideoManager", "Verified video: title='${video.title}', localPath='${video.localFilePath}'")
             }
             return@withContext exists
         } catch (e: Exception) {

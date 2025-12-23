@@ -14,12 +14,17 @@ interface UsuarioDao {
 
     @Query("""
         SELECT u.* FROM usuarios u 
-        INNER JOIN roles r ON u.rol_id = r.id 
+        INNER JOIN usuarios_roles ur ON u.id = ur.usuario_id
+        INNER JOIN roles r ON ur.rol_id = r.id 
         WHERE r.nombre = :roleName
     """)
     suspend fun getUsuariosByRoleName(roleName: String): List<Usuario>
 
-    @Query("SELECT * FROM usuarios WHERE rol_id = :rolId")
+    @Query("""
+        SELECT u.* FROM usuarios u 
+        INNER JOIN usuarios_roles ur ON u.id = ur.usuario_id 
+        WHERE ur.rol_id = :rolId
+    """)
     suspend fun getUsuariosByRolId(rolId: Long): List<Usuario>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -39,12 +44,17 @@ interface UsuarioDao {
 
     @Query("""
         SELECT COUNT(*) FROM usuarios u 
-        INNER JOIN roles r ON u.rol_id = r.id 
+        INNER JOIN usuarios_roles ur ON u.id = ur.usuario_id
+        INNER JOIN roles r ON ur.rol_id = r.id 
         WHERE r.nombre = :roleName
     """)
     suspend fun getUserCountByRoleName(roleName: String): Int
 
-    @Query("SELECT COUNT(*) FROM usuarios WHERE rol_id = :rolId")
+    @Query("""
+        SELECT COUNT(*) FROM usuarios u
+        INNER JOIN usuarios_roles ur ON u.id = ur.usuario_id
+        WHERE ur.rol_id = :rolId
+    """)
     suspend fun getUserCountByRolId(rolId: Long): Int
 
     @Query("SELECT * FROM usuarios WHERE username = :username LIMIT 1")
@@ -59,23 +69,25 @@ interface UsuarioDao {
     @Query("SELECT * FROM usuarios WHERE email = :email LIMIT 1")
     suspend fun getUsuarioByEmail(email: String): Usuario?
 
-    @Query("UPDATE usuarios SET rol_id = :rolId WHERE id = :userId")
-    suspend fun updateUserRolId(userId: Long, rolId: Long)
+    @Query("INSERT OR REPLACE INTO usuarios_roles (usuario_id, rol_id, asignado_en) VALUES (:userId, :rolId, :timestamp)")
+    suspend fun updateUserRolId(userId: Long, rolId: Long, timestamp: Long = System.currentTimeMillis())
 
     // Method to get user with role information
     @Query("""
-        SELECT u.*, r.nombre as rolNombre, r.nivel as rolNivel 
+        SELECT u.*, ur.rol_id as rol_id, r.nombre as rolNombre, r.nivel as rolNivel 
         FROM usuarios u 
-        INNER JOIN roles r ON u.rol_id = r.id 
+        INNER JOIN usuarios_roles ur ON u.id = ur.usuario_id
+        INNER JOIN roles r ON ur.rol_id = r.id 
         WHERE u.username = :username 
         LIMIT 1
     """)
     suspend fun getUsuarioWithRoleByUsername(username: String): UsuarioWithRole?
 
     @Query("""
-        SELECT u.*, r.nombre as rolNombre, r.nivel as rolNivel 
+        SELECT u.*, ur.rol_id as rol_id, r.nombre as rolNombre, r.nivel as rolNivel 
         FROM usuarios u 
-        INNER JOIN roles r ON u.rol_id = r.id 
+        INNER JOIN usuarios_roles ur ON u.id = ur.usuario_id
+        INNER JOIN roles r ON ur.rol_id = r.id 
         WHERE u.id = :userId 
         LIMIT 1
     """)
@@ -85,7 +97,8 @@ interface UsuarioDao {
     @Deprecated("Use getUsuariosByRoleName instead")
     @Query("""
         SELECT u.* FROM usuarios u 
-        INNER JOIN roles r ON u.rol_id = r.id 
+        INNER JOIN usuarios_roles ur ON u.id = ur.usuario_id
+        INNER JOIN roles r ON ur.rol_id = r.id 
         WHERE r.nombre = :role
     """)
     suspend fun getUsuariosByRole(role: String): List<Usuario>
@@ -93,16 +106,17 @@ interface UsuarioDao {
     @Deprecated("Use getUserCountByRoleName instead")
     @Query("""
         SELECT COUNT(*) FROM usuarios u 
-        INNER JOIN roles r ON u.rol_id = r.id 
+        INNER JOIN usuarios_roles ur ON u.id = ur.usuario_id
+        INNER JOIN roles r ON ur.rol_id = r.id 
         WHERE r.nombre = :role
     """)
     suspend fun getUserCountByRole(role: String): Int
 
     @Deprecated("Use updateUserRolId instead")
     @Query("""
-        UPDATE usuarios SET rol_id = (
-            SELECT id FROM roles WHERE nombre = :role LIMIT 1
-        ) WHERE id = :userId
+        INSERT OR REPLACE INTO usuarios_roles (usuario_id, rol_id, asignado_en) 
+        SELECT :userId, id, 0 
+        FROM roles WHERE nombre = :role LIMIT 1
     """)
     suspend fun updateUserRole(userId: Long, role: String)
 }

@@ -51,7 +51,7 @@ interface CourseDao {
     @Query("DELETE FROM courses WHERE id = :courseId")
     suspend fun deleteCourseById(courseId: Long)
 
-    @Query("UPDATE courses SET enrollmentCount = enrollmentCount + 1 WHERE id = :courseId")
+    @Query("UPDATE courses SET enrollment_count = enrollment_count + 1 WHERE id = :courseId")
     suspend fun incrementEnrollmentCount(courseId: Long)
 
     @Query("UPDATE courses SET rating = :rating WHERE id = :courseId")

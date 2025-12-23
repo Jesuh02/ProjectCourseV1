@@ -717,19 +717,19 @@ class LoginFragment : Fragment() {
                         Log.w(TAG, "Failed to sync persona to Supabase: ${e.message}")
                     }
                     
-                    // Create new user with valid persona_id and rol_id
+                    // Create new user with valid persona_id
                     val username = email.substringBefore("@")
                     val newUser = Usuario(
                         usuario = username,
                         email = email,
                         contrasena = "", // No password for Google users
                         avatar = avatarUrl,
-                        persona_id = personaId, // Use the created persona ID
-                        rol_id = usuarioRole.id // Use the actual role ID from database
+                        persona_id = personaId // Use the created persona ID
                     )
                     
                     // Insert user locally
                     val userId = usuarioDao.insertUsuario(newUser)
+                    usuarioDao.updateUserRolId(userId, usuarioRole.id)
                     existingUser = usuarioDao.getUsuarioById(userId)
                     Log.d(TAG, "Created local user: $username with ID: $userId")
                     
@@ -765,7 +765,7 @@ class LoginFragment : Fragment() {
                         sessionManager.createLoginSession(
                             username = user.usuario,
                             userId = user.id,
-                            personaId = user.persona_id,
+                            personaId = user.persona_id ?: user.id,
                             roleName = "user",
                             avatarUri = user.avatar
                         )
@@ -819,19 +819,6 @@ class LoginFragment : Fragment() {
                 
                 // Buscar usuario local por email de la persona
                 var localUser = withContext(Dispatchers.IO) {
-                    // Primero buscar persona local por email (Wait, email is now in Usuario, but we might have old data or need to check Usuario directly)
-                    // Since email moved to Usuario, we should search in Usuario table.
-                    usuarioDao.getUsuarioByEmail(user.email ?: "") 
-                    // Wait, the 'persona' object passed here is from SupabaseClient.fetchPersonas(). 
-                    // If Supabase schema changed, SupabaseClient needs update too. 
-                    // Assuming SupabaseClient returns a Persona object that still has email for now or we need to fix SupabaseClient too.
-                    // The user asked to modify tables, so Supabase schema WILL change.
-                    // If Supabase schema changes, 'persona' might not have email anymore if it was moved to 'usuario'.
-                    // However, the user said "modifica persona y usuario", implying the backend tables.
-                    // If backend tables change, SupabaseClient.fetchPersonas() will return objects without email if the column is gone.
-                    // But we are in the middle of migration.
-                    // Let's assume for this logic that we are looking for the user by email.
-                    
                     usuarioDao.getUsuarioByEmail(user.email)
                 }
                 
@@ -878,12 +865,12 @@ class LoginFragment : Fragment() {
                             usuario = user.usuario,
                             contrasena = "", // Sin contraseña para usuarios de Google
                             persona_id = personaId,
-                            rol_id = rolId,
                             email = user.email, // Email is now here
                             avatar = avatarUrl ?: user.avatar // Avatar is now here
                         )
                         
                         val newUserId = usuarioDao.insertUsuario(newLocalUser)
+                        usuarioDao.updateUserRolId(newUserId, rolId)
                         Log.d(TAG, "Usuario local creado con id: $newUserId")
                         
                         localUser = usuarioDao.getUsuarioById(newUserId)
@@ -914,7 +901,7 @@ class LoginFragment : Fragment() {
                     sessionManager.createLoginSession(
                         username = currentUser.usuario,
                         userId = currentUser.id,
-                        personaId = currentUser.persona_id,
+                        personaId = currentUser.persona_id ?: currentUser.id,
                         roleName = "user",
                         avatarUri = currentUser.avatar
                     )
@@ -948,7 +935,7 @@ class LoginFragment : Fragment() {
                 val rolDao = db.rolDao()
                 
                 var localUser = withContext(Dispatchers.IO) {
-                    usuarioDao.getUsuarioByEmail(user.email ?: "")
+                    usuarioDao.getUsuarioByEmail(user.email)
                 }
                 
                 if (localUser == null) {
@@ -981,12 +968,12 @@ class LoginFragment : Fragment() {
                             usuario = user.usuario,
                             contrasena = "",
                             persona_id = personaId,
-                            rol_id = rolId,
                             email = user.email,
                             avatar = avatarUrl ?: user.avatar
                         )
                         
                         val newUserId = usuarioDao.insertUsuario(newLocalUser)
+                        usuarioDao.updateUserRolId(newUserId, rolId)
                         localUser = usuarioDao.getUsuarioById(newUserId)
                     }
                 } else {
@@ -1002,7 +989,7 @@ class LoginFragment : Fragment() {
                     sessionManager.createLoginSession(
                         username = currentUser.usuario,
                         userId = currentUser.id,
-                        personaId = currentUser.persona_id,
+                        personaId = currentUser.persona_id ?: currentUser.id,
                         roleName = "user",
                         avatarUri = currentUser.avatar
                     )
@@ -1068,7 +1055,6 @@ class LoginFragment : Fragment() {
                         usuario = username,
                         contrasena = "",
                         persona_id = personaId,
-                        rol_id = rolId,
                         email = email,
                         avatar = avatarUrl
                     )
@@ -1076,6 +1062,7 @@ class LoginFragment : Fragment() {
                     // We should use avatarUrl passed to function.
                     
                     val newUserId = usuarioDao.insertUsuario(newLocalUser)
+                    usuarioDao.updateUserRolId(newUserId, rolId)
                     val localUser = usuarioDao.getUsuarioById(newUserId)
                     
                     // También crear el usuario en Supabase
@@ -1085,7 +1072,6 @@ class LoginFragment : Fragment() {
                             usuario = username,
                             contrasena = "",
                             persona_id = persona.id, // Usar el ID de Supabase para la persona
-                            rol_id = 1, // rol_id por defecto en Supabase
                             email = email,
                             avatar = avatarUrl
                         )
@@ -1100,7 +1086,7 @@ class LoginFragment : Fragment() {
                             sessionManager.createLoginSession(
                                 username = currentUser.usuario,
                                 userId = currentUser.id,
-                                personaId = currentUser.persona_id,
+                                personaId = currentUser.persona_id ?: currentUser.id,
                                 roleName = "user",
                                 avatarUri = currentUser.avatar
                             )

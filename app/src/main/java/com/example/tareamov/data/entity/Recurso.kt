@@ -1,5 +1,6 @@
 package com.example.tareamov.data.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.ForeignKey
@@ -11,11 +12,11 @@ import androidx.room.Index
         ForeignKey(
             entity = Recurso::class,
             parentColumns = ["id"],
-            childColumns = ["padreId"],
+            childColumns = ["padre_id"],
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("padreId")] // Agregar índice para padreId
+    indices = [Index("padre_id")] // Agregar índice para padreId
 )
 data class Recurso(
     @PrimaryKey(autoGenerate = true)
@@ -23,8 +24,11 @@ data class Recurso(
     val nombre: String,           // Nombre del recurso/funcionalidad
     val icono: String,           // Nombre del icono o identificador
     val orden: Int,              // Orden de aparición en el menú
+    @ColumnInfo(name = "padre_id")
     val padreId: Long? = null,   // ID del recurso padre (null = menú principal)
-    val interfaz: String? = null // Nombre de la interfaz/fragment donde aparece
+    val interfaz: String? = null, // Nombre de la interfaz/fragment donde aparece
+    @ColumnInfo(name = "created_at")
+    val createdAt: Long = System.currentTimeMillis()
 ) {
     companion object {
         // Constantes para los iconos que mencionaste

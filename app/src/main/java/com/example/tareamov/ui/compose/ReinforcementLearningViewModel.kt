@@ -116,13 +116,6 @@ class ReinforcementLearningViewModel(
                 // 3. Build Prompt (Concise)
                 val contextBuilder = StringBuilder()
                 contextBuilder.append("Curso: $courseName\n")
-                
-                // Add content items (Files) FIRST to give them priority in context
-                if (contentItems.isNotEmpty()) {
-                    contextBuilder.append("Materiales del Docente (Documentos/Videos/Imágenes) adjuntos - PRIORIDAD ALTA:\n")
-                    // Note: Actual content is appended by backend, this is just a marker
-                }
-
                 if (topics.isNotEmpty()) {
                     contextBuilder.append("Temas (Plan de estudios): ${topics.joinToString { it.name }}\n")
                 }
@@ -142,9 +135,9 @@ class ReinforcementLearningViewModel(
                 // It does NOT include FileContext (User submissions).
                 val contentList = contentItems.map { 
                     mapOf(
-                        "name" to (it.name ?: "Sin nombre"),
-                        "uri" to (it.uriString ?: ""),
-                        "type" to (it.contentType ?: "application/octet-stream")
+                        "name" to (it.title ?: "Sin nombre"),
+                        "uri" to it.body,
+                        "type" to it.contentType.ifBlank { "application/octet-stream" }
                     )
                 }
                 val jsonContentString = Gson().toJson(contentList)
