@@ -991,16 +991,33 @@ class ExploreFragment : Fragment() {
 
     // Get courses NOT created by current user (for viewing only)
     private suspend fun getOtherUsersCourses(): List<Course> {
-        if (currentUsername == null) return allCoursesList
-        
-        val currentUserId = withContext(Dispatchers.IO) {
-            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
-        }
-        
-        return if (currentUserId != null) {
-            allCoursesList.filter { it.creatorUserId != currentUserId }
-        } else {
-            allCoursesList
+        // Prefer authoritative server-side data: fetch all courses and exclude those
+        // created by the current session user. This avoids relying on the locally
+        // loaded page which may not contain all items and may include the user's
+        // own courses even when the intent is to show "others".
+        val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        val sessionUserId = session.getUserId()
+
+        return try {
+            val serverCourses = withContext(Dispatchers.IO) {
+                com.example.tareamov.service.SupabaseClient.fetchCourses()
+            }
+            if (sessionUserId > 0L) {
+                serverCourses.filter { it.creatorUserId != sessionUserId }
+            } else {
+                // If no active session, return all server courses (can't distinguish owner)
+                serverCourses
+            }
+        } catch (e: Exception) {
+            // Fallback: filter the locally loaded list if network or server call fails
+            val fallbackUserId = withContext(Dispatchers.IO) {
+                if (currentUsername != null) com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!) else null
+            }
+            if (fallbackUserId != null) {
+                allCoursesList.filter { it.creatorUserId != fallbackUserId }
+            } else {
+                allCoursesList
+            }
         }
     }
 
@@ -1664,54 +1681,90 @@ class ExploreFragment : Fragment() {
 
     // Filter premium courses
     private fun filterPremiumCourses() {
-        // Set filter index for "Premium" and refresh authoritative stats
+        // Prefer server-side authoritative list for premium courses and exclude session user
         currentFilterIndex = 3
-        val premiumCourses = allCoursesList
-            .filter { it.isPremium == true }
-            .sortedByDescending { it.timestamp }
-        coursesList.clear()
-        coursesList.addAll(premiumCourses)
-        if (::coursesAdapter.isInitialized) {
-            coursesAdapter.updateCourses(coursesList)
-        } else {
-            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+        lifecycleScope.launch {
+            try {
+                if (isNetworkAvailable()) {
+                    val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                    val sessionUserId = session.getUserId()
+                    val serverCourses = withContext(Dispatchers.IO) {
+                        try {
+                            com.example.tareamov.service.SupabaseClient.fetchCourses()
+                        } catch (t: Throwable) {
+                            emptyList<com.example.tareamov.data.entity.Course>()
+                        }
+                    }
+
+                    val premium = serverCourses.filter { it.isPremium == true && (sessionUserId <= 0L || it.creatorUserId != sessionUserId) }
+                        .sortedByDescending { it.timestamp }
+
+                    coursesList.clear()
+                    coursesList.addAll(premium)
+                    if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
+                    fetchAndDisplayCourseStats()
+                    updateActiveFilterUI("Cursos Premium")
+                    if (premium.isEmpty()) showDarkToast("No hay cursos premium disponibles") else showDarkToast("Mostrando ${premium.size} cursos premium")
+                    Log.d("ExploreFragment", "Filtered to show premium courses (server): ${premium.size} courses")
+                    return@launch
+                }
+
+                // Offline fallback: use local list
+                val premiumCourses = allCoursesList.filter { it.isPremium == true }.sortedByDescending { it.timestamp }
+                coursesList.clear(); coursesList.addAll(premiumCourses)
+                if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
+                fetchAndDisplayCourseStats()
+                updateActiveFilterUI("Cursos Premium")
+                if (premiumCourses.isEmpty()) showDarkToast("No hay cursos premium disponibles (offline)") else showDarkToast("Mostrando ${premiumCourses.size} cursos premium (offline)")
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error filtering premium courses", e)
+                Toast.makeText(context, "Error filtrando cursos premium", Toast.LENGTH_SHORT).show()
+            }
         }
-        fetchAndDisplayCourseStats()
-        updateActiveFilterUI("Cursos Premium")
-        
-        if (premiumCourses.isEmpty()) {
-            showDarkToast("No hay cursos premium disponibles")
-        } else {
-            showDarkToast("Mostrando ${premiumCourses.size} cursos premium")
-        }
-        
-        Log.d("ExploreFragment", "Filtered to show premium courses: ${premiumCourses.size} courses")
     }
 
     // Filter free courses
     private fun filterFreeCourses() {
-        // Set filter index for "Free" and refresh authoritative stats
+        // Prefer server-side authoritative list for free courses and exclude session user
         currentFilterIndex = 4
-        val freeCourses = allCoursesList
-            .filter { it.isPremium != true }
-            .sortedByDescending { it.timestamp }
-        coursesList.clear()
-        coursesList.addAll(freeCourses)
-        if (::coursesAdapter.isInitialized) {
-            coursesAdapter.updateCourses(coursesList)
-        } else {
-            Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
+        lifecycleScope.launch {
+            try {
+                if (isNetworkAvailable()) {
+                    val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                    val sessionUserId = session.getUserId()
+                    val serverCourses = withContext(Dispatchers.IO) {
+                        try {
+                            com.example.tareamov.service.SupabaseClient.fetchCourses()
+                        } catch (t: Throwable) {
+                            emptyList<com.example.tareamov.data.entity.Course>()
+                        }
+                    }
+
+                    val free = serverCourses.filter { it.isPremium != true && (sessionUserId <= 0L || it.creatorUserId != sessionUserId) }
+                        .sortedByDescending { it.timestamp }
+
+                    coursesList.clear()
+                    coursesList.addAll(free)
+                    if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
+                    fetchAndDisplayCourseStats()
+                    updateActiveFilterUI("Cursos Gratis")
+                    if (free.isEmpty()) showDarkToast("No hay cursos gratuitos disponibles") else showDarkToast("Mostrando ${free.size} cursos gratis")
+                    Log.d("ExploreFragment", "Filtered to show free courses (server): ${free.size} courses")
+                    return@launch
+                }
+
+                // Offline fallback: use local list
+                val freeCourses = allCoursesList.filter { it.isPremium != true }.sortedByDescending { it.timestamp }
+                coursesList.clear(); coursesList.addAll(freeCourses)
+                if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
+                fetchAndDisplayCourseStats()
+                updateActiveFilterUI("Cursos Gratis")
+                if (freeCourses.isEmpty()) showDarkToast("No hay cursos gratuitos disponibles (offline)") else showDarkToast("Mostrando ${freeCourses.size} cursos gratis (offline)")
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error filtering free courses", e)
+                Toast.makeText(context, "Error filtrando cursos gratis", Toast.LENGTH_SHORT).show()
+            }
         }
-        fetchAndDisplayCourseStats()
-        updateActiveFilterUI("Cursos Gratis")
-        
-        if (freeCourses.isEmpty()) {
-            showDarkToast("No hay cursos gratuitos disponibles")
-        } else {
-            showDarkToast("Mostrando ${freeCourses.size} cursos gratis")
-        }
-        
-        Log.d("ExploreFragment", "Filtered to show free courses: ${freeCourses.size} courses")
     }
 
     // Filter enrolled courses
@@ -1890,6 +1943,42 @@ class ExploreFragment : Fragment() {
                         newCoursesCount?.text = recent.toString()
                         Log.d("ExploreFragment", "My courses counts - total:$total popular:$popular recent:$recent (server)")
                     }
+                } else if (currentFilterIndex == 2) {
+                    // "Other Users' Courses" - fetch all server courses and exclude current session user
+                    val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                    val userId = session.getUserId()
+
+                    // If no valid user id, treat as global (can't distinguish owner)
+                    if (userId <= 0L) {
+                        Log.w("ExploreFragment", "fetchAndDisplayCourseStats: no valid user id for 'other users' filter, falling back to global counts")
+                    } else {
+                        val serverCourses = withContext(Dispatchers.IO) {
+                            try {
+                                com.example.tareamov.service.SupabaseClient.fetchCourses()
+                            } catch (t: Throwable) {
+                                emptyList<com.example.tareamov.data.entity.Course>()
+                            }
+                        }
+
+                        val others = serverCourses.filter { it.creatorUserId != userId }
+                        val total = others.size
+                        val popular = others.count { (it.enrollmentCount ?: 0) >= 10 }
+                        val recent = others.count { course ->
+                            val courseTime = course.timestamp
+                            val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
+                            maxOf(courseTime, creationTime) > thirtyDaysAgo
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            totalCoursesCount?.text = total.toString()
+                            popularCoursesCount?.text = popular.toString()
+                            newCoursesCount?.text = recent.toString()
+                            Log.d("ExploreFragment", "Other users' counts - total:$total popular:$popular recent:$recent (server)")
+                        }
+                        return@launch
+                    }
+
+                    // If we fell through (no valid session), continue to enrolled/global logic below
                 } else if (currentFilterIndex == 5) {
                     // "Enrolled" filter - show counts for courses where the current user is enrolled
                     val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
@@ -1939,6 +2028,39 @@ class ExploreFragment : Fragment() {
                             newCoursesCount?.text = recent.toString()
                             Log.d("ExploreFragment", "Enrolled counts - total:$total popular:$popular recent:$recent (server)")
                         }
+                    }
+                } else if (currentFilterIndex == 3 || currentFilterIndex == 4) {
+                    // Premium (3) or Free (4) filters: fetch server courses, exclude session user, then compute counts
+                    val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                    val userId = session.getUserId()
+
+                    val serverCourses = withContext(Dispatchers.IO) {
+                        try {
+                            com.example.tareamov.service.SupabaseClient.fetchCourses()
+                        } catch (t: Throwable) {
+                            emptyList<com.example.tareamov.data.entity.Course>()
+                        }
+                    }
+
+                    val filtered = serverCourses.filter { course ->
+                        val matchesType = if (currentFilterIndex == 3) course.isPremium == true else course.isPremium != true
+                        val notOwner = userId <= 0L || course.creatorUserId != userId
+                        matchesType && notOwner
+                    }
+
+                    val total = filtered.size
+                    val popular = filtered.count { (it.enrollmentCount ?: 0) >= 10 }
+                    val recent = filtered.count { course ->
+                        val courseTime = course.timestamp
+                        val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
+                        maxOf(courseTime, creationTime) > thirtyDaysAgo
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        totalCoursesCount?.text = total.toString()
+                        popularCoursesCount?.text = popular.toString()
+                        newCoursesCount?.text = recent.toString()
+                        Log.d("ExploreFragment", "${if (currentFilterIndex==3) "Premium" else "Free"} counts - total:$total popular:$popular recent:$recent (server)")
                     }
                 } else {
                     // Global counts
