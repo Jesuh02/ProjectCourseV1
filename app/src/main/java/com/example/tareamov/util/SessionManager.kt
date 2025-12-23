@@ -13,6 +13,12 @@ class SessionManager private constructor(private val context: Context) {
     private val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
     private val editor: SharedPreferences.Editor = sharedPreferences.edit()
 
+    // Listener interface for observing user/session changes
+    interface UserChangeListener {
+        fun onUserChanged(previousUser: String?, newUser: String?)
+        fun onUserLoggedOut(previousUser: String?)
+    }
+
     companion object {
         private const val PREF_NAME = "UserSessionPref"
         private const val KEY_USERNAME = "username"
@@ -40,11 +46,6 @@ class SessionManager private constructor(private val context: Context) {
             return instance ?: synchronized(this) {
                 instance ?: SessionManager(context.applicationContext).also { instance = it }
             }
-        }
-
-        interface UserChangeListener {
-            fun onUserChanged(previousUser: String?, newUser: String?)
-            fun onUserLoggedOut(previousUser: String?)
         }
 
         fun addUserChangeListener(listener: UserChangeListener) {

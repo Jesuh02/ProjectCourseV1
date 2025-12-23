@@ -19,6 +19,10 @@ data class ChatMessage(
     val toolName: String? = null, // Nombre de la herramienta MCP usada
     val sqlScript: String? = null, // Script SQL ejecutado (si aplica)
     val toolMetadata: String? = null // Metadata adicional en formato JSON
+    ,
+    // Optional sender metadata (used to show avatar/username when available)
+    val senderUsername: String? = null,
+    val senderAvatar: String? = null
 )
 
 //Hola Herazo...

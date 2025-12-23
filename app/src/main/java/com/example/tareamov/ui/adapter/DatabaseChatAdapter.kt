@@ -13,12 +13,14 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.animation.AnimationUtils
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
 import com.example.tareamov.R
 import com.example.tareamov.ui.ChatMessage
 import java.text.SimpleDateFormat
@@ -31,6 +33,12 @@ class DatabaseChatAdapter(
     private val messages = mutableListOf<ChatMessage>()
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val animatedPositions = mutableSetOf<Int>() // Track already animated positions
+    private var currentUserAvatarUrl: String? = null
+
+    fun setUserAvatarUrl(url: String?) {
+        currentUserAvatarUrl = url
+        notifyDataSetChanged()
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
         val view = LayoutInflater.from(parent.context)
@@ -160,6 +168,8 @@ class DatabaseChatAdapter(
         private val copyButtonUser: ImageButton = itemView.findViewById(R.id.copyButtonUser)
         private val shareButtonUser: ImageButton = itemView.findViewById(R.id.shareButtonUser)
         private val editButtonUser: ImageButton = itemView.findViewById(R.id.editButtonUser)
+        private val userAvatarImageView: ImageView? = itemView.findViewById(R.id.userAvatar)
+        private val botAvatarImageView: ImageView? = itemView.findViewById(R.id.botAvatar)
 
         fun bind(message: ChatMessage, shouldAnimate: Boolean = true) {
             // Only animate new messages, not updates
@@ -179,12 +189,41 @@ class DatabaseChatAdapter(
                 userMessageTextView.text = formatBoldText(message.text)
                 userMessageTime.text = timeFormat.format(Date(message.timestamp))
                 
+                // Load user avatar
+                userAvatarImageView?.let { iv ->
+                    val avatarUri = currentUserAvatarUrl
+                    if (!avatarUri.isNullOrEmpty()) {
+                        iv.clearColorFilter() // Clear tint for user image
+                        Glide.with(itemView.context)
+                            .load(avatarUri)
+                            .placeholder(R.drawable.ic_profile_avatars)
+                            .error(R.drawable.ic_profile_avatars)
+                            .circleCrop()
+                            .into(iv)
+                    } else {
+                        iv.setImageResource(R.drawable.ic_profile_avatars)
+                    }
+                    iv.visibility = View.VISIBLE
+                }
+
                 setupUserMessageActions(message)
             } else {
                 // Show bot message
                 userMessageContainer.visibility = View.GONE
                 botMessageContainer.visibility = View.VISIBLE
                 
+                // Load bot avatar
+                botAvatarImageView?.let { iv ->
+                    iv.clearColorFilter() // Clear tint for bot image
+                    Glide.with(itemView.context)
+                        .load("https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png")
+                        .placeholder(R.drawable.ic_cpu)
+                        .error(R.drawable.ic_cpu)
+                        .circleCrop()
+                        .into(iv)
+                    iv.visibility = View.VISIBLE
+                }
+
                 // Enhanced bot message formatting
                 val formattedMessage = formatBotMessage(message)
                 botMessageTextView.text = formatBoldText(formattedMessage)

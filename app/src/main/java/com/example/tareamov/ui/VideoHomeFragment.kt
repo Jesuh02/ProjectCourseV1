@@ -533,7 +533,8 @@ class VideoHomeFragment : Fragment() {
         llmTasksOption.visibility = if (hasRole2) View.VISIBLE else View.GONE
         llmReinforcementOption.visibility = View.VISIBLE
 
-        // Make option backgrounds less translucent (more visible)
+        // Removed programmatic background color setting to allow bg_header_gradient to show from XML
+        /*
         try {
             val optionBgColor = android.graphics.Color.parseColor("#DD2B303B") // semi-opaque dark
             if (llmDatabaseOption.visibility == View.VISIBLE) llmDatabaseOption.setBackgroundColor(optionBgColor)
@@ -542,6 +543,7 @@ class VideoHomeFragment : Fragment() {
         } catch (e: Exception) {
             // Fall back silently if color parsing or setting fails
         }
+        */
         
         // Add staggered entrance animation for menu items
         val menuItems = listOf(llmDatabaseOption, llmTasksOption, llmReinforcementOption).filter { it.visibility == View.VISIBLE }

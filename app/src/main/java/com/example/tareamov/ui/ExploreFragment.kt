@@ -108,6 +108,13 @@ class ExploreFragment : Fragment() {
         currentUsername = getCurrentUsername()
         Log.d("ExploreFragment", "Initialized with currentUsername: $currentUsername")
 
+        // Respect incoming filter from navigation (e.g., from ProfileFragment -> ExploreFragment)
+        val initialFilter = arguments?.getInt("filter_index") ?: 0
+        if (initialFilter != 0) {
+            currentFilterIndex = initialFilter
+            Log.d("ExploreFragment", "Initial filter from args: $currentFilterIndex")
+        }
+
         // Configurar RecyclerViews para cursos
         setupRecyclerViews(view)
 
@@ -131,6 +138,28 @@ class ExploreFragment : Fragment() {
             
         headerSection.outlineProvider = ViewOutlineProvider.BACKGROUND
         headerSection.clipToOutline = true
+
+        // Ensure all text inside the header gradient is white for contrast
+        // The gradient is a drawable background, not an id; take the first child of headerSection
+        val bgHeader = headerSection.getChildAt(0) as? ViewGroup
+        bgHeader?.let {
+            setAllChildTextColors(it, android.graphics.Color.WHITE)
+
+            // Prevent click-through: make the header container consume clicks/touches
+            // without changing visual appearance. This avoids accidental clicks
+            // on the course item underneath when tapping or scrolling over the header.
+            it.isClickable = true
+            it.isFocusable = true
+            // Removed explicit transparent background setting to allow bg_header_gradient to show
+            it.setOnClickListener {
+                // Intentionally empty - consumes the click
+            }
+        }
+
+        // Also explicitly set the main counters to white in case they are outside the gradient container
+        view.findViewById<TextView>(R.id.totalCoursesCount)?.setTextColor(android.graphics.Color.WHITE)
+        view.findViewById<TextView>(R.id.popularCoursesCount)?.setTextColor(android.graphics.Color.WHITE)
+        view.findViewById<TextView>(R.id.newCoursesCount)?.setTextColor(android.graphics.Color.WHITE)
 
         // Add TextWatcher to search bar
         searchEditText.addTextChangedListener(object : TextWatcher {
@@ -1293,8 +1322,22 @@ class ExploreFragment : Fragment() {
                         Log.w("ExploreFragment", "loadCourses: coursesAdapter not initialized yet!")
                     }
 
-                    // Update stats (this will call server-side aggregations)
-                    updateCourseStats()
+                    // Apply active filter (if any) after initial load so that
+                    // navigation with `filter_index` shows the correct filtered
+                    // list and the header counts reflect server-side totals.
+                    if (currentFilterIndex != 0) {
+                        when (currentFilterIndex) {
+                            1 -> filterMyCoursesOnly()
+                            2 -> filterOtherCoursesOnly()
+                            3 -> filterPremiumCourses()
+                            4 -> filterFreeCourses()
+                            5 -> filterEnrolledCourses()
+                            else -> fetchAndDisplayCourseStats()
+                        }
+                    } else {
+                        // No active filter: fetch global server-side stats
+                        fetchAndDisplayCourseStats()
+                    }
 
                     // Stop skeleton if we have at least one page or network
                     if (coursesList.isNotEmpty() || isNetworkAvailable()) {
@@ -1621,6 +1664,8 @@ class ExploreFragment : Fragment() {
 
     // Filter premium courses
     private fun filterPremiumCourses() {
+        // Set filter index for "Premium" and refresh authoritative stats
+        currentFilterIndex = 3
         val premiumCourses = allCoursesList
             .filter { it.isPremium == true }
             .sortedByDescending { it.timestamp }
@@ -1631,7 +1676,7 @@ class ExploreFragment : Fragment() {
         } else {
             Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
         }
-        updateCourseStats()
+        fetchAndDisplayCourseStats()
         updateActiveFilterUI("Cursos Premium")
         
         if (premiumCourses.isEmpty()) {
@@ -1645,6 +1690,8 @@ class ExploreFragment : Fragment() {
 
     // Filter free courses
     private fun filterFreeCourses() {
+        // Set filter index for "Free" and refresh authoritative stats
+        currentFilterIndex = 4
         val freeCourses = allCoursesList
             .filter { it.isPremium != true }
             .sortedByDescending { it.timestamp }
@@ -1655,7 +1702,7 @@ class ExploreFragment : Fragment() {
         } else {
             Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
         }
-        updateCourseStats()
+        fetchAndDisplayCourseStats()
         updateActiveFilterUI("Cursos Gratis")
         
         if (freeCourses.isEmpty()) {
@@ -1669,6 +1716,8 @@ class ExploreFragment : Fragment() {
 
     // Filter enrolled courses
     private fun filterEnrolledCourses() {
+        // Set filter index for "Enrolled" and refresh authoritative stats
+        currentFilterIndex = 5
         isLoadingCourses = true
         // Show loading state if possible
         
@@ -1693,6 +1742,8 @@ class ExploreFragment : Fragment() {
                     
                     val count = filtered.size
                     showDarkToast("Mostrando $count cursos inscritos")
+                    // Update header counts to reflect enrolled filter
+                    fetchAndDisplayCourseStats()
                     isLoadingCourses = false
                 }
             } catch (e: Exception) {
@@ -1740,7 +1791,7 @@ class ExploreFragment : Fragment() {
                     } else {
                         // Offline fallback: compute from loaded items only
                         val popularCount = coursesList.count { course ->
-                            course.rating >= 4.5 || (course.enrollmentCount ?: 0) >= 10
+                            (course.enrollmentCount ?: 0) >= 10
                         }
                         val currentTime = System.currentTimeMillis()
                         val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
@@ -1759,7 +1810,7 @@ class ExploreFragment : Fragment() {
                     Log.w("ExploreFragment", "Failed to fetch aggregated stats", e)
                     // Best-effort fallback
                     val popularCount = coursesList.count { course ->
-                        course.rating >= 4.5 || (course.enrollmentCount ?: 0) >= 10
+                        (course.enrollmentCount ?: 0) >= 10
                     }
                     val currentTime = System.currentTimeMillis()
                     val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
@@ -1787,10 +1838,9 @@ class ExploreFragment : Fragment() {
         val totalCoursesCount = v.findViewById<TextView>(R.id.totalCoursesCount)
         val popularCoursesCount = v.findViewById<TextView>(R.id.popularCoursesCount)
         val newCoursesCount = v.findViewById<TextView>(R.id.newCoursesCount)
-
         // Optimistically show local counts while background fetch runs
         totalCoursesCount?.text = if (totalCourses > 0) totalCourses.toString() else coursesList.size.toString()
-        val popularLocal = coursesList.count { it.rating >= 4.5 || (it.enrollmentCount ?: 0) >= 10 }
+        val popularLocal = coursesList.count { (it.enrollmentCount ?: 0) >= 10 }
         popularCoursesCount?.text = popularLocal.toString()
         val currentTime = System.currentTimeMillis()
         val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
@@ -1801,10 +1851,97 @@ class ExploreFragment : Fragment() {
         }
         newCoursesCount?.text = newLocal.toString()
 
-        // Fetch authoritative counts in background
+        // Fetch authoritative counts in background. Use server-side counts matching current filter.
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                if (isNetworkAvailable()) {
+                if (!isNetworkAvailable()) {
+                    Log.d("ExploreFragment", "fetchAndDisplayCourseStats: offline, keeping optimistic values")
+                    return@launch
+                }
+
+                if (currentFilterIndex == 1) {
+                    // "My Courses" - fetch counts for current user from server
+                    val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                    val userId = session.getUserId()
+                    if (userId <= 0L) {
+                        Log.w("ExploreFragment", "fetchAndDisplayCourseStats: no valid user id for 'my courses' filter")
+                        return@launch
+                    }
+
+                    val creatorCourses = withContext(Dispatchers.IO) {
+                        try {
+                            com.example.tareamov.service.SupabaseClient.fetchCoursesByCreatorUserId(userId)
+                        } catch (t: Throwable) {
+                            emptyList<com.example.tareamov.data.entity.Course>()
+                        }
+                    }
+
+                    val total = creatorCourses.size
+                    val popular = creatorCourses.count { (it.enrollmentCount ?: 0) >= 10 }
+                    val recent = creatorCourses.count { course ->
+                        val courseTime = course.timestamp
+                        val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
+                        maxOf(courseTime, creationTime) > thirtyDaysAgo
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        totalCoursesCount?.text = total.toString()
+                        popularCoursesCount?.text = popular.toString()
+                        newCoursesCount?.text = recent.toString()
+                        Log.d("ExploreFragment", "My courses counts - total:$total popular:$popular recent:$recent (server)")
+                    }
+                } else if (currentFilterIndex == 5) {
+                    // "Enrolled" filter - show counts for courses where the current user is enrolled
+                    val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                    val userId = session.getUserId()
+                    if (userId <= 0L) {
+                        Log.w("ExploreFragment", "fetchAndDisplayCourseStats: no valid user id for 'enrolled' filter")
+                        return@launch
+                    }
+
+                    val enrolledIds = withContext(Dispatchers.IO) {
+                        try {
+                            com.example.tareamov.service.SupabaseClient.fetchEnrolledCourseIds(userId)
+                        } catch (t: Throwable) {
+                            emptyList<Long>()
+                        }
+                    }
+
+                    if (enrolledIds.isEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            totalCoursesCount?.text = "0"
+                            popularCoursesCount?.text = "0"
+                            newCoursesCount?.text = "0"
+                            Log.d("ExploreFragment", "Enrolled courses counts: no enrolled courses (server)")
+                        }
+                    } else {
+                        // Fetch course objects from server and compute metrics
+                        val serverCourses = withContext(Dispatchers.IO) {
+                            try {
+                                com.example.tareamov.service.SupabaseClient.fetchCourses()
+                            } catch (t: Throwable) {
+                                emptyList<com.example.tareamov.data.entity.Course>()
+                            }
+                        }
+
+                        val enrolledCourses = serverCourses.filter { enrolledIds.contains(it.id) }
+                        val total = enrolledCourses.size
+                        val popular = enrolledCourses.count { (it.enrollmentCount ?: 0) >= 10 }
+                        val recent = enrolledCourses.count { course ->
+                            val courseTime = course.timestamp
+                            val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
+                            maxOf(courseTime, creationTime) > thirtyDaysAgo
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            totalCoursesCount?.text = total.toString()
+                            popularCoursesCount?.text = popular.toString()
+                            newCoursesCount?.text = recent.toString()
+                            Log.d("ExploreFragment", "Enrolled counts - total:$total popular:$popular recent:$recent (server)")
+                        }
+                    }
+                } else {
+                    // Global counts
                     val total = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.fetchCoursesCount() }
                     val popular = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.countPopularCourses() }
                     val recent = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.countNewCourses(30) }
@@ -1812,10 +1949,8 @@ class ExploreFragment : Fragment() {
                         totalCoursesCount?.text = total.toString()
                         popularCoursesCount?.text = popular.toString()
                         newCoursesCount?.text = recent.toString()
+                        Log.d("ExploreFragment", "Global counts - total:$total popular:$popular recent:$recent (server)")
                     }
-                } else {
-                    // No network: keep local optimistic values
-                    Log.d("ExploreFragment", "fetchAndDisplayCourseStats: offline, using local counts")
                 }
             } catch (e: Exception) {
                 Log.w("ExploreFragment", "fetchAndDisplayCourseStats failed", e)
@@ -1834,10 +1969,23 @@ class ExploreFragment : Fragment() {
         }
     }
 
+    // Recursively set text color for all TextView children in a ViewGroup
+    private fun setAllChildTextColors(root: ViewGroup, color: Int) {
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i)
+            when (child) {
+                is TextView -> child.setTextColor(color)
+                is ViewGroup -> setAllChildTextColors(child, color)
+            }
+        }
+    }
+
     // Filter courses to show only user's own courses
     private fun filterMyCoursesOnly() {
         lifecycleScope.launch {
             try {
+                // Filter index for "My Created" and refresh authoritative stats
+                currentFilterIndex = 1
                 val myCoursesOnly = getUserOwnedCourses()
                 val sorted = myCoursesOnly.sortedByDescending { it.timestamp }
                 coursesList.clear()
@@ -1847,7 +1995,7 @@ class ExploreFragment : Fragment() {
                 } else {
                     Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
                 }
-                updateCourseStats()
+                fetchAndDisplayCourseStats()
                 updateActiveFilterUI("Mis Cursos Creados")
                 Log.d("ExploreFragment", "Filtered to show only user's courses: ${sorted.size} courses")
             } catch (e: Exception) {
@@ -1861,6 +2009,8 @@ class ExploreFragment : Fragment() {
     private fun filterOtherCoursesOnly() {
         lifecycleScope.launch {
             try {
+                // Filter index for "Other Users'" and refresh authoritative stats
+                currentFilterIndex = 2
                 val otherCourses = getOtherUsersCourses()
                 val sorted = otherCourses.sortedByDescending { it.timestamp }
                 coursesList.clear()
@@ -1870,7 +2020,7 @@ class ExploreFragment : Fragment() {
                 } else {
                     Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
                 }
-                updateCourseStats()
+                fetchAndDisplayCourseStats()
                 updateActiveFilterUI("Cursos de Otros")
                 Log.d("ExploreFragment", "Filtered to show only other users' courses: ${sorted.size} courses")
             } catch (e: Exception) {
@@ -1910,8 +2060,11 @@ class ExploreFragment : Fragment() {
 
     private fun clearActiveFilter() {
         // Clear any active filter and reload all courses
+        currentFilterIndex = 0
         showAllCourses()
         updateActiveFilterUI(null)
+        // Refresh header counts to reflect unfiltered/global view
+        fetchAndDisplayCourseStats()
     }
 
     private fun showDebugStatsInfo() {

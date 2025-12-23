@@ -20,6 +20,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "CourseV"
+rootProject.name = "YisusCompany"
 include(":app")
  

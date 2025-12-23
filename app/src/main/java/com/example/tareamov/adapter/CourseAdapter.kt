@@ -53,7 +53,7 @@ class CourseAdapter(
         val descriptionTextView: TextView = itemView.findViewById(R.id.courseDescriptionTextView)
         val creatorTextView: TextView = itemView.findViewById(R.id.courseCreatorTextView)
         val categoryTextView: TextView = itemView.findViewById(R.id.courseCategoryTextView)
-        val ratingTextView: TextView = itemView.findViewById(R.id.courseRatingTextView)
+        
         val priceTextView: TextView = itemView.findViewById(R.id.coursePriceTextView)
         val originalPriceTextView: TextView = itemView.findViewById(R.id.originalPriceTextView)
         val enrollmentTextView: TextView = itemView.findViewById(R.id.courseEnrollmentTextView)
@@ -70,9 +70,10 @@ class CourseAdapter(
         val enrollButton: Button? = itemView.findViewById(R.id.enrollButton)
         // Enrolled status elements
         val enrolledStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.enrolledStatusContainer)
+        // Optional owner status container (may not exist in this layout)
+        val ownerStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.ownerStatusContainer)
         // CRUD action elements - moreOptionsButton is now directly in the layout
         val moreOptionsButton: android.widget.ImageButton? = itemView.findViewById(R.id.moreOptionsButton)
-        val ownerStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.ownerStatusContainer)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CourseViewHolder {
@@ -92,8 +93,8 @@ class CourseAdapter(
         holder.titleTextView.text = course.title
         holder.descriptionTextView.text = course.description
         // Don't set creatorTextView here - it will be set based on user permissions below
-        holder.categoryTextView.text = course.category ?: "General"
-        holder.ratingTextView.text = String.format("%.1f", course.rating)
+        holder.categoryTextView.text = if (course.category.isNullOrBlank()) "Programación" else course.category
+        
         
         Log.d("CourseAdapter", "Binding course: ${course.title}, creatorUserId: ${course.creatorUserId}, currentUsername: $currentUsername")
         
@@ -104,7 +105,6 @@ class CourseAdapter(
         holder.enrollButtonContainer?.visibility = View.GONE
         holder.enrollButton?.visibility = View.GONE
         holder.enrolledStatusContainer?.visibility = View.GONE
-        holder.ownerStatusContainer?.visibility = View.GONE
         // CRITICAL: Hide 3-dot menu by default - only show for course owners
         holder.moreOptionsButton?.visibility = View.GONE
 
@@ -123,7 +123,6 @@ class CourseAdapter(
                                 holder.creatorInfoContainer?.visibility = View.GONE
                                 holder.subscribeButton.visibility = View.GONE
                                 holder.moreOptionsButton?.visibility = View.VISIBLE
-                                holder.ownerStatusContainer?.visibility = View.VISIBLE
                                 holder.enrollButtonContainer?.visibility = View.GONE
                                 holder.enrolledStatusContainer?.visibility = View.GONE
                                 
@@ -157,13 +156,12 @@ class CourseAdapter(
             holder.moreOptionsButton?.visibility = View.VISIBLE
             
             // CRITICAL: Hide ALL enrollment UI for creators (both button and enrolled status)
-            // This ensures "Tu curso" owners never see enrollment options
+            // This ensures course owners never see enrollment options
             holder.enrollButtonContainer?.visibility = View.GONE
             holder.enrollButton?.visibility = View.GONE
             holder.enrolledStatusContainer?.visibility = View.GONE
 
-            // Show owner badge
-            holder.ownerStatusContainer?.visibility = View.VISIBLE
+            // Owner badge removed from layout
             
             // Set up 3-dot menu click listener
             holder.moreOptionsButton?.setOnClickListener { view ->
@@ -194,7 +192,7 @@ class CourseAdapter(
                     withContext(Dispatchers.Main) {
                         // Fallback: If username matches, treat as creator even if currentUserIdCached was null
                         if (currentUsername != null && creatorUsername == currentUsername) {
-                            holder.creatorTextView.text = "Por: $creatorUsername (Tu curso)"
+                            holder.creatorTextView.text = "Por: $creatorUsername"
                             
                             // Enable click on creator name/avatar to view profile
                             if (!creatorUsername.isNullOrBlank()) {
@@ -207,7 +205,6 @@ class CourseAdapter(
                             holder.enrollButtonContainer?.visibility = View.GONE
                             holder.enrollButton?.visibility = View.GONE
                             holder.enrolledStatusContainer?.visibility = View.GONE
-                            holder.ownerStatusContainer?.visibility = View.VISIBLE
                             holder.moreOptionsButton?.visibility = View.VISIBLE
                             holder.creatorInfoContainer?.visibility = View.VISIBLE
                             
@@ -601,7 +598,7 @@ class CourseAdapter(
                 
                 withContext(Dispatchers.Main) {
                     // FIX: Check if user is creator again, in case permissions updated while coroutine was running
-                    // Also check username match as fallback to ensure "Tu curso" logic is respected
+                    // Also check username match as fallback to ensure owner logic is respected
                     val creatorName = creatorUsernameCache[course.creatorUserId]
                     val isCreatorByUsername = currentUsername != null && creatorName != null && currentUsername == creatorName
                     
@@ -690,19 +687,20 @@ class CourseAdapter(
 
     private fun applyDarkModeTextColors(holder: CourseViewHolder) {
         // Primary text color (white/light gray)
-        val primaryTextColor = ContextCompat.getColor(context, R.color.dark_primary_text)
-        val secondaryTextColor = ContextCompat.getColor(context, R.color.dark_secondary_text)
-        val accentColor = ContextCompat.getColor(context, R.color.purple_500)
+        // Force white text for contrast where needed (header/gradient overlays)
+        val primaryTextColor = android.graphics.Color.WHITE
+        val secondaryTextColor = android.graphics.Color.WHITE
+        val accentColor = android.graphics.Color.WHITE
 
         holder.titleTextView.setTextColor(primaryTextColor)
         holder.descriptionTextView.setTextColor(secondaryTextColor)
         holder.creatorTextView.setTextColor(primaryTextColor)
         holder.categoryTextView.setTextColor(accentColor)
-        holder.ratingTextView.setTextColor(ContextCompat.getColor(context, R.color.rating_color))
+        
         holder.enrollmentTextView.setTextColor(secondaryTextColor)
         holder.priceTextView.setTextColor(accentColor)
-        // Subscription elements already have colors defined in layout
-        holder.subscriberCountTextView.setTextColor(ContextCompat.getColor(context, R.color.purple_500))
+        // Subscription elements also white for consistency in header overlays
+        holder.subscriberCountTextView.setTextColor(android.graphics.Color.WHITE)
     }
     
     /**

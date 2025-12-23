@@ -36,6 +36,20 @@ class ChatMessageAdapter(
     private var taskInfo: TaskInfo? = null
 ) : ListAdapter<ChatMessage, ChatMessageAdapter.MessageViewHolder>(MessageDiffCallback()) {
 
+    // Avatar URLs (can be set from fragment)
+    private var botAvatarUrl: String? = null
+    private var currentUserAvatarUrl: String? = null
+
+    fun setBotAvatarUrl(url: String?) {
+        botAvatarUrl = url
+        notifyDataSetChanged()
+    }
+
+    fun setUserAvatarUrl(url: String?) {
+        currentUserAvatarUrl = url
+        notifyDataSetChanged()
+    }
+
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
     data class TaskInfo(
@@ -99,6 +113,7 @@ class ChatMessageAdapter(
 
     inner class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val userAvatarImageView: ImageView? = itemView.findViewById(R.id.userAvatar)
+        private val botAvatarImageView: ImageView? = itemView.findViewById(R.id.botAvatar)
         private val userMessageContainer: LinearLayout = itemView.findViewById(R.id.userMessageContainer)
         private val botMessageContainer: LinearLayout = itemView.findViewById(R.id.botMessageContainer)
         private val userMessageTextView: TextView = itemView.findViewById(R.id.userMessageTextView)
@@ -123,9 +138,11 @@ class ChatMessageAdapter(
                 userMessageTextView.text = formatBoldText(message.message)
                 try {
                     val sess = SessionManager.getInstance(itemView.context)
-                    val avatarUri = sess.getUserAvatar()
+                    // Prefer sender-specific avatar stored on the message, then adapter-level user avatar, then session
+                    val avatarUri = message.senderAvatar ?: currentUserAvatarUrl ?: sess.getUserAvatar()
                     userAvatarImageView?.let { iv ->
                         if (!avatarUri.isNullOrEmpty()) {
+                            iv.clearColorFilter() // Clear tint for user image
                             Glide.with(itemView.context)
                                 .load(avatarUri)
                                 .placeholder(R.drawable.ic_profile_avatars)
@@ -146,10 +163,27 @@ class ChatMessageAdapter(
                 calificationButtonsContainer.visibility = View.GONE
             } else {
                 // Show bot message
-                // Optionally hide user avatar for bot messages
-                userAvatarImageView?.visibility = View.GONE
+                // Show bot avatar and bot message container
+                botAvatarImageView?.visibility = View.VISIBLE
                 userMessageContainer.visibility = View.GONE
                 botMessageContainer.visibility = View.VISIBLE
+
+                // Load bot avatar (fallback to default)
+                try {
+                    val botUrl = botAvatarUrl ?: "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
+                    botAvatarImageView?.let { iv ->
+                        iv.clearColorFilter() // Clear tint for bot image
+                        Glide.with(itemView.context)
+                            .load(botUrl)
+                            .placeholder(R.drawable.ic_cpu)
+                            .error(R.drawable.ic_cpu)
+                            .circleCrop()
+                            .into(iv)
+                        iv.visibility = View.VISIBLE
+                    }
+                } catch (e: Exception) {
+                    // ignore
+                }
                 
                 // Enhanced bot message formatting
                 val formattedMessage = if (message.hasCalification && taskInfo != null) {

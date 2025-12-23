@@ -107,6 +107,8 @@ class ChatBotFragment : Fragment() {
 
     private lateinit var fileAnalysisService: FileAnalysisService
     private lateinit var sessionManager: com.example.tareamov.util.SessionManager
+    // Listener instance so we can remove it in onDestroyView
+    private var sessionChangeListener: com.example.tareamov.util.SessionManager.UserChangeListener? = null
     private lateinit var syncRepository: com.example.tareamov.data.sync.SyncRepository
 
     // Runtime host selection: choose correct host for emulator vs physical device
@@ -431,6 +433,8 @@ class ChatBotFragment : Fragment() {
         super.onDestroyView()
         // Detener el monitoreo del cursor para evitar memory leaks
         cursorCheckHandler.removeCallbacks(cursorCheckRunnable)
+        // Eliminar el listener de sesión para evitar fugas
+        sessionChangeListener?.let { com.example.tareamov.util.SessionManager.removeUserChangeListener(it) }
     }
 
     private fun initializeViews(view: View) {
@@ -543,6 +547,8 @@ class ChatBotFragment : Fragment() {
                                 "Para obtener mejor ayuda, intenta subir el archivo localmente.",
                         isFromUser = false,
                         sessionId = sessionId
+                        , senderUsername = "DeepSeek",
+                        senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                     )
 
                     withContext(Dispatchers.IO) {
@@ -558,6 +564,8 @@ class ChatBotFragment : Fragment() {
                                 hasCalification = errorChatMessage.hasCalification,
                                 calificationValue = errorChatMessage.calificationValue,
                                 calificationAdded = errorChatMessage.calificationAdded
+                                , senderUsername = errorChatMessage.senderUsername,
+                                senderAvatar = errorChatMessage.senderAvatar
                             )
                             kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                 val ok = supabaseRepo.upsert("chat_messages", toSend)
@@ -665,7 +673,7 @@ class ChatBotFragment : Fragment() {
                     val savedIdCtx = database.chatMessageDao().insertMessage(contextMessage)
                     try {
                         val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = contextMessage.copy(id = savedIdCtx)
+                        val toSend = contextMessage.copy(id = savedIdCtx, senderUsername = contextMessage.senderUsername, senderAvatar = contextMessage.senderAvatar)
                         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             val ok = supabaseRepo.upsert("chat_messages", toSend)
                             if (ok) Log.i("ChatBotFragment", "ChatMessage $savedIdCtx upserted to Supabase.")
@@ -692,6 +700,24 @@ class ChatBotFragment : Fragment() {
             },
             taskInfo = null // Se actualizará dinámicamente cuando se cargue la información
         )
+        // Set bot avatar to DeepSeek image and current user avatar from session
+        val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        val userAvatar = sess.getUserAvatar()
+        chatAdapter.setUserAvatarUrl(userAvatar)
+        chatAdapter.setBotAvatarUrl("https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png")
+
+        // Update adapter avatar when session changes (store listener to remove later)
+        sessionChangeListener = object : com.example.tareamov.util.SessionManager.UserChangeListener {
+            override fun onUserChanged(previousUser: String?, newUser: String?) {
+                val updated = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUserAvatar()
+                chatAdapter.setUserAvatarUrl(updated)
+            }
+
+            override fun onUserLoggedOut(previousUser: String?) {
+                chatAdapter.setUserAvatarUrl(null)
+            }
+        }
+        sessionChangeListener?.let { com.example.tareamov.util.SessionManager.addUserChangeListener(it) }
         messagesRecyclerView.apply {
             adapter = chatAdapter
             layoutManager = LinearLayoutManager(context).apply {
@@ -842,13 +868,19 @@ class ChatBotFragment : Fragment() {
             val userMessage = ChatMessage(
                 message = messageText,
                 isFromUser = true,
-                sessionId = sessionId
+                sessionId = sessionId,
+                senderUsername = sessionManager.getUsername(),
+                senderAvatar = sessionManager.getUserAvatar()
             )
             withContext(Dispatchers.IO) {
                 val savedUserId = database.chatMessageDao().insertMessage(userMessage)
                 try {
                     val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                    val toSend = userMessage.copy(id = savedUserId)
+                    val toSend = userMessage.copy(
+                        id = savedUserId,
+                        senderUsername = userMessage.senderUsername,
+                        senderAvatar = userMessage.senderAvatar
+                    )
                     kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                         val ok = supabaseRepo.upsert("chat_messages", toSend)
                         if (ok) Log.i("ChatBotFragment", "ChatMessage $savedUserId upserted to Supabase.")
@@ -1622,13 +1654,15 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     sessionId = sessionId,
                     hasCalification = hasCalification,
                     calificationValue = calificationValue,
-                    calificationAdded = false
+                    calificationAdded = false,
+                    senderUsername = "DeepSeek",
+                    senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                 )
                 withContext(Dispatchers.IO) {
                     val savedBotId = database.chatMessageDao().insertMessage(botMessage)
                     try {
                         val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = botMessage.copy(id = savedBotId)
+                        val toSend = botMessage.copy(id = savedBotId, senderUsername = botMessage.senderUsername, senderAvatar = botMessage.senderAvatar)
                         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             val ok = supabaseRepo.upsert("chat_messages", toSend)
                             if (ok) Log.i("ChatBotFragment", "ChatMessage $savedBotId upserted to Supabase.")
@@ -1642,13 +1676,15 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 val errorMessage = ChatMessage(
                     message = "Lo siento, tuve un problema al procesar tu mensaje. ${generateFallbackResponse(messageText)}",
                     isFromUser = false,
-                    sessionId = sessionId
+                    sessionId = sessionId,
+                    senderUsername = "DeepSeek",
+                    senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                 )
                 withContext(Dispatchers.IO) {
                     val savedErrId = database.chatMessageDao().insertMessage(errorMessage)
                     try {
                         val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = errorMessage.copy(id = savedErrId)
+                        val toSend = errorMessage.copy(id = savedErrId, senderUsername = errorMessage.senderUsername, senderAvatar = errorMessage.senderAvatar)
                         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             val ok = supabaseRepo.upsert("chat_messages", toSend)
                             if (ok) Log.i("ChatBotFragment", "ChatMessage $savedErrId upserted to Supabase.")
@@ -2102,6 +2138,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     message = confirmationText,
                     isFromUser = false,
                     sessionId = sessionId
+                    , senderUsername = "DeepSeek",
+                    senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                 )
                 
                 withContext(Dispatchers.IO) {
@@ -2244,7 +2282,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             timestamp = System.currentTimeMillis(),
                             sessionId = sessionId,
                             hasCalification = detectCalification(newMessageText, botResponse),
-                            calificationAdded = false
+                            calificationAdded = false,
+                            senderUsername = "DeepSeek",
+                            senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                         )
                         
                         // Guardar respuesta del bot en la base de datos
@@ -2263,7 +2303,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             timestamp = System.currentTimeMillis(),
                             sessionId = sessionId,
                             hasCalification = false,
-                            calificationAdded = false
+                            calificationAdded = false,
+                            senderUsername = "DeepSeek",
+                            senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                         )
                         
                         withContext(Dispatchers.IO) {
@@ -3363,6 +3405,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         isFromUser = false,
                         sessionId = sessionId,
                         timestamp = System.currentTimeMillis()
+                        , senderUsername = "DeepSeek",
+                        senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                     )
                     
                     // Insertar mensaje en la base de datos
@@ -3392,6 +3436,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         isFromUser = false,
                         sessionId = sessionId,
                         timestamp = System.currentTimeMillis()
+                        , senderUsername = "DeepSeek",
+                        senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                     )
                     withContext(Dispatchers.IO) {
                         database.chatMessageDao().insertMessage(contextMessage)
@@ -3932,6 +3978,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             isFromUser = false,
                             sessionId = sessionId,
                             timestamp = System.currentTimeMillis()
+                            , senderUsername = "DeepSeek",
+                            senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                         )
                         
                         // Insertar mensaje en la base de datos

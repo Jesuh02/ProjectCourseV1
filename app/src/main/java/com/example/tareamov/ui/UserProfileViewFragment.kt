@@ -360,7 +360,7 @@ class UserProfileViewFragment : Fragment() {
                         title = course.title,
                         description = course.description,
                         creatorUserId = -1L, // Will be resolved in handleSubscriptionClick
-                        category = "General",
+                        category = "Programación",
                         thumbnailUri = course.thumbnailUri,
                         videoUri = course.videoUriString,
                         price = course.price ?: 0.0,
@@ -391,7 +391,7 @@ class UserProfileViewFragment : Fragment() {
                         title = course.title,
                         description = course.description,
                         creatorUserId = -1L, // Will be resolved in handleEnrollmentClick
-                        category = "General",
+                        category = "Programación",
                         thumbnailUri = course.thumbnailUri,
                         videoUri = course.videoUriString,
                         price = course.price ?: 0.0,

@@ -162,6 +162,7 @@
             android:backgroundTint="#10A37F">
 
             <ImageView
+                android:id="@+id/botAvatar"
                 android:layout_width="18dp"
                 android:layout_height="18dp"
                 android:layout_gravity="center"
