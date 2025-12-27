@@ -10,6 +10,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -28,14 +30,45 @@ class MCPHttpClient(private val context: Context) {
     private var isInitialized = false
     @Volatile private var activeBaseUrl: String? = null
     
+    fun getActiveBaseUrl(): String? {
+        return activeBaseUrl
+    }
+
+    /**
+     * Force a specific base URL for the MCP server (useful for manual LAN IP overrides)
+     */
+    fun setForcedBaseUrl(url: String) {
+        // Normalize forced URL: ensure scheme and port (default MCP port 3000)
+        var normalized = url.trim()
+        if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+            normalized = "http://$normalized"
+        }
+        try {
+            // If host does not include an explicit port, append default MCP port 3000
+            val u = java.net.URI(normalized)
+            val hasPort = u.port != -1
+            if (!hasPort) {
+                // Rebuild with default port 3000
+                val host = u.host ?: normalized.removePrefix("http://").removePrefix("https://")
+                normalized = "${u.scheme}://$host:3000"
+            }
+        } catch (e: Exception) {
+            // Fallback: if parsing fails, ensure it at least has http:// prefix
+        }
+        activeBaseUrl = normalized
+        // mark not initialized so next initialize() will try the forced URL
+        isInitialized = false
+        Log.i(tag, "Forced MCP base URL set to: $activeBaseUrl")
+    }
+    
     init {
         ServerEndpointResolver.initialize(context.applicationContext)
     }
     
     companion object {
-        private const val CONNECT_TIMEOUT = 15L // seconds
-        private const val READ_TIMEOUT = 120L // seconds (increased for complex LLM queries with retries)
-        private const val WRITE_TIMEOUT = 30L // seconds
+        private const val CONNECT_TIMEOUT = 30L // seconds (increased)
+        private const val READ_TIMEOUT = 180L // seconds (increased for complex LLM queries)
+        private const val WRITE_TIMEOUT = 60L // seconds (increased)
     }
     
     private val httpClient = OkHttpClient.Builder()
@@ -46,48 +79,90 @@ class MCPHttpClient(private val context: Context) {
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    private suspend fun <T> withMcpBase(action: suspend (String) -> T): T? {
-        val candidates = LinkedHashSet<String>()
-        
-        // Priority 1: Railway Cloud (Production) - ALWAYS TRY FIRST
-        candidates.add(ServerEndpointResolver.RAILWAY_MCP_URL)
-        
-        // Priority 2: Active base URL (if different from Railway)
-        activeBaseUrl?.let { if (it != ServerEndpointResolver.RAILWAY_MCP_URL) candidates.add(it) }
-        
-        // Priority 3: Emulator fallback (for local development only)
-        candidates.add("http://10.0.2.2:3000")
-        
-        // Priority 4: Discovery (if not already covered)
-        val discovered = ServerEndpointResolver.getMcpBaseUrl(false)
-        if (discovered != null) candidates.add(discovered)
-        
-        for (base in candidates) {
+    private suspend fun <T> withMcpBase(action: suspend (String) -> T?): T? {
+        val tried = HashSet<String>()
+        var lastException: Exception? = null
+
+        // Simple emulator detection to avoid trying emulator-only hosts from physical devices
+        fun runningOnEmulator(): Boolean {
             try {
-                Log.d(tag, "Trying MCP connection to: $base")
-                val result = action(base)
-                if (activeBaseUrl != base) {
-                    Log.i(tag, "MCP connection established with: $base")
-                    activeBaseUrl = base
-                }
-                return result
-            } catch (e: Exception) {
-                Log.w(tag, "MCP request failed on $base: ${e.message}")
-                if (base == activeBaseUrl) activeBaseUrl = null
+                val fingerprint = android.os.Build.FINGERPRINT ?: ""
+                val model = android.os.Build.MODEL ?: ""
+                val brand = android.os.Build.BRAND ?: ""
+                val product = android.os.Build.PRODUCT ?: ""
+                return fingerprint.startsWith("generic") || fingerprint.startsWith("unknown") ||
+                        model.contains("google_sdk") || model.contains("Emulator") ||
+                        brand.startsWith("generic") || product.contains("sdk")
+            } catch (t: Throwable) {
+                return false
             }
         }
-        
-        // If all else fails, try forced discovery
-        val forced = ServerEndpointResolver.getMcpBaseUrl(true)
-        if (forced != null && !candidates.contains(forced)) {
+
+        suspend fun tryUrl(url: String): T? {
+            if (url.isBlank() || !tried.add(url)) return null
             try {
-                Log.d(tag, "Trying forced discovery: $forced")
-                val result = action(forced)
-                activeBaseUrl = forced
-                return result
+                Log.d(tag, "Trying MCP connection to: $url")
+                val result = action(url)
+                if (result != null) {
+                    if (url != activeBaseUrl) {
+                        activeBaseUrl = url
+                        Log.i(tag, "MCP connection established at: $url")
+                    }
+                    return result
+                }
             } catch (e: Exception) {
-                Log.w(tag, "MCP request failed on forced $forced: ${e.message}")
+                lastException = e
+                Log.w(tag, "MCP request failed on $url: ${e.message}")
             }
+            return null
+        }
+
+        // Priority 1: Railway Cloud (Production)
+        if (ServerEndpointResolver.RAILWAY_MCP_URL.isNotBlank()) {
+            val res = tryUrl(ServerEndpointResolver.RAILWAY_MCP_URL)
+            if (res != null) return res
+        }
+
+        // Priority 2: Active/Last successful base URL
+        if (!activeBaseUrl.isNullOrBlank()) {
+            val res = tryUrl(activeBaseUrl!!)
+            if (res != null) return res
+        }
+
+        // Priority 3: Cached URL (Peek without blocking discovery)
+        val cached = ServerEndpointResolver.peekMcpBaseUrl()
+        if (!cached.isNullOrBlank()) {
+            // Skip emulator-only cached hosts when running on a physical device
+            if (!runningOnEmulator() && cached.contains("10.0.2.2")) {
+                Log.i(tag, "Skipping cached emulator host $cached on physical device")
+            } else {
+                val resCached = tryUrl(cached)
+                if (resCached != null) return resCached
+            }
+        }
+        // Priority 4: Full Discovery (Last Resort - Blocking)
+        Log.i(tag, "Fast candidates failed, attempting full network discovery...")
+        val discovered = ServerEndpointResolver.getMcpBaseUrl(forceDiscovery = true)
+        if (!discovered.isNullOrBlank()) {
+            val resDiscovered = tryUrl(discovered)
+            if (resDiscovered != null) return resDiscovered
+        }
+
+        // Priority 5: Local Emulator (Fallback for emulators only)
+        // Try common emulator ports only if running on an emulator to avoid physical-device timeouts
+        val hasLanIp = hasLocalLanIp()
+        Log.d(tag, "Emulator fallback decision: runningOnEmulator=${runningOnEmulator()} hasLanIp=$hasLanIp")
+        if (runningOnEmulator() && !hasLanIp) {
+            val resEmulator1 = tryUrl("http://10.0.2.2:3001")
+            if (resEmulator1 != null) return resEmulator1
+            val resEmulator0 = tryUrl("http://10.0.2.2:3000")
+            if (resEmulator0 != null) return resEmulator0
+        } else {
+            Log.d(tag, "Not running on emulator - skipping 10.0.2.2 fallbacks")
+        }
+
+        if (lastException != null) {
+            Log.e(tag, "All MCP connection attempts failed. Last error: ${lastException?.message}")
         }
 
         return null
@@ -97,16 +172,47 @@ class MCPHttpClient(private val context: Context) {
         return "${base.trimEnd('/')}$path"
     }
 
+    private fun hasLocalLanIp(): Boolean {
+        return try {
+            val nets = NetworkInterface.getNetworkInterfaces()
+            for (netIf in nets) {
+                if (!netIf.isUp || netIf.isLoopback) continue
+                val addrs = netIf.inetAddresses
+                for (addr in addrs) {
+                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
+                        val host = addr.hostAddress ?: continue
+                        // ignore emulator special subnet 10.0.2.x
+                        if (!host.startsWith("10.0.2.")) {
+                            return true
+                        }
+                    }
+                }
+            }
+            false
+        } catch (e: Exception) {
+            Log.d(tag, "hasLocalLanIp check failed: ${e.message}")
+            false
+        }
+    }
+
     private suspend fun executeRpcRaw(path: String, payload: JSONObject): String? {
         return withMcpBase { base ->
+            val fullUrl = buildUrl(base, path)
+            try {
+                Log.d(tag, "RPC POST url=$fullUrl payload=${payload.toString().take(1000)}")
+            } catch (_: Exception) {}
+
             val request = Request.Builder()
-                .url(buildUrl(base, path))
+                .url(fullUrl)
                 .header("Connection", "close") // Forzar cierre de conexión
+                .header("X-MCP-Client", "android")
+                .header("X-MCP-Request-Id", payload.optString("id", "-1"))
                 .post(payload.toString().toRequestBody(jsonMediaType))
                 .build()
 
             httpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string() ?: ""
+                Log.d(tag, "RPC response code=${response.code} bodyPreview=${body.take(600)}")
                 if (!response.isSuccessful) {
                     throw IOException("HTTP ${response.code}: ${response.message}")
                 }
@@ -131,12 +237,140 @@ class MCPHttpClient(private val context: Context) {
     )
     
     /**
+     * Upload a file to the backend
+     */
+    suspend fun uploadFile(uri: android.net.Uri, filename: String, mimeType: String): String? = withContext(Dispatchers.IO) {
+        return@withContext withMcpBase { base ->
+            try {
+                Log.d(tag, "📤 Uploading file: $filename to $base/upload")
+                
+                val contentResolver = context.contentResolver
+                val inputStream = contentResolver.openInputStream(uri) ?: return@withMcpBase null
+                val bytes = inputStream.readBytes()
+                inputStream.close()
+                
+                val requestBody = okhttp3.MultipartBody.Builder()
+                    .setType(okhttp3.MultipartBody.FORM)
+                    .addFormDataPart("userId", "android_user") // Replace with actual user ID if available
+                    .addFormDataPart(
+                        "file",
+                        filename,
+                        okhttp3.RequestBody.create(mimeType.toMediaType(), bytes)
+                    )
+                    .build()
+                
+                val request = Request.Builder()
+                    .url(buildUrl(base, "/upload"))
+                    .post(requestBody)
+                    .build()
+                
+                httpClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: ""
+                    if (!response.isSuccessful) {
+                        Log.e(tag, "Upload failed: ${response.code} - $body")
+                        return@withMcpBase null
+                    }
+                    
+                    val json = JSONObject(body)
+                    if (json.getBoolean("success")) {
+                        val url = json.getString("url")
+                        Log.d(tag, "✅ File uploaded: $url")
+                        return@withMcpBase url
+                    } else {
+                        Log.e(tag, "Upload returned success=false: $body")
+                        return@withMcpBase null
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "Error uploading file", e)
+                return@withMcpBase null
+            }
+        }
+    }
+
+    /**
+     * Process prompt with attachments (files)
+     * Calls /procesar-prompt directly
+     */
+    suspend fun processPromptWithAttachments(prompt: String, jsonContent: String): MCPQueryResult = withContext(Dispatchers.IO) {
+        return@withContext withMcpBase { base ->
+            try {
+                Log.d(tag, "🤖 Processing prompt with attachments: $prompt")
+                
+                val payload = JSONObject().apply {
+                    put("prompt", prompt)
+                    put("jsonContent", jsonContent)
+                    // We need to provide an ollamaUrl or LLM config. 
+                    // The backend routes might expect it or have a default.
+                    // Based on llmRoutes.js: const { prompt, ollamaUrl, model, jsonContent } = req.body;
+                    // It throws if ollamaUrl is missing!
+                    // We should point it to the local or configured LLM URL.
+                    // For now, let's assume the backend has a default or we pass a dummy one if using OpenAI.
+                    // But llmRoutes.js line 131 checks if (!ollamaUrl) throw.
+                    // We should use ServerEndpointResolver to get the LLM URL if possible, or pass a placeholder if using DeepSeek Cloud.
+                    // The backend code calls `targetUrl = ${baseUrl}/api/generate`.
+                    // If we want to use DeepSeek via MCP, we might need to pass the endpoint.
+                    // Let's pass a placeholder or try to find a real one.
+                    put("ollamaUrl", "http://localhost:11434") // Placeholder, backend might override or use it
+                    put("model", "deepseek-r1:8b") // Default model
+                }
+                
+                val request = Request.Builder()
+                    .url(buildUrl(base, "/procesar-prompt"))
+                    .post(payload.toString().toRequestBody(jsonMediaType))
+                    .build()
+                
+                httpClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: ""
+                    if (!response.isSuccessful) {
+                        return@withMcpBase MCPQueryResult(
+                            success = false,
+                            error = "HTTP ${response.code}: ${response.message} - $body"
+                        )
+                    }
+                    
+                    val json = JSONObject(body)
+                    val responseText = json.optString("respuesta_texto")
+                    
+                    // Parse response if it's JSON string
+                    val data = try {
+                        JSONObject(responseText)
+                    } catch (e: Exception) {
+                        try {
+                            JSONArray(responseText)
+                        } catch (e2: Exception) {
+                            responseText // Return raw string
+                        }
+                    }
+                    
+                    return@withMcpBase MCPQueryResult(
+                        success = true,
+                        data = data
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "Error processing prompt with attachments", e)
+                return@withMcpBase MCPQueryResult(
+                    success = false,
+                    error = e.message
+                )
+            }
+        } ?: MCPQueryResult(success = false, error = "Failed to connect to MCP server")
+    }
+
+    /**
      * Initialize MCP server connection
      */
-    suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
-        if (isInitialized) {
+    suspend fun initialize(force: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+        if (!force && isInitialized) {
             Log.d(tag, "MCP client already initialized")
             return@withContext true
+        }
+
+        // Reset active URL if forcing re-initialization
+        if (force) {
+            activeBaseUrl = null
+            isInitialized = false
         }
 
         val result = withMcpBase { base ->
@@ -219,7 +453,7 @@ class MCPHttpClient(private val context: Context) {
                     success = false,
                     data = null,
                     sqlScript = null,
-                    error = "MCP server not reachable"
+                    error = "MCP server not reachable (Check logs for connection errors)"
                 )
             }
 

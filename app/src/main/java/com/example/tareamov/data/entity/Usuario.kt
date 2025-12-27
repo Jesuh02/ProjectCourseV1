@@ -40,6 +40,7 @@ data class Usuario(
     val persona_id: Long = 0,
     val rol_id: Long = 1, // Default to estudiante role (ID 1)
     val email: String = "",
+    @SerializedName("avatar")
     val avatar: String? = null,
     @ColumnInfo(name = "is_active")
     @SerializedName("is_active")
@@ -54,6 +55,8 @@ data class Usuario(
     @SerializedName("created_at")
     val createdAt: String? = null
 ) {
+    fun avatarUrlOrNull(): String? = avatar?.takeIf { it.isNotBlank() }
+
     // Alias for password field (for Google Sign-In compatibility)
     var password: String
         get() = contrasena

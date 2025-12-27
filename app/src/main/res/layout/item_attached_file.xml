@@ -1,47 +1,97 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:padding="8dp"
-    android:layout_marginEnd="8dp"
-    android:background="@drawable/bg_attached_file"
-    android:gravity="center">
+    android:padding="2dp"
+    android:clipChildren="false"
+    android:clipToPadding="false">
 
-    <!-- File icon -->
-    <ImageView
-        android:id="@+id/fileIcon"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
-        android:src="@drawable/ic_attach_file"
-        app:tint="#888888"
-        android:layout_marginBottom="4dp" />
-
-    <!-- File name -->
-    <TextView
-        android:id="@+id/fileName"
-        android:layout_width="60dp"
+    <!-- Card with margins to make space for the overlapping X button -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/cardView"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="file.pdf"
-        android:textColor="#E0E0E0"
-        android:textSize="10sp"
-        android:maxLines="1"
-        android:ellipsize="middle"
-        android:gravity="center" />
+        android:layout_marginTop="10dp"
+        android:layout_marginEnd="10dp"
+        android:layout_marginBottom="4dp"
+        android:layout_gravity="bottom|start"
+        app:cardBackgroundColor="#1E1E1E"
+        app:cardCornerRadius="12dp"
+        app:strokeColor="#333333"
+        app:strokeWidth="1dp"
+        app:cardElevation="0dp">
 
-    <!-- Remove button -->
-    <ImageButton
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="12dp"
+            android:gravity="center_vertical">
+
+            <!-- Icon container -->
+            <FrameLayout
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_excel_icon"
+                android:padding="8dp">
+
+                <ImageView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:src="@drawable/ic_table_chart"
+                    app:tint="#FFFFFF" />
+            </FrameLayout>
+
+            <!-- Text info -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp">
+
+                <TextView
+                    android:id="@+id/fileName"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="data.xlsx"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:maxWidth="220dp" />
+
+                <TextView
+                    android:id="@+id/fileType"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Hoja de cálculo"
+                    android:textColor="#AAAAAA"
+                    android:textSize="12sp"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Close button (Top-Right, overlapping naturally due to FrameLayout Z-order) -->
+    <FrameLayout
         android:id="@+id/removeFileButton"
-        android:layout_width="20dp"
-        android:layout_height="20dp"
-        android:layout_marginTop="4dp"
-        android:background="@drawable/circle_shape"
-        android:backgroundTint="#2A2A2A"
-        android:src="@drawable/ic_close"
-        app:tint="#888888"
-        android:padding="4dp"
-        android:contentDescription="Eliminar archivo" />
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_gravity="top|end"
+        android:background="@drawable/bg_circle_close"
+        android:clickable="true"
+        android:focusable="true"
+        android:elevation="4dp">
 
-</LinearLayout>
+        <ImageView
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_close"
+            app:tint="#FFFFFF" />
+    </FrameLayout>
 
+</FrameLayout>

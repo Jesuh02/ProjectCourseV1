@@ -234,17 +234,9 @@
         android:paddingHorizontal="12dp"
         android:paddingTop="12dp"
         android:paddingBottom="8dp"
+        android:clipChildren="false"
+        android:clipToPadding="false"
         app:layout_constraintBottom_toBottomOf="parent">
-
-        <!-- Attached files preview container -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/attachedFilesRecyclerView"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            android:visibility="gone"
-            android:overScrollMode="never"
-            android:orientation="horizontal" />
 
         <!-- Input row with modern design -->
         <LinearLayout
@@ -254,7 +246,9 @@
             android:orientation="horizontal"
             android:gravity="bottom"
             android:background="@drawable/bg_input_container_cursor"
-            android:padding="6dp">
+            android:padding="6dp"
+            android:clipChildren="false"
+            android:clipToPadding="false">
 
             <!-- Attach file button -->
             <FrameLayout
@@ -281,7 +275,21 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:orientation="vertical"
-                android:paddingHorizontal="8dp">
+                android:paddingHorizontal="8dp"
+                android:clipChildren="false"
+                android:clipToPadding="false">
+
+                <!-- Attached files preview container -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/attachedFilesRecyclerView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:visibility="gone"
+                    android:layout_marginBottom="4dp"
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:overScrollMode="never"
+                    android:orientation="horizontal" />
 
                 <EditText
                     android:id="@+id/queryInput"
@@ -310,17 +318,36 @@
                 android:layout_gravity="bottom"
                 android:layout_marginStart="6dp">
 
-                <com.google.android.material.floatingactionbutton.FloatingActionButton
-                    android:id="@+id/sendButton"
+                <LinearLayout
+                    android:orientation="horizontal"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:src="@drawable/ic_send"
-                    app:tint="#FFFFFF"
-                    app:backgroundTint="#10A37F"
-                    app:borderWidth="0dp"
-                    app:fabSize="mini"
-                    app:elevation="0dp"
-                    app:pressedTranslationZ="2dp" />
+                    android:layout_height="wrap_content">
+
+                    <Button
+                        android:id="@+id/excelButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:text="Excel"
+                        android:textSize="12sp"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2E7D32"
+                        android:paddingHorizontal="8dp"
+                        android:visibility="gone"
+                        android:layout_marginEnd="8dp"
+                        style="@style/Widget.Material3.Button.UnelevatedButton" />
+
+                    <com.google.android.material.floatingactionbutton.FloatingActionButton
+                        android:id="@+id/sendButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:src="@drawable/ic_send"
+                        app:tint="#FFFFFF"
+                        app:backgroundTint="#10A37F"
+                        app:borderWidth="0dp"
+                        app:fabSize="mini"
+                        app:elevation="0dp"
+                        app:pressedTranslationZ="2dp" />
+                </LinearLayout>
 
                 <ProgressBar
                     android:id="@+id/loadingSpinner"

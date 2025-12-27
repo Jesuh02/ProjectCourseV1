@@ -17,6 +17,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import com.google.android.material.card.MaterialCardView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -167,9 +168,25 @@ class DatabaseChatAdapter(
         private val shareButton: ImageButton = itemView.findViewById(R.id.shareButton)
         private val copyButtonUser: ImageButton = itemView.findViewById(R.id.copyButtonUser)
         private val shareButtonUser: ImageButton = itemView.findViewById(R.id.shareButtonUser)
-        private val editButtonUser: ImageButton = itemView.findViewById(R.id.editButtonUser)
+        // Make editButtonUser nullable and safe to avoid crashes if not found in layout
+        private val editButtonUser: ImageButton? = try {
+            itemView.findViewById(R.id.editButtonUser)
+        } catch (e: Exception) { null }
         private val userAvatarImageView: ImageView? = itemView.findViewById(R.id.userAvatar)
         private val botAvatarImageView: ImageView? = itemView.findViewById(R.id.botAvatar)
+
+        // Attached File Views (Make nullable and safe)
+        private val attachedFileContainer: androidx.cardview.widget.CardView? = try {
+            itemView.findViewById(R.id.attachedFileContainer)
+        } catch (e: Exception) { null }
+        
+        private val attachedFileName: TextView? = try {
+            itemView.findViewById(R.id.attachedFileName)
+        } catch (e: Exception) { null }
+        
+        private val attachedFileType: TextView? = try {
+            itemView.findViewById(R.id.attachedFileType)
+        } catch (e: Exception) { null }
 
         fun bind(message: ChatMessage, shouldAnimate: Boolean = true) {
             // Only animate new messages, not updates
@@ -189,9 +206,18 @@ class DatabaseChatAdapter(
                 userMessageTextView.text = formatBoldText(message.text)
                 userMessageTime.text = timeFormat.format(Date(message.timestamp))
                 
+                // Show attached file if present
+                if (message.attachedFileUrl != null && message.attachedFileName != null) {
+                    attachedFileContainer?.visibility = View.VISIBLE
+                    attachedFileName?.text = message.attachedFileName
+                    attachedFileType?.text = message.attachedFileType ?: "Archivo adjunto"
+                } else {
+                    attachedFileContainer?.visibility = View.GONE
+                }
+                
                 // Load user avatar
                 userAvatarImageView?.let { iv ->
-                    val avatarUri = currentUserAvatarUrl
+                    val avatarUri = message.senderAvatar.takeUnless { it.isNullOrEmpty() } ?: currentUserAvatarUrl
                     if (!avatarUri.isNullOrEmpty()) {
                         iv.clearColorFilter() // Clear tint for user image
                         Glide.with(itemView.context)
@@ -287,7 +313,7 @@ class DatabaseChatAdapter(
             // Use minimal icons for user actions too
             copyButtonUser.setImageResource(R.drawable.ic_copy_minimal)
             shareButtonUser.setImageResource(R.drawable.ic_share_minimal)
-            editButtonUser.setImageResource(R.drawable.ic_edit_minimal)
+            editButtonUser?.setImageResource(R.drawable.ic_edit_minimal)
 
             copyButtonUser.setOnClickListener {
                 copyToClipboard(message.text)
@@ -297,7 +323,8 @@ class DatabaseChatAdapter(
                 shareMessage(message.text)
             }
             
-            editButtonUser.setOnClickListener {
+            // Safe call on nullable editButtonUser
+            editButtonUser?.setOnClickListener {
                 onEditUserMessageClick(message)
             }
         }

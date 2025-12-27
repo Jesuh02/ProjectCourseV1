@@ -38,6 +38,11 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import com.example.tareamov.service.ServerEndpointResolver
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import android.widget.EditText
+import android.provider.OpenableColumns
 
 class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
 
@@ -61,6 +66,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     private var totalMessageCount = 0
     private var isScrolledToBottom = true
     private var currentUser: String? = null
+    private var currentUserAvatar: String? = null
     // Keep the last Supabase GET URL for display with final results
     private var lastSupabaseUrl: String? = null
     
@@ -75,6 +81,209 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     
     // Keyboard visibility listener
     private var keyboardLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
+    
+    // Excel mode flag removed from UI (option eliminated)
+
+    // Attached files
+    data class AttachedFile(
+        val uri: android.net.Uri, 
+        val name: String, 
+        val type: String, 
+        var remoteUrl: String? = null,
+        val isPreUploaded: Boolean = false // Flag for files that are already on the server (e.g. generated)
+    )
+    private val attachedFiles = mutableListOf<AttachedFile>()
+    private lateinit var attachedFilesAdapter: AttachedFilesAdapter
+
+    // Launcher for picking Excel files
+    private val excelPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            // Persist permission to access the file
+            try {
+                requireContext().contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to take persistable permission", e)
+            }
+
+            // Get file name
+            var fileName = "Unknown file"
+            try {
+                val cursor = requireContext().contentResolver.query(uri, null, null, null, null)
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex >= 0) {
+                            fileName = it.getString(nameIndex)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error getting file name", e)
+            }
+            
+            // Add to list and UI
+            val file = AttachedFile(uri, fileName, "excel")
+            addAttachedFile(file)
+            
+            // Upload immediately
+            uploadAttachedFile(file)
+        }
+    }
+
+    private fun addAttachedFile(file: AttachedFile) {
+        attachedFiles.clear() // Limit to 1 file as per request implication (single attachment shown)
+        attachedFiles.add(file)
+        updateAttachedFilesUI()
+    }
+
+    private fun removeAttachedFile(file: AttachedFile) {
+        attachedFiles.remove(file)
+        updateAttachedFilesUI()
+    }
+
+    private fun removeAttachedFileWithRemote(file: AttachedFile) {
+        // If there's a remote URL, try to delete from Cloudflare R2 first
+        val remote = file.remoteUrl
+        if (remote.isNullOrEmpty()) {
+            removeAttachedFile(file)
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            val ctx = context ?: return@launch
+            var deletedRemotely = false
+
+            try {
+                withContext(Dispatchers.IO) {
+                    try {
+                        val uri = java.net.URI(remote)
+                        var path = uri.path ?: ""
+                        if (!path.startsWith("/")) path = "/$path"
+
+                        val hostPrefix = uri.host?.split(".")?.getOrNull(0)
+
+                        val candidates = mutableListOf<String>()
+                        if (!hostPrefix.isNullOrEmpty() && path.startsWith("/$hostPrefix/")) {
+                            candidates.add(path.substringAfter("/$hostPrefix/"))
+                        }
+                        if (path.startsWith("/")) candidates.add(path.substring(1))
+                        candidates.add(path.trimStart('/'))
+
+                        for (candidate in candidates) {
+                            try {
+                                if (candidate.isEmpty()) continue
+                                val ok = com.example.tareamov.service.CloudflareR2Service.deleteFile(candidate)
+                                if (ok) {
+                                    deletedRemotely = true
+                                    break
+                                }
+                            } catch (t: Throwable) {
+                                // try next candidate
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ignore and continue to local removal
+                    }
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+
+            withContext(Dispatchers.Main) {
+                if (deletedRemotely) {
+                    Toast.makeText(requireContext(), "Archivo remoto eliminado", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(requireContext(), "No se pudo eliminar archivo remoto (se eliminará localmente)", Toast.LENGTH_LONG).show()
+                }
+                removeAttachedFile(file)
+            }
+        }
+    }
+
+    private fun updateAttachedFilesUI() {
+        val recyclerView = binding.root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.attachedFilesRecyclerView)
+        if (attachedFiles.isEmpty()) {
+            recyclerView.visibility = View.GONE
+        } else {
+            recyclerView.visibility = View.VISIBLE
+            attachedFilesAdapter.notifyDataSetChanged()
+        }
+    }
+    
+    private fun uploadAttachedFile(file: AttachedFile) {
+        // If file is already pre-uploaded (e.g. generated from backend), skip upload
+        if (file.isPreUploaded && !file.remoteUrl.isNullOrEmpty()) {
+            Log.d(TAG, "File is pre-uploaded: ${file.remoteUrl}")
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val ctx = context ?: return@launch
+            try {
+                // Use CloudflareR2Service for direct upload (Better Performance/Good Practice)
+                val result = com.example.tareamov.service.CloudflareR2Service.uploadFile(
+                    context = ctx,
+                    fileUri = file.uri,
+                    folder = "uploads/chat_attachments",
+                    customFileName = file.name
+                )
+
+                withContext(Dispatchers.Main) {
+                    when (result) {
+                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
+                            file.remoteUrl = result.url
+                            Toast.makeText(requireContext(), "Archivo subido correctamente", Toast.LENGTH_SHORT).show()
+                            Log.d(TAG, "✅ File uploaded to R2: ${result.url}")
+                        }
+                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
+                            Toast.makeText(requireContext(), "Error al subir archivo: ${result.message}", Toast.LENGTH_SHORT).show()
+                            Log.e(TAG, "❌ Upload failed: ${result.message}")
+                            // Remove failed file from list
+                            removeAttachedFile(file)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Upload failed", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    removeAttachedFile(file)
+                }
+            }
+        }
+    }
+
+    // Inner Adapter class
+    inner class AttachedFilesAdapter : androidx.recyclerview.widget.RecyclerView.Adapter<AttachedFilesAdapter.ViewHolder>() {
+        
+        inner class ViewHolder(view: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(view) {
+            val fileName: TextView = view.findViewById(R.id.fileName)
+            val fileType: TextView = view.findViewById(R.id.fileType)
+            val removeButton: View = view.findViewById(R.id.removeFileButton)
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+            val view = LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_attached_file, parent, false)
+            return ViewHolder(view)
+        }
+
+        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+            val file = attachedFiles[position]
+            holder.fileName.text = file.name
+            holder.fileType.text = if (file.type == "excel") "Hoja de cálculo" else "Archivo"
+            holder.removeButton.setOnClickListener {
+                removeAttachedFileWithRemote(file)
+            }
+        }
+
+        override fun getItemCount() = attachedFiles.size
+    }
 
     companion object {
         private const val TAG = "DatabaseQueryFragment"
@@ -110,27 +319,171 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         
         // Initialize MCP HTTP Client for tareamov-mcp-server
         mcpHttpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
-        
-        // Initialize MCP connection in background
+
+        // Initialize MCP connection in background with ChatBot-like fallback
         viewLifecycleOwner.lifecycleScope.launch {
-            val initialized = mcpHttpClient.initialize()
+            var initialized = mcpHttpClient.initialize()
             if (initialized) {
-                Log.d(TAG, "✅ MCP HTTP client connected to server at http://10.0.2.2:3000")
-                
+                val active = mcpHttpClient.getActiveBaseUrl() ?: "http://10.0.2.2:3000"
+                Log.d(TAG, "✅ MCP HTTP client connected to server at $active")
                 withContext(Dispatchers.Main) {
-                    addMessageToChat("✅ Conectado a servidor MCP CourseV by YisusFactory (HTTP)", false)
+                    addMessageToChat("✅ Conectado a servidor MCP CourseV by YisusFactory (HTTP) \n$active", false)
                 }
             } else {
-                Log.w(TAG, "⚠️ MCP HTTP client connection failed, using fallback")
+                Log.w(TAG, "⚠️ MCP HTTP client initial initialization failed, attempting ChatBotFragment-style host detection...")
+
+                // Try ChatBotFragment style detection: gateway + common hosts
+                try {
+                    val wifiManager = requireContext().applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+                    val dhcpInfo = wifiManager?.dhcpInfo
+                    val fallbackIps = mutableListOf<String>()
+
+                    if (dhcpInfo != null) {
+                        val gatewayInt = dhcpInfo.gateway
+                        val gateway = String.format(
+                            "%d.%d.%d.%d",
+                            gatewayInt and 0xff,
+                            gatewayInt shr 8 and 0xff,
+                            gatewayInt shr 16 and 0xff,
+                            gatewayInt shr 24 and 0xff
+                        )
+
+                        val myIpInt = dhcpInfo.ipAddress
+                        val myIp = String.format(
+                            "%d.%d.%d.%d",
+                            myIpInt and 0xff,
+                            myIpInt shr 8 and 0xff,
+                            myIpInt shr 16 and 0xff,
+                            myIpInt shr 24 and 0xff
+                        )
+
+                        val networkBase = myIp.substringBeforeLast(".")
+                        fallbackIps.addAll(listOf("$networkBase.90", "$networkBase.100", "$networkBase.1", "$networkBase.2", gateway))
+                    }
+
+                    // Add a few common LAN candidates and more likely host addresses
+                    fallbackIps.addAll(listOf("192.168.1.90", "192.168.1.100", "192.168.1.10", "192.168.1.254"))
+                    // Try also typical small office IPs near gateway
+                    ServerEndpointResolver.getGatewayAddress()?.let { gw ->
+                        val base = gw.substringBeforeLast('.')
+                        fallbackIps.addAll(listOf("$base.1", "$base.2", "$base.10", "$base.50", "$base.100", "$base.254"))
+                    }
+
+                    // Try each candidate on port 3000 (MCP HTTP) then 3001 (API)
+                    var found: String? = null
+                    val socketTimeout = 1500 // ms - give slightly more time on busy networks
+                    for (ip in fallbackIps) {
+                        try {
+                            val socket = java.net.Socket()
+                            socket.connect(java.net.InetSocketAddress(ip, 3000), socketTimeout)
+                            socket.close()
+                            Log.d(TAG, "Fallback scan: reachable $ip:3000")
+                            found = "http://$ip:3000"
+                            break
+                        } catch (e: Exception) {
+                            Log.d(TAG, "Fallback scan: $ip:3000 not reachable (${e.message})")
+                        }
+                    }
+
+                    if (found == null) {
+                        for (ip in fallbackIps) {
+                            try {
+                                val socket = java.net.Socket()
+                                socket.connect(java.net.InetSocketAddress(ip, 3001), socketTimeout)
+                                socket.close()
+                                Log.d(TAG, "Fallback scan: reachable $ip:3001")
+                                found = "http://$ip:3001"
+                                break
+                            } catch (e: Exception) {
+                                Log.d(TAG, "Fallback scan: $ip:3001 not reachable (${e.message})")
+                            }
+                        }
+                    }
+
+                    if (found != null) {
+                        Log.i(TAG, "Forcing MCP base URL to $found and re-initializing client")
+                        mcpHttpClient.setForcedBaseUrl(found)
+                        initialized = mcpHttpClient.initialize(force = true)
+                        if (initialized) {
+                            withContext(Dispatchers.Main) {
+                                addMessageToChat("✅ Conectado a servidor MCP (forzado): $found", false)
+                            }
+                        } else {
+                            Log.w(TAG, "Forced initialization failed for $found")
+                        }
+                    } else {
+                        Log.w(TAG, "No fallback host found via gateway scan")
+                    }
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error during fallback host detection: ${e.message}", e)
+                }
+
+                if (!initialized) {
+                    Log.w(TAG, "⚠️ MCP HTTP client connection ultimately failed")
+                    withContext(Dispatchers.Main) {
+                        addMessageToChat("⚠️ No se detectó conexión con el servidor MCP. Usa IP LAN del host.", false)
+
+                        // Prompt user to enter LAN IP manually to help testing from physical devices
+                        try {
+                            val input = EditText(requireContext())
+                            input.hint = "e.g. 192.168.1.90:3000"
+                            AlertDialog.Builder(requireContext())
+                                .setTitle("Ingresar IP del servidor MCP")
+                                .setMessage("Si la detección automática falló, introduce manualmente la IP LAN del host (incluye :puerto si no es 3000)")
+                                .setView(input)
+                                .setPositiveButton("Conectar") { _, _ ->
+                                    val text = input.text.toString().trim()
+                                    if (text.isNotBlank()) {
+                                        // Normalize and force base URL
+                                        val url = if (text.startsWith("http")) text else "http://$text"
+                                        mcpHttpClient.setForcedBaseUrl(url)
+                                        // Re-attempt initialization in background
+                                        viewLifecycleOwner.lifecycleScope.launch {
+                                            val ok = mcpHttpClient.initialize(force = true)
+                                            withContext(Dispatchers.Main) {
+                                                if (ok) {
+                                                    addMessageToChat("✅ Conectado a servidor MCP (manual): $url", false)
+                                                } else {
+                                                    addMessageToChat("❌ No se pudo conectar a $url", false)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                .setNegativeButton("Cancelar", null)
+                                .show()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error showing manual IP dialog: ${e.message}")
+                        }
+                    }
+                }
             }
         }
 
         // Initialize UI components
         setupUIComponents()
-
+        
         // Setup chat RecyclerView with enhanced scrolling
         setupChatRecyclerView()
         
+        // Setup send button
+        setupSendButton()
+
+        // Attempt to fetch current user's avatar and set it on the adapter
+        lifecycleScope.launch {
+                try {
+                    currentUser?.let { username ->
+                        val avatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(username)
+                        avatar?.let { 
+                            currentUserAvatar = it
+                            chatAdapter.setUserAvatarUrl(it) 
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+
         // Setup floating action buttons
         setupFloatingActionButtons()
 
@@ -150,8 +503,18 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         // Set up enhanced UI interactions
         setupEnhancedUI()
 
-        // Set up send button click listener
-        setupSendButton()
+        // Initialize Attached Files Adapter
+        attachedFilesAdapter = AttachedFilesAdapter()
+        binding.attachedFilesRecyclerView.apply {
+            layoutManager = androidx.recyclerview.widget.LinearLayoutManager(context, androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL, false)
+            adapter = attachedFilesAdapter
+        }
+
+        // Set up attachment button
+        setupAttachmentButton()
+
+        // Set up Excel button
+        setupExcelButton()
 
         // Set up chart control buttons
         setupChartControls()
@@ -382,8 +745,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                     val mcpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
                     val mcpAvailable = mcpClient.initialize()
 
+                    val activeUrl = mcpClient.getActiveBaseUrl() ?: com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty { "http://10.0.2.2:3000" }
+
                     val status = if (mcpAvailable) {
-                        "✓ MCP HTTP server disponible (http://10.0.2.2:3000). El LLM se puede usar a través del MCP bridge."
+                        "✓ MCP HTTP server disponible ($activeUrl). El LLM se puede usar a través del MCP bridge."
                     } else {
                         "❌ MCP HTTP server no disponible. Asegúrate de que el servidor Node.js esté corriendo."
                     }
@@ -422,9 +787,15 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         }
     }
 
-    private fun addMessageToChat(text: String, isUser: Boolean): String {
+    private fun addMessageToChat(text: String, isUser: Boolean, attachedFile: AttachedFile? = null): String {
         val message = if (isUser) {
-            ChatMessage.createUserMessage(text)
+            ChatMessage.createUserMessage(
+                text, 
+                senderAvatar = currentUserAvatar,
+                attachedFileUrl = attachedFile?.remoteUrl ?: attachedFile?.uri?.toString(),
+                attachedFileName = attachedFile?.name,
+                attachedFileType = attachedFile?.type
+            )
         } else {
             ChatMessage.createSystemMessage(text)
         }
@@ -506,6 +877,118 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         }
     }
 
+    private fun setupExcelButton() {
+        val excelButton = binding.root.findViewById<android.widget.Button>(R.id.excelButton)
+        excelButton.setOnClickListener {
+            val userInput = binding.queryInput.text.toString().trim()
+            if (userInput.isNotEmpty()) {
+                generateExcel(userInput)
+                // Clear input
+                binding.queryInput.setText("")
+            } else {
+                Toast.makeText(requireContext(), "Escribe una consulta para generar el Excel", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun generateExcel(query: String) {
+        // Show loading state
+        addMessageToChat("📊 Generando Excel para: \"$query\"...", false)
+        binding.loadingSpinner.visibility = View.VISIBLE
+        
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
+                    "http://10.0.2.2:3000"
+                }
+                
+                val payload = JSONObject().apply {
+                    put("query", query)
+                    put("userId", sessionManager.getUsername() ?: "user")
+                }
+                
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
+                    .writeTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                
+                val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+                val request = okhttp3.Request.Builder()
+                    .url("$baseUrl/generate-excel")
+                    .post(body)
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                val responseBody = response.body?.string()
+                
+                withContext(Dispatchers.Main) {
+                    binding.loadingSpinner.visibility = View.GONE
+                    
+                    if (response.isSuccessful && responseBody != null) {
+                        try {
+                            val json = JSONObject(responseBody)
+                            if (json.has("url")) {
+                                val url = json.getString("url")
+                                val filename = json.optString("filename", "reporte.xlsx")
+                                val rows = json.optInt("rows", 0)
+                                
+                                addMessageToChat("✅ Excel generado ($rows filas).", false)
+                                
+                                // Attach the generated file to the input area for "mixing with prompt"
+                                try {
+                                    val uri = android.net.Uri.parse(url)
+                                    val file = AttachedFile(
+                                        uri = uri,
+                                        name = filename,
+                                        type = "excel",
+                                        remoteUrl = url,
+                                        isPreUploaded = true
+                                    )
+                                    addAttachedFile(file)
+                                    addMessageToChat("📎 Archivo adjuntado automáticamente. Puedes hacer preguntas sobre él.", false)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error attaching generated file", e)
+                                }
+                                
+                                // Also offer download/open
+                                addMessageToChat("📥 Descargar aquí: $url", false)
+                                
+                                // Open URL
+                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                                intent.data = android.net.Uri.parse(url)
+                                startActivity(intent)
+                            } else {
+                                addMessageToChat("⚠️ Respuesta inesperada del servidor.", false)
+                            }
+                        } catch (e: Exception) {
+                            addMessageToChat("❌ Error procesando respuesta: ${e.message}", false)
+                        }
+                    } else {
+                        addMessageToChat("❌ Error al generar Excel: ${response.code}", false)
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    binding.loadingSpinner.visibility = View.GONE
+                    addMessageToChat("❌ Error de conexión: ${e.message}", false)
+                    Log.e(TAG, "Excel generation failed", e)
+                }
+            }
+        }
+    }
+
+    private fun setupAttachmentButton() {
+        binding.attachFileButton.setOnClickListener {
+            // Launch file picker filtering for Excel files
+            // MIME types for Excel: .xls, .xlsx
+            excelPickerLauncher.launch(arrayOf(
+                "application/vnd.ms-excel",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ))
+        }
+    }
+
     private fun setupChartControls() {
         // Chart controls are disabled for now to avoid chart library dependency issues
         binding.zoomInButton.setOnClickListener {
@@ -555,12 +1038,46 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         Log.d("DatabaseQueryFragment", "Connection status: ${if (isConnected) statusText ?: "Conectado" else statusText ?: "Desconectado"}")
     }
 
+    private fun isExcelRequest(lowerQuery: String): Boolean {
+        // Palabras clave directas de Excel
+        val excelKeywords = listOf(
+            "excel", "hoja de cálculo", "hoja de calculo", "spreadsheet", "xls", "xlsx", "csv"
+        )
+        if (excelKeywords.any { lowerQuery.contains(it) }) return true
+
+        // Detección de intención de exportación/reporte (ej: "dame un reporte", "descargar datos")
+        // Esto evita que el LLM responda con texto cuando el usuario quiere un archivo
+        val exportActions = listOf("generar", "crear", "dame", "descargar", "exportar", "necesito", "quiero")
+        val exportObjects = listOf("reporte", "informe", "listado", "tabla", "archivo", "documento")
+        
+        val hasAction = exportActions.any { lowerQuery.contains(it) }
+        val hasObject = exportObjects.any { lowerQuery.contains(it) }
+        
+        // Si hay acción + objeto (ej: "generar reporte"), asumimos que quiere un Excel
+        // especialmente si pide "datos"
+        if (hasAction && hasObject) return true
+        
+        // Caso específico: "necesito los datos de..."
+        if (lowerQuery.contains("datos de") && (lowerQuery.contains("necesito") || lowerQuery.contains("dame"))) {
+            return true
+        }
+
+        return false
+    }
+
     private fun processQuery(query: String) {
         Log.d("DatabaseQueryFragment", "=== MAIN QUERY PROCESSING ===")
         Log.d("DatabaseQueryFragment", "User Query: $query")
         
         // Add user message to chat first
-        addMessageToChat(query, true)
+        val attachedFile = if (attachedFiles.isNotEmpty()) attachedFiles[0] else null
+        addMessageToChat(query, true, attachedFile)
+        
+        // Immediately clear attached files from UI after sending
+        if (attachedFiles.isNotEmpty()) {
+            attachedFiles.clear()
+            updateAttachedFilesUI()
+        }
         
         // Show spinner instead of typing indicator
         binding.sendButton.visibility = View.GONE
@@ -570,8 +1087,65 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         binding.chartContainer.visibility = View.GONE // Hide chart container
         removeCurrentChart() // Remove previous chart if any
 
-        // Check if this is a Business Intelligence query
+        // Check if attached files exist (using captured variable)
+        if (attachedFile != null) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    val remoteUrl = attachedFile.remoteUrl
+                    
+                    if (remoteUrl != null) {
+                        Log.d("DatabaseQueryFragment", "📎 Processing query with attached file: ${attachedFile.name}")
+                        
+                        // Construct JSON Content
+                        val jsonContent = JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("type", "file")
+                                put("uri", remoteUrl)
+                                put("name", attachedFile.name)
+                            })
+                        }.toString()
+                        
+                        val result = mcpHttpClient.processPromptWithAttachments(query, jsonContent)
+                        
+                        // Hide spinner
+                        binding.loadingSpinner.visibility = View.GONE
+                        binding.sendButton.visibility = View.VISIBLE
+                        
+                        if (result.success) {
+                            // Display response
+                            val responseText = if (result.data is JSONObject) {
+                                result.data.optString("response", result.data.toString())
+                            } else {
+                                result.data?.toString() ?: "Respuesta vacía"
+                            }
+                            addMessageToChat(responseText, false)
+                        } else {
+                            addMessageToChat("❌ Error: ${result.error}", false)
+                        }
+                    } else {
+                         // Fallback if upload failed or pending
+                        binding.loadingSpinner.visibility = View.GONE
+                        binding.sendButton.visibility = View.VISIBLE
+                        addMessageToChat("⚠️ El archivo adjunto aún no se ha subido o falló la subida. Inténtalo de nuevo.", false)
+                    }
+                } catch (e: Exception) {
+                    binding.loadingSpinner.visibility = View.GONE
+                    binding.sendButton.visibility = View.VISIBLE
+                    addMessageToChat("❌ Error procesando archivo: ${e.message}", false)
+                }
+            }
+            return
+        }
+
+        // Check if this is an Excel generation request
         val lowerQuery = query.lowercase().trim()
+        if (isExcelRequest(lowerQuery)) {
+            Log.d("DatabaseQueryFragment", "📊 Excel generation request detected")
+            generateExcel(query)
+            return
+        }
+
+        // Check if this is a Business Intelligence query
         if (isBIQuery(lowerQuery)) {
             Log.d("DatabaseQueryFragment", "🎯 Business Intelligence query detected - using VS Code style response")
             viewLifecycleOwner.lifecycleScope.launch {
@@ -691,11 +1265,16 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 return@withContext
             }
             
-            Log.d(TAG, "� Sending email notification to user $currentUserId (without sensitive data)")
+            Log.d(TAG, "📧 Sending email notification to user $currentUserId (without sensitive data)")
             
-            // Obtener la URL base del backend
-            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
-                "http://10.0.2.2:3000"  // Fallback para emulador
+            // Obtener la URL base del backend (priorizar la conexión activa del cliente MCP)
+            val activeUrl = mcpHttpClient.getActiveBaseUrl()
+            val baseUrl = if (!activeUrl.isNullOrBlank()) {
+                activeUrl
+            } else {
+                com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
+                    "http://10.0.2.2:3000"  // Fallback para emulador
+                }
             }
             
             // 🔒 SEGURIDAD: NO enviar la respuesta completa
@@ -906,7 +1485,25 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             
             // Call the tool 'query_database' on the MCP server
             // This triggers the backend agent (DeepSeek) if the query is natural language
-            val result = mcpHttpClient.executeTool("query_database", args)
+            var result = mcpHttpClient.executeTool("query_database", args)
+            
+            // Auto-retry if not reachable or connection failed
+            if (!result.success && (result.error?.contains("reachable") == true || result.error?.contains("failed") == true)) {
+                Log.w(TAG, "⚠️ First attempt failed (${result.error}), re-initializing MCP client and retrying...")
+                // Force re-initialization to find a valid host
+                if (mcpHttpClient.initialize(force = true)) {
+                    Log.i(TAG, "✅ Re-initialization successful, retrying query...")
+                    result = mcpHttpClient.executeTool("query_database", args)
+                } else {
+                    Log.e(TAG, "❌ Re-initialization failed")
+                }
+            }
+
+            // Retry for "timeout" errors specifically (often due to cold start)
+            if (!result.success && result.error?.contains("timeout", ignoreCase = true) == true) {
+                 Log.w(TAG, "⚠️ Request timed out, retrying once...")
+                 result = mcpHttpClient.executeTool("query_database", args)
+            }
             
             if (result.success && result.data != null) {
                 val data = result.data
@@ -1778,18 +2375,21 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             ¿Qué deseas hacer?
         """.trimIndent()
         
+        val options = arrayOf("Exportar Chat", "Nueva Sesión")
+
         android.app.AlertDialog.Builder(requireContext())
-            .setTitle("Historial de Chat")
-            .setMessage(message)
-            .setPositiveButton("Exportar") { _, _ ->
-                exportChatHistory()
+            .setTitle("Opciones")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> exportChatHistory()
+                    1 -> startNewSession()
+                }
             }
-            .setNeutralButton("Nueva sesión") { _, _ ->
-                startNewSession()
-            }
-            .setNegativeButton("Cerrar", null)
+            .setNegativeButton("Cancelar", null)
             .show()
     }
+
+    // toggleExcelMode removed
     
     private fun startNewSession() {
         android.app.AlertDialog.Builder(requireContext())

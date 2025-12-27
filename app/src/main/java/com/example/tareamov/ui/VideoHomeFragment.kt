@@ -41,6 +41,7 @@ import com.example.tareamov.data.entity.Subscription
 import com.example.tareamov.util.SessionManager
 import android.graphics.Color
 import android.graphics.PorterDuff
+import android.graphics.drawable.GradientDrawable
 import android.media.MediaPlayer // Required for MediaPlayer interactions if direct
 import android.widget.EditText
 import android.view.inputmethod.EditorInfo
@@ -506,9 +507,16 @@ class VideoHomeFragment : Fragment() {
             true
         )
         
-        // Set background and animation — make background less translucent so options are more visible
+        // Set background and animation — use a rounded panel for better visuals
         val popupBgColor = android.graphics.Color.parseColor("#DD1F222B") // darker semi-opaque panel
-        popupWindow.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(popupBgColor))
+        val radiusPx = (12 * resources.displayMetrics.density)
+        val bgDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = radiusPx
+            setColor(popupBgColor)
+            setStroke((1 * resources.displayMetrics.density).toInt(), Color.parseColor("#33FFFFFF"))
+        }
+        popupWindow.setBackgroundDrawable(bgDrawable)
         popupWindow.animationStyle = android.R.style.Animation_Dialog
         popupWindow.isOutsideTouchable = true
         popupWindow.isFocusable = true

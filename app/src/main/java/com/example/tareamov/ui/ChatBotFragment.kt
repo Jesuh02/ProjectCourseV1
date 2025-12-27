@@ -367,6 +367,18 @@ class ChatBotFragment : Fragment() {
 
         initializeViews(view)
         setupRecyclerView()
+
+        // Try to fetch the current user's avatar and set it on the chat adapter
+        lifecycleScope.launch {
+            try {
+                val username = sessionManager.getUsername()
+                if (!username.isNullOrBlank()) {
+                    val avatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(username)
+                    avatar?.let { chatAdapter.setUserAvatarUrl(it) }
+                }
+            } catch (_: Exception) {
+            }
+        }
         setupClickListeners()
         loadMessages()
         loadFileContextFromArguments()
@@ -647,7 +659,9 @@ class ChatBotFragment : Fragment() {
                                 "3. Volver a subir el archivo desde tu almacenamiento local\n\n" +
                                 "Mientras tanto, puedo ayudarte con preguntas generales.",
                         isFromUser = false,
-                        sessionId = sessionId
+                        sessionId = sessionId,
+                        senderUsername = "DeepSeek",
+                        senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                     )
                 } else if (hasError) {
                     ChatMessage(
@@ -657,7 +671,9 @@ class ChatBotFragment : Fragment() {
                                 "⚠️ El archivo tiene problemas de acceso, pero intentaré ayudarte con la información disponible.\n\n" +
                                 "Puedes hacerme preguntas y haré lo mejor posible con los datos limitados.",
                         isFromUser = false,
-                        sessionId = sessionId
+                        sessionId = sessionId,
+                        senderUsername = "DeepSeek",
+                        senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                     )
                 } else {
                     // Mostrar solo el nombre del archivo sin el contenido
@@ -665,7 +681,9 @@ class ChatBotFragment : Fragment() {
                         message = "📁 **Archivo cargado:** ${currentFileContext!!.fileName}\n\n" +
                                 "✅ Puedes hacerme preguntas sobre este archivo.",
                         isFromUser = false,
-                        sessionId = sessionId
+                        sessionId = sessionId,
+                        senderUsername = "DeepSeek",
+                        senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                     )
                 }
 

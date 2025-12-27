@@ -28,7 +28,6 @@ import androidx.compose.ui.platform.LocalDensity
 
 @Composable
 fun EvaluativeReinforcementScreen(
-    onContinueClick: () -> Unit,
     onCourseSelectionClick: () -> Unit
 ) {
     // Animation state for the robot (bobbing up and down)
@@ -57,13 +56,16 @@ fun EvaluativeReinforcementScreen(
     // Typewriter effect state
     var displayedText by remember { mutableStateOf("") }
     val fullText = "¡Hola amigo! Soy tu asistente."
+    var isSpeaking by remember { mutableStateOf(false) }
 
     LaunchedEffect(key1 = fullText) {
         displayedText = ""
-        fullText.forEachIndexed { index, char ->
+        isSpeaking = true
+        fullText.forEach { char ->
             displayedText += char
             kotlinx.coroutines.delay(50) // Adjust speed here (lower is faster)
         }
+        isSpeaking = false
     }
 
     Column(
@@ -93,7 +95,7 @@ fun EvaluativeReinforcementScreen(
                 .offset(y = dy.dp),
             contentAlignment = Alignment.Center
         ) {
-            CuteRobot()
+            CuteRobot(isSpeaking = isSpeaking)
         }
 
         Spacer(modifier = Modifier.weight(1f))
@@ -169,8 +171,21 @@ fun SpeechBubble(text: String) {
 }
 
 @Composable
-fun CuteRobot() {
+fun CuteRobot(isSpeaking: Boolean) {
     val density = LocalDensity.current
+    
+    // Animation for mouth movement
+    val infiniteTransition = rememberInfiniteTransition(label = "mouthAnim")
+    val mouthOpenHeight by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(150, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "mouthOpenHeight"
+    )
+
     Canvas(modifier = Modifier.fillMaxSize()) {
         val w = size.width
         val h = size.height
@@ -184,8 +199,8 @@ fun CuteRobot() {
         val pupilColor = Color.Black
 
         // Precompute dp->px values using LocalDensity
-        val px4 = with(density) { 4.dp.toPx() }
         val px3 = with(density) { 3.dp.toPx() }
+        val px4 = with(density) { 4.dp.toPx() }
         val px6 = with(density) { 6.dp.toPx() }
         val px8 = with(density) { 8.dp.toPx() }
         val px10 = with(density) { 10.dp.toPx() }
@@ -200,6 +215,9 @@ fun CuteRobot() {
         val px80 = with(density) { 80.dp.toPx() }
         val px100 = with(density) { 100.dp.toPx() }
         val px120 = with(density) { 120.dp.toPx() }
+        
+        // Dynamic mouth height in px
+        val mouthHeightPx = if (isSpeaking) with(density) { mouthOpenHeight.dp.toPx() } else px10
 
         // Body (Rounded Rect)
         drawRoundRect(
@@ -246,16 +264,27 @@ fun CuteRobot() {
             center = Offset(cx + px30, cy - px10)
         )
 
-        // Smile
-        drawArc(
-            color = Color.Black,
-            startAngle = 0f,
-            sweepAngle = 180f,
-            useCenter = false,
-            topLeft = Offset(cx - px10, cy + px10),
-            size = Size(px20, px10),
-            style = Stroke(width = px3)
-        )
+        // Mouth (Smile or Talking)
+        if (isSpeaking) {
+            // Draw an oval for talking mouth
+            drawOval(
+                color = Color.Black,
+                topLeft = Offset(cx - px10, cy + px10),
+                size = Size(px20, mouthHeightPx),
+                style = Fill
+            )
+        } else {
+            // Draw static smile
+            drawArc(
+                color = Color.Black,
+                startAngle = 0f,
+                sweepAngle = 180f,
+                useCenter = false,
+                topLeft = Offset(cx - px10, cy + px10),
+                size = Size(px20, px10),
+                style = Stroke(width = px3)
+            )
+        }
 
         // Arms (Waving)
         // Left arm (down)

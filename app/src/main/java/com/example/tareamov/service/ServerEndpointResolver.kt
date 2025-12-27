@@ -31,16 +31,17 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object ServerEndpointResolver {
     private const val TAG = "ServerEndpointResolver"
+    // MCP HTTP server runs on 3000 (mcp-http.js). Use 3000 so physical devices discover the correct service.
     private const val MCP_PORT = 3000
     private const val OLLAMA_PORT = 11435
-    private const val DEFAULT_TIMEOUT_MS = 500 // Reduced from 1500ms to speed up scanning
+    private const val DEFAULT_TIMEOUT_MS = 1000 // Increased from 500ms to be more reliable on mobile networks
     private const val PREFS_NAME = "server_endpoint_resolver"
     private const val PREF_KEY_PREFIX = "last_host_"
-    private const val MAX_SCAN_HOSTS = 32 // Reduced from 128 to scan fewer hosts
+    private const val MAX_SCAN_HOSTS = 48 // Slightly increased to allow more candidates
     
     // Railway Cloud URLs (Production)
-    const val RAILWAY_MCP_URL = "https://mcp-backenddeploy-production.up.railway.app"
-    const val RAILWAY_API_URL = "https://mcp-backenddeploy-production.up.railway.app"  // Same service, different port internally
+    const val RAILWAY_MCP_URL = "" // Set to empty to use local server http://10.0.2.2:3000
+    const val RAILWAY_API_URL = ""  // Same service, different port internally
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()
@@ -290,9 +291,23 @@ object ServerEndpointResolver {
         candidates.add("127.0.0.1")
         candidates.add("localhost")
 
-        getGatewayAddress()?.let { candidates.add(it) }
+        // Add gateway only if it is not an emulator-only subnet (10.0.2.x)
+        getGatewayAddress()?.let {
+            if (it.startsWith("10.0.2.") && !isEmulator()) {
+                Log.d(TAG, "Skipping gateway $it (emulator subnet) on physical device")
+            } else {
+                candidates.add(it)
+            }
+        }
 
-        collectSubnetCandidates().forEach { candidates.add(it) }
+        // Collect subnet candidates but skip emulator subnets when on a physical device
+        collectSubnetCandidates().forEach { candidate ->
+            if (candidate.startsWith("10.0.2.") && !isEmulator()) {
+                Log.d(TAG, "Skipping candidate $candidate from subnet scan (emulator subnet) on physical device")
+            } else {
+                candidates.add(candidate)
+            }
+        }
 
         return candidates.toList()
     }
@@ -361,7 +376,7 @@ object ServerEndpointResolver {
         return (0xFFFFFFFFL shl (32 - prefixLength)) and 0xFFFFFFFFL
     }
 
-    private fun getGatewayAddress(): String? {
+    fun getGatewayAddress(): String? {
         return try {
             val dhcpInfo = wifiManager?.dhcpInfo ?: return null
             if (dhcpInfo.gateway == 0) {

@@ -202,11 +202,12 @@ class SyncRepository(
         }
     }
 
-    suspend fun saveReinforcementHistory(userId: Long, courseId: Long, questions: List<Any>) {
+    suspend fun saveReinforcementHistory(userId: Long, courseId: Long, topicId: Long = -1L, taskId: Long = -1L, questions: List<Any>) {
         try {
-            if (userId > 0 && courseId > 0 && questions.isNotEmpty()) {
+                if (userId > 0 && courseId > 0 && questions.isNotEmpty()) {
                 // Change to insertReinforcementHistory to create new records instead of upserting
-                val success = supabaseClient.insertReinforcementHistory(userId, courseId, questions)
+                // SupabaseClient.insertReinforcementHistory signature: (userId, courseId, topicId, taskId, newQuestions)
+                val success = supabaseClient.insertReinforcementHistory(userId, courseId, topicId, taskId, questions)
                 if (success) {
                     Log.d("SyncRepository", "Successfully saved reinforcement history for user $userId course $courseId")
                 } else {

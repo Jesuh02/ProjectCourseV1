@@ -488,12 +488,37 @@
         <action
             android:id="@+id/action_selectTopicFragment_to_courseTaskFragment"
             app:destination="@id/courseTaskFragment" />
+        <!-- Action to navigate to SelectTaskFragment (list of tasks) -->
+        <action
+            android:id="@+id/action_selectTopicFragment_to_selectTaskFragment"
+            app:destination="@id/selectTaskFragment" />
         <!-- Optional: Action to go back, e.g., to CourseDetailFragment -->
         <action
             android:id="@+id/action_selectTopicFragment_to_courseDetailFragment"
             app:destination="@id/courseDetailFragment"
             app:popUpTo="@id/courseDetailFragment"
             app:popUpToInclusive="true" />
+    </fragment>
+
+    <!-- Add SelectTaskFragment definition -->
+    <fragment
+        android:id="@+id/selectTaskFragment"
+        android:name="com.example.tareamov.ui.SelectTaskFragment"
+        android:label="Select Task"
+        tools:layout="@layout/fragment_select_task">
+        <argument
+            android:name="courseId"
+            app:argType="long" />
+        <argument
+            android:name="topicId"
+            app:argType="long" />
+        <action
+            android:id="@+id/action_selectTaskFragment_to_courseTaskFragment"
+            app:destination="@id/courseTaskFragment" />
+        <!-- New action: select task -> reinforcement learning -->
+        <action
+            android:id="@+id/action_selectTaskFragment_to_reinforcementLearningFragment"
+            app:destination="@id/reinforcementLearningFragment" />
     </fragment>
 
     <!-- Audience Selection Fragment - remove nested profileFragment -->
@@ -629,6 +654,10 @@
         <action
             android:id="@+id/action_courseSelectionFragment_to_reinforcementLearningFragment"
             app:destination="@id/reinforcementLearningFragment" />
+        <!-- New action: from course selection -> select topic -->
+        <action
+            android:id="@+id/action_courseSelectionFragment_to_selectTopicFragment"
+            app:destination="@id/selectTopicFragment" />
     </fragment>
 
     <!-- Reinforcement Learning Fragment -->

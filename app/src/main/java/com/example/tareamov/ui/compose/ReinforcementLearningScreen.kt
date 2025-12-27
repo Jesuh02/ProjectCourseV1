@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.style.TextAlign // Fix Unresolved reference: TextAlign
+import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalContext
@@ -52,11 +53,19 @@ fun ReinforcementLearningScreen(
     LaunchedEffect(courseName) {
         android.util.Log.d("ReinforcementScreen", "🚀 Screen initialized for course: $courseName")
     }
+    
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
 
     // Fix Unresolved reference for collectAsState
     val uiState by (viewModel?.uiState?.collectAsState() ?: remember { mutableStateOf(ReinforcementState.Initial) })
     val currentScore by (viewModel?.currentScore?.collectAsState() ?: remember { mutableStateOf(0) })
+    // ViewModel does not expose selectedTopicName/selectedTaskName flows; keep local nullable state
+    val selectedTopic by (viewModel?.selectedTopicName?.collectAsState() ?: remember { mutableStateOf<String?>(null) })
+    val selectedTask by (viewModel?.selectedTaskName?.collectAsState() ?: remember { mutableStateOf<String?>(null) })
+    val analyzedFiles by (viewModel?.analyzedFiles?.collectAsState() ?: remember { mutableStateOf(emptyList<AnalyzedFile>()) })
+    
     var historySaved by remember { mutableStateOf(false) }
+    var showInfoDialog by remember { mutableStateOf(false) }
     
     // Local state for quiz flow
     var isQuizActive by remember { mutableStateOf(false) }
@@ -117,7 +126,7 @@ fun ReinforcementLearningScreen(
                 Text("<", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.width(16.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = if (isQuizActive) "Pregunta ${currentQuestionIndex + 1}" else courseName,
                     color = Color.White,
@@ -147,6 +156,128 @@ fun ReinforcementLearningScreen(
                         fontSize = 14.sp,
                         maxLines = 1
                     )
+                }
+            }
+            
+            // Info Button (3 dots)
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(Color(0xFF2B303B), RoundedCornerShape(12.dp))
+                    .clickable { showInfoDialog = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "...",
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.offset(y = (-6).dp)
+                )
+            }
+        }
+        
+        // Context Info Dialog
+        if (showInfoDialog) {
+            Dialog(onDismissRequest = { showInfoDialog = false }) {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                     Box(
+                        modifier = Modifier
+                            .background(Color(0xD91F222B)) // Dark translucent similar to liquid glass
+                            .padding(20.dp)
+                     ) {
+                         Column(horizontalAlignment = Alignment.Start) {
+                             Text(
+                                 text = "Contexto de Estudio",
+                                 color = Color.White,
+                                 fontSize = 18.sp,
+                                 fontWeight = FontWeight.Bold,
+                                 modifier = Modifier.fillMaxWidth()
+                             )
+                             Spacer(modifier = Modifier.height(16.dp))
+                             
+                             Text(
+                                 text = "Tema Seleccionado:",
+                                 color = Color(0xFFAAAAAA),
+                                 fontSize = 12.sp,
+                                 fontWeight = FontWeight.Bold
+                             )
+                             Text(
+                                 text = selectedTopic ?: "No seleccionado (General)",
+                                 color = Color.White,
+                                 fontSize = 14.sp,
+                                 modifier = Modifier.padding(bottom = 12.dp)
+                             )
+                             
+                             Text(
+                                 text = "Tarea Seleccionada:",
+                                 color = Color(0xFFAAAAAA),
+                                 fontSize = 12.sp,
+                                 fontWeight = FontWeight.Bold
+                             )
+                             Text(
+                                 text = selectedTask ?: "No seleccionada (General)",
+                                 color = Color.White,
+                                 fontSize = 14.sp
+                             )
+                             
+                             Spacer(modifier = Modifier.height(16.dp))
+                             
+                             Text(
+                                 text = "Archivos Analizados (${analyzedFiles.size}):",
+                                 color = Color(0xFFAAAAAA),
+                                 fontSize = 12.sp,
+                                 fontWeight = FontWeight.Bold
+                             )
+                             
+                             if (analyzedFiles.isEmpty()) {
+                                 Text(
+                                     text = "Ninguno",
+                                     color = Color.Gray,
+                                     fontSize = 14.sp,
+                                     fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                                 )
+                             } else {
+                                 analyzedFiles.forEach { file ->
+                                     Text(
+                                         text = "📄 ${file.name}",
+                                         color = Color(0xFF40C4FF),
+                                         fontSize = 14.sp,
+                                         modifier = Modifier
+                                             .padding(vertical = 4.dp)
+                                             .clickable {
+                                                 file.url?.let { url ->
+                                                     try {
+                                                         uriHandler.openUri(url)
+                                                     } catch (e: Exception) {
+                                                         android.util.Log.e("ReinforcementScreen", "Could not open URL: $url", e)
+                                                     }
+                                                 }
+                                             }
+                                     )
+                                 }
+                             }
+                             
+                             Spacer(modifier = Modifier.height(24.dp))
+                             
+                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                 Box(
+                                     modifier = Modifier
+                                         .background(Color.Transparent, RoundedCornerShape(8.dp))
+                                         .border(1.dp, Color(0x80FFFFFF), RoundedCornerShape(8.dp))
+                                         .clickable { showInfoDialog = false }
+                                         .padding(horizontal = 16.dp, vertical = 8.dp)
+                                 ) {
+                                     Text("Cerrar", color = Color.White, fontSize = 14.sp)
+                                 }
+                             }
+                         }
+                     }
                 }
             }
         }
@@ -231,6 +362,19 @@ fun ReinforcementLearningScreen(
                 } else {
                     // Completed
                     Text("¡Felicidades! Has completado el refuerzo.", color = Color.White)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { 
+                            // Reset state to initial to trigger regeneration
+                            onStartClick() // This calls viewModel.loadQuestions which sets state to Loading -> fetches NEW questions
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF58CC02)),
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    ) { 
+                        Text("COMENZAR CUESTIONARIO NUEVO", fontSize = 18.sp, fontWeight = FontWeight.Bold) 
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
                     Button(onClick = { isQuizActive = false }) { Text("Volver") }
                 }
             } else {
@@ -251,6 +395,7 @@ fun WelcomeView(
     onStartQuizClick: () -> Unit
 ) {
     var displayedText by remember { mutableStateOf("") }
+    var isSpeaking by remember { mutableStateOf(false) }
     val fullText = "¡Bienvenido! Estoy listo para ayudarte con \"$courseName\"."
     
     // State handling text
@@ -263,10 +408,12 @@ fun WelcomeView(
 
     LaunchedEffect(robotText) {
         displayedText = ""
+        isSpeaking = true
         robotText.forEachIndexed { index, char ->
             displayedText += char
             delay(30)
         }
+        isSpeaking = false
     }
 
     Column(
@@ -285,7 +432,7 @@ fun WelcomeView(
             modifier = Modifier.size(200.dp).scale(scale).offset(y = dy.dp),
             contentAlignment = Alignment.Center
         ) {
-            CuteRobot()
+                    CuteRobot(isSpeaking = isSpeaking)
         }
 
         Spacer(modifier = Modifier.weight(1f))
@@ -351,7 +498,7 @@ fun QuizView(
                         modifier = Modifier.size(100.dp).scale(scale * 0.8f).offset(y = dy.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        CuteRobot()
+                        CuteRobot(isSpeaking = false)
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Box(

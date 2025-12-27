@@ -22,7 +22,12 @@ data class ChatMessage(
     ,
     // Optional sender metadata (used to show avatar/username when available)
     val senderUsername: String? = null,
-    val senderAvatar: String? = null
+    val senderAvatar: String? = null,
+
+    // Attached File Metadata
+    val attachedFileUrl: String? = null,
+    val attachedFileName: String? = null,
+    val attachedFileType: String? = null
 )
 
 //Hola Herazo...

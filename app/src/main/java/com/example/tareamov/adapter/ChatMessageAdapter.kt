@@ -121,6 +121,20 @@ class ChatMessageAdapter(
         private val userMessageTime: TextView = itemView.findViewById(R.id.userMessageTime)
         private val botMessageTime: TextView = itemView.findViewById(R.id.botMessageTime)
         private val timestampTextView: TextView = itemView.findViewById(R.id.messageTimestampTextView)
+        
+        // Attached File Views (Make nullable and safe)
+        private val attachedFileContainer: androidx.cardview.widget.CardView? = try {
+            itemView.findViewById(R.id.attachedFileContainer)
+        } catch (e: Exception) { null }
+        
+        private val attachedFileName: TextView? = try {
+            itemView.findViewById(R.id.attachedFileName)
+        } catch (e: Exception) { null }
+        
+        private val attachedFileType: TextView? = try {
+            itemView.findViewById(R.id.attachedFileType)
+        } catch (e: Exception) { null }
+
         private val calificationButtonsContainer: LinearLayout = itemView.findViewById(R.id.calificationButtonsContainer)
         private val addCalificationButton: Button = itemView.findViewById(R.id.addCalificationButton)
         private val rejectCalificationButton: Button = itemView.findViewById(R.id.rejectCalificationButton)
@@ -128,6 +142,10 @@ class ChatMessageAdapter(
         private val shareButton: ImageButton = itemView.findViewById(R.id.shareButton)
         private val copyButtonUser: ImageButton = itemView.findViewById(R.id.copyButtonUser)
         private val shareButtonUser: ImageButton = itemView.findViewById(R.id.shareButtonUser)
+        // Make editButtonUser nullable and safe to avoid crashes if not found in layout
+        private val editButtonUser: ImageButton? = try {
+            itemView.findViewById(R.id.editButtonUser)
+        } catch (e: Exception) { null }
 
         fun bind(message: ChatMessage) {
             if (message.isFromUser) {
@@ -136,6 +154,16 @@ class ChatMessageAdapter(
                 botMessageContainer.visibility = View.GONE
                 
                 userMessageTextView.text = formatBoldText(message.message)
+                
+                // Show attached file if present
+                if (message.attachedFileUrl != null && message.attachedFileName != null) {
+                    attachedFileContainer?.visibility = View.VISIBLE
+                    attachedFileName?.text = message.attachedFileName
+                    attachedFileType?.text = message.attachedFileType ?: "Archivo adjunto"
+                } else {
+                    attachedFileContainer?.visibility = View.GONE
+                }
+
                 try {
                     val sess = SessionManager.getInstance(itemView.context)
                     // Prefer sender-specific avatar stored on the message, then adapter-level user avatar, then session
@@ -160,6 +188,7 @@ class ChatMessageAdapter(
                 userMessageTime.text = timeFormat.format(Date(message.timestamp))
                 
                 setupUserMessageActions(message)
+                
                 calificationButtonsContainer.visibility = View.GONE
             } else {
                 // Show bot message
@@ -170,19 +199,16 @@ class ChatMessageAdapter(
 
                 // Load bot avatar (fallback to default)
                 try {
-                    val botUrl = botAvatarUrl ?: "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
-                    botAvatarImageView?.let { iv ->
-                        iv.clearColorFilter() // Clear tint for bot image
+                    if (!botAvatarUrl.isNullOrBlank()) {
                         Glide.with(itemView.context)
-                            .load(botUrl)
-                            .placeholder(R.drawable.ic_cpu)
-                            .error(R.drawable.ic_cpu)
+                            .load(botAvatarUrl)
                             .circleCrop()
-                            .into(iv)
-                        iv.visibility = View.VISIBLE
+                            .into(botAvatarImageView!!)
+                    } else {
+                        botAvatarImageView?.setImageResource(android.R.drawable.sym_def_app_icon)
                     }
                 } catch (e: Exception) {
-                    // ignore
+                    botAvatarImageView?.setImageResource(android.R.drawable.sym_def_app_icon)
                 }
                 
                 // Enhanced bot message formatting
@@ -262,12 +288,21 @@ class ChatMessageAdapter(
         }
 
         private fun setupUserMessageActions(message: ChatMessage) {
+            // Use minimal icons for user actions too
+            copyButtonUser.setImageResource(R.drawable.ic_copy_minimal)
+            shareButtonUser.setImageResource(R.drawable.ic_share_minimal)
+            editButtonUser?.setImageResource(R.drawable.ic_edit_minimal)
+
             copyButtonUser.setOnClickListener {
                 copyToClipboard(message.message)
             }
             
             shareButtonUser.setOnClickListener {
                 shareMessage(message.message)
+            }
+            
+            editButtonUser?.setOnClickListener {
+                onEditUserMessageClick(message)
             }
         }
         

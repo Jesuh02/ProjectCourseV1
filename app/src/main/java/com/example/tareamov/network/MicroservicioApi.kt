@@ -43,7 +43,8 @@ data class MicroservicioPromptRequest(
     val userId: Long? = null,             // ID del usuario para notificaciones push
     val courseId: Long? = null,           // ID del curso para historial de preguntas
     val submissionId: Long? = null,       // ID de la submission para obtener contenido desde R2/Supabase
-    val taskId: Long? = null,             // ID de la tarea para buscar submission
+    val taskId: Long? = null,             // ID de la tarea para buscar submission o contexto
+    val topicId: Long? = null,            // ID del tema para contexto
     val studentId: Long? = null,          // ID del estudiante para buscar submission
     val fileUri: String? = null,          // URI del archivo en R2 para descarga directa
     val requestNonce: String? = null      // Optional nonce to force unique LLM prompts

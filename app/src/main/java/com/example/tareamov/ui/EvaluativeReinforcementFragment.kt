@@ -20,9 +20,6 @@ class EvaluativeReinforcementFragment : Fragment() {
         return ComposeView(requireContext()).apply {
             setContent {
                 EvaluativeReinforcementScreen(
-                    onContinueClick = {
-                        findNavController().popBackStack()
-                    },
                     onCourseSelectionClick = {
                         // Navigate to course selection screen
                         findNavController().navigate(R.id.action_evaluativeReinforcementFragment_to_courseSelectionFragment)

@@ -75,6 +75,16 @@ object SupabaseClient {
         requestListener = listener
     }
 
+    // Convenience helper: fetch only the avatar URL for a username
+    suspend fun fetchUsuarioAvatarByUsername(username: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val usuario = fetchUsuarioByUsername(username)
+            return@withContext usuario?.avatar
+        } catch (e: Exception) {
+            return@withContext null
+        }
+    }
+
     private fun effectiveApiKey(): String {
         val b = apiKey.trim()
         if (b.isNotEmpty()) return b
@@ -340,14 +350,22 @@ object SupabaseClient {
      * Insert a new reinforcement question history record for a user in a course.
      * This creates a new row instead of updating an existing one, preserving history.
      */
-    suspend fun insertReinforcementHistory(userId: Long, courseId: Long, newQuestions: List<Any>): Boolean = withContext(Dispatchers.IO) {
+    suspend fun insertReinforcementHistory(
+        userId: Long, 
+        courseId: Long, 
+        topicId: Long = -1L,
+        taskId: Long = -1L,
+        newQuestions: List<Any>
+    ): Boolean = withContext(Dispatchers.IO) {
         try {
             // Simply insert the new batch of questions as a new record
-            val payload = mapOf(
+            val payload = mutableMapOf(
                 "user_id" to userId,
                 "course_id" to courseId,
                 "questions" to newQuestions
             )
+            if (topicId > 0) payload["topic_id"] = topicId
+            if (taskId > 0) payload["task_id"] = taskId
             
             val body = gson.toJson(payload).toRequestBody(jsonMedia)
             val url = "$baseUrl/rest/v1/reinforcement_question_history"
@@ -373,6 +391,47 @@ object SupabaseClient {
         } catch (e: Exception) {
             Log.e("SupabaseClient", "insertReinforcementHistory exception", e)
             return@withContext false
+        }
+    }
+
+    /**
+     * Fetch previous reinforcement questions to avoid repetition.
+     */
+    suspend fun fetchReinforcementHistory(userId: Long, courseId: Long, topicId: Long = -1L, taskId: Long = -1L): List<String> = withContext(Dispatchers.IO) {
+        try {
+            var url = "$baseUrl/rest/v1/reinforcement_question_history?user_id=eq.$userId&course_id=eq.$courseId&select=questions"
+            if (topicId > 0) url += "&topic_id=eq.$topicId"
+            if (taskId > 0) url += "&task_id=eq.$taskId"
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val bodyStr = resp.body?.string() ?: return@withContext emptyList()
+                
+                val historyQuestions = mutableListOf<String>()
+                val jsonArray = com.google.gson.JsonParser.parseString(bodyStr).asJsonArray
+                jsonArray.forEach { row ->
+                    val questionsArray = row.asJsonObject.getAsJsonArray("questions")
+                    questionsArray?.forEach { q ->
+                        // Assuming questions are stored as objects with "question" field or strings
+                        if (q.isJsonObject && q.asJsonObject.has("question")) {
+                            historyQuestions.add(q.asJsonObject.get("question").asString)
+                        } else if (q.isJsonPrimitive) {
+                            historyQuestions.add(q.asString)
+                        }
+                    }
+                }
+                return@withContext historyQuestions
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "fetchReinforcementHistory exception", e)
+            return@withContext emptyList()
         }
     }
 

@@ -34,6 +34,8 @@ class SelectTopicFragment : Fragment() {
 
     private var courseId: Long = -1
     private var courseName: String = ""
+    private var autoOpenTasks: Boolean = false
+    private var autoOpenedTasks: Boolean = false
     private lateinit var topicsRecyclerView: RecyclerView
     private lateinit var topicSelectionAdapter: TopicSelectionAdapter
     // private val topicsList = mutableListOf<Topic>() // Remove this - adapter handles the list
@@ -44,6 +46,7 @@ class SelectTopicFragment : Fragment() {
         arguments?.let {
             courseId = it.getLong("courseId", -1)
             courseName = it.getString("courseName", "")
+            autoOpenTasks = it.getBoolean("autoOpenTasks", false)
             Log.d("SelectTopicFragment", "Received courseId: $courseId, courseName: $courseName")
         }
         if (courseId == -1L) {
@@ -87,6 +90,20 @@ class SelectTopicFragment : Fragment() {
 
         setupRecyclerView()
 
+        // If topics were already loaded before view creation, auto-open tasks immediately
+        val preloaded = viewModel.topics.value
+        if (!preloaded.isNullOrEmpty() && autoOpenTasks && !autoOpenedTasks) {
+            val first = preloaded[0]
+            val bundle = Bundle().apply {
+                putLong("courseId", courseId)
+                putString("courseName", courseName)
+                putLong("topicId", first.id)
+                putLong("taskId", -1L)
+            }
+            autoOpenedTasks = true
+            findNavController().navigate(R.id.action_selectTopicFragment_to_selectTaskFragment, bundle)
+        }
+
         // Observe the topics LiveData from the ViewModel
         viewModel.topics.observe(viewLifecycleOwner) { topics ->
             // Update the adapter with the new list of topics
@@ -101,6 +118,18 @@ class SelectTopicFragment : Fragment() {
                 Log.d("SelectTopicFragment", "Displaying ${topics.size} topics")
                 animateFadeOut(emptyStateLayout)
                 animateFadeIn(topicsRecyclerView)
+                // If we were asked to auto-open tasks, navigate to SelectTaskFragment for first topic
+                if (autoOpenTasks && !autoOpenedTasks && !topics.isNullOrEmpty()) {
+                    val first = topics[0]
+                    val bundle = Bundle().apply {
+                        putLong("courseId", courseId)
+                        putString("courseName", courseName)
+                        putLong("topicId", first.id)
+                        putLong("taskId", -1L)
+                    }
+                    autoOpenedTasks = true
+                    findNavController().navigate(R.id.action_selectTopicFragment_to_selectTaskFragment, bundle)
+                }
             }
         }
 
@@ -122,6 +151,19 @@ class SelectTopicFragment : Fragment() {
                         topicSelectionAdapter.submitList(remoteTopics)
                         animateFadeIn(topicsRecyclerView)
                         emptyStateLayout.visibility = View.GONE
+                        // Auto-open tasks if requested
+                        if (autoOpenTasks && !autoOpenedTasks && remoteTopics.isNotEmpty()) {
+                            val firstTopic = remoteTopics[0]
+                            val bundle = Bundle().apply {
+                                putLong("courseId", courseId)
+                                putString("courseName", courseName)
+                                putLong("topicId", firstTopic.id)
+                                putLong("taskId", -1L)
+                            }
+                            autoOpenedTasks = true
+                            findNavController().navigate(R.id.action_selectTopicFragment_to_selectTaskFragment, bundle)
+                            return@launch
+                        }
                     } else {
                         // Fallback to local DB via ViewModel
                         Log.d("SelectTopicFragment", "No remote topics for course $courseId, falling back to local DB")
@@ -146,10 +188,12 @@ class SelectTopicFragment : Fragment() {
             Log.d("SelectTopicFragment", "Topic selected: ID=${selectedTopic.id}, Name=${selectedTopic.name}")
             val bundle = Bundle().apply {
                 putLong("courseId", courseId)
+                putString("courseName", courseName)
                 putLong("topicId", selectedTopic.id)
                 putLong("taskId", -1L)
             }
-            findNavController().navigate(R.id.action_selectTopicFragment_to_courseTaskFragment, bundle)
+            // Navegar al fragmento de selección de tarea recién creado
+            findNavController().navigate(R.id.action_selectTopicFragment_to_selectTaskFragment, bundle)
         }
 
         topicsRecyclerView.apply {

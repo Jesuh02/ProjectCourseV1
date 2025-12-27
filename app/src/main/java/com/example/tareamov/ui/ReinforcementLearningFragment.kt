@@ -64,6 +64,8 @@ class ReinforcementLearningFragment : Fragment() {
             setContent {
                 val courseId = arguments?.getLong("courseId") ?: -1L
                 val courseName = arguments?.getString("courseName") ?: "Curso sin título"
+                val topicId = arguments?.getLong("topicId") ?: -1L
+                val taskId = arguments?.getLong("taskId") ?: -1L
                 val instructorArg = arguments?.getString("instructorName")
 
                 // Fetch creator username and avatar asynchronously and expose to Compose
@@ -109,7 +111,7 @@ class ReinforcementLearningFragment : Fragment() {
                     onStartClick = {
                         if (viewModel.uiState.value is com.example.tareamov.ui.compose.ReinforcementState.Initial ||
                             viewModel.uiState.value is com.example.tareamov.ui.compose.ReinforcementState.Error) {
-                            viewModel.loadQuestions(courseId, courseName)
+                            viewModel.loadQuestions(courseId, courseName, topicId, taskId)
                         }
                         // If already Success, do nothing (quiz will start)
                     },
