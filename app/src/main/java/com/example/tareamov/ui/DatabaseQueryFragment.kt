@@ -147,10 +147,12 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     }
 
     private fun removeAttachedFileWithRemote(file: AttachedFile) {
-        // If there's a remote URL, try to delete from Cloudflare R2 first
+        // Remove from UI immediately for better UX
+        removeAttachedFile(file)
+
+        // If there's a remote URL, try to delete from Cloudflare R2 in background
         val remote = file.remoteUrl
         if (remote.isNullOrEmpty()) {
-            removeAttachedFile(file)
             return
         }
 
@@ -187,7 +189,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                             }
                         }
                     } catch (e: Exception) {
-                        // ignore and continue to local removal
+                        // ignore
                     }
                 }
             } catch (e: Exception) {
@@ -196,11 +198,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
 
             withContext(Dispatchers.Main) {
                 if (deletedRemotely) {
-                    Toast.makeText(requireContext(), "Archivo remoto eliminado", Toast.LENGTH_SHORT).show()
+                    Log.d(TAG, "Archivo remoto eliminado: $remote")
                 } else {
-                    Toast.makeText(requireContext(), "No se pudo eliminar archivo remoto (se eliminará localmente)", Toast.LENGTH_LONG).show()
+                    Log.w(TAG, "No se pudo eliminar archivo remoto: $remote")
                 }
-                removeAttachedFile(file)
             }
         }
     }
@@ -797,7 +798,12 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 attachedFileType = attachedFile?.type
             )
         } else {
-            ChatMessage.createSystemMessage(text)
+            ChatMessage.createSystemMessage(
+                text,
+                attachedFileUrl = attachedFile?.remoteUrl ?: attachedFile?.uri?.toString(),
+                attachedFileName = attachedFile?.name,
+                attachedFileType = attachedFile?.type
+            )
         }
         
         // Add to both adapter and internal history
@@ -915,7 +921,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 
                 val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
                 val request = okhttp3.Request.Builder()
-                    .url("$baseUrl/generate-excel")
+                    .url("$baseUrl/excel/generate-excel")
                     .post(body)
                     .build()
                 
@@ -924,6 +930,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 
                 withContext(Dispatchers.Main) {
                     binding.loadingSpinner.visibility = View.GONE
+                    binding.sendButton.visibility = View.VISIBLE
                     
                     if (response.isSuccessful && responseBody != null) {
                         try {
@@ -933,26 +940,26 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                                 val filename = json.optString("filename", "reporte.xlsx")
                                 val rows = json.optInt("rows", 0)
                                 
-                                addMessageToChat("✅ Excel generado ($rows filas).", false)
+                                // Create a single message with the attachment info
+                                val uri = android.net.Uri.parse(url)
+                                val file = AttachedFile(
+                                    uri = uri,
+                                    name = filename,
+                                    type = "excel",
+                                    remoteUrl = url,
+                                    isPreUploaded = true
+                                )
+                                
+                                // Add message with attachment
+                                addMessageToChat("✅ Excel generado ($rows filas). Descargar aquí: $url", false, file)
                                 
                                 // Attach the generated file to the input area for "mixing with prompt"
                                 try {
-                                    val uri = android.net.Uri.parse(url)
-                                    val file = AttachedFile(
-                                        uri = uri,
-                                        name = filename,
-                                        type = "excel",
-                                        remoteUrl = url,
-                                        isPreUploaded = true
-                                    )
                                     addAttachedFile(file)
-                                    addMessageToChat("📎 Archivo adjuntado automáticamente. Puedes hacer preguntas sobre él.", false)
+                                    addMessageToChat("📎 Archivo adjuntado automáticamente a la barra de escritura. Puedes hacer preguntas sobre él.", false)
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Error attaching generated file", e)
                                 }
-                                
-                                // Also offer download/open
-                                addMessageToChat("📥 Descargar aquí: $url", false)
                                 
                                 // Open URL
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
@@ -965,7 +972,13 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                             addMessageToChat("❌ Error procesando respuesta: ${e.message}", false)
                         }
                     } else {
-                        addMessageToChat("❌ Error al generar Excel: ${response.code}", false)
+                        val errorMsg = try {
+                            val errJson = JSONObject(responseBody ?: "")
+                            errJson.optString("error", "Error ${response.code}")
+                        } catch (e: Exception) {
+                            "Error ${response.code}"
+                        }
+                        addMessageToChat("❌ Error al generar Excel: $errorMsg", false)
                     }
                 }
             } catch (e: Exception) {

@@ -45,6 +45,20 @@
             android:layout_marginTop="2dp" />
     </LinearLayout>
 
+    <ImageButton
+        android:id="@+id/deleteContentButton"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:background="@drawable/bg_delete_button"
+        android:src="@drawable/ic_delete"
+        android:contentDescription="Eliminar contenido"
+        android:tint="#FFFFFF"
+        android:padding="6dp"
+        android:layout_marginEnd="4dp"
+        android:alpha="0.85"
+        android:scaleType="centerInside"
+        android:visibility="gone" />
+
     <ImageView
         android:layout_width="20dp"
         android:layout_height="20dp"

@@ -27,6 +27,8 @@ import com.example.tareamov.data.entity.Course
 import com.example.tareamov.data.entity.Rol
 import com.example.tareamov.data.entity.Recurso
 import com.example.tareamov.data.entity.RolRecurso
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 
 object SupabaseClient {
     private val client = OkHttpClient.Builder()
@@ -1327,6 +1329,9 @@ object SupabaseClient {
             .get()
             .addHeader("Accept", "application/json")
             .addHeader("Prefer", "count=exact") // Request exact count for pagination
+            .addHeader("Cache-Control", "no-cache, no-store, must-revalidate") // Disable cache
+            .addHeader("Pragma", "no-cache") // HTTP 1.0 backward compatibility
+            .addHeader("Expires", "0") // Proxies
 
         if (key.isNotEmpty()) {
             builder.addHeader("apikey", key)
@@ -5422,5 +5427,267 @@ object SupabaseClient {
 
         Log.d("SupabaseClient", "✅ Total notifications: $inAppCount in-app, $pushCount push")
         return@withContext Pair(inAppCount, pushCount)
+    }
+
+    suspend fun fetchAverageGradeForCreator(creatorId: Long): Float = withContext(Dispatchers.IO) {
+        try {
+            // task_submissions -> tasks -> topics -> courses -> creator_id
+            // We select only the grade.
+            val path = "task_submissions?select=grade,tasks!inner(topics!inner(courses!inner(creator_id)))&tasks.topics.courses.creator_id=eq.$creatorId&grade=not.is.null"
+            
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext 0f
+                val body = resp.body?.string() ?: return@withContext 0f
+                val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                if (arr.size() == 0) return@withContext 0f
+                
+                var totalGrade = 0.0
+                var count = 0
+                for (i in 0 until arr.size()) {
+                    val obj = arr.get(i).asJsonObject
+                    if (obj.has("grade") && !obj.get("grade").isJsonNull) {
+                        totalGrade += obj.get("grade").asDouble
+                        count++
+                    }
+                }
+                
+                if (count == 0) 0f else (totalGrade / count).toFloat()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching average grade for creator", e)
+            0f
+        }
+    }
+
+    // Fetch total unique students enrolled in courses created by a specific creator
+    suspend fun fetchTotalStudentsForCreator(creatorId: Long): Int = withContext(Dispatchers.IO) {
+        try {
+            // progreso_estudiante -> courses -> creator_id
+            // We want to count unique usuario_id
+            val path = "progreso_estudiante?select=usuario_id,courses!inner(creator_id)&courses.creator_id=eq.$creatorId"
+            
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext 0
+                val body = resp.body?.string() ?: return@withContext 0
+                val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                val uniqueStudents = mutableSetOf<Long>()
+                for (i in 0 until arr.size()) {
+                    val obj = arr.get(i).asJsonObject
+                    if (obj.has("usuario_id") && !obj.get("usuario_id").isJsonNull) {
+                        uniqueStudents.add(obj.get("usuario_id").asLong)
+                    }
+                }
+                uniqueStudents.size
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching total students for creator", e)
+            0
+        }
+    }
+
+    // Fetch completion stats for a creator: (Total Enrollments, Completed Enrollments)
+    // Completed means estado = 'Ganado' (or 'Completado')
+    suspend fun fetchCreatorCompletionStats(creatorId: Long): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        try {
+            val path = "progreso_estudiante?select=estado,courses!inner(creator_id)&courses.creator_id=eq.$creatorId"
+            
+            val req = buildGetRequest(path)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext Pair(0, 0)
+                val body = resp.body?.string() ?: return@withContext Pair(0, 0)
+                val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                var total = 0
+                var completed = 0
+                
+                for (i in 0 until arr.size()) {
+                    val obj = arr.get(i).asJsonObject
+                    total++
+                    if (obj.has("estado") && !obj.get("estado").isJsonNull) {
+                        val estado = obj.get("estado").asString
+                        if (estado.equals("Ganado", ignoreCase = true) || estado.equals("Completado", ignoreCase = true)) {
+                            completed++
+                        }
+                    }
+                }
+                Pair(total, completed)
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching completion stats for creator", e)
+            Pair(0, 0)
+        }
+    }
+
+    // ==================== ANALYTICS HELPERS ====================
+
+    suspend fun fetchUserCount(): Int = withContext(Dispatchers.IO) {
+        try {
+            fetchTableJson("usuarios").size()
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching user count", e)
+            0
+        }
+    }
+
+    suspend fun fetchCourseCount(publishedOnly: Boolean = false): Int = withContext(Dispatchers.IO) {
+        try {
+            val courses = fetchTableJson("courses")
+            if (publishedOnly) {
+                var count = 0
+                for (i in 0 until courses.size()) {
+                    val course = courses.get(i).asJsonObject
+                    if (course.has("is_published") && !course.get("is_published").isJsonNull && course.get("is_published").asBoolean) {
+                        count++
+                    }
+                }
+                count
+            } else {
+                courses.size()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching course count", e)
+            0
+        }
+    }
+
+    suspend fun fetchSubmissionCount(): Int = withContext(Dispatchers.IO) {
+        try {
+            fetchTableJson("task_submissions").size()
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching submission count", e)
+            0
+        }
+    }
+
+    suspend fun fetchCertificatesIssuedCount(): Int = withContext(Dispatchers.IO) {
+        try {
+            val progress = fetchTableJson("progreso_estudiante")
+            var count = 0
+            for (i in 0 until progress.size()) {
+                val p = progress.get(i).asJsonObject
+                // Check if certificate_url is present and not null/empty, or status is 'Ganado'
+                val hasCert = (p.has("certificado_url") && !p.get("certificado_url").isJsonNull && p.get("certificado_url").asString.isNotEmpty())
+                val isWon = (p.has("estado") && !p.get("estado").isJsonNull && p.get("estado").asString.equals("Ganado", ignoreCase = true))
+                
+                if (hasCert || isWon) {
+                    count++
+                }
+            }
+            count
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching certificates count", e)
+            0
+        }
+    }
+
+    data class TopCreator(
+        val id: Long,
+        val username: String,
+        val avatarUrl: String?,
+        val certifications: Int,
+        val subscribers: Int,
+        val coursesCount: Int = 0
+    )
+
+    suspend fun fetchTopCreators(limit: Int = 5): List<TopCreator> = withContext(Dispatchers.IO) {
+        try {
+            // Run fetches in parallel
+            val subscriptionsDeferred = async { 
+                // Fetch only creator_id
+                val json = fetchTableJson("subscriptions?select=creator_id") 
+                // Count subscribers per creator
+                val counts = mutableMapOf<Long, Int>()
+                for (i in 0 until json.size()) {
+                    val obj = json.get(i).asJsonObject
+                    if (obj.has("creator_id") && !obj.get("creator_id").isJsonNull) {
+                        val creatorId = obj.get("creator_id").asLong
+                        counts[creatorId] = counts.getOrDefault(creatorId, 0) + 1
+                    }
+                }
+                counts
+            }
+
+            val certificationsDeferred = async {
+                // Fetch curso_id where certificate is likely issued
+                val json = fetchTableJson("progreso_estudiante?select=curso_id,certificado_url,estado")
+                val courseCounts = mutableMapOf<Long, Int>()
+                for (i in 0 until json.size()) {
+                    val obj = json.get(i).asJsonObject
+                    val hasCert = (obj.has("certificado_url") && !obj.get("certificado_url").isJsonNull && obj.get("certificado_url").asString.isNotEmpty())
+                    val isWon = (obj.has("estado") && !obj.get("estado").isJsonNull && obj.get("estado").asString.equals("Ganado", ignoreCase = true))
+                    if (hasCert || isWon) {
+                        if (obj.has("curso_id") && !obj.get("curso_id").isJsonNull) {
+                            val courseId = obj.get("curso_id").asLong
+                            courseCounts[courseId] = courseCounts.getOrDefault(courseId, 0) + 1
+                        }
+                    }
+                }
+                courseCounts
+            }
+
+            val coursesDeferred = async {
+                // Map course_id to creator_id and count courses per creator
+                val json = fetchTableJson("courses?select=id,creator_user_id")
+                val courseToCreator = mutableMapOf<Long, Long>() // courseId -> creatorId
+                val coursesCountByCreator = mutableMapOf<Long, Int>() // creatorId -> course count
+                for (i in 0 until json.size()) {
+                    val obj = json.get(i).asJsonObject
+                    if (obj.has("id") && obj.has("creator_user_id") && !obj.get("creator_user_id").isJsonNull) {
+                        val courseId = obj.get("id").asLong
+                        val creatorId = obj.get("creator_user_id").asLong
+                        courseToCreator[courseId] = creatorId
+                        coursesCountByCreator[creatorId] = coursesCountByCreator.getOrDefault(creatorId, 0) + 1
+                    }
+                }
+                Pair(courseToCreator, coursesCountByCreator)
+            }
+
+            val usersDeferred = async {
+                 fetchTableJson("usuarios?select=id,username,avatar")
+            }
+
+            val subCounts = subscriptionsDeferred.await()
+            val certCountsByCourse = certificationsDeferred.await()
+            val (courseToCreator, coursesCountByCreator) = coursesDeferred.await()
+            val usersJson = usersDeferred.await()
+
+            // Aggregate certifications by creator
+            val certCountsByCreator = mutableMapOf<Long, Int>()
+            certCountsByCourse.forEach { (courseId, count) ->
+                val creatorId = courseToCreator[courseId]
+                if (creatorId != null) {
+                    certCountsByCreator[creatorId] = certCountsByCreator.getOrDefault(creatorId, 0) + count
+                }
+            }
+
+            // Combine metrics
+            val creators = mutableListOf<TopCreator>()
+            for (i in 0 until usersJson.size()) {
+                val obj = usersJson.get(i).asJsonObject
+                val id = obj.get("id").asLong
+                val username = if (obj.has("username") && !obj.get("username").isJsonNull) obj.get("username").asString else "Unknown"
+                val avatar = if (obj.has("avatar") && !obj.get("avatar").isJsonNull) obj.get("avatar").asString else null
+                
+                val coursesCount = coursesCountByCreator.getOrDefault(id, 0)
+                val subs = subCounts.getOrDefault(id, 0)
+                val certs = certCountsByCreator.getOrDefault(id, 0)
+                
+                // Solo incluir creadores con al menos 1 curso
+                if (coursesCount > 0) {
+                    creators.add(TopCreator(id, username, avatar, certs, subs, coursesCount))
+                }
+            }
+
+            // Sort by certifications (primary) and subscribers (secondary)
+            creators.sortedWith(compareByDescending<TopCreator> { it.certifications }.thenByDescending { it.subscribers })
+                .take(limit)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching top creators", e)
+            emptyList()
+        }
     }
 }

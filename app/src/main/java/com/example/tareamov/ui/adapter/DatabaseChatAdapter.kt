@@ -257,6 +257,18 @@ class DatabaseChatAdapter(
                 
                 // Setup action buttons for bot messages
                 setupBotMessageActions(message)
+
+                // Show attached file if present (for bot messages too)
+                if (message.attachedFileUrl != null && message.attachedFileName != null) {
+                    attachedFileContainer?.visibility = View.VISIBLE
+                    attachedFileName?.text = message.attachedFileName
+                    attachedFileType?.text = message.attachedFileType ?: "Archivo adjunto"
+                } else {
+                    // Only hide if we are sure it's not shared/used by user message (but here user container is GONE)
+                    // If attachedFileContainer is shared, we should manage it carefully.
+                    // Assuming it's safe to hide if not used.
+                    attachedFileContainer?.visibility = View.GONE
+                }
             }
             
             // Hide standalone timestamp (we're using inline timestamps now)

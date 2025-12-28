@@ -48,4 +48,8 @@ interface TaskDao {
 
     @Query("SELECT tasks.* FROM tasks INNER JOIN topics ON tasks.topicId = topics.id WHERE tasks.name = :taskName AND topics.courseId = :courseId LIMIT 1")
     suspend fun getTaskByNameAndCourse(taskName: String, courseId: Long): Task?
+    
+    // Alias method for getTasksByTopicId
+    @Query("SELECT * FROM tasks WHERE topicId = :topicId ORDER BY orderIndex ASC")
+    suspend fun getTasksForTopic(topicId: Long): List<Task>
 }

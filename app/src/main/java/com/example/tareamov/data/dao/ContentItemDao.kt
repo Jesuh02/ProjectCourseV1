@@ -61,4 +61,12 @@ interface ContentItemDao {
     // Add this method to delete content items by task ID
     @Query("DELETE FROM content_items WHERE taskId = :taskId")
     suspend fun deleteContentItemsByTaskId(taskId: Long)
+    
+    // Alias method for getContentItemsByTopicId
+    @Query("SELECT * FROM content_items WHERE topicId = :topicId ORDER BY orderIndex ASC")
+    suspend fun getContentItemsForTopic(topicId: Long): List<ContentItem>
+    
+    // Alias method for getContentItemsByTaskId
+    @Query("SELECT * FROM content_items WHERE taskId = :taskId ORDER BY orderIndex ASC")
+    suspend fun getContentItemsForTask(taskId: Long): List<ContentItem>
 }

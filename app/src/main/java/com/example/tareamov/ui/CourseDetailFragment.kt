@@ -1830,6 +1830,8 @@ class CourseDetailFragment : Fragment() {
         val topicDescriptionTextView = topicView.findViewById<TextView>(R.id.topicDescriptionTextView)
         val topicContentContainer = topicView.findViewById<LinearLayout>(R.id.topicContentContainer)
         val tasksContainer = topicView.findViewById<LinearLayout>(R.id.tasksDetailContainer)
+        val editTopicButton = topicView.findViewById<ImageButton>(R.id.editTopicButton)
+        val deleteTopicButton = topicView.findViewById<ImageButton>(R.id.deleteTopicButton)
 
         // Headers (keep them for context, but they might be inside hidden containers)
         // Define contentHeader here, similar to tasksHeader
@@ -1856,6 +1858,18 @@ class CourseDetailFragment : Fragment() {
             topicDescriptionTextView.visibility = View.VISIBLE
         } else {
             topicDescriptionTextView.visibility = View.GONE
+        }
+
+        // Configure edit/delete buttons - only visible for course creator
+        editTopicButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+        deleteTopicButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+
+        editTopicButton?.setOnClickListener {
+            navigateToEditTopic(topic.id)
+        }
+
+        deleteTopicButton?.setOnClickListener {
+            showDeleteTopicConfirmation(topic)
         }
 
         // --- Filtering Logic ---
@@ -1961,6 +1975,7 @@ class CourseDetailFragment : Fragment() {
         val taskNameTextView = taskView.findViewById<TextView>(R.id.taskNameTextView)
         val taskDescriptionTextView = taskView.findViewById<TextView>(R.id.taskDescriptionTextView)
         val editTaskButton = taskView.findViewById<ImageButton>(R.id.editTaskButton)
+        val deleteTaskButton = taskView.findViewById<ImageButton>(R.id.deleteTaskButton)
         val submitTaskButton = taskView.findViewById<Button>(R.id.uploadSubmissionButton)
         val gradeStatusTextView = taskView.findViewById<TextView>(R.id.gradeStatusTextView)
 
@@ -2044,6 +2059,7 @@ class CourseDetailFragment : Fragment() {
                         val iconView = contentItemView.findViewById<ImageView>(R.id.contentIconView)
                         val nameView = contentItemView.findViewById<TextView>(R.id.contentNameView)
                         val typeView = contentItemView.findViewById<TextView>(R.id.contentTypeView)
+                        val deleteButton = contentItemView.findViewById<ImageButton>(R.id.deleteContentButton)
                         
                         // Show cloud emoji if it's an R2 URL
                         val displayName = if (CloudflareR2Service.isR2Url(contentItem.uriString)) {
@@ -2067,6 +2083,12 @@ class CourseDetailFragment : Fragment() {
                                 iconView?.setImageResource(android.R.drawable.ic_menu_help)
                                 typeView?.text = "Documento"
                             }
+                        }
+                        
+                        // Configure delete button - only visible for course creator
+                        deleteButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+                        deleteButton?.setOnClickListener {
+                            showDeleteContentConfirmation(contentItem, taskContentContainer!!, contentItemView)
                         }
                         
                         // Make the whole item clickable
@@ -2102,10 +2124,16 @@ class CourseDetailFragment : Fragment() {
 
         // Only show edit button for course creators
         editTaskButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+        deleteTaskButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
 
         // Set click listener for the edit button (only if visible)
         editTaskButton?.setOnClickListener {
             navigateToEditTask(task.id, task.topicId)
+        }
+
+        // Set click listener for the delete button (only if visible)
+        deleteTaskButton?.setOnClickListener {
+            showDeleteTaskConfirmation(task)
         }
 
         // For course creator: show view submissions button
@@ -2293,6 +2321,7 @@ class CourseDetailFragment : Fragment() {
         val iconView = contentView.findViewById<ImageView>(R.id.contentIconView)
         val nameView = contentView.findViewById<TextView>(R.id.contentNameView)
         val typeView = contentView.findViewById<TextView>(R.id.contentTypeView)
+        val deleteButton = contentView.findViewById<ImageButton>(R.id.deleteContentButton)
 
         // Show cloud icon if it's an R2 URL
         val displayName = if (CloudflareR2Service.isR2Url(item.uriString)) {
@@ -2320,6 +2349,12 @@ class CourseDetailFragment : Fragment() {
                 iconView?.setImageResource(android.R.drawable.ic_menu_help)
                 typeView?.text = "Archivo"
             }
+        }
+
+        // Configure delete button - only visible for course creator
+        deleteButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+        deleteButton?.setOnClickListener {
+            showDeleteContentConfirmation(item, container, contentView)
         }
 
         // Make the whole item clickable to open content
@@ -3090,6 +3125,208 @@ class CourseDetailFragment : Fragment() {
             activeNetwork.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> true
             activeNetwork.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> true
             else -> false
+        }
+    }
+
+    /**
+     * Navigate to edit topic screen
+     */
+    private fun navigateToEditTopic(topicId: Long) {
+        val bundle = Bundle().apply {
+            putLong("topicId", topicId)
+            putLong("courseId", courseId)
+            putString("courseName", courseName) // Pass course name to edit screen
+            putBoolean("isEditMode", true)
+        }
+        findNavController().navigate(R.id.action_courseDetailFragment_to_courseTopicFragment, bundle)
+    }
+
+    /**
+     * Show confirmation dialog before deleting a topic
+     */
+    private fun showDeleteTopicConfirmation(topic: Topic) {
+        AlertDialog.Builder(requireContext())
+            .setTitle("Eliminar Tema")
+            .setMessage("¿Estás seguro de que deseas eliminar el tema '${topic.name}'? Esta acción no se puede deshacer y eliminará todo el contenido y tareas asociadas.")
+            .setPositiveButton("Eliminar") { _, _ ->
+                deleteTopic(topic)
+            }
+            .setNegativeButton("Cancelar", null)
+            .setIcon(android.R.drawable.ic_dialog_alert)
+            .show()
+    }
+
+    /**
+     * Delete a topic and all its associated content and tasks
+     */
+    private fun deleteTopic(topic: Topic) {
+        if (!isCurrentUserCreator) {
+            Toast.makeText(requireContext(), "Solo el creador puede eliminar temas", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val database = AppDatabase.getDatabase(requireContext())
+                    
+                    // Delete all content items associated with this topic
+                    val contentItems = database.contentItemDao().getContentItemsForTopic(topic.id)
+                    for (item in contentItems) {
+                        database.contentItemDao().deleteContentItem(item.id)
+                    }
+                    
+                    // Delete all tasks associated with this topic
+                    val tasks = database.taskDao().getTasksForTopic(topic.id)
+                    for (task in tasks) {
+                        // Delete task submissions first
+                        database.taskSubmissionDao().deleteSubmissionsForTask(task.id)
+                        // Delete task content items
+                        val taskContent = database.contentItemDao().getContentItemsForTask(task.id)
+                        for (taskItem in taskContent) {
+                            database.contentItemDao().deleteContentItem(taskItem.id)
+                        }
+                        // Delete the task
+                        database.taskDao().deleteTask(task.id)
+                    }
+                    
+                    // Finally, delete the topic
+                    database.topicDao().deleteTopic(topic.id)
+                    
+                    // Delete from remote (Supabase)
+                    try {
+                        syncRepository.deleteTopicFromSupabase(topic.id)
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "Failed to delete topic from Supabase", e)
+                    }
+                }
+                
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "Tema eliminado exitosamente", Toast.LENGTH_SHORT).show()
+                    // Reload the course details to refresh the UI
+                    loadCourseDetails()
+                }
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error deleting topic", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "Error al eliminar el tema: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * Show confirmation dialog before deleting a task
+     */
+    private fun showDeleteTaskConfirmation(task: Task) {
+        AlertDialog.Builder(requireContext())
+            .setTitle("Eliminar Tarea")
+            .setMessage("¿Estás seguro de que deseas eliminar la tarea '${task.name}'? Esta acción no se puede deshacer y eliminará todas las entregas de los estudiantes.")
+            .setPositiveButton("Eliminar") { _, _ ->
+                deleteTask(task)
+            }
+            .setNegativeButton("Cancelar", null)
+            .setIcon(android.R.drawable.ic_dialog_alert)
+            .show()
+    }
+
+    /**
+     * Delete a task and all its associated submissions
+     */
+    private fun deleteTask(task: Task) {
+        if (!isCurrentUserCreator) {
+            Toast.makeText(requireContext(), "Solo el creador puede eliminar tareas", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val database = AppDatabase.getDatabase(requireContext())
+                    
+                    // Delete all task submissions
+                    database.taskSubmissionDao().deleteSubmissionsForTask(task.id)
+                    
+                    // Delete all content items associated with this task
+                    val taskContent = database.contentItemDao().getContentItemsForTask(task.id)
+                    for (item in taskContent) {
+                        database.contentItemDao().deleteContentItem(item.id)
+                    }
+                    
+                    // Delete the task
+                    database.taskDao().deleteTask(task.id)
+                    
+                    // Delete from remote (Supabase)
+                    try {
+                        syncRepository.deleteTaskFromSupabase(task.id)
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "Failed to delete task from Supabase", e)
+                    }
+                }
+                
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "Tarea eliminada exitosamente", Toast.LENGTH_SHORT).show()
+                    // Reload the course details to refresh the UI
+                    loadCourseDetails()
+                }
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error deleting task", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "Error al eliminar la tarea: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * Show confirmation dialog before deleting content item
+     */
+    private fun showDeleteContentConfirmation(contentItem: ContentItem, container: LinearLayout, contentView: View) {
+        AlertDialog.Builder(requireContext())
+            .setTitle("Eliminar Contenido")
+            .setMessage("¿Estás seguro de que deseas eliminar '${contentItem.name}'?")
+            .setPositiveButton("Eliminar") { _, _ ->
+                deleteContent(contentItem, container, contentView)
+            }
+            .setNegativeButton("Cancelar", null)
+            .setIcon(android.R.drawable.ic_dialog_alert)
+            .show()
+    }
+
+    /**
+     * Delete a content item
+     */
+    private fun deleteContent(contentItem: ContentItem, container: LinearLayout, contentView: View) {
+        if (!isCurrentUserCreator) {
+            Toast.makeText(requireContext(), "Solo el creador puede eliminar contenido", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val database = AppDatabase.getDatabase(requireContext())
+                    database.contentItemDao().deleteContentItem(contentItem.id)
+                    
+                    // Delete from remote (Supabase)
+                    try {
+                        syncRepository.deleteContentItemFromSupabase(contentItem.id)
+                    } catch (e: Exception) {
+                        Log.w("CourseDetailFragment", "Failed to delete content from Supabase", e)
+                    }
+                }
+                
+                withContext(Dispatchers.Main) {
+                    // Remove the view from the container
+                    container.removeView(contentView)
+                    Toast.makeText(requireContext(), "Contenido eliminado exitosamente", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error deleting content", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "Error al eliminar el contenido: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 }

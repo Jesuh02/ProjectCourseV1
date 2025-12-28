@@ -284,15 +284,8 @@ class EditProfileFragment : Fragment() {
                 // Update usuario with new username and avatar URL
                 if (currentUser != null) {
                     withContext(Dispatchers.IO) {
-                        // Update local Room database with avatar URL
-                        val updatedUsuario = currentUser!!.copy(
-                            usuario = newUsername,
-                            avatar = avatarUrl
-                        )
-                        usuarioDao.updateUsuario(updatedUsuario)
-                        Log.d("EditProfileFragment", "Updated local user with avatar: $avatarUrl")
-                        
-                        // Also try to update remote Usuario in Supabase with avatar URL
+                        // First, try to update remote Usuario in Supabase with avatar URL
+                        var remoteUpdateSuccess = false
                         try {
                             if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
                                 val remoteUsuario = com.example.tareamov.data.entity.Usuario(
@@ -308,12 +301,25 @@ class EditProfileFragment : Fragment() {
                                     lastLogin = currentUser!!.lastLogin,
                                     createdAt = currentUser!!.createdAt
                                 )
-                                val updatedU = com.example.tareamov.service.SupabaseClient.updateUsuario(remoteUsuario)
-                                Log.d("EditProfileFragment", "Supabase updateUsuario result: $updatedU, avatar: $avatarUrl")
+                                remoteUpdateSuccess = com.example.tareamov.service.SupabaseClient.updateUsuario(remoteUsuario)
+                                Log.d("EditProfileFragment", "Supabase updateUsuario result: $remoteUpdateSuccess, avatar: $avatarUrl")
+                                
+                                // Small delay to ensure Supabase has processed the update
+                                if (remoteUpdateSuccess) {
+                                    kotlinx.coroutines.delay(500)
+                                }
                             }
                         } catch (e: Exception) {
                             Log.w("EditProfileFragment", "Failed to update usuario on Supabase", e)
                         }
+                        
+                        // Always update local Room database with avatar URL
+                        val updatedUsuario = currentUser!!.copy(
+                            usuario = newUsername,
+                            avatar = avatarUrl
+                        )
+                        usuarioDao.updateUsuario(updatedUsuario)
+                        Log.d("EditProfileFragment", "Updated local user with avatar: $avatarUrl")
                         Unit
                     }
                 }

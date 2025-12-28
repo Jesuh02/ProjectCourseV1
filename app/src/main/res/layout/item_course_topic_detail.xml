@@ -85,23 +85,53 @@
                     tools:text="Introducción" />
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/topicMetaChip"
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/bg_stat_pill"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:paddingTop="3dp"
-                android:paddingBottom="3dp"
-                android:text="Nuevo"
-                android:textColor="#FFFFFF"
-                android:textSize="11sp"
-                android:fontFamily="sans-serif-medium"
-                android:includeFontPadding="false"
-                android:visibility="gone"
-                tools:text="Nuevo"
-                tools:visibility="visible" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ImageButton
+                    android:id="@+id/editTopicButton"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_edit"
+                    android:contentDescription="Editar tema"
+                    android:tint="#FFFFFF"
+                    android:padding="4dp"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/deleteTopicButton"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:background="@drawable/bg_delete_button"
+                    android:src="@drawable/ic_delete"
+                    android:contentDescription="Eliminar tema"
+                    android:tint="#FFFFFF"
+                    android:alpha="0.85"
+                    android:padding="6dp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/topicMetaChip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_stat_pill"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="3dp"
+                    android:paddingBottom="3dp"
+                    android:text="Nuevo"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false"
+                    android:visibility="gone"
+                    tools:text="Nuevo"
+                    tools:visibility="visible" />
+            </LinearLayout>
         </LinearLayout>
 
         <TextView

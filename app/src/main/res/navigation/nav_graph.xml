@@ -83,6 +83,9 @@
         <action
             android:id="@+id/action_videoHomeFragment_to_evaluativeReinforcementFragment"
             app:destination="@id/evaluativeReinforcementFragment" />
+        <action
+            android:id="@+id/action_videoHomeFragment_to_adminDashboardFragment"
+            app:destination="@id/adminDashboardFragment" />
     </fragment>
 
     <!-- Single exploreFragment definition -->
@@ -563,6 +566,10 @@
         <action
             android:id="@+id/action_profileFragment_to_homeFragment"
             app:destination="@id/homeFragment" />
+        <!-- Add action to navigate to Admin Dashboard -->
+        <action
+            android:id="@+id/action_profileFragment_to_adminDashboardFragment"
+            app:destination="@id/adminDashboardFragment" />
     </fragment>
 
     <!-- REMOVE the duplicate Course Detail Fragment definition -->
@@ -674,6 +681,25 @@
         <argument
             android:name="instructorName"
             app:argType="string" />
+    </fragment>
+
+    <!-- Admin Dashboard Fragment -->
+    <fragment
+        android:id="@+id/adminDashboardFragment"
+        android:name="com.example.tareamov.ui.AdminDashboardFragment"
+        android:label="Admin Dashboard"
+        tools:layout="@layout/fragment_admin_dashboard">
+        <action
+            android:id="@+id/action_adminDashboardFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment"
+            app:popUpTo="@id/adminDashboardFragment"
+            app:popUpToInclusive="true" />
+        <action
+            android:id="@+id/action_adminDashboardFragment_to_exploreFragment"
+            app:destination="@id/exploreFragment" />
+        <action
+            android:id="@+id/action_adminDashboardFragment_to_profileFragment"
+            app:destination="@id/profileFragment" />
     </fragment>
 
 

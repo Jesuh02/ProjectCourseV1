@@ -40,8 +40,8 @@ object ServerEndpointResolver {
     private const val MAX_SCAN_HOSTS = 48 // Slightly increased to allow more candidates
     
     // Railway Cloud URLs (Production)
-    const val RAILWAY_MCP_URL = "" // Set to empty to use local server http://10.0.2.2:3000
-    const val RAILWAY_API_URL = ""  // Same service, different port internally
+    const val RAILWAY_MCP_URL = "https://mcp-backenddeploy-production.up.railway.app"
+    const val RAILWAY_API_URL = "https://mcp-backenddeploy-production.up.railway.app"  // Same service, different port internally
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()
@@ -75,8 +75,16 @@ object ServerEndpointResolver {
         }
     }
 
-    suspend fun getMcpBaseUrl(forceDiscovery: Boolean = false): String? {
-        return getBaseUrlForPort(MCP_PORT, "/health", forceDiscovery)
+    suspend fun getMcpBaseUrl(forceDiscovery: Boolean = false): String {
+        // 1. Try local discovery first
+        val localUrl = getBaseUrlForPort(MCP_PORT, "/health", forceDiscovery)
+        if (localUrl != null) {
+            return localUrl
+        }
+        
+        // 2. Fallback to Railway (Production)
+        // This ensures that if local discovery fails, we always try the cloud
+        return RAILWAY_MCP_URL
     }
 
     suspend fun getOllamaBaseUrl(forceDiscovery: Boolean = false): String? {
@@ -94,6 +102,22 @@ object ServerEndpointResolver {
     suspend fun isServiceReachable(url: String, fallbackHealthPath: String? = null): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
             val parsed = URL(url)
+            
+            // Handle HTTPS (Railway) directly
+            if (parsed.protocol == "https") {
+                val connection = parsed.openConnection() as HttpURLConnection
+                return@withContext try {
+                    connection.connectTimeout = DEFAULT_TIMEOUT_MS
+                    connection.readTimeout = DEFAULT_TIMEOUT_MS
+                    connection.requestMethod = "GET"
+                    connection.responseCode in 200..399
+                } catch (e: Exception) {
+                    false
+                } finally {
+                    connection.disconnect()
+                }
+            }
+
             val host = parsed.host
             val port = if (parsed.port != -1) parsed.port else parsed.defaultPort
             val healthPath = when {
@@ -282,6 +306,7 @@ object ServerEndpointResolver {
 
         // Explicitly add the user's PC IP
         candidates.add("192.168.1.90")
+        candidates.add("10.144.200.79")
 
         if (isEmulator()) {
             candidates.add("10.0.2.2")

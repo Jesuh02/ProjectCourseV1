@@ -188,6 +188,12 @@ class ProfileFragment : Fragment() {
                     val bundle = Bundle().apply { putInt("filter_index", 1) }
                     findNavController().navigate(R.id.action_profileFragment_to_exploreFragment, bundle)
                 }
+            } else if (id == R.id.creatorDashboardItem) {
+                itemView.setOnClickListener {
+                    animateButtonPress(it)
+                    // Navegar al Panel de Administrador
+                    findNavController().navigate(R.id.adminDashboardFragment)
+                }
             } else {
                 itemView.setOnClickListener {
                     animateButtonPress(it)
@@ -213,6 +219,19 @@ class ProfileFragment : Fragment() {
                             com.example.tareamov.service.SupabaseClient.fetchUsuarioByUsername(activeUsername)
                         }
                         if (remoteUsuario != null) {
+                            Log.d("ProfileFragment", "Loaded user from Supabase with avatar: ${remoteUsuario.avatar}")
+                            
+                            // Update local database with latest data from Supabase
+                            withContext(Dispatchers.IO) {
+                                try {
+                                    val db = AppDatabase.getDatabase(requireContext())
+                                    db.usuarioDao().updateUsuario(remoteUsuario)
+                                    Log.d("ProfileFragment", "Updated local DB with Supabase data")
+                                } catch (e: Exception) {
+                                    Log.w("ProfileFragment", "Failed to update local DB", e)
+                                }
+                            }
+                            
                             // Try fetching Persona remotely as well (by persona_id) if available
                             val remotePersona = withContext(Dispatchers.IO) {
                                 try {
@@ -309,14 +328,16 @@ class ProfileFragment : Fragment() {
             try {
                 when {
                     usuario.avatar.startsWith("http") -> {
-                        // Load as URL
+                        // Load as URL with cache disabled for fresh image
                         Glide.with(requireContext())
                             .load(usuario.avatar)
                             .placeholder(R.drawable.ic_profile)
                             .error(R.drawable.ic_profile)
+                            .skipMemoryCache(true) // Skip memory cache
+                            .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE) // Skip disk cache
                             .circleCrop()
                             .into(profileImage)
-                        Log.d("ProfileFragment", "Loaded avatar from URL")
+                        Log.d("ProfileFragment", "Loaded avatar from URL (no cache)")
                     }
                     usuario.avatar.startsWith("file:") -> {
                         // Load as file URI
@@ -325,9 +346,11 @@ class ProfileFragment : Fragment() {
                             .load(fileUri)
                             .placeholder(R.drawable.ic_profile)
                             .error(R.drawable.ic_profile)
+                            .skipMemoryCache(true)
+                            .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE)
                             .circleCrop()
                             .into(profileImage)
-                        Log.d("ProfileFragment", "Loaded avatar from file URI")
+                        Log.d("ProfileFragment", "Loaded avatar from file URI (no cache)")
                     }
                     usuario.avatar.startsWith("/") -> {
                         // Load as file path
@@ -336,9 +359,11 @@ class ProfileFragment : Fragment() {
                             .load(file)
                             .placeholder(R.drawable.ic_profile)
                             .error(R.drawable.ic_profile)
+                            .skipMemoryCache(true)
+                            .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE)
                             .circleCrop()
                             .into(profileImage)
-                        Log.d("ProfileFragment", "Loaded avatar from file path")
+                        Log.d("ProfileFragment", "Loaded avatar from file path (no cache)")
                     }
                     else -> {
                         // Try to load as resource ID first
@@ -419,7 +444,8 @@ class ProfileFragment : Fragment() {
             // Reset the flag
             sharedPrefs.edit().putBoolean("profile_updated", false).apply()
 
-            // Reload user data
+            // Force reload user data from Supabase (not cache)
+            Log.d("ProfileFragment", "Profile was updated, forcing reload from server")
             loadUserData()
         }
     }

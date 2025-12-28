@@ -23,6 +23,8 @@ import com.example.tareamov.R
 import com.example.tareamov.adapter.TaskSelectionAdapter
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Task
+import com.example.tareamov.data.sync.SyncRepository
+import com.example.tareamov.service.SupabaseClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -101,8 +103,32 @@ class SelectTaskFragment : Fragment() {
         lifecycleScope.launch {
             try {
                 val db = AppDatabase.getDatabase(requireContext())
-                val tasks: List<Task> = withContext(Dispatchers.IO) {
-                    db.taskDao().getTasksByTopic(topicId)
+                val syncRepo = SyncRepository(
+                    db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
+                    db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
+                    db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
+                )
+
+                var tasks: List<Task> = emptyList()
+
+                // Try fetching from Supabase first if configured
+                if (SupabaseClient.isConfigured()) {
+                    try {
+                        tasks = withContext(Dispatchers.IO) {
+                            syncRepo.fetchTasksByTopicIdsFromSupabase(listOf(topicId))
+                        }
+                        Log.d("SelectTaskFragment", "Fetched ${tasks.size} tasks from Supabase")
+                    } catch (e: Exception) {
+                        Log.w("SelectTaskFragment", "Failed to fetch tasks from Supabase", e)
+                    }
+                }
+
+                // Fallback to local DB if Supabase failed or returned empty
+                if (tasks.isEmpty()) {
+                    tasks = withContext(Dispatchers.IO) {
+                        db.taskDao().getTasksByTopic(topicId)
+                    }
+                    Log.d("SelectTaskFragment", "Fetched ${tasks.size} tasks from local DB")
                 }
 
                 if (tasks.isNullOrEmpty()) {

@@ -1019,5 +1019,94 @@ class SupabaseRepository(
         }
     }
 
+    /**
+     * Delete a topic from Supabase
+     */
+    suspend fun deleteTopic(topicId: Long): Boolean {
+        return try {
+            val url = "$supabaseUrl/rest/v1/topics?id=eq.$topicId"
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", supabaseKey)
+                .addHeader("Authorization", "Bearer $supabaseKey")
+                .addHeader("Prefer", "return=minimal")
+                .build()
+
+            val response = executeRequestWithRetries(request)
+            val success = response?.isSuccessful == true
+            response?.close()
+            
+            if (success) {
+                Log.d("SupabaseRepository", "Successfully deleted topic $topicId from Supabase")
+            } else {
+                Log.w("SupabaseRepository", "Failed to delete topic $topicId: ${response?.code}")
+            }
+            success
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error deleting topic $topicId", e)
+            false
+        }
+    }
+
+    /**
+     * Delete a task from Supabase
+     */
+    suspend fun deleteTask(taskId: Long): Boolean {
+        return try {
+            val url = "$supabaseUrl/rest/v1/tasks?id=eq.$taskId"
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", supabaseKey)
+                .addHeader("Authorization", "Bearer $supabaseKey")
+                .addHeader("Prefer", "return=minimal")
+                .build()
+
+            val response = executeRequestWithRetries(request)
+            val success = response?.isSuccessful == true
+            response?.close()
+            
+            if (success) {
+                Log.d("SupabaseRepository", "Successfully deleted task $taskId from Supabase")
+            } else {
+                Log.w("SupabaseRepository", "Failed to delete task $taskId: ${response?.code}")
+            }
+            success
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error deleting task $taskId", e)
+            false
+        }
+    }
+
+    /**
+     * Delete a content item from Supabase
+     */
+    suspend fun deleteContentItem(contentItemId: Long): Boolean {
+        return try {
+            val url = "$supabaseUrl/rest/v1/content_items?id=eq.$contentItemId"
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", supabaseKey)
+                .addHeader("Authorization", "Bearer $supabaseKey")
+                .addHeader("Prefer", "return=minimal")
+                .build()
+
+            val response = executeRequestWithRetries(request)
+            val success = response?.isSuccessful == true
+            response?.close()
+            
+            if (success) {
+                Log.d("SupabaseRepository", "Successfully deleted content item $contentItemId from Supabase")
+            } else {
+                Log.w("SupabaseRepository", "Failed to delete content item $contentItemId: ${response?.code}")
+            }
+            success
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error deleting content item $contentItemId", e)
+            false
+        }
+    }
 
 }

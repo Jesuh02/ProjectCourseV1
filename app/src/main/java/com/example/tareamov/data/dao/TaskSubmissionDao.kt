@@ -38,4 +38,8 @@ interface TaskSubmissionDao {
     
     @Query("SELECT * FROM task_submissions")
     fun getAllSubmissionsSync(): List<TaskSubmission>
+    
+    // Delete all submissions for a specific task
+    @Query("DELETE FROM task_submissions WHERE taskId = :taskId")
+    suspend fun deleteSubmissionsForTask(taskId: Long)
 }

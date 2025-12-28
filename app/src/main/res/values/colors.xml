@@ -91,4 +91,9 @@
     
     <!-- Premium Badge -->
     <color name="premium_badge_color">#FF6B35</color>
+    
+    <!-- Admin Dashboard Purple Dark Theme -->
+    <color name="purple_dark_background">#1A0B2E</color>
+    <color name="card_purple_glass">#2D1B4E</color>
+    <color name="purple_accent">#8B7FFF</color>
 </resources>

@@ -3447,5 +3447,38 @@ class SyncRepository(
             null
         }
     }
+    
+    // Delete topic from Supabase
+    suspend fun deleteTopicFromSupabase(topicId: Long) {
+        try {
+            supabaseRepo.deleteTopic(topicId)
+            Log.d("SyncRepository", "Successfully deleted topic $topicId from Supabase")
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error deleting topic $topicId from Supabase", e)
+            throw e
+        }
+    }
+    
+    // Delete task from Supabase
+    suspend fun deleteTaskFromSupabase(taskId: Long) {
+        try {
+            supabaseRepo.deleteTask(taskId)
+            Log.d("SyncRepository", "Successfully deleted task $taskId from Supabase")
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error deleting task $taskId from Supabase", e)
+            throw e
+        }
+    }
+    
+    // Delete content item from Supabase
+    suspend fun deleteContentItemFromSupabase(contentItemId: Long) {
+        try {
+            supabaseRepo.deleteContentItem(contentItemId)
+            Log.d("SyncRepository", "Successfully deleted content item $contentItemId from Supabase")
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error deleting content item $contentItemId from Supabase", e)
+            throw e
+        }
+    }
 
 }
