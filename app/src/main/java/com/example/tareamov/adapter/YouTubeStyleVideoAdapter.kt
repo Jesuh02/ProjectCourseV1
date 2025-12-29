@@ -22,6 +22,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
+import com.example.tareamov.util.TimeUtils
+
 /**
  * Adaptador para mostrar videos con estilo similar a YouTube
  */
@@ -214,7 +216,7 @@ class YouTubeStyleVideoAdapter(
                         retriever.release()
                         
                         duration?.toLongOrNull()?.let { durationMs ->
-                            val durationFormatted = formatDuration(durationMs)
+                            val durationFormatted = TimeUtils.formatTime(durationMs)
                             // Cache the result
                             durationCache[video.id] = durationFormatted
                             
@@ -228,19 +230,7 @@ class YouTubeStyleVideoAdapter(
                     }
                 }
             }
-        }        private fun formatDuration(durationMs: Long): String {
-            val seconds = (durationMs / 1000) % 60
-            val minutes = (durationMs / (1000 * 60)) % 60
-            val hours = (durationMs / (1000 * 60 * 60))
-
-            return if (hours > 0) {
-                String.format("%d:%02d:%02d", hours, minutes, seconds)
-            } else {
-                String.format("%d:%02d", minutes, seconds)
-            }
-        }
-        
-        private fun getTimeAgoString(timestamp: Long): String {
+        }        private fun getTimeAgoString(timestamp: Long): String {
             val now = System.currentTimeMillis()
             val diff = now - timestamp
             

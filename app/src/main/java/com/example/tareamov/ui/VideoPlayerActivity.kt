@@ -1,12 +1,6 @@
 package com.example.tareamov.ui
 
 import android.app.PictureInPictureParams
-import android.app.PendingIntent
-import android.app.RemoteAction
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.IntentFilter
-import android.graphics.drawable.Icon
 import android.content.Intent
 import android.media.MediaPlayer
 import android.net.Uri
@@ -21,29 +15,18 @@ import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import com.example.tareamov.R
+import com.example.tareamov.databinding.ActivityVideoPlayerBinding
+import com.example.tareamov.util.TimeUtils
+import com.example.tareamov.util.player.BrightnessManager
+import com.example.tareamov.util.player.PipManager
 // import com.example.tareamov.util.UriPermissionManager
 
 class VideoPlayerActivity : AppCompatActivity() {
 
-    private lateinit var videoView: VideoView
+    private lateinit var binding: ActivityVideoPlayerBinding
+    private lateinit var brightnessManager: BrightnessManager
+    private lateinit var pipManager: PipManager
     // private lateinit var uriPermissionManager: UriPermissionManager
-
-    private lateinit var controlsOverlay: FrameLayout
-    private lateinit var playPauseOverlay: ImageView
-    private lateinit var backButton: ImageView
-    private lateinit var seekBar: SeekBar
-    private lateinit var currentTime: TextView
-    private lateinit var totalTime: TextView
-    private lateinit var muteButton: ImageView
-    private lateinit var likeButton: ImageView
-    private lateinit var shareButton: ImageView
-    private lateinit var titleText: TextView
-    private lateinit var skipBackIcon: ImageView
-    private lateinit var skipForwardIcon: ImageView
-    private lateinit var btnFloatingMode: ImageView
-    private lateinit var loadingSpinner: android.widget.ProgressBar
-    private lateinit var brightnessOverlay: LinearLayout
-    private lateinit var brightnessSeekBar: SeekBar
 
     private var mediaPlayer: MediaPlayer? = null
     private var mediaPlayerPrepared: Boolean = false
@@ -53,21 +36,21 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var progressRunnable: Runnable? = null
     private val autoHideDelayMs = 3000L
     private var autoHideRunnable: Runnable? = null
-    private var brightnessHideRunnable: Runnable? = null
     private var pendingUserSeekMs: Int? = null
     private var isScrubbing: Boolean = false
-    private val ACTION_TOGGLE_PLAYBACK = "com.example.tareamov.action.TOGGLE_PIP_PLAYBACK"
-    private var pipReceiver: BroadcastReceiver? = null
     
-    // Brightness control variables
-    private var startY = 0f
-    private var startX = 0f
-    private var isBrightnessAdjusting = false
-    private var initialBrightness = -1f
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_video_player)
+        binding = ActivityVideoPlayerBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        // Initialize Brightness Manager
+        brightnessManager = BrightnessManager(this, window, binding) {
+            scheduleAutoHide() // Callback when brightness is interacted with
+        }
+        
+        // Initialize Pip Manager
+        pipManager = PipManager(this, binding.videoView)
 
         // Immersive fullscreen
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -80,41 +63,6 @@ class VideoPlayerActivity : AppCompatActivity() {
             View.SYSTEM_UI_FLAG_FULLSCREEN
         )
 
-        // Views
-        videoView = findViewById(R.id.videoView)
-        controlsOverlay = findViewById(R.id.controlsOverlay)
-        playPauseOverlay = findViewById(R.id.playPauseOverlay)
-        backButton = findViewById(R.id.backButton)
-        seekBar = findViewById(R.id.seekBar)
-        currentTime = findViewById(R.id.currentTime)
-        totalTime = findViewById(R.id.totalTime)
-        muteButton = findViewById(R.id.muteButton)
-        titleText = findViewById(R.id.titleText)
-        skipBackIcon = findViewById(R.id.skipBackIcon)
-        skipForwardIcon = findViewById(R.id.skipForwardIcon)
-        btnFloatingMode = findViewById(R.id.btn_floating_mode)
-        loadingSpinner = findViewById(R.id.loadingSpinner)
-        brightnessOverlay = findViewById(R.id.brightnessOverlay)
-        brightnessSeekBar = findViewById(R.id.brightnessSeekBar)
-
-        // Brightness SeekBar Listener
-        brightnessSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) {
-                    val lp = window.attributes
-                    lp.screenBrightness = progress / 100f
-                    window.attributes = lp
-                    scheduleAutoHide()
-                }
-            }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {
-                cancelAutoHide()
-            }
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                scheduleAutoHide()
-            }
-        })
-
         // uriPermissionManager = UriPermissionManager(this)
 
         // Read intent extras from adapter
@@ -122,7 +70,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         val videoTitle = intent.getStringExtra("video_title") ?: getString(R.string.app_name)
         val videoDescription = intent.getStringExtra("video_description")
         val username = intent.getStringExtra("username")
-        titleText.text = videoTitle
+        binding.titleText.text = videoTitle
 
         Log.d("VideoPlayerActivity", "Received pathOrUri: $pathOrUri")
         Log.d("VideoPlayerActivity", "Received videoTitle: $videoTitle")
@@ -175,18 +123,18 @@ class VideoPlayerActivity : AppCompatActivity() {
         Log.d("VideoPlayerActivity", "Final processed URI: $uri")
 
         // Mostrar spinner mientras se carga el video
-        loadingSpinner.visibility = View.VISIBLE
+        binding.loadingSpinner.visibility = View.VISIBLE
 
-        videoView.setVideoURI(uri)
-        videoView.setOnPreparedListener { mp ->
+        binding.videoView.setVideoURI(uri)
+        binding.videoView.setOnPreparedListener { mp ->
             mediaPlayer = mp
             mediaPlayerPrepared = true
             mp.isLooping = true
-            totalTime.text = formatTime(mp.duration)
-            seekBar.max = mp.duration
+            binding.totalTime.text = TimeUtils.formatTime(mp.duration)
+            binding.seekBar.max = mp.duration
 
             // Ocultar spinner cuando el video esté listo
-            loadingSpinner.visibility = View.GONE
+            binding.loadingSpinner.visibility = View.GONE
 
             // Ajuste explícito de aspecto para modo visualización (sin tocar)
             try {
@@ -209,24 +157,24 @@ class VideoPlayerActivity : AppCompatActivity() {
                         w to screenH
                     }
 
-                    val lp = videoView.layoutParams
+                    val lp = binding.videoView.layoutParams
                     lp.width = targetW
                     lp.height = targetH
-                    videoView.layoutParams = lp
+                    binding.videoView.layoutParams = lp
                 }
             } catch (_: Exception) { }
 
             setMuted(isMuted)
-            videoView.start()
+            binding.videoView.start()
             startProgressUpdater()
 
             // Sync when seek completes
             try {
                 mp.setOnSeekCompleteListener {
                     if (!isScrubbing) {
-                        val pos = videoView.currentPosition
-                        currentTime.text = formatTime(pos)
-                        seekBar.progress = pos
+                        val pos = binding.videoView.currentPosition
+                        binding.currentTime.text = TimeUtils.formatTime(pos)
+                        binding.seekBar.progress = pos
                     }
                 }
             } catch (_: Exception) { }
@@ -237,12 +185,12 @@ class VideoPlayerActivity : AppCompatActivity() {
                     when (what) {
                         MediaPlayer.MEDIA_INFO_BUFFERING_START -> {
                             // Video está buffeando, mostrar spinner
-                            loadingSpinner.visibility = View.VISIBLE
+                            binding.loadingSpinner.visibility = View.VISIBLE
                             Log.d("VideoPlayerActivity", "Buffering started")
                         }
                         MediaPlayer.MEDIA_INFO_BUFFERING_END -> {
                             // Buffering terminado, ocultar spinner
-                            loadingSpinner.visibility = View.GONE
+                            binding.loadingSpinner.visibility = View.GONE
                             Log.d("VideoPlayerActivity", "Buffering ended")
                         }
                     }
@@ -251,11 +199,11 @@ class VideoPlayerActivity : AppCompatActivity() {
             } catch (_: Exception) { }
         }
 
-        videoView.setOnErrorListener { _, what, extra ->
+        binding.videoView.setOnErrorListener { _, what, extra ->
             Log.e("VideoPlayerActivity", "Error playing video: what=$what, extra=$extra")
             mediaPlayerPrepared = false
             // Ocultar spinner si hay error
-            loadingSpinner.visibility = View.GONE
+            binding.loadingSpinner.visibility = View.GONE
             Toast.makeText(this, "Error al reproducir el video", Toast.LENGTH_SHORT).show()
             finish()
             true
@@ -265,83 +213,36 @@ class VideoPlayerActivity : AppCompatActivity() {
     hideControls(immediate = true)
 
     // Interaction: swipe for brightness (left), tap for controls
-        controlsOverlay.setOnTouchListener { _, event ->
-            val screenWidth = resources.displayMetrics.widthPixels
-            val screenHeight = resources.displayMetrics.heightPixels
-
-            when (event.action) {
-                android.view.MotionEvent.ACTION_DOWN -> {
-                    startX = event.x
-                    startY = event.y
-                    
-                    // Get current brightness
-                    val lp = window.attributes
-                    if (lp.screenBrightness < 0) {
-                        try {
-                            val sys = android.provider.Settings.System.getInt(contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
-                            initialBrightness = sys / 255f
-                        } catch (e: Exception) {
-                            initialBrightness = 0.5f
-                        }
-                    } else {
-                        initialBrightness = lp.screenBrightness
-                    }
-                    
-                    isBrightnessAdjusting = false
-                    true
-                }
-                android.view.MotionEvent.ACTION_MOVE -> {
-                    val deltaY = startY - event.y // Up is positive (increase)
-                    val deltaX = event.x - startX
-                    
-                    // Threshold to detect scroll vs tap (e.g. 30px)
-                    // Check if swipe is on the left side (Brightness)
-                    if (!isBrightnessAdjusting && startX < screenWidth / 2 && kotlin.math.abs(deltaY) > 30 && kotlin.math.abs(deltaY) > kotlin.math.abs(deltaX)) {
-                        isBrightnessAdjusting = true
-                    }
-                    
-                    if (isBrightnessAdjusting) {
-                        val change = deltaY / (screenHeight * 0.8f)
-                        var newB = initialBrightness + change
-                        newB = newB.coerceIn(0.01f, 1.0f)
-                        
-                        val lp = window.attributes
-                        lp.screenBrightness = newB
-                        window.attributes = lp
-                        
-                        showBrightnessOverlay(newB)
-                    }
-                    true
-                }
-                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                    if (isBrightnessAdjusting) {
-                        isBrightnessAdjusting = false
-                        scheduleHideBrightnessOverlay()
-                    } else {
-                        // Tap detected
-                        if (isControlsVisible) {
-                            hideControls()
-                        } else {
-                            showControls()
-                        }
-                    }
-                    true
-                }
-                else -> false
+        binding.controlsOverlay.setOnTouchListener { _, event ->
+            // Delegate touch to BrightnessManager first
+            if (brightnessManager.onTouch(event)) {
+                return@setOnTouchListener true
             }
+            
+            // If not consumed by brightness, handle tap for controls
+            if (event.action == android.view.MotionEvent.ACTION_UP) {
+                if (isControlsVisible) {
+                    hideControls()
+                } else {
+                    showControls()
+                }
+                return@setOnTouchListener true
+            }
+            
+            true
         }
 
-        playPauseOverlay.setOnClickListener {
-            if (videoView.isPlaying) {
-                videoView.pause()
+        binding.playPauseOverlay.setOnClickListener {
+            if (binding.videoView.isPlaying) {
+                binding.videoView.pause()
             } else {
-                videoView.start()
+                binding.videoView.start()
             }
             updatePlayPauseIcon()
             scheduleAutoHide()
         }
 
-        backButton.setOnClickListener {
+        binding.backButton.setOnClickListener {
             try {
                 // Instead of finishing the app, navigate back to the VideoHomeFragment hosted by MainActivity
                 val i = Intent(this, com.example.tareamov.MainActivity::class.java)
@@ -355,7 +256,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             }
         }
 
-        btnFloatingMode.setOnClickListener {
+        binding.btnFloatingMode.setOnClickListener {
             try {
                 val uriToSend = pathOrUri
                 if (uriToSend.isNullOrEmpty()) {
@@ -367,19 +268,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 // visible after leaving the app. Otherwise fallback to the existing in-app floating container.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     try {
-                        // Use current video view dimensions as aspect ratio hint
-                        val w = if (videoView.width > 0) videoView.width else 16
-                        val h = if (videoView.height > 0) videoView.height else 9
-                        val builder = PictureInPictureParams.Builder()
-                            .setAspectRatio(Rational(w, h))
-                        // attach play/pause action
-                        try {
-                            val actions = createPipActions(videoView.isPlaying)
-                            if (actions.isNotEmpty()) builder.setActions(actions)
-                        } catch (_: Throwable) { }
-                        // ensure receiver is registered
-                        registerPipReceiver()
-                        enterPictureInPictureMode(builder.build())
+                        pipManager.enterPipMode()
                         // Do not finish activity: leaving it in PIP keeps playback.
                     } catch (pipEx: Exception) {
                         Log.w("VideoPlayerActivity", "PIP failed, falling back to in-app floating", pipEx)
@@ -404,21 +293,21 @@ class VideoPlayerActivity : AppCompatActivity() {
             }
         }
 
-        skipBackIcon.setOnClickListener { seekBy(-10_000) }
-        skipForwardIcon.setOnClickListener { seekBy(10_000) }
+        binding.skipBackIcon.setOnClickListener { seekBy(-10_000) }
+        binding.skipForwardIcon.setOnClickListener { seekBy(10_000) }
 
-    muteButton.setOnClickListener {
+    binding.muteButton.setOnClickListener {
             isMuted = !isMuted
             setMuted(isMuted)
         }
         
 
-        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        binding.seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
                     // No buscar en caliente: solo actualiza tiempo mostrado y guarda posición
                     pendingUserSeekMs = progress
-                    currentTime.text = formatTime(progress)
+                    binding.currentTime.text = TimeUtils.formatTime(progress)
                     // Keep controls visible while scrubbing
                     showControls()
                 }
@@ -432,7 +321,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(sb: SeekBar?) {
                 // Realiza el seek definitivo al soltar
                 pendingUserSeekMs?.let { target ->
-                    try { videoView.seekTo(target) } catch (_: Exception) {}
+                    try { binding.videoView.seekTo(target) } catch (_: Exception) {}
                 }
                 pendingUserSeekMs = null
                 isScrubbing = false
@@ -446,28 +335,14 @@ class VideoPlayerActivity : AppCompatActivity() {
         updatePlayPauseIcon()
         if (!isControlsVisible) {
             isControlsVisible = true
-            fadeVisibility(findViewById(R.id.topBar), true)
-            fadeVisibility(findViewById(R.id.bottomBar), true)
-            fadeVisibility(skipBackIcon, true)
-            fadeVisibility(skipForwardIcon, true)
-            fadeVisibility(playPauseOverlay, true)
+            fadeVisibility(binding.topBar, true)
+            fadeVisibility(binding.bottomBar, true)
+            fadeVisibility(binding.skipBackIcon, true)
+            fadeVisibility(binding.skipForwardIcon, true)
+            fadeVisibility(binding.playPauseOverlay, true)
             
-            // Show Brightness Overlay with Controls
-            val lp = window.attributes
-            val brightness = if (lp.screenBrightness < 0) {
-                try {
-                    android.provider.Settings.System.getInt(contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS) / 255f
-                } catch (e: Exception) { 0.5f }
-            } else {
-                lp.screenBrightness
-            }
-            brightnessSeekBar.progress = (brightness * 100).toInt()
-            // Nudge brightness overlay further to the right for better ergonomics
-            brightnessOverlay.translationX = dpToPx(120f)
-            brightnessOverlay.visibility = View.VISIBLE
-            brightnessOverlay.animate().alpha(1f).setDuration(250).start()
-            // Cancel specific brightness hide timer
-            brightnessHideRunnable?.let { uiHandler.removeCallbacks(it) }
+            // Show Brightness Overlay with Controls via Manager
+            brightnessManager.syncWithControls()
         }
         scheduleAutoHide()
     }
@@ -477,24 +352,20 @@ class VideoPlayerActivity : AppCompatActivity() {
         if (isControlsVisible) {
             isControlsVisible = false
             if (immediate) {
-                findViewById<View>(R.id.topBar).apply { alpha = 0f; visibility = View.GONE }
-                findViewById<View>(R.id.bottomBar).apply { alpha = 0f; visibility = View.GONE }
-                skipBackIcon.apply { alpha = 0f; visibility = View.GONE }
-                skipForwardIcon.apply { alpha = 0f; visibility = View.GONE }
-                playPauseOverlay.apply { alpha = 0f; visibility = View.GONE }
-                brightnessOverlay.apply { alpha = 0f; visibility = View.GONE }
+                binding.topBar.apply { alpha = 0f; visibility = View.GONE }
+                binding.bottomBar.apply { alpha = 0f; visibility = View.GONE }
+                binding.skipBackIcon.apply { alpha = 0f; visibility = View.GONE }
+                binding.skipForwardIcon.apply { alpha = 0f; visibility = View.GONE }
+                binding.playPauseOverlay.apply { alpha = 0f; visibility = View.GONE }
+                brightnessManager.hideOverlay(immediate = true)
             } else {
-                fadeVisibility(findViewById(R.id.topBar), false)
-                fadeVisibility(findViewById(R.id.bottomBar), false)
-                fadeVisibility(skipBackIcon, false)
-                fadeVisibility(skipForwardIcon, false)
-                fadeVisibility(playPauseOverlay, false)
+                fadeVisibility(binding.topBar, false)
+                fadeVisibility(binding.bottomBar, false)
+                fadeVisibility(binding.skipBackIcon, false)
+                fadeVisibility(binding.skipForwardIcon, false)
+                fadeVisibility(binding.playPauseOverlay, false)
                 
-                brightnessOverlay.animate()
-                    .alpha(0f)
-                    .setDuration(250)
-                    .withEndAction { brightnessOverlay.visibility = View.GONE }
-                    .start()
+                brightnessManager.hideOverlay(immediate = false)
             }
         }
     }
@@ -526,9 +397,9 @@ class VideoPlayerActivity : AppCompatActivity() {
             override fun run() {
                 try {
                     if (!isScrubbing) {
-                        val pos = videoView.currentPosition
-                        seekBar.progress = pos
-                        currentTime.text = formatTime(pos)
+                        val pos = binding.videoView.currentPosition
+                        binding.seekBar.progress = pos
+                        binding.currentTime.text = TimeUtils.formatTime(pos)
                     }
                 } finally {
                     uiHandler.postDelayed(this, 500)
@@ -547,7 +418,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             try {
                 val volume = if (muted) 0f else 1f
                 mediaPlayer?.setVolume(volume, volume)
-                muteButton.setImageResource(if (muted) R.drawable.ic_sound_muted_minimal else R.drawable.ic_sound_minimal)
+                binding.muteButton.setImageResource(if (muted) R.drawable.ic_sound_muted_minimal else R.drawable.ic_sound_minimal)
             } catch (e: IllegalStateException) {
                 Log.e("VideoPlayerActivity", "Error setting volume, MediaPlayer might not be ready.", e)
                 // Keep isMuted flag; volume will be applied later when prepared
@@ -557,39 +428,32 @@ class VideoPlayerActivity : AppCompatActivity() {
             // Not prepared yet: volume will be applied when onPreparedListener runs
             Log.d("VideoPlayerActivity", "MediaPlayer not prepared yet; saved mute state=$isMuted")
             // Still update button appearance
-            muteButton.setImageResource(if (muted) R.drawable.ic_sound_muted_minimal else R.drawable.ic_sound_minimal)
+            binding.muteButton.setImageResource(if (muted) R.drawable.ic_sound_muted_minimal else R.drawable.ic_sound_minimal)
         }
     }
 
     private fun seekBy(deltaMs: Int) {
-        val duration = if (videoView.duration > 0) videoView.duration else seekBar.max
-        val newPos = (videoView.currentPosition + deltaMs).coerceIn(0, duration)
-        videoView.seekTo(newPos)
-        currentTime.text = formatTime(newPos)
+        val duration = if (binding.videoView.duration > 0) binding.videoView.duration else binding.seekBar.max
+        val newPos = (binding.videoView.currentPosition + deltaMs).coerceIn(0, duration)
+        binding.videoView.seekTo(newPos)
+        binding.currentTime.text = TimeUtils.formatTime(newPos)
         showControls()
     }
 
     private fun updatePlayPauseIcon() {
-        if (videoView.isPlaying) {
-            playPauseOverlay.setImageResource(R.drawable.ic_pause_overlay)
+        if (binding.videoView.isPlaying) {
+            binding.playPauseOverlay.setImageResource(R.drawable.ic_pause_overlay)
         } else {
-            playPauseOverlay.setImageResource(R.drawable.ic_play_overlay)
+            binding.playPauseOverlay.setImageResource(R.drawable.ic_play_overlay)
         }
-    }
-
-    private fun formatTime(ms: Int): String {
-        val totalSec = ms / 1000
-        val m = totalSec / 60
-        val s = totalSec % 60
-        return String.format("%d:%02d", m, s)
     }
 
     override fun onPause() {
         super.onPause()
         // If the activity enters background but is in PIP mode, keep playback as-is (playing or paused).
         // Only pause playback when the activity is fully paused and NOT in PIP mode.
-        if (!isInPictureInPictureMode && videoView.isPlaying) {
-            videoView.pause()
+        if (!isInPictureInPictureMode && binding.videoView.isPlaying) {
+            binding.videoView.pause()
         }
     }
 
@@ -599,16 +463,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         // Works regardless of playback state (playing or paused)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode) {
             try {
-                val w = if (videoView.width > 0) videoView.width else 16
-                val h = if (videoView.height > 0) videoView.height else 9
-                val builder = PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(w, h))
-                try {
-                    val actions = createPipActions(videoView.isPlaying)
-                    if (actions.isNotEmpty()) builder.setActions(actions)
-                } catch (_: Throwable) { }
-                registerPipReceiver()
-                enterPictureInPictureMode(builder.build())
+                pipManager.enterPipMode()
             } catch (t: Throwable) {
                 Log.w("VideoPlayerActivity", "Auto PIP failed", t)
             }
@@ -617,127 +472,27 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        
+        pipManager.onPictureInPictureModeChanged(isInPictureInPictureMode)
+        
         // Hide controls in PIP to keep the small window clean
         if (isInPictureInPictureMode) {
             // hide heavy UI
-            findViewById<View>(R.id.topBar)?.visibility = View.GONE
-            findViewById<View>(R.id.bottomBar)?.visibility = View.GONE
-            controlsOverlay.visibility = View.GONE
-            // update actions to reflect current playback state
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val actions = createPipActions(videoView.isPlaying)
-                try {
-                    setPictureInPictureParams(PictureInPictureParams.Builder().setActions(actions).build())
-                } catch (_: Exception) { }
-            }
+            binding.topBar.visibility = View.GONE
+            binding.bottomBar.visibility = View.GONE
+            binding.controlsOverlay.visibility = View.GONE
         } else {
             // restore UI when returning
-            findViewById<View>(R.id.topBar)?.visibility = View.VISIBLE
-            findViewById<View>(R.id.bottomBar)?.visibility = View.VISIBLE
-            controlsOverlay.visibility = View.VISIBLE
-            // unregister receiver when exiting PIP
-            unregisterPipReceiver()
+            binding.topBar.visibility = View.VISIBLE
+            binding.bottomBar.visibility = View.VISIBLE
+            binding.controlsOverlay.visibility = View.VISIBLE
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         progressRunnable?.let { uiHandler.removeCallbacks(it) }
-        unregisterPipReceiver()
-        try { videoView.stopPlayback() } catch (_: Exception) { }
-    }
-
-    private fun flagsForPendingIntent(): Int {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        } else PendingIntent.FLAG_UPDATE_CURRENT
-    }
-
-    private fun createPipActions(isPlaying: Boolean): ArrayList<RemoteAction> {
-        val actions = ArrayList<RemoteAction>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                val iconRes = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
-                val icon = Icon.createWithResource(this, iconRes)
-                val title = if (isPlaying) "Pause" else "Play"
-                val desc = "Toggle playback"
-                val intent = Intent(ACTION_TOGGLE_PLAYBACK)
-                // keep intent generic (no explicit package) so the dynamically-registered receiver can receive it
-                val pi = PendingIntent.getBroadcast(this, 0, intent, flagsForPendingIntent())
-                actions.add(RemoteAction(icon, title, desc, pi))
-            } catch (t: Throwable) {
-                Log.w("VideoPlayerActivity", "Failed to create PIP action", t)
-            }
-        }
-        return actions
-    }
-
-    private fun registerPipReceiver() {
-        if (pipReceiver != null) return
-        pipReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                Log.d("VideoPlayerActivity", "PIP action received: ${intent?.action}")
-                if (intent?.action == ACTION_TOGGLE_PLAYBACK) {
-                    try {
-                        if (videoView.isPlaying) {
-                            videoView.pause()
-                        } else {
-                            videoView.start()
-                        }
-                        // update PIP actions to reflect new state
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode) {
-                            val actions = createPipActions(videoView.isPlaying)
-                            try {
-                                setPictureInPictureParams(PictureInPictureParams.Builder().setActions(actions).build())
-                            } catch (_: Exception) { }
-                        }
-                    } catch (t: Throwable) { t.printStackTrace() }
-                }
-            }
-        }
-        try {
-            applicationContext.registerReceiver(pipReceiver, IntentFilter(ACTION_TOGGLE_PLAYBACK))
-            Log.d("VideoPlayerActivity", "PIP receiver registered")
-        } catch (t: Throwable) {
-            Log.w("VideoPlayerActivity", "Failed to register PIP receiver", t)
-        }
-    }
-
-    private fun unregisterPipReceiver() {
-        pipReceiver?.let {
-            try { applicationContext.unregisterReceiver(it) } catch (_: Exception) { }
-            pipReceiver = null
-            Log.d("VideoPlayerActivity", "PIP receiver unregistered")
-        }
-    }
-
-    private fun showBrightnessOverlay(brightness: Float) {
-        brightnessHideRunnable?.let { uiHandler.removeCallbacks(it) }
-        // Keep the overlay slightly to the right to avoid covering main controls
-        brightnessOverlay.translationX = dpToPx(40f)
-        brightnessOverlay.visibility = View.VISIBLE
-        brightnessOverlay.alpha = 1f
-        brightnessSeekBar.progress = (brightness * 100).toInt()
-    }
-
-    // Utility to convert dp to pixels
-    private fun dpToPx(dp: Float): Float {
-        return dp * resources.displayMetrics.density
-    }
-
-    private fun scheduleHideBrightnessOverlay() {
-        brightnessHideRunnable?.let { uiHandler.removeCallbacks(it) }
-        
-        // If controls are visible, let the main auto-hide handle it.
-        if (isControlsVisible) return
-
-        brightnessHideRunnable = Runnable {
-            brightnessOverlay.animate()
-                .alpha(0f)
-                .setDuration(300)
-                .withEndAction { brightnessOverlay.visibility = View.GONE }
-                .start()
-        }
-        uiHandler.postDelayed(brightnessHideRunnable!!, 1000)
+        pipManager.unregisterReceiver()
+        try { binding.videoView.stopPlayback() } catch (_: Exception) { }
     }
 }
