@@ -347,15 +347,24 @@ class VideoAdapter(
                             
                             val params = videoView.layoutParams
                             
-                            // Center Crop Logic: Scale to fill the screen
-                            if (videoRatio > screenRatio) {
-                                // Video is wider than screen (relative to height) -> Fit Height, Crop Width
-                                params.height = parentHeight
-                                params.width = (parentHeight * videoRatio).toInt()
-                            } else {
-                                // Video is taller/same as screen (relative to width) -> Fit Width, Crop Height
+                            // Responsive Logic:
+                            // Horizontal videos (Landscape): Fit Width (Letterbox) to show full content
+                            // Vertical videos (Portrait): Center Crop (Fill Screen) for immersive experience
+                            if (videoWidth > videoHeight) {
+                                // Horizontal Video -> Fit Width
                                 params.width = parentWidth
                                 params.height = (parentWidth / videoRatio).toInt()
+                            } else {
+                                // Vertical/Square Video -> Center Crop (Fill Screen)
+                                if (videoRatio > screenRatio) {
+                                    // Video is wider than screen (relative to height) -> Fit Height, Crop Width
+                                    params.height = parentHeight
+                                    params.width = (parentHeight * videoRatio).toInt()
+                                } else {
+                                    // Video is taller/same as screen (relative to width) -> Fit Width, Crop Height
+                                    params.width = parentWidth
+                                    params.height = (parentWidth / videoRatio).toInt()
+                                }
                             }
                             videoView.layoutParams = params
                         }

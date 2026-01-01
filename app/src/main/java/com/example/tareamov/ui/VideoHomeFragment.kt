@@ -215,6 +215,45 @@ class VideoHomeFragment : Fragment() {
         profileAvatars = view.findViewById(R.id.profileAvatars)
         skeletonContainer = view.findViewById(R.id.skeletonContainer)
 
+        // Ensure `profileAvatars` matches the visible size of the live/profile button.
+        // Try `enVivoButton` first, then `profileButton`, otherwise fallback to 42dp.
+        try {
+            val targetCandidate = view.findViewById<View?>(R.id.enVivoButton)
+                ?: view.findViewById<View?>(R.id.profileButton)
+
+            val applySize: (Int, Int) -> Unit = { w, h ->
+                if (::profileAvatars.isInitialized) {
+                    val params = profileAvatars.layoutParams
+                    params.width = w
+                    params.height = h
+                    profileAvatars.layoutParams = params
+                }
+            }
+
+            if (targetCandidate != null) {
+                // Wait for layout to measure the candidate view
+                targetCandidate.post {
+                    try {
+                        val tw = if (targetCandidate.width > 0) targetCandidate.width else targetCandidate.measuredWidth
+                        val th = if (targetCandidate.height > 0) targetCandidate.height else targetCandidate.measuredHeight
+                        if (tw > 0 && th > 0) {
+                            applySize(tw, th)
+                        } else {
+                            val fallbackPx = (42 * resources.displayMetrics.density).toInt()
+                            applySize(fallbackPx, fallbackPx)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("VideoHomeFragment", "Error sizing profileAvatars from candidate view", e)
+                    }
+                }
+            } else {
+                val fallbackPx = (42 * resources.displayMetrics.density).toInt()
+                applySize(fallbackPx, fallbackPx)
+            }
+        } catch (e: Exception) {
+            Log.e("VideoHomeFragment", "Error applying profileAvatars sizing", e)
+        }
+
         // Initialize bottom navigation icons
         homeIconImageView = view.findViewById(R.id.homeIconImageView)
         exploreIconImageView = view.findViewById(R.id.exploreIconImageView)
@@ -334,43 +373,6 @@ class VideoHomeFragment : Fragment() {
             it.postDelayed({
                 findNavController().navigate(R.id.loginFragment)
             }, 150)
-        }
-
-        // Add this block to navigate to CourseDetailFragment when profile is clicked
-        profileAvatars.setOnClickListener {
-            // Get the current video (or course) data
-            val currentVideo = videoList.getOrNull(currentVideoIndex)
-            if (currentVideo != null) {
-                lifecycleScope.launch {
-                    try {
-                        val courseRepo = com.example.tareamov.repository.CourseRepository(requireContext())
-                        val course = withContext(Dispatchers.IO) { courseRepo.getCourseById(currentVideo.id) }
-                        val targetId = course?.id ?: currentVideo.id
-                        val bundle = Bundle().apply {
-                            putLong("courseId", targetId)
-                            putString("courseName", course?.title ?: currentVideo.title)
-                        }
-                        // Check if current destination is still VideoHomeFragment before navigating
-                        val navController = findNavController()
-                        if (navController.currentDestination?.id == R.id.videoHomeFragment) {
-                            navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("VideoHomeFragment", "Error resolving course for profile click", e)
-                        val bundle = Bundle().apply {
-                            putLong("courseId", currentVideo.id)
-                            putString("courseName", currentVideo.title)
-                        }
-                        // Check if current destination is still VideoHomeFragment before navigating
-                        val navController = findNavController()
-                        if (navController.currentDestination?.id == R.id.videoHomeFragment) {
-                            navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
-                        }
-                    }
-                }
-            } else {
-                Toast.makeText(requireContext(), "No course information available", Toast.LENGTH_SHORT).show()
-            }
         }
 
         // Also set up the profile avatars in the top bar to navigate to profile
@@ -535,15 +537,8 @@ class VideoHomeFragment : Fragment() {
             true
         )
         
-        // Set background and animation — use a rounded panel for better visuals
-        val popupBgColor = android.graphics.Color.parseColor("#DD1F222B") // darker semi-opaque panel
-        val radiusPx = (12 * resources.displayMetrics.density)
-        val bgDrawable = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = radiusPx
-            setColor(popupBgColor)
-            setStroke((1 * resources.displayMetrics.density).toInt(), Color.parseColor("#33FFFFFF"))
-        }
+        // Set background using bg_header_gradient.xml
+        val bgDrawable = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.bg_header_gradient)
         popupWindow.setBackgroundDrawable(bgDrawable)
         popupWindow.animationStyle = android.R.style.Animation_Dialog
         popupWindow.isOutsideTouchable = true
@@ -1094,6 +1089,9 @@ class VideoHomeFragment : Fragment() {
         super.onResume()
         registerNetworkCallback()
         
+        // Reload avatar in case it changed
+        loadCurrentUserAvatar()
+        
         // Enable full screen mode via MainActivity
         (requireActivity() as? MainActivity)?.isFullScreenMode = true
     }
@@ -1176,50 +1174,51 @@ class VideoHomeFragment : Fragment() {
         // Ensure fragment is added and context is available before proceeding
         if (!isAdded || context == null) {
             Log.w("VideoHomeFragment", "loadCurrentUserAvatar: Fragment not added or context is null.")
-            if (::profileAvatars.isInitialized) {
-                profileAvatars.setImageResource(R.drawable.ic_profile_avatars)
-            }
             return
         }
 
         try {
             if (!::sessionManager.isInitialized) {
-                Log.e("VideoHomeFragment", "SessionManager not initialized in loadCurrentUserAvatar")
-                if (::profileAvatars.isInitialized) {
-                    profileAvatars.setImageResource(R.drawable.ic_profile_avatars)
-                }
-                return
+                sessionManager = SessionManager.getInstance(requireContext())
             }
 
             val avatarUriString = sessionManager.getUserAvatar()
             if (!avatarUriString.isNullOrEmpty()) {
-                val avatarUri = Uri.parse(avatarUriString)
+                // Load from session cache first
                 if (::profileAvatars.isInitialized) {
-                    Glide.with(requireContext())
-                        .load(avatarUri)
-                        .placeholder(R.drawable.ic_profile_avatars)
-                        .error(R.drawable.ic_profile_avatars)
+                    Glide.with(this)
+                        .load(avatarUriString)
+                        .placeholder(R.drawable.ic_profile_placeholder)
+                        .error(R.drawable.ic_profile_placeholder)
                         .into(profileAvatars)
-                    Log.d("VideoHomeFragment", "Current user avatar loaded from session: $avatarUriString")
-                } else {
-                    Log.e("VideoHomeFragment", "profileAvatars not initialized in loadCurrentUserAvatar")
                 }
             } else {
-                if (::profileAvatars.isInitialized) {
-                    profileAvatars.setImageResource(R.drawable.ic_profile_avatars)
+                // If no avatar in session, try to fetch from Supabase
+                val username = sessionManager.getUsername()
+                if (username != null) {
+                    lifecycleScope.launch {
+                        try {
+                            val remoteAvatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(username)
+                            if (remoteAvatar != null) {
+                                // Save to session for future use
+                                sessionManager.saveUserAvatar(remoteAvatar)
+                                
+                                if (::profileAvatars.isInitialized) {
+                                    Glide.with(this@VideoHomeFragment)
+                                        .load(remoteAvatar)
+                                        .placeholder(R.drawable.ic_profile_placeholder)
+                                        .error(R.drawable.ic_profile_placeholder)
+                                        .into(profileAvatars)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("VideoHomeFragment", "Error fetching remote avatar", e)
+                        }
+                    }
                 }
-                Log.d("VideoHomeFragment", "Current user avatar not found in session or URI is empty, using default.")
-            }
-        } catch (e: IllegalArgumentException) {
-            Log.e("VideoHomeFragment", "Error parsing avatar URI in loadCurrentUserAvatar: ${e.message}", e)
-            if (::profileAvatars.isInitialized) {
-                profileAvatars.setImageResource(R.drawable.ic_profile_avatars)
             }
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "Error in loadCurrentUserAvatar: ${e.message}", e)
-            if (::profileAvatars.isInitialized) {
-                profileAvatars.setImageResource(R.drawable.ic_profile_avatars)
-            }
         }
     }
 

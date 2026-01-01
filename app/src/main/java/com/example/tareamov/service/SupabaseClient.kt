@@ -1838,6 +1838,49 @@ object SupabaseClient {
             return@withContext emptyList()
         }
     }
+
+    // Fetch creators that a specific user is subscribed to
+    suspend fun fetchSubscribedCreators(subscriberId: Long): List<Usuario> = withContext(Dispatchers.IO) {
+        try {
+            // 1. Get subscriptions to find creator_ids
+            val response = client.newCall(
+                buildGetRequest("subscriptions?subscriber_id=eq.$subscriberId&select=creator_id")
+            ).execute()
+            
+            if (!response.isSuccessful) {
+                Log.e("SupabaseClient", "Error fetching subscriptions: ${response.code}")
+                return@withContext emptyList()
+            }
+            
+            val json = response.body?.string() ?: return@withContext emptyList()
+            
+            // Helper class for parsing
+            data class SubItem(val creator_id: Long)
+            val subs = gson.fromJson(json, Array<SubItem>::class.java)
+            val creatorIds = subs.map { it.creator_id }
+            
+            if (creatorIds.isEmpty()) return@withContext emptyList()
+            
+            // 2. Get users details for these creator_ids
+            // Supabase "in" filter: id=in.(1,2,3)
+            val idsStr = creatorIds.joinToString(",")
+            val usersResponse = client.newCall(
+                buildGetRequest("usuarios?id=in.($idsStr)")
+            ).execute()
+            
+            if (!usersResponse.isSuccessful) {
+                Log.e("SupabaseClient", "Error fetching subscribed users: ${usersResponse.code}")
+                return@withContext emptyList()
+            }
+            
+            val usersJson = usersResponse.body?.string() ?: return@withContext emptyList()
+            gson.fromJson(usersJson, Array<Usuario>::class.java).toList()
+            
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching subscribed creators", e)
+            emptyList()
+        }
+    }
     
     // Fetch raw JSON array for a table; useful when we need defensive mapping
     suspend fun fetchTableJson(table: String): com.google.gson.JsonArray = withContext(Dispatchers.IO) {

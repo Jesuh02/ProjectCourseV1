@@ -423,6 +423,28 @@ class UserProfileViewFragment : Fragment() {
                 mutableListOf(),
                 onVideoClickListener = { video ->
                     handleVideoClick(video)
+                },
+                onEditClickListener = { video ->
+                    // Navigate to VideoDetailsFragment for editing
+                    try {
+                        val bundle = Bundle().apply {
+                            putLong("videoId", video.id)
+                            putParcelable("videoUri", Uri.parse(video.videoUriString))
+                            putString("title", video.title)
+                            putString("description", video.description)
+                            putBoolean("isPaid", video.isPaid)
+                            putBoolean("isEditMode", true)
+                        }
+                        // Use the ID of the fragment directly if action is not defined, or try to find the action
+                        // Assuming standard navigation, we try to navigate to the fragment
+                        findNavController().navigate(R.id.videoDetailsFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("UserProfileViewFragment", "Error navigating to edit video", e)
+                        Toast.makeText(context, "Error al abrir editor", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onDeleteClickListener = { video ->
+                    deleteCourse(video)
                 }
             )
 

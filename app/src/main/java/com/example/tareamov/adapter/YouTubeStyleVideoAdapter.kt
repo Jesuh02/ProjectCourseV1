@@ -30,7 +30,9 @@ import com.example.tareamov.util.TimeUtils
 class YouTubeStyleVideoAdapter(
     private val context: Context,
     private var videos: MutableList<VideoData>,
-    private val onVideoClickListener: (VideoData) -> Unit
+    private val onVideoClickListener: (VideoData) -> Unit,
+    private val onEditClickListener: ((VideoData) -> Unit)? = null,
+    private val onDeleteClickListener: ((VideoData) -> Unit)? = null
 ) : RecyclerView.Adapter<YouTubeStyleVideoAdapter.VideoViewHolder>() {
 
     // Cache for video durations to avoid re-extracting
@@ -121,10 +123,45 @@ class YouTubeStyleVideoAdapter(
                     .start()
             }
 
-            // Configurar botón de más opciones (opcional)
+            // Configurar botón de más opciones
             moreOptionsImageView.setOnClickListener {
-                // Implementar menú de opciones si es necesario
+                showPopupMenu(it, video)
             }
+        }
+
+        private fun showPopupMenu(anchorView: View, video: VideoData) {
+            // Use ContextThemeWrapper to apply dark theme to PopupMenu
+            val wrapper = android.view.ContextThemeWrapper(context, R.style.DarkPopupMenuThemeOverlay)
+            val popupMenu = android.widget.PopupMenu(wrapper, anchorView, android.view.Gravity.END)
+            popupMenu.menu.add(0, 1, 0, "✏️ Modificar")
+            popupMenu.menu.add(0, 2, 1, "🗑️ Eliminar")
+            
+            // Force icons to show if API level supports it
+            try {
+                val popup = android.widget.PopupMenu::class.java.getDeclaredField("mPopup")
+                popup.isAccessible = true
+                val menuPopupHelper = popup.get(popupMenu)
+                menuPopupHelper.javaClass.getDeclaredMethod("setForceShowIcon", Boolean::class.java)
+                    .invoke(menuPopupHelper, true)
+            } catch (e: Exception) {
+                // Ignore if reflection fails
+            }
+            
+            popupMenu.setOnMenuItemClickListener { menuItem ->
+                when (menuItem.itemId) {
+                    1 -> {
+                        onEditClickListener?.invoke(video)
+                        true
+                    }
+                    2 -> {
+                        onDeleteClickListener?.invoke(video)
+                        true
+                    }
+                    else -> false
+                }
+            }
+            
+            popupMenu.show()
         }          private fun loadVideoThumbnail(video: VideoData) {
             // Set placeholder immediately
             thumbnailImageView.setImageResource(R.drawable.placeholder_image)

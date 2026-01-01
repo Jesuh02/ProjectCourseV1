@@ -16,6 +16,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.cardview.widget.CardView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -30,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 import android.util.Log
 
 class ProfileFragment : Fragment() {
@@ -40,6 +42,10 @@ class ProfileFragment : Fragment() {
     private lateinit var editProfileButton: Button
     private lateinit var avatarContainer: FrameLayout
     private lateinit var skeletonLayout: FrameLayout
+
+    private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri?.let { handleImageSelection(it) }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -59,6 +65,14 @@ class ProfileFragment : Fragment() {
         editProfileButton = view.findViewById(R.id.editProfileButton)
         avatarContainer = view.findViewById(R.id.avatarContainer)
         skeletonLayout = view.findViewById(R.id.skeletonLayout)
+
+        // Enable clicking on avatar to change it
+        profileImage.setOnClickListener {
+            pickImageLauncher.launch("image/*")
+        }
+        avatarContainer.setOnClickListener {
+            pickImageLauncher.launch("image/*")
+        }
 
         // Set up navigation for bottom buttons usando ComponentBottomNavigationBinding 
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
@@ -114,6 +128,41 @@ class ProfileFragment : Fragment() {
 
         // Initial entrance animation
         animateEntrance()
+    }
+
+    private fun handleImageSelection(uri: Uri) {
+        try {
+            // Copy to internal storage to ensure persistence
+            val inputStream = requireContext().contentResolver.openInputStream(uri)
+            val file = File(requireContext().filesDir, "profile_${System.currentTimeMillis()}.jpg")
+            val outputStream = FileOutputStream(file)
+            inputStream?.copyTo(outputStream)
+            inputStream?.close()
+            outputStream.close()
+
+            val savedUri = Uri.fromFile(file).toString()
+
+            // Update Session
+            val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+            sessionManager.saveUserAvatar(savedUri)
+
+            // Update UI
+            Glide.with(this)
+                .load(file)
+                .circleCrop()
+                .into(profileImage)
+            
+            // Notify user
+            Toast.makeText(requireContext(), "Foto de perfil actualizada", Toast.LENGTH_SHORT).show()
+            
+            // Set flag to reload elsewhere if needed
+            requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("profile_updated", true).apply()
+
+        } catch (e: Exception) {
+            Log.e("ProfileFragment", "Error saving image", e)
+            Toast.makeText(requireContext(), "Error al guardar la imagen", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun updateBottomNavSelection(bottomNavBinding: ComponentBottomNavigationBinding, selected: String) {
@@ -221,6 +270,21 @@ class ProfileFragment : Fragment() {
                     // Navegar al Panel de Administrador
                     findNavController().navigate(R.id.adminDashboardFragment)
                 }
+            } else if (id == R.id.subscriptionsItem) {
+                itemView.setOnClickListener {
+                    animateButtonPress(it)
+                    // Navigate to SubscriptionsFragment
+                    try {
+                        findNavController().navigate(R.id.action_profileFragment_to_subscriptionsFragment)
+                    } catch (e: Exception) {
+                        // Fallback if action not defined yet
+                        try {
+                            findNavController().navigate(R.id.subscriptionsFragment)
+                        } catch (e2: Exception) {
+                            Toast.makeText(requireContext(), "Error de navegación", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
             } else {
                 itemView.setOnClickListener {
                     animateButtonPress(it)
@@ -234,98 +298,69 @@ class ProfileFragment : Fragment() {
         startSkeletonAnimation()
         lifecycleScope.launch {
             try {
-                // Prefer SessionManager for active user identification
-                val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-                val activeUsername = session.getUsername()
-                var subscriberCount = 0L
-
-                // If we have a username from the active session, try Supabase first
-                if (!activeUsername.isNullOrEmpty() && com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                    try {
-                        val remoteUsuario = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.fetchUsuarioByUsername(activeUsername)
-                        }
-                        if (remoteUsuario != null) {
-                            Log.d("ProfileFragment", "Loaded user from Supabase with avatar: ${remoteUsuario.avatar}")
-                            
-                            // Update local database with latest data from Supabase
-                            withContext(Dispatchers.IO) {
-                                try {
-                                    val db = AppDatabase.getDatabase(requireContext())
-                                    db.usuarioDao().updateUsuario(remoteUsuario)
-                                    Log.d("ProfileFragment", "Updated local DB with Supabase data")
-                                } catch (e: Exception) {
-                                    Log.w("ProfileFragment", "Failed to update local DB", e)
-                                }
-                            }
-                            
-                            // Try fetching Persona remotely as well (by persona_id) if available
-                            val remotePersona = withContext(Dispatchers.IO) {
-                                try {
-                                    val personaId = remoteUsuario.persona_id ?: -1L
-                                    if (personaId > 0) {
-                                        com.example.tareamov.service.SupabaseClient.fetchPersonas().firstOrNull { p -> p.id == personaId }
-                                    } else null
-                                } catch (e: Exception) {
-                                    null
-                                }
-                            }
-                            
-                            // Fetch subscriber count
-                            try {
-                                subscriberCount = withContext(Dispatchers.IO) {
-                                    com.example.tareamov.service.SupabaseClient.fetchSubscriberCount(remoteUsuario.id)
-                                }
-                            } catch (e: Exception) {
-                                Log.w("ProfileFragment", "Failed to fetch subscriber count", e)
-                            }
-
-                            updateUI(remoteUsuario, remotePersona, subscriberCount)
-                            return@launch
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.w("ProfileFragment", "Supabase lookup failed, falling back to local DB", e)
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                val currentUsername = sessionManager.getUsername()
+                
+                if (currentUsername != null) {
+                    // 1. Try to get avatar from SessionManager first (fastest)
+                    val cachedAvatar = sessionManager.getUserAvatar()
+                    if (!cachedAvatar.isNullOrEmpty()) {
+                        Glide.with(this@ProfileFragment)
+                            .load(cachedAvatar)
+                            .placeholder(R.drawable.ic_profile_placeholder)
+                            .error(R.drawable.ic_profile_placeholder)
+                            .into(profileImage)
                     }
-                }
 
-                // Fallback: use local SharedPreferences-stored user id or Room DB lookup
-                val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                val currentUserId = sharedPrefs.getLong("current_user_id", -1L)
-
-                if (currentUserId != -1L) {
-                    val db = AppDatabase.getDatabase(requireContext())
-                    // Fetch Usuario by ID
-                    val usuario = withContext(Dispatchers.IO) {
-                        db.usuarioDao().getUsuarioById(currentUserId)
-                    }
+                    // 2. Fetch fresh data from Supabase
+                    val usuario = com.example.tareamov.service.SupabaseClient.fetchUsuarioByUsername(currentUsername)
+                    
                     if (usuario != null) {
-                        // Fetch Persona by usuario.persona_id
-                        val persona = withContext(Dispatchers.IO) {
-                            usuario.persona_id?.let { id -> db.personaDao().getPersonaById(id) }
+                        // Update UI with user data
+                        usernameTextView.text = usuario.usuario
+                        
+                        // Load avatar from Supabase result (fresher than session)
+                        if (!usuario.avatar.isNullOrEmpty()) {
+                            Glide.with(this@ProfileFragment)
+                                .load(usuario.avatar)
+                                .placeholder(R.drawable.ic_profile_placeholder)
+                                .error(R.drawable.ic_profile_placeholder)
+                                .into(profileImage)
                         }
                         
-                        // Try to fetch subscriber count if online
-                        if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                             try {
-                                 subscriberCount = withContext(Dispatchers.IO) {
-                                     com.example.tareamov.service.SupabaseClient.fetchSubscriberCount(usuario.id)
-                                 }
-                             } catch (e: Exception) {
-                                 Log.w("ProfileFragment", "Failed to fetch subscriber count locally", e)
-                             }
-                        }
-                        
-                        updateUI(usuario, persona, subscriberCount)
+                        // Fetch subscriber count
+                        val subscriberCount = com.example.tareamov.service.SupabaseClient.fetchSubscriberCount(usuario.id)
+                        updateUI(usuario, null, subscriberCount)
                     } else {
-                        updateUI(null, null, 0)
+                        // Fallback to local DB if offline
+                        loadLocalUserData(currentUsername)
                     }
                 } else {
-                    updateUI(null, null, 0)
+                    stopSkeletonAnimation()
+                    Toast.makeText(context, "No hay sesión activa", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
-                updateUI(null, null, 0)
+                Log.e("ProfileFragment", "Error loading user data", e)
+                stopSkeletonAnimation()
             }
+        }
+    }
+
+    private suspend fun loadLocalUserData(username: String) {
+        try {
+            val database = AppDatabase.getDatabase(requireContext())
+            val usuario = database.usuarioDao().getUsuarioByUsername(username)
+            
+            if (usuario != null) {
+                val persona = database.personaDao().getPersonaById(usuario.persona_id)
+                updateUI(usuario, persona, 0)
+            } else {
+                stopSkeletonAnimation()
+                Toast.makeText(context, "Usuario no encontrado", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e("ProfileFragment", "Error loading local user data", e)
+            stopSkeletonAnimation()
         }
     }
 

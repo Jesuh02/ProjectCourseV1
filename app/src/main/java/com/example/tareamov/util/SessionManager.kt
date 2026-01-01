@@ -172,6 +172,11 @@ class SessionManager private constructor(private val context: Context) {
     fun getUserRole(): String? = sharedPreferences.getString(KEY_USER_ROLE, null)
     fun getUserAvatar(): String? = sharedPreferences.getString(KEY_USER_AVATAR, null)
 
+    fun saveUserAvatar(avatarUri: String) {
+        editor.putString(KEY_USER_AVATAR, avatarUri)
+        editor.apply()
+    }
+
     /** Refresh session from Supabase (keeps existing logic). */
     suspend fun refreshFromSupabase(): Boolean {
         val current = getUsername() ?: return false

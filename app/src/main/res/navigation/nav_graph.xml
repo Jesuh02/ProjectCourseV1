@@ -570,6 +570,9 @@
         <action
             android:id="@+id/action_profileFragment_to_adminDashboardFragment"
             app:destination="@id/adminDashboardFragment" />
+        <action
+            android:id="@+id/action_profileFragment_to_subscriptionsFragment"
+            app:destination="@id/subscriptionsFragment" />
     </fragment>
 
     <!-- REMOVE the duplicate Course Detail Fragment definition -->
@@ -702,5 +705,14 @@
             app:destination="@id/profileFragment" />
     </fragment>
 
+    <!-- Subscriptions Fragment -->
+    <fragment
+        android:id="@+id/subscriptionsFragment"
+        android:name="com.example.tareamov.ui.SubscriptionsFragment"
+        android:label="Subscriptions">
+        <action
+            android:id="@+id/action_subscriptionsFragment_to_userProfileViewFragment"
+            app:destination="@id/userProfileViewFragment" />
+    </fragment>
 
 </navigation>
