@@ -471,30 +471,21 @@ class AdminDashboardFragment : Fragment() {
             try {
                 val topCourses = withContext(Dispatchers.IO) {
                     try {
-                        val courses = database.courseDao().getAllCourses().take(10) // Limitar a 10 desde el inicio
+                        // Fetch top popular courses directly from Supabase with real enrollment counts
+                        // This uses the global data from progreso_estudiante table instead of local cache
+                        val popularCoursesWithCounts = com.example.tareamov.service.SupabaseClient.fetchTopPopularCoursesWithCounts(5)
                         
-                        // Usar método batch optimizado
-                        val courseIds = courses.map { it.id }
-                        val metricsMap = com.example.tareamov.service.SupabaseClient.fetchCourseMetricsBatch(courseIds)
-                        
-                        courses.mapNotNull { course ->
-                            val metrics = metricsMap[course.id]
-                            if (metrics != null) {
-                                CourseStats(
-                                    id = course.id,
-                                    title = course.title,
-                                    description = course.description ?: "",
-                                    thumbnailUri = course.thumbnailUri,
-                                    enrollments = metrics.enrollments,
-                                    isPremium = course.isPremium,
-                                    rating = 4.5f
-                                )
-                            } else {
-                                null
-                            }
+                        popularCoursesWithCounts.map { (course, count) ->
+                            CourseStats(
+                                id = course.id,
+                                title = course.title,
+                                description = course.description ?: "",
+                                thumbnailUri = course.thumbnailUri,
+                                enrollments = count,
+                                isPremium = course.isPremium,
+                                rating = 4.5f // Placeholder rating
+                            )
                         }
-                        .sortedByDescending { it.enrollments }
-                        .take(5)
                     } catch (e: Exception) {
                         Log.e("AdminDashboard", "Error loading top courses", e)
                         emptyList()
@@ -558,31 +549,10 @@ class AdminDashboardFragment : Fragment() {
                 
                 val topStudents = withContext(Dispatchers.IO) {
                     try {
-                        // Get current user's ID (more reliable than username)
-                        val currentUserId = sessionManager.getUserId()
-                        if (currentUserId <= 0) {
-                            Log.w("AdminDashboard", "Invalid user ID for top students: $currentUserId")
-                            return@withContext emptyList<StudentStats>()
-                        }
+                        Log.d("AdminDashboard", "Loading global top students")
                         
-                        Log.d("AdminDashboard", "Loading top students for user ID: $currentUserId")
-                        
-                        // Fetch creator's courses by user ID
-                        val creatorCourses = com.example.tareamov.service.SupabaseClient.fetchCoursesByCreatorUserId(currentUserId)
-                        val courseIds = creatorCourses.map { it.id }
-                        
-                        Log.d("AdminDashboard", "Found ${creatorCourses.size} courses for creator")
-                        creatorCourses.forEachIndexed { index, course ->
-                            Log.d("AdminDashboard", "Course #${index + 1}: ID=${course.id}, Title='${course.title}'")
-                        }
-                        
-                        if (courseIds.isEmpty()) {
-                            Log.d("AdminDashboard", "No courses found for creator - cannot get top students")
-                            return@withContext emptyList<StudentStats>()
-                        }
-                        
-                        // Fetch top students by average grade across creator's courses
-                        val topStudentsData = com.example.tareamov.service.SupabaseClient.fetchTopStudentsForCreator(currentUserId, 5)
+                        // Fetch top students globally (ignoring creator filter to show all top students)
+                        val topStudentsData = com.example.tareamov.service.SupabaseClient.fetchTopStudentsGlobal(5)
 
                         Log.d("AdminDashboard", "Retrieved ${topStudentsData.size} top students from SupabaseClient")
 
@@ -642,6 +612,10 @@ class AdminDashboardFragment : Fragment() {
                         // Set student name with rank
                         itemView.findViewById<TextView>(R.id.studentName)?.text = 
                             "#${index + 1} ${student.username}"
+
+                        // Set completed courses count
+                        itemView.findViewById<TextView>(R.id.coursesCompletedText)?.text = 
+                            "${student.completedCourses} cursos completados"
                         
                         // Set average grade
                         itemView.findViewById<TextView>(R.id.averageGrade)?.text = 

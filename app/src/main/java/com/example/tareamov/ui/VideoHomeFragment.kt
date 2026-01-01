@@ -120,6 +120,17 @@ class VideoHomeFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Fix for bottom navigation overlapping with system bars
+        val bottomNav = view.findViewById<View>(R.id.bottomNavigation)
+        if (bottomNav != null) {
+            val initialBottomPadding = bottomNav.paddingBottom
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(bottomNav) { v, insets ->
+                val systemBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, initialBottomPadding + systemBars.bottom)
+                insets
+            }
+        }
+
         // Initialize VideoManager
         videoManager = VideoManager(requireContext())
         sessionManager = SessionManager.getInstance(requireContext()) // Initialize SessionManager

@@ -366,6 +366,7 @@ fun ReinforcementLearningScreen(
                     Button(
                         onClick = { 
                             // Reset state to initial to trigger regeneration
+                            isQuizActive = false
                             onStartClick() // This calls viewModel.loadQuestions which sets state to Loading -> fetches NEW questions
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF58CC02)),

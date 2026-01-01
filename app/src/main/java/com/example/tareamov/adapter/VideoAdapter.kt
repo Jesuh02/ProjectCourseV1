@@ -19,10 +19,11 @@ import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
 import java.io.File
 import kotlinx.coroutines.*
+import kotlinx.coroutines.delay
 import kotlin.math.abs // Use kotlin.math.abs to avoid ambiguity
 
 /**
- * Adaptador para mostrar videos en un ViewPager2 con estilo TikTok
+ * Adaptador para mostrar videos en un ViewPager2 con estilo
  */
 class VideoAdapter(
     private var videos: List<VideoData>,
@@ -133,18 +134,25 @@ class VideoAdapter(
             // Fetch like count and user like status
             CoroutineScope(Dispatchers.Main).launch {
                 try {
-                    // Get like count
-                    val likeCount = getLikeCount?.invoke(videoData.id) ?: 0
+                    // Get like count from database
+                    val likeCount = withContext(Dispatchers.IO) {
+                        getLikeCount?.invoke(videoData.id) ?: 0
+                    }
                     likeCountText?.text = formatCount(likeCount)
                     
-                    // Check if user has liked this video
-                    if (currentUserId > 0) {
-                        isLiked = checkUserLikedVideo?.invoke(videoData.id) ?: false
-                        updateLikeButton()
+                    // Check if user has liked this video (must check DB to persist likes)
+                    // Always check via callback to ensure we use the latest session info (even if adapter's currentUserId is not yet set)
+                    val likedByUser = withContext(Dispatchers.IO) {
+                        checkUserLikedVideo?.invoke(videoData.id) ?: false
                     }
+                    isLiked = likedByUser
+                    updateLikeButton()
+                    Log.d("VideoAdapter", "Video ${videoData.id}: liked=$isLiked")
                     
-                    // Get comment count
-                    val commentCount = getCommentCount?.invoke(videoData.id) ?: 0
+                    // Get comment count from database
+                    val commentCount = withContext(Dispatchers.IO) {
+                        getCommentCount?.invoke(videoData.id) ?: 0
+                    }
                     commentCountText?.text = formatCount(commentCount)
                     
                     // Update comment button state (activated if there are comments)
@@ -485,10 +493,22 @@ class VideoAdapter(
         }
 
         private fun setupButtonListeners() {
-            // Like button
+            // Like button with protection against multiple clicks
             likeButton?.setOnClickListener {
-                val wasLiked = isLiked
-                isLiked = !isLiked
+                // Prevent multiple rapid clicks
+                if (likeButton.tag == "processing") {
+                    return@setOnClickListener
+                }
+                
+                // Mark as processing
+                likeButton.tag = "processing"
+                likeButton.isEnabled = false
+                
+                val newLikeState = !isLiked
+                val previousLikeState = isLiked
+                
+                // Update UI optimistically
+                isLiked = newLikeState
                 updateLikeButton()
                 
                 // Update like count locally
@@ -512,9 +532,52 @@ class VideoAdapter(
                     }
                     .start()
                 
-                // Notify callback to sync with Supabase
+                // Sync with database in background
                 currentVideoData?.let { videoData ->
-                    onLikeToggle?.invoke(videoData, isLiked)
+                    CoroutineScope(Dispatchers.Main).launch {
+                        try {
+                            // Call the toggle callback
+                            onLikeToggle?.invoke(videoData, newLikeState)
+                            
+                            // Verify the like was actually saved by checking the database
+                            delay(100) // Small delay to ensure DB write completes
+                            
+                            if (checkUserLikedVideo != null) {
+                                val actualLikeState = checkUserLikedVideo.invoke(videoData.id)
+                                
+                                // If the actual state doesn't match what we tried to set, revert
+                                if (actualLikeState != newLikeState) {
+                                    Log.w("VideoAdapter", "Like state mismatch, reverting. Expected: $newLikeState, Actual: $actualLikeState")
+                                    isLiked = actualLikeState
+                                    updateLikeButton()
+                                    
+                                    // Revert count
+                                    val revertedCount = if (actualLikeState) currentCount + 1 else maxOf(0, currentCount - 1)
+                                    likeCountText?.text = formatCount(revertedCount)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("VideoAdapter", "Error toggling like, reverting state", e)
+                            // Revert on error
+                            isLiked = previousLikeState
+                            updateLikeButton()
+                            likeCountText?.text = formatCount(currentCount)
+                            
+                            android.widget.Toast.makeText(
+                                itemView.context, 
+                                "Error al actualizar like", 
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } finally {
+                            // Re-enable button
+                            likeButton?.tag = null
+                            likeButton?.isEnabled = true
+                        }
+                    }
+                } ?: run {
+                    // No video data, re-enable immediately
+                    likeButton?.tag = null
+                    likeButton?.isEnabled = true
                 }
             }
 
@@ -679,7 +742,7 @@ class VideoAdapter(
             likeButton?.let { button ->
                 if (isLiked) {
                     button.setImageResource(R.drawable.ic_heart_minimal)
-                    button.setColorFilter(android.graphics.Color.parseColor("#FF6B6B"), android.graphics.PorterDuff.Mode.SRC_IN)
+                    button.setColorFilter(android.graphics.Color.RED, android.graphics.PorterDuff.Mode.SRC_IN)
                 } else {
                     button.setImageResource(R.drawable.ic_heart_minimal)
                     button.setColorFilter(android.graphics.Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)

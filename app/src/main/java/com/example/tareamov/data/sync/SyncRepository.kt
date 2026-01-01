@@ -2912,6 +2912,15 @@ class SyncRepository(
      */
     suspend fun toggleVideoLike(videoId: Long, usuarioId: Long, isLiked: Boolean): Boolean = withContext(Dispatchers.IO) {
         try {
+            // First, check the current state in the database
+            val currentLikeState = videoLikeDao?.hasUserLikedVideo(videoId, usuarioId) ?: false
+            
+            // If the requested state matches the current state, no action needed
+            if (currentLikeState == isLiked) {
+                Log.d("SyncRepository", "Like state already matches requested state ($isLiked) for video $videoId, user $usuarioId")
+                return@withContext true
+            }
+            
             // Ensure video exists locally
             val localVideo = videoDao.getVideoById(videoId)
             if (localVideo == null) {
@@ -2943,7 +2952,12 @@ class SyncRepository(
             }
 
             if (isLiked) {
-                // Add like
+                // Add like - but verify it doesn't already exist
+                if (currentLikeState) {
+                    Log.w("SyncRepository", "User $usuarioId already liked video $videoId, skipping duplicate like")
+                    return@withContext true
+                }
+                
                 // Update local
                 videoLikeDao?.let { dao ->
                     val userLike = UserVideoLike(videoId = videoId, usuarioId = usuarioId)
@@ -2952,9 +2966,14 @@ class SyncRepository(
                 }
                 // Sync to Supabase
                 supabaseClient.incrementVideoLike(videoId)
-                // supabaseClient.addUserVideoLike(videoId, usuarioId) // Disabled: table does not exist
+                Log.d("SyncRepository", "Added like for video $videoId by user $usuarioId")
             } else {
-                // Remove like
+                // Remove like - but verify it exists first
+                if (!currentLikeState) {
+                    Log.w("SyncRepository", "User $usuarioId hasn't liked video $videoId, skipping unlike")
+                    return@withContext true
+                }
+                
                 // Update local
                 videoLikeDao?.let { dao ->
                     dao.deleteUserLike(videoId, usuarioId)
@@ -2962,7 +2981,7 @@ class SyncRepository(
                 }
                 // Sync to Supabase
                 supabaseClient.decrementVideoLike(videoId)
-                // supabaseClient.removeUserVideoLike(videoId, usuarioId) // Disabled: table does not exist
+                Log.d("SyncRepository", "Removed like for video $videoId by user $usuarioId")
             }
             return@withContext true
         } catch (e: Exception) {

@@ -112,8 +112,10 @@ class ReinforcementLearningViewModel(
             return
         }
 
+        // Set Loading state immediately to avoid race conditions in UI
+        _uiState.value = ReinforcementState.Loading
+
         viewModelScope.launch {
-            _uiState.value = ReinforcementState.Loading
             try {
                 // 1. Create API using production configuration
                 val api = createApi()
@@ -226,6 +228,9 @@ class ReinforcementLearningViewModel(
                     contextBuilder.append("\n\nHISTORIAL DE PREGUNTAS YA REALIZADAS (NO REPETIR):\n")
                     historyQuestions.takeLast(50).forEach { contextBuilder.append("- $it\n") }
                 }
+                
+                // Add a unique timestamp to force fresh generation and avoid caching
+                contextBuilder.append("\n(Generación ID: ${System.currentTimeMillis()})\n")
 
                 // Serialize content items to JSON for backend processing
                 // CRITICAL: Ensure we are sending valid URIs
@@ -433,5 +438,71 @@ class ReinforcementLearningViewModel(
     
     fun resetScore() {
         _currentScore.value = 0
+    }
+    
+    /**
+     * Load context information (topic, task, files) without generating questions
+     */
+    fun loadContextInfo(courseId: Long, topicId: Long = -1L, taskId: Long = -1L) {
+        viewModelScope.launch {
+            try {
+                // Fetch Context from Repository
+                val (topics, tasks, contentItems) = withContext(Dispatchers.IO) {
+                    var t = syncRepository.fetchTopicsByCourseFromSupabase(courseId)
+                    
+                    // Filter by Topic if selected
+                    if (topicId != -1L) {
+                        t = t.filter { it.id == topicId }
+                    }
+
+                    val tIds = t.map { it.id }
+                    var k = if (tIds.isNotEmpty()) {
+                        syncRepository.fetchTasksByTopicIdsFromSupabase(tIds)
+                    } else {
+                        emptyList()
+                    }
+                    
+                    // Filter by Task if selected
+                    if (taskId != -1L) {
+                        k = k.filter { it.id == taskId }
+                    }
+
+                    // Fetch Content Items (Files)
+                    val c = if (taskId != -1L) {
+                        val taskItems = syncRepository.fetchContentItemsByTaskIdFromSupabase(taskId)
+                        val topicItems = if (tIds.isNotEmpty()) syncRepository.fetchContentItemsByTopicIdsFromSupabase(tIds) else emptyList()
+                        val relevantTopicItems = topicItems.filter { it.taskId == null || it.taskId == 0L || it.taskId == taskId }
+                        (taskItems + relevantTopicItems).distinctBy { it.id }
+                    } else if (tIds.isNotEmpty()) {
+                        syncRepository.fetchContentItemsByTopicIdsFromSupabase(tIds)
+                    } else {
+                        emptyList()
+                    }
+                    
+                    Triple(t, k, c)
+                }
+
+                // Update context information
+                val analyzedFileList = contentItems.map { 
+                    AnalyzedFile(
+                        name = it.name ?: "Archivo sin nombre",
+                        url = it.uriString,
+                        type = it.contentType
+                    )
+                }
+                _analyzedFiles.value = analyzedFileList
+
+                // Set topic and task names
+                val selectedTopic = topics.find { it.id == topicId }
+                val selectedTask = tasks.find { it.id == taskId }
+
+                _selectedTopicName.value = selectedTopic?.name ?: "No seleccionado (General)"
+                _selectedTaskName.value = selectedTask?.name ?: "No seleccionada (General)"
+                
+                Log.d("ReinforcementVM", "Context loaded: Topic=${_selectedTopicName.value}, Task=${_selectedTaskName.value}, Files=${analyzedFileList.size}")
+            } catch (e: Exception) {
+                Log.e("ReinforcementVM", "Error loading context info", e)
+            }
+        }
     }
 }

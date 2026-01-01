@@ -2190,27 +2190,22 @@ object SupabaseClient {
     }
 
     /**
-     * Fetch top N students (by average 'promedio' in progreso_estudiante)
-     * that are enrolled in courses created by the given creator (creatorUserId).
-     * Returns a list of maps with keys: user_id, username, avg_grade, courses_count
+     * Fetch top students globally based on completed courses (estado='Ganado').
+     * Returns a list of maps with keys: user_id, username, avg_grade, courses_count.
+     * Ordered by courses_count desc, then avg_grade desc.
      */
-    suspend fun fetchTopStudentsForCreator(creatorUserId: Long, limit: Int = 5): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+    suspend fun fetchTopStudentsGlobal(limit: Int = 5): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
         try {
             if (!isConfigured()) return@withContext emptyList()
 
-            // Step 1: get courses by creator
-            val courses = fetchCoursesByCreatorUserId(creatorUserId)
-            if (courses.isEmpty()) return@withContext emptyList()
-
-            val courseIds = courses.map { it.id }
-            val idsStr = courseIds.joinToString(",")
-
-            // Step 2: fetch progreso_estudiante rows for those courses
-            val path = "progreso_estudiante?curso_id=in.($idsStr)&select=usuario_estudiante,promedio,curso_id"
+            // Step 1: fetch ALL progreso_estudiante rows where estado=Ganado
+            val path = "progreso_estudiante?estado=eq.Ganado&select=usuario_estudiante,promedio,calificacion_ponderada,curso_id"
             val rows = fetchListMap(path)
 
+            if (rows.isEmpty()) return@withContext emptyList()
+
             // Aggregate by usuario_estudiante
-            val agg = mutableMapOf<Long, MutableMap<String, Any>>() // userId -> { sum, count, courseSet }
+            val agg = mutableMapOf<Long, MutableMap<String, Any>>() // userId -> { sum, count, completed_courses }
 
             rows.forEach { row ->
                 val userIdAny = row["usuario_estudiante"] ?: row["usuarioEstudiante"] ?: return@forEach
@@ -2220,12 +2215,22 @@ object SupabaseClient {
                     else -> return@forEach
                 }
 
-                val promedioAny = row["promedio"] ?: row["promedio"]
-                val promedio = when (promedioAny) {
-                    is Number -> promedioAny.toDouble()
-                    is String -> promedioAny.toDoubleOrNull()
-                    else -> null
+                val calificacionAny = row["calificacion_ponderada"] ?: row["calificacionPonderada"]
+                val calificacion = when (calificacionAny) {
+                    is Number -> calificacionAny.toDouble()
+                    is String -> calificacionAny.toDoubleOrNull() ?: 0.0
+                    else -> 0.0
                 }
+                
+                // Fallback to promedio if calificacion_ponderada is 0
+                val finalCalificacion = if (calificacion == 0.0) {
+                     val promedioAny = row["promedio"] ?: row["promedio"]
+                     when (promedioAny) {
+                        is Number -> promedioAny.toDouble()
+                        is String -> promedioAny.toDoubleOrNull() ?: 0.0
+                        else -> 0.0
+                     }
+                } else calificacion
 
                 val cursoAny = row["curso_id"] ?: row["cursoId"]
                 val cursoId = when (cursoAny) {
@@ -2234,21 +2239,24 @@ object SupabaseClient {
                     else -> null
                 }
 
-                val entry = agg.getOrPut(userId) { mutableMapOf("sum" to 0.0, "count" to 0, "courses" to mutableSetOf<Long>()) }
-                if (promedio != null) {
-                    val sum = (entry["sum"] as Double) + promedio
-                    val cnt = (entry["count"] as Int) + 1
-                    entry["sum"] = sum
-                    entry["count"] = cnt
-                }
+                val entry = agg.getOrPut(userId) { mutableMapOf("sum" to 0.0, "count" to 0, "completed_courses" to mutableSetOf<Long>()) }
+                
                 if (cursoId != null) {
-                    (entry["courses"] as MutableSet<Long>).add(cursoId)
+                    val completedSet = entry["completed_courses"] as MutableSet<Long>
+                    if (!completedSet.contains(cursoId)) {
+                        completedSet.add(cursoId)
+                        
+                        val sum = (entry["sum"] as Double) + finalCalificacion
+                        val cnt = (entry["count"] as Int) + 1
+                        entry["sum"] = sum
+                        entry["count"] = cnt
+                    }
                 }
             }
 
             if (agg.isEmpty()) return@withContext emptyList()
 
-            // Step 3: fetch usernames for involved user ids
+            // Step 2: fetch usernames for involved user ids
             val userIds = agg.keys.toList()
             val idsUsersStr = userIds.joinToString(",")
             val usersPath = "usuarios?id=in.($idsUsersStr)&select=id,username"
@@ -2268,21 +2276,22 @@ object SupabaseClient {
             val result = agg.map { (userId, data) ->
                 val sum = data["sum"] as Double
                 val cnt = data["count"] as Int
-                val coursesSet = data["courses"] as MutableSet<Long>
+                val completedCoursesSet = data["completed_courses"] as MutableSet<Long>
                 val avg = if (cnt > 0) sum / cnt else 0.0
 
                 mapOf<String, Any?>(
                     "user_id" to userId,
                     "username" to (usernameById[userId] ?: "Usuario $userId"),
                     "avg_grade" to avg,
-                    "courses_count" to coursesSet.size
+                    "courses_count" to completedCoursesSet.size
                 )
-            }.sortedByDescending { (it["avg_grade"] as? Number)?.toDouble() ?: 0.0 }
+            }.sortedWith(compareByDescending<Map<String, Any?>> { (it["courses_count"] as Int) }
+                .thenByDescending { (it["avg_grade"] as Number).toDouble() })
              .take(limit)
 
             return@withContext result
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching top students for creator $creatorUserId", e)
+            Log.e("SupabaseClient", "Error fetching global top students", e)
             emptyList()
         }
     }
@@ -3703,6 +3712,81 @@ object SupabaseClient {
             }
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error in fetchTopPopularCourses", e)
+            return@withContext emptyList()
+        }
+    }
+
+    /**
+     * Fetch TOP popular courses with their enrollment counts.
+     * Returns a list of Pair<Course, Int> where Int is the enrollment count.
+     */
+    suspend fun fetchTopPopularCoursesWithCounts(limit: Int = 5): List<Pair<Course, Int>> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+            
+            // Step 1: Get enrollment counts grouped by curso_id from progreso_estudiante
+            val courseIdCounts = mutableMapOf<Long, Int>()
+            
+            // Fetch all progreso_estudiante to count (optimized: select only curso_id)
+            val progresoUrl = "$baseUrl/rest/v1/progreso_estudiante?select=curso_id"
+            val progresoRequest = Request.Builder()
+                .url(progresoUrl)
+                .header("apikey", effectiveApiKey())
+                .header("Authorization", "Bearer ${effectiveApiKey()}")
+                .get()
+                .build()
+            
+            client.newCall(progresoRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: "[]"
+                    val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    
+                    jsonArray.forEach { element ->
+                        val obj = element.asJsonObject
+                        if (obj.has("curso_id") && !obj.get("curso_id").isJsonNull) {
+                            val cursoId = obj.get("curso_id").asLong
+                            courseIdCounts[cursoId] = (courseIdCounts[cursoId] ?: 0) + 1
+                        }
+                    }
+                } else {
+                    return@withContext emptyList()
+                }
+            }
+            
+            // Step 2: Sort by count descending and take top N
+            val topEntries = courseIdCounts.entries
+                .sortedByDescending { it.value }
+                .take(limit)
+            
+            if (topEntries.isEmpty()) return@withContext emptyList()
+            
+            val topCourseIds = topEntries.map { it.key }
+            
+            // Step 3: Fetch Course details
+            val courseIdsFilter = topCourseIds.joinToString(",")
+            val coursesUrl = "$baseUrl/rest/v1/courses?id=in.($courseIdsFilter)&select=*"
+            val coursesRequest = Request.Builder()
+                .url(coursesUrl)
+                .header("apikey", effectiveApiKey())
+                .header("Authorization", "Bearer ${effectiveApiKey()}")
+                .get()
+                .build()
+            
+            client.newCall(coursesRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: "[]"
+                    val courses = gson.fromJson(body, Array<Course>::class.java).toList()
+                    
+                    // Map courses to their counts and sort again to maintain order
+                    return@withContext courses
+                        .map { course -> course to (courseIdCounts[course.id] ?: 0) }
+                        .sortedByDescending { it.second }
+                } else {
+                    return@withContext emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error in fetchTopPopularCoursesWithCounts", e)
             return@withContext emptyList()
         }
     }

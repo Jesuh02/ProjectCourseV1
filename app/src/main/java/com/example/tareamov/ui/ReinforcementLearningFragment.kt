@@ -52,6 +52,16 @@ class ReinforcementLearningFragment : Fragment() {
         val factory = ReinforcementLearningViewModelFactory(requireActivity().application, syncRepository)
         viewModel = ViewModelProvider(this, factory).get(ReinforcementLearningViewModel::class.java)
 
+        // Get navigation arguments
+        val courseId = arguments?.getLong("courseId") ?: -1L
+        val topicId = arguments?.getLong("topicId") ?: -1L
+        val taskId = arguments?.getLong("taskId") ?: -1L
+        
+        // Load context information immediately when fragment is created
+        if (courseId != -1L) {
+            viewModel.loadContextInfo(courseId, topicId, taskId)
+        }
+        
         // Check for preloaded questions
         val preloadedJson = findNavController().currentBackStackEntry?.savedStateHandle?.get<String>("preloaded_questions_json")
         if (!preloadedJson.isNullOrBlank()) {
@@ -109,11 +119,10 @@ class ReinforcementLearningFragment : Fragment() {
                         findNavController().popBackStack()
                     },
                     onStartClick = {
-                        if (viewModel.uiState.value is com.example.tareamov.ui.compose.ReinforcementState.Initial ||
-                            viewModel.uiState.value is com.example.tareamov.ui.compose.ReinforcementState.Error) {
-                            viewModel.loadQuestions(courseId, courseName, topicId, taskId)
-                        }
-                        // If already Success, do nothing (quiz will start)
+                        // Always load new questions when the button is clicked
+                        // The ViewModel will set state to Loading immediately to ensure UI updates
+                        android.util.Log.d("ReinforceFrag", "Generating new questions for course $courseId")
+                        viewModel.loadQuestions(courseId, courseName, topicId, taskId)
                     },
                     viewModel = viewModel
                 )
