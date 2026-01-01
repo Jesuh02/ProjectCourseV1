@@ -60,6 +60,7 @@ import com.example.tareamov.ui.ShimmerFrameLayout
 
 import androidx.lifecycle.ViewModelProvider
 import com.example.tareamov.viewmodel.VideoHomeViewModel
+import com.example.tareamov.MainActivity
 
 class VideoHomeFragment : Fragment() {
     private lateinit var viewModel: VideoHomeViewModel
@@ -73,6 +74,10 @@ class VideoHomeFragment : Fragment() {
     private lateinit var exploreIconImageView: ImageView
     private lateinit var activityIconImageView: ImageView
     private lateinit var profileIconImageView: ImageView
+    private lateinit var homeIconContainer: android.widget.FrameLayout
+    private lateinit var exploreIconContainer: android.widget.FrameLayout
+    private lateinit var activityIconContainer: android.widget.FrameLayout
+    private lateinit var profileIconContainer: android.widget.FrameLayout
     private lateinit var databaseIconImageView: ImageView // New database icon for admins
     private lateinit var aiAssistantIconImageView: ImageView // New AI Assistant icon
     private lateinit var evaluativeReinforcementIconImageView: ImageView // New Evaluative Reinforcement icon
@@ -204,6 +209,12 @@ class VideoHomeFragment : Fragment() {
         exploreIconImageView = view.findViewById(R.id.exploreIconImageView)
         activityIconImageView = view.findViewById(R.id.activityIconImageView)
         profileIconImageView = view.findViewById(R.id.profileIconImageView)
+        
+        homeIconContainer = view.findViewById(R.id.homeIconContainer)
+        exploreIconContainer = view.findViewById(R.id.exploreIconContainer)
+        activityIconContainer = view.findViewById(R.id.activityIconContainer)
+        profileIconContainer = view.findViewById(R.id.profileIconContainer)
+
         databaseIconImageView = view.findViewById(R.id.databaseIconImageView) // Initialize new icon
         aiAssistantIconImageView = view.findViewById(R.id.aiAssistantIconImageView) // Initialize AI icon
         evaluativeReinforcementIconImageView = view.findViewById(R.id.evaluativeReinforcementIconImageView) // Initialize Evaluative Reinforcement icon
@@ -359,6 +370,8 @@ class VideoHomeFragment : Fragment() {
         // Add this code to handle the bottom navigation profile button click
         val profileNavButton = view.findViewById<LinearLayout>(R.id.profileNavButton)
         profileNavButton?.setOnClickListener {
+            // Instant visual feedback
+            updateBottomNavSelection("profile")
             navigateToProfileSafely()
         }
 
@@ -371,12 +384,16 @@ class VideoHomeFragment : Fragment() {
         // Set up Explorar button to navigate to ExploreFragment
         val exploreButton = view.findViewById<LinearLayout>(R.id.exploreButton)
         exploreButton?.setOnClickListener {
+            // Instant visual feedback
+            updateBottomNavSelection("explore")
             findNavController().navigate(R.id.action_videoHomeFragment_to_exploreFragment)
         }
 
         // Set up Activity button to navigate to NotificacionesFragment
         val activityButton = view.findViewById<LinearLayout>(R.id.activityButton)
         activityButton?.setOnClickListener {
+            // Instant visual feedback
+            updateBottomNavSelection("activity")
             findNavController().navigate(R.id.action_videoHomeFragment_to_notificacionesFragment)
         }
 
@@ -774,17 +791,31 @@ class VideoHomeFragment : Fragment() {
         }
     }
 
-    private fun setupBottomNavigationIconColors() {
-        // Active color (Purple)
-        val activeColor = Color.parseColor("#9C27B0")
-        // Inactive color (White)
-        val inactiveColor = Color.parseColor("#FFFFFF")
+    private fun updateBottomNavSelection(selected: String) {
+        val activeBackground = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.nav_item_background_active)
+        
+        homeIconContainer.background = if (selected == "home") activeBackground else null
+        exploreIconContainer.background = if (selected == "explore") activeBackground else null
+        activityIconContainer.background = if (selected == "activity") activeBackground else null
+        profileIconContainer.background = if (selected == "profile") activeBackground else null
+    }
 
-        // Set "Inicio" to active (purple), others to inactive (white)
-        homeIconImageView.setColorFilter(activeColor, PorterDuff.Mode.SRC_IN)
-        exploreIconImageView.setColorFilter(inactiveColor, PorterDuff.Mode.SRC_IN)
-        activityIconImageView.setColorFilter(inactiveColor, PorterDuff.Mode.SRC_IN)
-        profileIconImageView.setColorFilter(inactiveColor, PorterDuff.Mode.SRC_IN)
+    private fun setupBottomNavigationIconColors() {
+        // Active background (Purple Pill)
+        val activeBackground = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.nav_item_background_active)
+        
+        // Set "Inicio" to active
+        homeIconContainer.background = activeBackground
+        exploreIconContainer.background = null
+        activityIconContainer.background = null
+        profileIconContainer.background = null
+
+        // Icons always white
+        val whiteColor = Color.parseColor("#FFFFFF")
+        homeIconImageView.setColorFilter(whiteColor, PorterDuff.Mode.SRC_IN)
+        exploreIconImageView.setColorFilter(whiteColor, PorterDuff.Mode.SRC_IN)
+        activityIconImageView.setColorFilter(whiteColor, PorterDuff.Mode.SRC_IN)
+        profileIconImageView.setColorFilter(whiteColor, PorterDuff.Mode.SRC_IN)
     }
 
     /**
@@ -1051,11 +1082,17 @@ class VideoHomeFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         registerNetworkCallback()
+        
+        // Enable full screen mode via MainActivity
+        (requireActivity() as? MainActivity)?.isFullScreenMode = true
     }
 
     override fun onPause() {
         super.onPause()
         unregisterNetworkCallback()
+        
+        // Disable full screen mode via MainActivity
+        (requireActivity() as? MainActivity)?.isFullScreenMode = false
     }
 
     override fun onDestroyView() {
@@ -1506,6 +1543,12 @@ class VideoHomeFragment : Fragment() {
             if (isSearchMode && currentSearchQuery.isNotEmpty()) {
                 filterVideos(currentSearchQuery)
             }
+        }
+
+        // Set chip text color to black
+        for (i in 0 until (filterChipGroup?.childCount ?: 0)) {
+            val chip = filterChipGroup?.getChildAt(i) as? Chip
+            chip?.setTextColor(Color.BLACK)
         }
     }
 

@@ -20,12 +20,24 @@
         android:gravity="center"
         android:orientation="vertical">
 
-        <ImageView
-            android:id="@+id/homeIconImageView"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/ic_home"
-            app:tint="#FFFFFF" />
+        <FrameLayout
+            android:id="@+id/homeIconContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:duplicateParentState="true"
+            android:stateListAnimator="@animator/nav_item_pulse">
+
+            <ImageView
+                android:id="@+id/homeIconImageView"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_home"
+                app:tint="#FFFFFF" />
+        </FrameLayout>
 
         <TextView
             android:layout_width="wrap_content"
@@ -43,12 +55,24 @@
         android:gravity="center"
         android:orientation="vertical">
 
-        <ImageView
-            android:id="@+id/exploreIconImageView"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/ic_explore"
-            app:tint="#FFFFFF" />
+        <FrameLayout
+            android:id="@+id/exploreIconContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:duplicateParentState="true"
+            android:stateListAnimator="@animator/nav_item_pulse">
+
+            <ImageView
+                android:id="@+id/exploreIconImageView"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_explore"
+                app:tint="#FFFFFF" />
+        </FrameLayout>
 
         <TextView
             android:layout_width="wrap_content"
@@ -84,8 +108,15 @@
         android:orientation="vertical">
 
         <FrameLayout
+            android:id="@+id/activityIconContainer"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content">
+            android:layout_height="wrap_content"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:duplicateParentState="true"
+            android:stateListAnimator="@animator/nav_item_pulse">
 
             <ImageView
                 android:id="@+id/activityIconImageView"
@@ -127,12 +158,24 @@
         android:gravity="center"
         android:orientation="vertical">
 
-        <ImageView
-            android:id="@+id/profileIconImageView"
+        <FrameLayout
+            android:id="@+id/profileIconContainer"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:src="@drawable/ic_profile"
-            app:tint="#FFFFFF" />
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:duplicateParentState="true"
+            android:stateListAnimator="@animator/nav_item_pulse">
+
+            <ImageView
+                android:id="@+id/profileIconImageView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:src="@drawable/ic_profile"
+                app:tint="#FFFFFF" />
+        </FrameLayout>
 
         <TextView
             android:layout_width="wrap_content"

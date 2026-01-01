@@ -90,6 +90,7 @@ class CourseDetailFragment : Fragment() {
     private lateinit var togglePriceButton: Button
     private lateinit var editCourseButton: ImageButton
     private var refreshJob: kotlinx.coroutines.Job? = null // Job to handle refresh cancellation
+    private var isLoadingCourseDetails = false // Flag to prevent multiple simultaneous loads
     // Repository for remote checks
     private val syncRepository by lazy { com.example.tareamov.data.sync.SyncRepository(
         AppDatabase.getDatabase(requireContext()).usuarioDao(),
@@ -128,10 +129,10 @@ class CourseDetailFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         if (courseId != -1L) {
-            Log.d("CourseDetailFragment", "onResume: Reloading course details for courseId: $courseId")
+            Log.d("CourseDetailFragment", "🔄 onResume: Reloading course details for courseId: $courseId")
+            // Only call loadCourseDetails - it already loads topics at the end
+            // Calling both loadCourseDetails() AND refreshTopicsFromSupabase() causes duplication
             loadCourseDetails()
-            // Also refresh topics from Supabase to reflect recent remote creations
-            refreshTopicsFromSupabase()
         }
     }
 
@@ -897,6 +898,21 @@ class CourseDetailFragment : Fragment() {
 
     // In the loadCourseDetails() method, update to use SubscriptionDao
     private fun loadCourseDetails() {
+        // Prevent multiple simultaneous loads
+        if (isLoadingCourseDetails) {
+            Log.w("CourseDetailFragment", "⚠️ Load already in progress, skipping duplicate call")
+            return
+        }
+        
+        isLoadingCourseDetails = true
+        
+        // Cancel any previous refresh job
+        refreshJob?.cancel()
+        
+        // CRITICAL: Clear container IMMEDIATELY to prevent duplication
+        topicsContainer.removeAllViews()
+        Log.d("CourseDetailFragment", "🧹 Topics container cleared at start of loadCourseDetails")
+        
         startSkeletonAnimation()
         val db = AppDatabase.getDatabase(requireContext())
         val topicDao = db.topicDao()
@@ -912,7 +928,7 @@ class CourseDetailFragment : Fragment() {
         val noTasksTextView = view?.findViewById<TextView>(R.id.noTasksTextView) // Make sure this ID exists in your layout or create it
     val paymentContainer = view?.findViewById<FrameLayout>(R.id.paymentButtonContainer)
 
-        CoroutineScope(Dispatchers.Main).launch {
+        refreshJob = CoroutineScope(Dispatchers.Main).launch {
             try { // Start of the main try block
                 // Try to fetch the Course from Supabase first (via MainActivity.syncRepository)
                 var remoteCourse: com.example.tareamov.data.entity.Course? = null
@@ -1359,7 +1375,11 @@ class CourseDetailFragment : Fragment() {
                 noTopicsTextView?.alpha = 0f
                 animateViewIfVisible(noTopicsTextView, 320)
                 noTasksTextView?.visibility = View.GONE // Ensure no tasks message is hidden on error
+                topicsContainer.removeAllViews() // Clear on error
                 topicsContainer.visibility = View.GONE
+            } finally {
+                isLoadingCourseDetails = false
+                Log.d("CourseDetailFragment", "✅ Load complete, flag reset")
             } // Closes the main catch block
         } // Closes CoroutineScope
     } // Closes loadCourseDetails function

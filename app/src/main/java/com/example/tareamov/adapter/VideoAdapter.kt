@@ -332,11 +332,23 @@ class VideoAdapter(
                         val videoHeight = mp.videoHeight
                         if (videoWidth > 0 && videoHeight > 0) {
                             val parentWidth = (videoView.parent as View).width
-                            val aspectRatio = videoWidth.toFloat() / videoHeight.toFloat()
-                            val newHeight = (parentWidth.toFloat() / aspectRatio).toInt()
+                            val parentHeight = (videoView.parent as View).height
+                            
+                            val videoRatio = videoWidth.toFloat() / videoHeight.toFloat()
+                            val screenRatio = parentWidth.toFloat() / parentHeight.toFloat()
+                            
                             val params = videoView.layoutParams
-                            params.width = parentWidth
-                            params.height = newHeight
+                            
+                            // Center Crop Logic: Scale to fill the screen
+                            if (videoRatio > screenRatio) {
+                                // Video is wider than screen (relative to height) -> Fit Height, Crop Width
+                                params.height = parentHeight
+                                params.width = (parentHeight * videoRatio).toInt()
+                            } else {
+                                // Video is taller/same as screen (relative to width) -> Fit Width, Crop Height
+                                params.width = parentWidth
+                                params.height = (parentWidth / videoRatio).toInt()
+                            }
                             videoView.layoutParams = params
                         }
                         mp.setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)

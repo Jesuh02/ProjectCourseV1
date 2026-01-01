@@ -43,9 +43,16 @@ class NotificacionesFragment : Fragment() {
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
         bottomNavBinding = ComponentBottomNavigationBinding.bind(bottomNavView)
 
-        bottomNavBinding.activityIconImageView.setColorFilter(
-            androidx.core.content.ContextCompat.getColor(requireContext(), R.color.purple_500)
-        )
+        // Resaltar solo el icono de actividad en morado (ahora con fondo pill)
+        val activeBackground = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.nav_item_background_active)
+        bottomNavBinding.activityIconContainer.background = activeBackground
+        
+        // Ensure icons are white
+        val whiteColor = android.graphics.Color.WHITE
+        bottomNavBinding.homeIconImageView.setColorFilter(whiteColor)
+        bottomNavBinding.exploreIconImageView.setColorFilter(whiteColor)
+        bottomNavBinding.activityIconImageView.setColorFilter(whiteColor)
+        bottomNavBinding.profileIconImageView.setColorFilter(whiteColor)
 
         setupRecyclerView()
         setupAdminButton()
@@ -204,12 +211,23 @@ class NotificacionesFragment : Fragment() {
         }
     }
 
+    private fun updateBottomNavSelection(selected: String) {
+        val activeBackground = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.nav_item_background_active)
+        
+        bottomNavBinding.homeIconContainer.background = if (selected == "home") activeBackground else null
+        bottomNavBinding.exploreIconContainer.background = if (selected == "explore") activeBackground else null
+        bottomNavBinding.activityIconContainer.background = if (selected == "activity") activeBackground else null
+        bottomNavBinding.profileIconContainer.background = if (selected == "profile") activeBackground else null
+    }
+
     private fun setupNavigation() {
         bottomNavBinding.homeNavLayout.setOnClickListener {
+            updateBottomNavSelection("home")
             findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment)
         }
 
         bottomNavBinding.exploreButton.setOnClickListener {
+            updateBottomNavSelection("explore")
             findNavController().navigate(R.id.action_notificacionesFragment_to_exploreFragment)
         }
 
@@ -222,6 +240,7 @@ class NotificacionesFragment : Fragment() {
         }
 
         bottomNavBinding.profileNavButton.setOnClickListener {
+            updateBottomNavSelection("profile")
             findNavController().navigate(R.id.action_notificacionesFragment_to_profileFragment)
         }
     }

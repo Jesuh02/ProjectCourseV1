@@ -2190,6 +2190,104 @@ object SupabaseClient {
     }
 
     /**
+     * Fetch top N students (by average 'promedio' in progreso_estudiante)
+     * that are enrolled in courses created by the given creator (creatorUserId).
+     * Returns a list of maps with keys: user_id, username, avg_grade, courses_count
+     */
+    suspend fun fetchTopStudentsForCreator(creatorUserId: Long, limit: Int = 5): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+
+            // Step 1: get courses by creator
+            val courses = fetchCoursesByCreatorUserId(creatorUserId)
+            if (courses.isEmpty()) return@withContext emptyList()
+
+            val courseIds = courses.map { it.id }
+            val idsStr = courseIds.joinToString(",")
+
+            // Step 2: fetch progreso_estudiante rows for those courses
+            val path = "progreso_estudiante?curso_id=in.($idsStr)&select=usuario_estudiante,promedio,curso_id"
+            val rows = fetchListMap(path)
+
+            // Aggregate by usuario_estudiante
+            val agg = mutableMapOf<Long, MutableMap<String, Any>>() // userId -> { sum, count, courseSet }
+
+            rows.forEach { row ->
+                val userIdAny = row["usuario_estudiante"] ?: row["usuarioEstudiante"] ?: return@forEach
+                val userId = when (userIdAny) {
+                    is Number -> userIdAny.toLong()
+                    is String -> userIdAny.toLongOrNull() ?: return@forEach
+                    else -> return@forEach
+                }
+
+                val promedioAny = row["promedio"] ?: row["promedio"]
+                val promedio = when (promedioAny) {
+                    is Number -> promedioAny.toDouble()
+                    is String -> promedioAny.toDoubleOrNull()
+                    else -> null
+                }
+
+                val cursoAny = row["curso_id"] ?: row["cursoId"]
+                val cursoId = when (cursoAny) {
+                    is Number -> cursoAny.toLong()
+                    is String -> cursoAny.toLongOrNull()
+                    else -> null
+                }
+
+                val entry = agg.getOrPut(userId) { mutableMapOf("sum" to 0.0, "count" to 0, "courses" to mutableSetOf<Long>()) }
+                if (promedio != null) {
+                    val sum = (entry["sum"] as Double) + promedio
+                    val cnt = (entry["count"] as Int) + 1
+                    entry["sum"] = sum
+                    entry["count"] = cnt
+                }
+                if (cursoId != null) {
+                    (entry["courses"] as MutableSet<Long>).add(cursoId)
+                }
+            }
+
+            if (agg.isEmpty()) return@withContext emptyList()
+
+            // Step 3: fetch usernames for involved user ids
+            val userIds = agg.keys.toList()
+            val idsUsersStr = userIds.joinToString(",")
+            val usersPath = "usuarios?id=in.($idsUsersStr)&select=id,username"
+            val usersList = fetchListMap(usersPath)
+            val usernameById = usersList.associate { row ->
+                val idAny = row["id"] ?: row["id"]
+                val id = when (idAny) {
+                    is Number -> idAny.toLong()
+                    is String -> idAny.toLongOrNull()
+                    else -> null
+                }
+                val username = (row["username"] ?: row["usuario"] ?: "") as String
+                id to username
+            }.filterKeys { it != null } as Map<Long, String>
+
+            // Build result list
+            val result = agg.map { (userId, data) ->
+                val sum = data["sum"] as Double
+                val cnt = data["count"] as Int
+                val coursesSet = data["courses"] as MutableSet<Long>
+                val avg = if (cnt > 0) sum / cnt else 0.0
+
+                mapOf<String, Any?>(
+                    "user_id" to userId,
+                    "username" to (usernameById[userId] ?: "Usuario $userId"),
+                    "avg_grade" to avg,
+                    "courses_count" to coursesSet.size
+                )
+            }.sortedByDescending { (it["avg_grade"] as? Number)?.toDouble() ?: 0.0 }
+             .take(limit)
+
+            return@withContext result
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching top students for creator $creatorUserId", e)
+            emptyList()
+        }
+    }
+
+    /**
      * Fetch submissions by taskId and studentId (using student_id integer column)
      * Returns all submissions for the given task and student, ordered by submission_date desc
      */
@@ -2665,6 +2763,31 @@ object SupabaseClient {
         }
     }
 
+    // Fetch courses by multiple creator user IDs (server-side filter)
+    suspend fun fetchCoursesByCreatorUserIds(userIds: List<Long>): List<Course> = withContext(Dispatchers.IO) {
+        if (userIds.isEmpty()) return@withContext emptyList()
+        try {
+            val idsStr = userIds.joinToString(",")
+            val path = "courses?creator_user_id=in.($idsStr)&order=timestamp.desc,created_at.desc.nullslast"
+            fetchList(path, Array<Course>::class.java)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching courses by creator user IDs", e)
+            emptyList()
+        }
+    }
+
+    // Search users by username (partial match)
+    suspend fun searchUsersByUsername(query: String): List<Usuario> = withContext(Dispatchers.IO) {
+        try {
+            val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+            val path = "usuarios?username=ilike.*$encoded*"
+            fetchList(path, Array<Usuario>::class.java)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error searching users by username", e)
+            emptyList()
+        }
+    }
+
     // Fetch videos by a list of course IDs (server-side filter using 'in')
     suspend fun fetchVideosByCourseIds(courseIds: List<Long>): List<VideoData> = withContext(Dispatchers.IO) {
         try {
@@ -2877,6 +3000,36 @@ object SupabaseClient {
             return@withContext Pair(user, rol)
         } else {
             return@withContext Pair(user, null)
+        }
+    }
+
+    /**
+     * Check if user has a specific role in usuarios_roles table
+     */
+    suspend fun userHasRole(userId: Long, roleId: Int): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/usuarios_roles?usuario_id=eq.$userId&rol_id=eq.$roleId"
+            
+            val request = Request.Builder()
+                .url(url)
+                .header("apikey", effectiveApiKey())
+                .header("Authorization", "Bearer ${effectiveApiKey()}")
+                .get()
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: "[]"
+                    val items = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    return@withContext items.size() > 0
+                } else {
+                    Log.w("SupabaseClient", "Error checking user role: ${response.code}")
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error in userHasRole", e)
+            false
         }
     }
 
@@ -3424,6 +3577,132 @@ object SupabaseClient {
             }
         } catch (e: Exception) {
             Log.e("SupabaseClient", "fetchProgresosByCurso exception", e)
+            return@withContext emptyList()
+        }
+    }
+
+    /**
+     * Count students enrolled in a course (from progreso_estudiante table)
+     */
+    suspend fun countStudentsInCourse(courseId: Long): Int = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext 0
+            
+            val url = "$baseUrl/rest/v1/progreso_estudiante?curso_id=eq.$courseId&select=usuario_estudiante"
+            
+            val request = Request.Builder()
+                .url(url)
+                .header("apikey", effectiveApiKey())
+                .header("Authorization", "Bearer ${effectiveApiKey()}")
+                .get()
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: "[]"
+                    val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    return@withContext jsonArray.size()
+                } else {
+                    Log.w("SupabaseClient", "Error counting students: ${response.code}")
+                    0
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error in countStudentsInCourse", e)
+            0
+        }
+    }
+
+    /**
+     * Fetch TOP 5 most popular courses (courses with most students enrolled in progreso_estudiante)
+     * This method queries ALL courses in the database and returns only the top 5 by enrollment count
+     */
+    suspend fun fetchTopPopularCourses(limit: Int = 5): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+            
+            Log.d("SupabaseClient", "Fetching top $limit popular courses from ALL courses in database")
+            
+            // Step 1: Get enrollment counts grouped by curso_id from progreso_estudiante
+            // We'll fetch all progreso_estudiante records and group them manually
+            val progresoUrl = "$baseUrl/rest/v1/progreso_estudiante?select=curso_id"
+            val progresoRequest = Request.Builder()
+                .url(progresoUrl)
+                .header("apikey", effectiveApiKey())
+                .header("Authorization", "Bearer ${effectiveApiKey()}")
+                .get()
+                .build()
+            
+            val courseIdCounts = mutableMapOf<Long, Int>()
+            
+            client.newCall(progresoRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: "[]"
+                    val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    
+                    // Count occurrences of each curso_id
+                    jsonArray.forEach { element ->
+                        val obj = element.asJsonObject
+                        val cursoId = obj.get("curso_id")?.asLong ?: return@forEach
+                        courseIdCounts[cursoId] = (courseIdCounts[cursoId] ?: 0) + 1
+                    }
+                    
+                    Log.d("SupabaseClient", "Found ${courseIdCounts.size} courses with students")
+                } else {
+                    Log.w("SupabaseClient", "Error fetching progreso_estudiante: ${response.code}")
+                    return@withContext emptyList()
+                }
+            }
+            
+            // Step 2: Sort by count descending and take top N course IDs
+            val topCourseIds = courseIdCounts.entries
+                .sortedByDescending { it.value }
+                .take(limit)
+                .map { it.key }
+            
+            if (topCourseIds.isEmpty()) {
+                Log.d("SupabaseClient", "No courses with students found")
+                return@withContext emptyList()
+            }
+            
+            Log.d("SupabaseClient", "Top $limit course IDs by enrollment: $topCourseIds")
+            
+            // Step 3: Fetch the actual Course records for these IDs
+            val courseIdsFilter = topCourseIds.joinToString(",")
+            val coursesUrl = "$baseUrl/rest/v1/courses?id=in.($courseIdsFilter)&select=*"
+            val coursesRequest = Request.Builder()
+                .url(coursesUrl)
+                .header("apikey", effectiveApiKey())
+                .header("Authorization", "Bearer ${effectiveApiKey()}")
+                .get()
+                .build()
+            
+            client.newCall(coursesRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: "[]"
+                    val courses = gson.fromJson(body, Array<Course>::class.java).toList()
+                    
+                    // Sort courses by their enrollment count to maintain top-to-bottom order (most popular first)
+                    // and ensure we only return exactly 'limit' courses
+                    val sortedCourses = courses
+                        .sortedByDescending { course -> courseIdCounts[course.id] ?: 0 }
+                        .take(limit)  // Explicitly limit to requested number
+                    
+                    // Log the sorted order for debugging
+                    sortedCourses.forEachIndexed { index, course ->
+                        val count = courseIdCounts[course.id] ?: 0
+                        Log.d("SupabaseClient", "Popular #${index + 1}: '${course.title}' with $count students")
+                    }
+                    
+                    Log.d("SupabaseClient", "Returning ${sortedCourses.size} popular courses (requested: $limit), sorted from most to least popular")
+                    return@withContext sortedCourses
+                } else {
+                    Log.w("SupabaseClient", "Error fetching courses: ${response.code}")
+                    return@withContext emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error in fetchTopPopularCourses", e)
             return@withContext emptyList()
         }
     }
@@ -4813,6 +5092,225 @@ object SupabaseClient {
     }
 
     /**
+     * Count unique students enrolled in a list of courses.
+     * Returns the number of distinct usuario_estudiante values in progreso_estudiante
+     * for the given course IDs.
+     */
+    suspend fun countUniqueStudentsInCourses(courseIds: List<Long>): Int = withContext(Dispatchers.IO) {
+        try {
+            if (courseIds.isEmpty()) return@withContext 0
+            
+            // Build the IN filter for course IDs
+            val courseIdsStr = courseIds.joinToString(",") { it.toString() }
+            val path = "progreso_estudiante?curso_id=in.($courseIdsStr)&select=usuario_estudiante"
+            
+            val request = buildGetRequest(path)
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "countUniqueStudentsInCourses failed: ${response.code}")
+                    return@withContext 0
+                }
+                
+                val body = response.body?.string()
+                if (body.isNullOrEmpty()) return@withContext 0
+                
+                val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                
+                // Extract unique student IDs
+                val uniqueStudents = mutableSetOf<Long>()
+                jsonArray.forEach { element ->
+                    val obj = element.asJsonObject
+                    if (obj.has("usuario_estudiante") && !obj.get("usuario_estudiante").isJsonNull) {
+                        uniqueStudents.add(obj.get("usuario_estudiante").asLong)
+                    }
+                }
+                
+                Log.d("SupabaseClient", "Found ${uniqueStudents.size} unique students in ${courseIds.size} courses")
+                return@withContext uniqueStudents.size
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error counting unique students in courses", e)
+            0
+        }
+    }
+
+    /**
+     * Get top students by average grade across ALL their enrolled courses.
+     * First finds students enrolled in the creator's courses, then calculates their overall average.
+     * Returns a list of students ordered by their global average grade (descending).
+     */
+    suspend fun fetchTopStudentsByProgress(courseIds: List<Long>, limit: Int = 5): List<Map<String, Any>> = withContext(Dispatchers.IO) {
+        try {
+            if (courseIds.isEmpty()) {
+                Log.d("SupabaseClient", "No course IDs provided for top students")
+                return@withContext emptyList()
+            }
+            
+            Log.d("SupabaseClient", "Fetching top students for courses: $courseIds")
+            
+            // Step 1: Get unique students enrolled in the creator's courses
+            val courseIdsStr = courseIds.joinToString(",") { it.toString() }
+            val studentsPath = "progreso_estudiante?curso_id=in.($courseIdsStr)&select=usuario_estudiante"
+            
+            Log.d("SupabaseClient", "Students query path: $studentsPath")
+            
+            val studentsRequest = buildGetRequest(studentsPath)
+            val uniqueStudentIds = mutableSetOf<Long>()
+            
+            client.newCall(studentsRequest).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "Failed to fetch students: ${response.code} - ${response.message}")
+                    val errorBody = response.body?.string()
+                    Log.w("SupabaseClient", "Error body: $errorBody")
+                    return@withContext emptyList()
+                }
+                
+                val body = response.body?.string()
+                Log.d("SupabaseClient", "Students response body: $body")
+                
+                if (body.isNullOrEmpty()) {
+                    Log.d("SupabaseClient", "No students found in creator's courses - empty response")
+                    return@withContext emptyList()
+                }
+                
+                val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                Log.d("SupabaseClient", "Found ${jsonArray.size()} progreso_estudiante records")
+                
+                jsonArray.forEach { element ->
+                    val obj = element.asJsonObject
+                    if (obj.has("usuario_estudiante") && !obj.get("usuario_estudiante").isJsonNull) {
+                        val studentId = obj.get("usuario_estudiante").asLong
+                        uniqueStudentIds.add(studentId)
+                        Log.d("SupabaseClient", "Added student ID: $studentId")
+                    }
+                }
+            }
+            
+            if (uniqueStudentIds.isEmpty()) {
+                Log.d("SupabaseClient", "No unique students found after processing")
+                return@withContext emptyList()
+            }
+            
+            Log.d("SupabaseClient", "Found ${uniqueStudentIds.size} unique students: $uniqueStudentIds")
+            
+            // Step 2: For each student, get ALL their course grades to calculate global average
+            val studentGlobalStats = mutableListOf<Map<String, Any>>()
+            
+            for (studentId in uniqueStudentIds) {
+                try {
+                    val allCoursesPath = "progreso_estudiante?usuario_estudiante=eq.$studentId&select=calificacion_promedio"
+                    val gradesRequest = buildGetRequest(allCoursesPath)
+                    
+                    Log.d("SupabaseClient", "Fetching all grades for student $studentId")
+                    
+                    client.newCall(gradesRequest).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            Log.w("SupabaseClient", "Failed to fetch grades for student $studentId: ${response.code}")
+                            return@use
+                        }
+                        
+                        val body = response.body?.string()
+                        if (body.isNullOrEmpty()) {
+                            Log.w("SupabaseClient", "No grades found for student $studentId")
+                            return@use
+                        }
+                        
+                        val gradesArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                        val allGrades = mutableListOf<Double>()
+                        
+                        gradesArray.forEach { element ->
+                            val obj = element.asJsonObject
+                            if (obj.has("calificacion_promedio") && !obj.get("calificacion_promedio").isJsonNull) {
+                                val grade = obj.get("calificacion_promedio").asDouble
+                                allGrades.add(grade)
+                                Log.d("SupabaseClient", "Student $studentId - Grade: $grade")
+                            }
+                        }
+                        
+                        if (allGrades.isNotEmpty()) {
+                            val globalAverage = allGrades.average()
+                            val username = getUsernameFromUserId(studentId) ?: "Usuario $studentId"
+                            
+                            Log.d("SupabaseClient", "Student $studentId ($username) - Average: $globalAverage from ${allGrades.size} courses")
+                            
+                            studentGlobalStats.add(
+                                mapOf(
+                                    "userId" to studentId,
+                                    "username" to username,
+                                    "averageProgress" to globalAverage,
+                                    "coursesEnrolled" to allGrades.size
+                                )
+                            )
+                        } else {
+                            Log.w("SupabaseClient", "Student $studentId has no valid grades")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("SupabaseClient", "Error fetching grades for student $studentId", e)
+                }
+            }
+            
+            // Step 3: Sort by global average and take top N
+            val topStudents = studentGlobalStats
+                .sortedByDescending { it["averageProgress"] as Double }
+                .take(limit)
+            
+            Log.d("SupabaseClient", "Top ${topStudents.size} students by global average grade:")
+            topStudents.forEachIndexed { index, student ->
+                Log.d("SupabaseClient", "#${index + 1}: ${student["username"]} - ${student["averageProgress"]} (${student["coursesEnrolled"]} courses)")
+            }
+            
+            return@withContext topStudents
+            
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching top students by progress", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Debug function to check what data exists in progreso_estudiante table
+     * This helps identify if the table has data and what fields are available
+     */
+    suspend fun debugProgresoEstudiante(): String = withContext(Dispatchers.IO) {
+        try {
+            val path = "progreso_estudiante?limit=10"
+            val request = buildGetRequest(path)
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext "Error: ${response.code} - ${response.message}"
+                }
+                
+                val body = response.body?.string()
+                if (body.isNullOrEmpty()) {
+                    return@withContext "Tabla vacía - No hay registros en progreso_estudiante"
+                }
+                
+                val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                val result = StringBuilder()
+                result.append("Registros encontrados: ${jsonArray.size()}\n\n")
+                
+                jsonArray.take(5).forEachIndexed { index, element ->
+                    val obj = element.asJsonObject
+                    result.append("Registro #${index + 1}:\n")
+                    result.append("  - usuario_estudiante: ${obj.get("usuario_estudiante")}\n")
+                    result.append("  - curso_id: ${obj.get("curso_id")}\n")
+                    result.append("  - calificacion_promedio: ${obj.get("calificacion_promedio")}\n")
+                    result.append("  - porcentaje_completado: ${obj.get("porcentaje_completado")}\n")
+                    result.append("\n")
+                }
+                
+                return@withContext result.toString()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error debugging progreso_estudiante", e)
+            "Error al consultar: ${e.message}"
+        }
+    }
+
+    /**
      * Fetch courses where the user has submitted tasks (as a student).
      * This uses the task_submissions table to find unique course_ids for the given student.
      */
@@ -5527,8 +6025,11 @@ object SupabaseClient {
     suspend fun fetchUserCount(): Int = withContext(Dispatchers.IO) {
         try {
             fetchTableJson("usuarios").size()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d("SupabaseClient", "User count fetch cancelled")
+            throw e
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching user count", e)
+            Log.w("SupabaseClient", "Error fetching user count: ${e.message}")
             0
         }
     }
@@ -5548,8 +6049,11 @@ object SupabaseClient {
             } else {
                 courses.size()
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d("SupabaseClient", "Course count fetch cancelled")
+            throw e
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching course count", e)
+            Log.w("SupabaseClient", "Error fetching course count: ${e.message}")
             0
         }
     }
@@ -5557,8 +6061,11 @@ object SupabaseClient {
     suspend fun fetchSubmissionCount(): Int = withContext(Dispatchers.IO) {
         try {
             fetchTableJson("task_submissions").size()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d("SupabaseClient", "Submission count fetch cancelled")
+            throw e
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching submission count", e)
+            Log.w("SupabaseClient", "Error fetching submission count: ${e.message}")
             0
         }
     }
@@ -5578,8 +6085,11 @@ object SupabaseClient {
                 }
             }
             count
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d("SupabaseClient", "Certificates count fetch cancelled")
+            throw e
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching certificates count", e)
+            Log.w("SupabaseClient", "Error fetching certificates count: ${e.message}")
             0
         }
     }
@@ -5688,6 +6198,184 @@ object SupabaseClient {
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error fetching top creators", e)
             emptyList()
+        }
+    }
+
+    /**
+     * Fetch the count of certifications (students who have completed) for a specific course.
+     * Returns the number of students who have earned certificates in the given course.
+     */
+    suspend fun fetchCertificationsForCourse(courseId: Long): Int = withContext(Dispatchers.IO) {
+        try {
+            val json = fetchTableJson("progreso_estudiante?curso_id=eq.$courseId&select=certificado_url,estado")
+            var count = 0
+            for (i in 0 until json.size()) {
+                val obj = json.get(i).asJsonObject
+                val hasCert = (obj.has("certificado_url") && !obj.get("certificado_url").isJsonNull && obj.get("certificado_url").asString.isNotEmpty())
+                val isWon = (obj.has("estado") && !obj.get("estado").isJsonNull && obj.get("estado").asString.equals("Ganado", ignoreCase = true))
+                if (hasCert || isWon) {
+                    count++
+                }
+            }
+            count
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "Error fetching certifications for course $courseId: ${e.message}")
+            0
+        }
+    }
+
+    /**
+     * Fetch the count of submissions for a specific course.
+     * Returns the total number of task submissions for the given course.
+     */
+    suspend fun fetchSubmissionCountForCourse(courseId: Long): Int = withContext(Dispatchers.IO) {
+        try {
+            // First, get all topics for this course
+            val topics = fetchTopicsByCourse(courseId)
+            val topicIds = topics.map { it.id }
+            
+            if (topicIds.isEmpty()) {
+                return@withContext 0
+            }
+            
+            // Then get all tasks for these topics
+            val tasks = fetchTasksByTopicIds(topicIds)
+            val taskIds = tasks.map { it.id }
+            
+            if (taskIds.isEmpty()) {
+                return@withContext 0
+            }
+            
+            // Finally, count submissions for these tasks
+            val taskIdsStr = taskIds.joinToString(",")
+            val json = fetchTableJson("task_submissions?task_id=in.($taskIdsStr)&select=id")
+            json.size()
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "Error fetching submission count for course $courseId: ${e.message}")
+            0
+        }
+    }
+
+    /**
+     * OPTIMIZACIÓN: Obtener todas las métricas de cursos en una sola operación paralela
+     * Retorna un mapa de courseId a métricas (enrollments, certifications, submissions)
+     */
+    data class CourseMetrics(
+        val enrollments: Int,
+        val certifications: Int,
+        val submissions: Int,
+        val uniqueUsers: Int = 0 // Usuarios únicos inscritos
+    )
+
+    suspend fun fetchCourseMetricsBatch(courseIds: List<Long>): Map<Long, CourseMetrics> = withContext(Dispatchers.IO) {
+        if (courseIds.isEmpty()) return@withContext emptyMap()
+        
+        try {
+            // Usar async para paralelizar todas las llamadas
+            val metricsMap = mutableMapOf<Long, CourseMetrics>()
+            
+            // Procesar todos los cursos en paralelo
+            val jobs = courseIds.map { courseId ->
+                async {
+                    try {
+                        val enrollments = async { fetchEnrolledCount(courseId).toInt() }
+                        val certifications = async { fetchCertificationsForCourse(courseId) }
+                        val submissions = async { fetchSubmissionCountForCourse(courseId) }
+                        
+                        courseId to CourseMetrics(
+                            enrollments = enrollments.await(),
+                            certifications = certifications.await(),
+                            submissions = submissions.await()
+                        )
+                    } catch (e: Exception) {
+                        Log.w("SupabaseClient", "Error fetching metrics for course $courseId", e)
+                        courseId to CourseMetrics(0, 0, 0)
+                    }
+                }
+            }
+            
+            jobs.awaitAll().forEach { (courseId, metrics) ->
+                metricsMap[courseId] = metrics
+            }
+            
+            Log.d("SupabaseClient", "Fetched metrics for ${metricsMap.size} courses in batch")
+            metricsMap
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error in fetchCourseMetricsBatch", e)
+            emptyMap()
+        }
+    }
+
+    /**
+     * OPTIMIZACIÓN: Obtener métricas agregadas de múltiples cursos de forma eficiente
+     */
+    suspend fun fetchAggregatedMetrics(courseIds: List<Long>): CourseMetrics = withContext(Dispatchers.IO) {
+        if (courseIds.isEmpty()) return@withContext CourseMetrics(0, 0, 0, 0)
+        
+        try {
+            val batchMetrics = fetchCourseMetricsBatch(courseIds)
+            
+            val totalEnrollments = batchMetrics.values.sumOf { it.enrollments }
+            val totalCertifications = batchMetrics.values.sumOf { it.certifications }
+            val totalSubmissions = batchMetrics.values.sumOf { it.submissions }
+            
+            // Obtener usuarios únicos inscritos en cualquiera de los cursos
+            val uniqueUsers = try {
+                fetchUniqueEnrolledUsers(courseIds)
+            } catch (e: Exception) {
+                Log.w("SupabaseClient", "Error fetching unique users, falling back to enrollments", e)
+                totalEnrollments // Fallback
+            }
+            
+            CourseMetrics(totalEnrollments, totalCertifications, totalSubmissions, uniqueUsers)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error in fetchAggregatedMetrics", e)
+            CourseMetrics(0, 0, 0, 0)
+        }
+    }
+    
+    /**
+     * Obtiene la cantidad de usuarios únicos inscritos en los cursos especificados
+     * usando la tabla progreso_estudiante
+     */
+    private data class SubscriptionUserId(val user_id: Long)
+    
+    suspend fun fetchUniqueEnrolledUsers(courseIds: List<Long>): Int = withContext(Dispatchers.IO) {
+        if (courseIds.isEmpty()) return@withContext 0
+        
+        try {
+            // Usar la tabla progreso_estudiante para contar usuarios únicos inscritos
+            val courseIdsStr = courseIds.joinToString(",") { it.toString() }
+            val path = "progreso_estudiante?curso_id=in.($courseIdsStr)&select=usuario_estudiante"
+            
+            val request = buildGetRequest(path)
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "fetchUniqueEnrolledUsers failed: ${response.code}")
+                    return@withContext 0
+                }
+                
+                val body = response.body?.string()
+                if (body.isNullOrEmpty()) return@withContext 0
+                
+                val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                
+                // Extract unique student IDs
+                val uniqueStudents = mutableSetOf<Long>()
+                jsonArray.forEach { element ->
+                    val obj = element.asJsonObject
+                    if (obj.has("usuario_estudiante") && !obj.get("usuario_estudiante").isJsonNull) {
+                        uniqueStudents.add(obj.get("usuario_estudiante").asLong)
+                    }
+                }
+                
+                Log.d("SupabaseClient", "Found ${uniqueStudents.size} unique users enrolled in ${courseIds.size} courses from progreso_estudiante")
+                return@withContext uniqueStudents.size
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error in fetchUniqueEnrolledUsers", e)
+            0
         }
     }
 }

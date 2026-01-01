@@ -62,6 +62,12 @@ class AdminDashboardFragment : Fragment() {
     private lateinit var titleTextView: TextView
     private lateinit var sectionsContainer: LinearLayout
     private lateinit var scrollView: androidx.core.widget.NestedScrollView
+    private var loadingView: View? = null
+    
+    // Caché de datos para evitar llamadas repetidas
+    private var cachedMetrics: GlobalMetrics? = null
+    private var metricsLastUpdated: Long = 0
+    private val CACHE_DURATION_MS = 60_000L // 1 minuto
     
     // Secciones del dashboard
     private var currentSection: DashboardSection = DashboardSection.ANALYTICS
@@ -94,53 +100,84 @@ class AdminDashboardFragment : Fragment() {
     }
 
     private fun initializeViews(view: View) {
-        backButton = view.findViewById(R.id.backButton)
-        titleTextView = view.findViewById(R.id.dashboardTitle)
-        sectionsContainer = view.findViewById(R.id.sectionsContainer)
-        scrollView = view.findViewById(R.id.dashboardScrollView)
-        
-        backButton.setOnClickListener {
-            findNavController().navigateUp()
+        try {
+            backButton = view.findViewById(R.id.backButton)
+            titleTextView = view.findViewById(R.id.dashboardTitle)
+            sectionsContainer = view.findViewById(R.id.sectionsContainer)
+            scrollView = view.findViewById(R.id.dashboardScrollView)
+            
+            // Validar que todas las vistas fueron encontradas
+            if (backButton == null || titleTextView == null || 
+                sectionsContainer == null || scrollView == null) {
+                Log.e("AdminDashboard", "Error: No se pudieron inicializar todas las vistas")
+                Toast.makeText(requireContext(), 
+                    "Error al cargar el panel. Intente nuevamente.", 
+                    Toast.LENGTH_SHORT).show()
+                return
+            }
+            
+            backButton.setOnClickListener {
+                findNavController().navigateUp()
+            }
+            
+            setupSectionTabs(view)
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error initializing views", e)
+            Toast.makeText(requireContext(), 
+                "Error al inicializar el panel: ${e.message}", 
+                Toast.LENGTH_SHORT).show()
         }
-        
-        setupSectionTabs(view)
     }
 
     private fun setupSectionTabs(view: View) {
-        val tabAnalytics: LinearLayout = view.findViewById(R.id.tabAnalytics)
-        val tabUsers: LinearLayout = view.findViewById(R.id.tabUsers)
-        val tabModeration: LinearLayout = view.findViewById(R.id.tabModeration)
-        val tabProgress: LinearLayout = view.findViewById(R.id.tabProgress)
-        val tabPermissions: LinearLayout = view.findViewById(R.id.tabPermissions)
-        
-        tabAnalytics.setOnClickListener {
+        try {
+            val tabAnalytics: LinearLayout = view.findViewById(R.id.tabAnalytics)
+            val tabUsers: LinearLayout = view.findViewById(R.id.tabUsers)
+            val tabModeration: LinearLayout = view.findViewById(R.id.tabModeration)
+            val tabProgress: LinearLayout = view.findViewById(R.id.tabProgress)
+            val tabPermissions: LinearLayout = view.findViewById(R.id.tabPermissions)
+            
+            // Validar que todos los tabs fueron encontrados
+            if (tabAnalytics == null || tabUsers == null || tabModeration == null || 
+                tabProgress == null || tabPermissions == null) {
+                Log.e("AdminDashboard", "Error: No se pudieron encontrar todos los tabs")
+                return
+            }
+            
+            tabAnalytics.setOnClickListener {
+                switchSection(DashboardSection.ANALYTICS)
+                updateTabSelection(tabAnalytics, tabUsers, tabModeration, tabProgress, tabPermissions)
+            }
+            
+            tabUsers.setOnClickListener {
+                switchSection(DashboardSection.USER_MANAGEMENT)
+                updateTabSelection(tabUsers, tabAnalytics, tabModeration, tabProgress, tabPermissions)
+            }
+            
+            tabModeration.setOnClickListener {
+                switchSection(DashboardSection.MODERATION)
+                updateTabSelection(tabModeration, tabAnalytics, tabUsers, tabProgress, tabPermissions)
+            }
+            
+            tabProgress.setOnClickListener {
+                switchSection(DashboardSection.PROGRESS_TRACKING)
+                updateTabSelection(tabProgress, tabAnalytics, tabUsers, tabModeration, tabPermissions)
+            }
+            
+            tabPermissions.setOnClickListener {
+                switchSection(DashboardSection.PERMISSIONS)
+                updateTabSelection(tabPermissions, tabAnalytics, tabUsers, tabModeration, tabProgress)
+            }
+            
+            // Iniciar con Analytics
             switchSection(DashboardSection.ANALYTICS)
             updateTabSelection(tabAnalytics, tabUsers, tabModeration, tabProgress, tabPermissions)
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error setting up section tabs", e)
+            Toast.makeText(requireContext(), 
+                "Error al configurar las pestañas: ${e.message}", 
+                Toast.LENGTH_SHORT).show()
         }
-        
-        tabUsers.setOnClickListener {
-            switchSection(DashboardSection.USER_MANAGEMENT)
-            updateTabSelection(tabUsers, tabAnalytics, tabModeration, tabProgress, tabPermissions)
-        }
-        
-        tabModeration.setOnClickListener {
-            switchSection(DashboardSection.MODERATION)
-            updateTabSelection(tabModeration, tabAnalytics, tabUsers, tabProgress, tabPermissions)
-        }
-        
-        tabProgress.setOnClickListener {
-            switchSection(DashboardSection.PROGRESS_TRACKING)
-            updateTabSelection(tabProgress, tabAnalytics, tabUsers, tabModeration, tabPermissions)
-        }
-        
-        tabPermissions.setOnClickListener {
-            switchSection(DashboardSection.PERMISSIONS)
-            updateTabSelection(tabPermissions, tabAnalytics, tabUsers, tabModeration, tabProgress)
-        }
-        
-        // Iniciar con Analytics
-        switchSection(DashboardSection.ANALYTICS)
-        updateTabSelection(tabAnalytics, tabUsers, tabModeration, tabProgress, tabPermissions)
     }
 
     private fun updateTabSelection(selected: LinearLayout, vararg others: LinearLayout) {
@@ -164,81 +201,198 @@ class AdminDashboardFragment : Fragment() {
     // ==================== SECCIÓN 1: ANALYTICS GLOBAL ====================
     
     private fun loadAnalyticsSection() {
-        titleTextView.text = "Analytics Global"
+        titleTextView.text = "Mis Estadísticas"
         
+        // Verificar si hay datos en caché
+        val now = System.currentTimeMillis()
+        if (cachedMetrics != null && (now - metricsLastUpdated) < CACHE_DURATION_MS) {
+            Log.d("AdminDashboard", "Using cached metrics")
+            displayAnalyticsMetrics(cachedMetrics!!, animated = false)
+            return
+        }
+        
+        // Mostrar UI instantáneamente con valores en 0
+        displayAnalyticsMetrics(GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0), animated = false)
+        
+        // Cargar datos reales en background y actualizar con animación
         lifecycleScope.launch {
-            val metrics = withContext(Dispatchers.IO) {
-                try {
-                    // Fetch real data from Supabase in parallel
-                    val userCountDeferred = async { com.example.tareamov.service.SupabaseClient.fetchUserCount() }
-                    val courseCountDeferred = async { com.example.tareamov.service.SupabaseClient.fetchCourseCount(publishedOnly = false) }
-                    val publishedCourseCountDeferred = async { com.example.tareamov.service.SupabaseClient.fetchCourseCount(publishedOnly = true) }
-                    val submissionCountDeferred = async { com.example.tareamov.service.SupabaseClient.fetchSubmissionCount() }
-                    val certCountDeferred = async { com.example.tareamov.service.SupabaseClient.fetchCertificatesIssuedCount() }
-                    
-                    GlobalMetrics(
-                        totalUsers = userCountDeferred.await(),
-                        activeUsers = userCountDeferred.await(), // Assuming all fetched are active for now
-                        totalCourses = courseCountDeferred.await(),
-                        publishedCourses = publishedCourseCountDeferred.await(),
-                        totalSubmissions = submissionCountDeferred.await(),
-                        totalNotifications = 0,
-                        totalChatMessages = 0,
-                        certificatesIssued = certCountDeferred.await()
-                    )
-                } catch (e: Exception) {
-                    Log.e("AdminDashboard", "Error loading analytics", e)
-                    // Fallback to empty metrics
-                    GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0)
+            try {
+                val metrics = withContext(Dispatchers.IO) {
+                    try {
+                        val currentUsername = sessionManager.getUsername()
+                        if (currentUsername.isNullOrEmpty()) {
+                            Log.w("AdminDashboard", "No username found in session")
+                            return@withContext GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0)
+                        }
+                        
+                        // Fetch creator's courses
+                        val creatorCourses = com.example.tareamov.service.SupabaseClient.fetchCoursesByCreator(currentUsername)
+                        val courseIds = creatorCourses.map { it.id }
+                        
+                        if (courseIds.isEmpty()) {
+                            return@withContext GlobalMetrics(
+                                totalUsers = 0,
+                                activeUsers = 0,
+                                totalCourses = 0,
+                                publishedCourses = 0,
+                                totalSubmissions = 0,
+                                totalNotifications = 0,
+                                totalChatMessages = 0,
+                                certificatesIssued = 0
+                            )
+                        }
+                        
+                        // SUPER OPTIMIZACIÓN: Obtener todas las métricas en una sola llamada batch
+                        val aggregatedMetrics = com.example.tareamov.service.SupabaseClient.fetchAggregatedMetrics(courseIds)
+                        
+                        GlobalMetrics(
+                            totalUsers = aggregatedMetrics.uniqueUsers, // Usuarios únicos inscritos
+                            activeUsers = aggregatedMetrics.uniqueUsers, // Mismos usuarios únicos
+                            totalCourses = creatorCourses.size,
+                            publishedCourses = creatorCourses.count { it.isPublished },
+                            totalSubmissions = aggregatedMetrics.submissions,
+                            totalNotifications = 0,
+                            totalChatMessages = 0,
+                            certificatesIssued = aggregatedMetrics.certifications
+                        )
+                    } catch (e: Exception) {
+                        Log.w("AdminDashboard", "Error loading analytics: ${e.message}", e)
+                        GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0)
+                    }
                 }
+                
+                // Actualizar caché
+                cachedMetrics = metrics
+                metricsLastUpdated = System.currentTimeMillis()
+                
+                // Actualizar UI con datos reales y animación
+                updateAnalyticsMetrics(metrics, animated = true)
+                Log.d("AdminDashboard", "Analytics loaded successfully")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d("AdminDashboard", "Analytics section cancelled")
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Unexpected error in analytics section", e)
             }
-            
-            displayAnalyticsMetrics(metrics)
         }
     }
 
-    private fun displayAnalyticsMetrics(metrics: GlobalMetrics) {
-        val analyticsView = LayoutInflater.from(requireContext())
-            .inflate(R.layout.section_analytics, sectionsContainer, false)
+    private fun displayAnalyticsMetrics(metrics: GlobalMetrics, animated: Boolean = false) {
+        try {
+            // Validar que el contenedor existe
+            if (!::sectionsContainer.isInitialized) {
+                Log.e("AdminDashboard", "sectionsContainer no está inicializado")
+                return
+            }
+            
+            val analyticsView = LayoutInflater.from(requireContext())
+                .inflate(R.layout.section_analytics, sectionsContainer, false)
+            
+            // Validar que la vista se infló correctamente
+            if (analyticsView == null) {
+                Log.e("AdminDashboard", "Error al inflar section_analytics")
+                return
+            }
+            
+            // Establecer valores sin animación para renderizado instantáneo
+            analyticsView.findViewById<TextView>(R.id.totalUsersText)?.text = metrics.totalUsers.toString()
+            analyticsView.findViewById<TextView>(R.id.totalCoursesText)?.text = metrics.totalCourses.toString()
+            analyticsView.findViewById<TextView>(R.id.totalSubmissionsText)?.text = metrics.totalSubmissions.toString()
+            analyticsView.findViewById<TextView>(R.id.certificatesIssuedText)?.text = metrics.certificatesIssued.toString()
+            
+            // Labels estáticos
+            analyticsView.findViewById<TextView>(R.id.activeUsersText)?.text = "Inscritos en mis cursos"
+            analyticsView.findViewById<TextView>(R.id.publishedCoursesText)?.text = "Mis cursos"
+            
+            // Setup Charts - con validación de null
+            val weeklyChart = analyticsView.findViewById<com.example.tareamov.ui.components.SimpleLineChart>(R.id.weeklyActivityChart)
+            weeklyChart?.setData(listOf(120f, 150f, 140f, 180f, 220f, 190f, 160f))
+            
+            val monthlyChart = analyticsView.findViewById<com.example.tareamov.ui.components.SimpleBarChart>(R.id.monthlyProgressChart)
+            monthlyChart?.setData(
+                listOf(350f, 500f, 420f, 580f, 510f, 620f),
+                listOf("Ene", "Feb", "Mar", "Abr", "May", "Jun")
+            )
+            
+            // Animate Progress Bars
+            val progressCompleted = analyticsView.findViewById<ProgressBar>(R.id.progressCompleted)
+            val progressApproved = analyticsView.findViewById<ProgressBar>(R.id.progressApproved)
+            val progressSatisfaction = analyticsView.findViewById<ProgressBar>(R.id.progressSatisfaction)
+            
+            progressCompleted?.let { animateProgressBar(it, 87) }
+            progressApproved?.let { animateProgressBar(it, 92) }
+            progressSatisfaction?.let { animateProgressBar(it, 78) }
+            
+            sectionsContainer.addView(analyticsView)
+            
+            // Lazy loading: cargar secciones secundarias después de mostrar lo principal
+            lifecycleScope.launch {
+                try {
+                    // Cargar en paralelo pero después de mostrar la UI principal
+                    val creatorsJob = async { loadTopCreators(analyticsView) }
+                    val coursesJob = async { loadTopCourses(analyticsView) }
+                    val studentsJob = async { loadTopStudents(analyticsView) }
+                    
+                    // Esperar a que todas terminen
+                    creatorsJob.await()
+                    coursesJob.await()
+                    studentsJob.await()
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error loading secondary sections", e)
+                }
+            }
+            
+            Log.d("AdminDashboard", "Analytics metrics displayed successfully")
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error displaying analytics metrics", e)
+            Toast.makeText(requireContext(), 
+                "Error al mostrar las métricas: ${e.message}", 
+                Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun updateAnalyticsMetrics(metrics: GlobalMetrics, animated: Boolean = true) {
+        try {
+            // Buscar la vista ya existente en el contenedor
+            if (sectionsContainer.childCount == 0) {
+                // Si no existe, crearla
+                displayAnalyticsMetrics(metrics, animated)
+                return
+            }
+            
+            val analyticsView = sectionsContainer.getChildAt(0)
+            
+            // Actualizar valores con animación
+            if (animated) {
+                animateMetricValue(analyticsView, R.id.totalUsersText, metrics.totalUsers)
+                animateMetricValue(analyticsView, R.id.totalCoursesText, metrics.totalCourses)
+                animateMetricValue(analyticsView, R.id.totalSubmissionsText, metrics.totalSubmissions)
+                animateMetricValue(analyticsView, R.id.certificatesIssuedText, metrics.certificatesIssued)
+            } else {
+                analyticsView.findViewById<TextView>(R.id.totalUsersText)?.text = metrics.totalUsers.toString()
+                analyticsView.findViewById<TextView>(R.id.totalCoursesText)?.text = metrics.totalCourses.toString()
+                analyticsView.findViewById<TextView>(R.id.totalSubmissionsText)?.text = metrics.totalSubmissions.toString()
+                analyticsView.findViewById<TextView>(R.id.certificatesIssuedText)?.text = metrics.certificatesIssued.toString()
+            }
+            
+            Log.d("AdminDashboard", "Analytics metrics updated with animation=$animated")
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error updating analytics metrics", e)
+        }
+    }
+
+    private fun animateMetricValue(view: View, textViewId: Int, targetValue: Int) {
+        val textView = view.findViewById<TextView>(textViewId) ?: return
+        val currentValue = textView.text.toString().toIntOrNull() ?: 0
         
-        analyticsView.findViewById<TextView>(R.id.totalUsersText).text = metrics.totalUsers.toString()
-        analyticsView.findViewById<TextView>(R.id.activeUsersText).text = "Total registrados"
-        analyticsView.findViewById<TextView>(R.id.totalCoursesText).text = metrics.totalCourses.toString()
-        analyticsView.findViewById<TextView>(R.id.publishedCoursesText).text = "Publicados"
-        analyticsView.findViewById<TextView>(R.id.totalSubmissionsText).text = "${metrics.totalSubmissions}"
-        analyticsView.findViewById<TextView>(R.id.certificatesIssuedText).text = metrics.certificatesIssued.toString()
-        
-        // Setup Charts
-        val weeklyChart = analyticsView.findViewById<com.example.tareamov.ui.components.SimpleLineChart>(R.id.weeklyActivityChart)
-        // Mock data for weekly activity - In a real app this would come from metrics
-        weeklyChart.setData(listOf(120f, 150f, 140f, 180f, 220f, 190f, 160f))
-        
-        val monthlyChart = analyticsView.findViewById<com.example.tareamov.ui.components.SimpleBarChart>(R.id.monthlyProgressChart)
-        // Mock data for monthly progress
-        monthlyChart.setData(
-            listOf(350f, 500f, 420f, 580f, 510f, 620f),
-            listOf("Ene", "Feb", "Mar", "Abr", "May", "Jun")
-        )
-        
-        // Animate Progress Bars
-        val progressCompleted = analyticsView.findViewById<ProgressBar>(R.id.progressCompleted)
-        val progressApproved = analyticsView.findViewById<ProgressBar>(R.id.progressApproved)
-        val progressSatisfaction = analyticsView.findViewById<ProgressBar>(R.id.progressSatisfaction)
-        
-        animateProgressBar(progressCompleted, 87)
-        animateProgressBar(progressApproved, 92)
-        animateProgressBar(progressSatisfaction, 78)
-        
-        sectionsContainer.addView(analyticsView)
-        
-        // Cargar top creadores
-        loadTopCreators(analyticsView)
-        
-        // Cargar cursos más populares
-        loadTopCourses(analyticsView)
-        
-        // Cargar estudiantes destacados
-        loadTopStudents(analyticsView)
+        // Animar de currentValue a targetValue en 800ms
+        android.animation.ValueAnimator.ofInt(currentValue, targetValue).apply {
+            duration = 800 // 0.8 segundos para una animación rápida pero visible
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener { animator ->
+                textView.text = (animator.animatedValue as Int).toString()
+            }
+            start()
+        }
     }
 
     private fun animateProgressBar(progressBar: ProgressBar, target: Int) {
@@ -250,28 +404,34 @@ class AdminDashboardFragment : Fragment() {
 
     private fun loadTopCreators(parentView: View) {
         lifecycleScope.launch {
-            val creators = withContext(Dispatchers.IO) {
-                try {
-                    val topCreators = com.example.tareamov.service.SupabaseClient.fetchTopCreators()
-                    topCreators.map { 
-                        CreatorStats(
-                            username = it.username,
-                            coursesCount = it.coursesCount,
-                            subscribersCount = it.subscribers,
-                            certificationsCount = it.certifications,
-                            avatarUrl = it.avatarUrl
-                        )
+            try {
+                val creators = withContext(Dispatchers.IO) {
+                    try {
+                        val topCreators = com.example.tareamov.service.SupabaseClient.fetchTopCreators()
+                        topCreators.map { 
+                            CreatorStats(
+                                username = it.username,
+                                coursesCount = it.coursesCount,
+                                subscribersCount = it.subscribers,
+                                certificationsCount = it.certifications,
+                                avatarUrl = it.avatarUrl
+                            )
+                        }
+                    } catch (e: Exception) {
+                        Log.e("AdminDashboard", "Error loading top creators", e)
+                        emptyList<CreatorStats>()
                     }
-                } catch (e: Exception) {
-                    Log.e("AdminDashboard", "Error loading top creators", e)
-                    emptyList<CreatorStats>()
                 }
-            }
-            
-            val container = parentView.findViewById<LinearLayout>(R.id.topCreatorsContainer)
-            container.removeAllViews()
-            
-            creators.forEachIndexed { index, creator ->
+                
+                val container = parentView.findViewById<LinearLayout>(R.id.topCreatorsContainer)
+                container?.removeAllViews()
+                
+                if (container == null) {
+                    Log.e("AdminDashboard", "topCreatorsContainer not found in layout")
+                    return@launch
+                }
+                
+                creators.forEachIndexed { index, creator ->
                 val itemView = LayoutInflater.from(requireContext())
                     .inflate(R.layout.item_top_creator, container, false)
                 
@@ -295,45 +455,59 @@ class AdminDashboardFragment : Fragment() {
                 itemView.findViewById<TextView>(R.id.rankNumber).text = "${index + 1}"
                 itemView.findViewById<TextView>(R.id.creatorName).text = creator.username
                 itemView.findViewById<TextView>(R.id.coursesCount).text = "${creator.coursesCount} Cursos"
-                itemView.findViewById<TextView>(R.id.subscribersCount).text = "${creator.subscribersCount}"
-                container.addView(itemView)
+                    itemView.findViewById<TextView>(R.id.subscribersCount).text = "${creator.subscribersCount}"
+                    container.addView(itemView)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d("AdminDashboard", "Top creators loading cancelled")
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error displaying top creators", e)
             }
         }
     }
 
     private fun loadTopCourses(parentView: View) {
         lifecycleScope.launch {
-            val topCourses = withContext(Dispatchers.IO) {
-                try {
-                    val courses = database.courseDao().getAllCourses()
-                    // Fetch enrollment counts from Supabase for each course
-                    courses.mapNotNull { course ->
-                        try {
-                            val enrollmentCount = com.example.tareamov.service.SupabaseClient.fetchEnrolledCount(course.id)
-                            CourseStats(
-                                id = course.id,
-                                title = course.title,
-                                description = course.description ?: "",
-                                thumbnailUri = course.thumbnailUri,
-                                enrollments = enrollmentCount.toInt(),
-                                isPremium = course.isPremium,
-                                rating = 4.5f // Placeholder, could be calculated from submissions
-                            )
-                        } catch (e: Exception) {
-                            Log.e("AdminDashboard", "Error fetching enrollment for course ${course.id}", e)
-                            null
+            try {
+                val topCourses = withContext(Dispatchers.IO) {
+                    try {
+                        val courses = database.courseDao().getAllCourses().take(10) // Limitar a 10 desde el inicio
+                        
+                        // Usar método batch optimizado
+                        val courseIds = courses.map { it.id }
+                        val metricsMap = com.example.tareamov.service.SupabaseClient.fetchCourseMetricsBatch(courseIds)
+                        
+                        courses.mapNotNull { course ->
+                            val metrics = metricsMap[course.id]
+                            if (metrics != null) {
+                                CourseStats(
+                                    id = course.id,
+                                    title = course.title,
+                                    description = course.description ?: "",
+                                    thumbnailUri = course.thumbnailUri,
+                                    enrollments = metrics.enrollments,
+                                    isPremium = course.isPremium,
+                                    rating = 4.5f
+                                )
+                            } else {
+                                null
+                            }
                         }
+                        .sortedByDescending { it.enrollments }
+                        .take(5)
+                    } catch (e: Exception) {
+                        Log.e("AdminDashboard", "Error loading top courses", e)
+                        emptyList()
                     }
-                    .sortedByDescending { it.enrollments }
-                    .take(5)
-                } catch (e: Exception) {
-                    Log.e("AdminDashboard", "Error loading top courses", e)
-                    emptyList()
                 }
-            }
-            
-            val container = parentView.findViewById<LinearLayout>(R.id.topCoursesContainer)
-            container.removeAllViews()
+                
+                val container = parentView.findViewById<LinearLayout>(R.id.topCoursesContainer)
+                container?.removeAllViews()
+                
+                if (container == null) {
+                    Log.e("AdminDashboard", "topCoursesContainer not found in layout")
+                    return@launch
+                }
             
             topCourses.forEach { course ->
                 val itemView = LayoutInflater.from(requireContext())
@@ -363,30 +537,130 @@ class AdminDashboardFragment : Fragment() {
                     thumbnail.setImageResource(R.drawable.placeholder_image)
                 }
                 
-                container.addView(itemView)
+                    container.addView(itemView)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d("AdminDashboard", "Top courses loading cancelled")
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error displaying top courses", e)
             }
         }
     }
 
     private fun loadTopStudents(parentView: View) {
         lifecycleScope.launch {
-            val topStudents = withContext(Dispatchers.IO) {
-                // Placeholder - implementación simplificada
-                emptyList<StudentStats>()
-            }
-            
-            val container = parentView.findViewById<LinearLayout>(R.id.topStudentsContainer)
-            container.removeAllViews()
-            
-            topStudents.forEach { student ->
-                val itemView = LayoutInflater.from(requireContext())
-                    .inflate(R.layout.item_top_student, container, false)
-                itemView.findViewById<TextView>(R.id.studentName).text = student.username
-                itemView.findViewById<TextView>(R.id.averageGrade).text = 
-                    String.format("%.1f", student.averageGrade)
-                itemView.findViewById<ImageView>(R.id.certificateIcon).visibility = 
-                    if (student.hasCertificate) View.VISIBLE else View.GONE
-                container.addView(itemView)
+            try {
+                // First, debug the progreso_estudiante table
+                val debugInfo = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.debugProgresoEstudiante()
+                }
+                Log.d("AdminDashboard", "Debug progreso_estudiante:\n$debugInfo")
+                
+                val topStudents = withContext(Dispatchers.IO) {
+                    try {
+                        // Get current user's ID (more reliable than username)
+                        val currentUserId = sessionManager.getUserId()
+                        if (currentUserId <= 0) {
+                            Log.w("AdminDashboard", "Invalid user ID for top students: $currentUserId")
+                            return@withContext emptyList<StudentStats>()
+                        }
+                        
+                        Log.d("AdminDashboard", "Loading top students for user ID: $currentUserId")
+                        
+                        // Fetch creator's courses by user ID
+                        val creatorCourses = com.example.tareamov.service.SupabaseClient.fetchCoursesByCreatorUserId(currentUserId)
+                        val courseIds = creatorCourses.map { it.id }
+                        
+                        Log.d("AdminDashboard", "Found ${creatorCourses.size} courses for creator")
+                        creatorCourses.forEachIndexed { index, course ->
+                            Log.d("AdminDashboard", "Course #${index + 1}: ID=${course.id}, Title='${course.title}'")
+                        }
+                        
+                        if (courseIds.isEmpty()) {
+                            Log.d("AdminDashboard", "No courses found for creator - cannot get top students")
+                            return@withContext emptyList<StudentStats>()
+                        }
+                        
+                        // Fetch top students by average grade across creator's courses
+                        val topStudentsData = com.example.tareamov.service.SupabaseClient.fetchTopStudentsForCreator(currentUserId, 5)
+
+                        Log.d("AdminDashboard", "Retrieved ${topStudentsData.size} top students from SupabaseClient")
+
+                        topStudentsData.mapIndexed { index, studentData ->
+                            val avgGrade = (studentData["avg_grade"] as? Number)?.toDouble()?.toFloat() ?: 0f
+                            val username = (studentData["username"] as? String)?.takeIf { it.isNotBlank() }
+                                ?: "Usuario ${studentData["user_id"]}"
+                            val coursesCount = (studentData["courses_count"] as? Number)?.toInt() ?: 0
+
+                            Log.d("AdminDashboard", "Mapping student #${index + 1}: $username - Grade: $avgGrade - Courses: $coursesCount")
+
+                            StudentStats(
+                                username = username,
+                                averageGrade = avgGrade,
+                                completedCourses = coursesCount,
+                                hasCertificate = avgGrade >= 9.0
+                            )
+                        }
+                    } catch (e: Exception) {
+                        Log.e("AdminDashboard", "Error loading top students", e)
+                        emptyList<StudentStats>()
+                    }
+                }
+                
+                val container = parentView.findViewById<LinearLayout>(R.id.topStudentsContainer)
+                container?.removeAllViews()
+                
+                if (container == null) {
+                    Log.e("AdminDashboard", "topStudentsContainer not found in layout")
+                    return@launch
+                }
+                
+                if (topStudents.isEmpty()) {
+                     val emptyView = TextView(requireContext()).apply {
+                        text = "No hay estudiantes inscritos en tus cursos aún.\n\n" +
+                               "Para ver estudiantes destacados:\n" +
+                               "1. Los estudiantes deben inscribirse a tus cursos\n" +
+                               "2. Debe existir registro en la tabla 'progreso_estudiante'\n" +
+                               "3. El campo 'calificacion_promedio' debe tener valores"
+                        setTextColor(Color.parseColor("#B0BEC5"))
+                        textSize = 14f
+                        gravity = android.view.Gravity.CENTER
+                        setPadding(32, 40, 32, 40)
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        )
+                     }
+                     container.addView(emptyView)
+                     Log.d("AdminDashboard", "Showing empty state for top students")
+                } else {
+                    Log.d("AdminDashboard", "Displaying ${topStudents.size} top students")
+                    topStudents.forEachIndexed { index, student ->
+                        val itemView = LayoutInflater.from(requireContext())
+                            .inflate(R.layout.item_top_student, container, false)
+                        
+                        // Set student name with rank
+                        itemView.findViewById<TextView>(R.id.studentName)?.text = 
+                            "#${index + 1} ${student.username}"
+                        
+                        // Set average grade
+                        itemView.findViewById<TextView>(R.id.averageGrade)?.text = 
+                            String.format("%.1f", student.averageGrade)
+                        
+                        // Show certificate icon if applicable
+                        itemView.findViewById<ImageView>(R.id.certificateIcon)?.visibility = 
+                            if (student.hasCertificate) View.VISIBLE else View.GONE
+                        
+                        container.addView(itemView)
+                        
+                        Log.d("AdminDashboard", "Added student to UI: #${index + 1} ${student.username}")
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d("AdminDashboard", "Top students loading cancelled")
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error displaying top students", e)
+                Toast.makeText(requireContext(), "Error al cargar estudiantes destacados: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -873,6 +1147,12 @@ class AdminDashboardFragment : Fragment() {
         
         bottomNavView.visibility = View.VISIBLE
         
+        // Setup admin button with role verification
+        setupAdminButton(bottomNavBinding)
+        
+        // Update notification badge
+        updateNotificationBadge(bottomNavBinding)
+        
         bottomNavBinding.homeNavLayout.setOnClickListener {
             findNavController().navigate(R.id.videoHomeFragment)
         }
@@ -882,15 +1162,77 @@ class AdminDashboardFragment : Fragment() {
         }
         
         bottomNavBinding.goToHomeButton.setOnClickListener {
-            findNavController().navigate(R.id.videoHomeFragment)
+            findNavController().navigate(R.id.contentUploadFragment)
+        }
+        
+        bottomNavBinding.activityButton.setOnClickListener {
+            findNavController().navigate(R.id.notificacionesFragment)
         }
         
         bottomNavBinding.profileNavButton.setOnClickListener {
             findNavController().navigate(R.id.profileFragment)
         }
     }
+    
+    private fun setupAdminButton(bottomNavBinding: ComponentBottomNavigationBinding) {
+        val adminSlot = bottomNavBinding.adminSlot
+        val goToAdminButton = bottomNavBinding.goToAdminButton
+
+        // Inicializa como INVISIBLE para evitar salto al inflar
+        goToAdminButton.visibility = View.INVISIBLE
+
+        val sess = SessionManager.getInstance(requireContext())
+        
+        // Verificar específicamente el rol 3
+        if (!sess.hasRole(3)) {
+            // Ocultar el slot antes del render para que no quede hueco visible
+            adminSlot.visibility = View.GONE
+            return
+        }
+
+        // Usuario tiene rol 3: mostrar botón y asignar listener
+        adminSlot.visibility = View.VISIBLE
+        goToAdminButton.visibility = View.VISIBLE
+        goToAdminButton.setOnClickListener {
+            // Ya estamos en AdminDashboard, no hacer nada o recargar
+            loadAnalyticsSection()
+        }
+    }
+
+    /**
+     * Actualiza el badge de notificaciones no leídas
+     */
+    private fun updateNotificationBadge(bottomNavBinding: ComponentBottomNavigationBinding) {
+        val userId = sessionManager.getUserId()
+        if (userId == -1L) {
+            bottomNavBinding.notificationBadge.visibility = View.GONE
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val unreadCount = withContext(Dispatchers.IO) {
+                    com.example.tareamov.service.SupabaseClient.countUnreadNotifications(userId)
+                }
+                
+                if (unreadCount > 0) {
+                    bottomNavBinding.notificationBadge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
+                    bottomNavBinding.notificationBadge.visibility = View.VISIBLE
+                } else {
+                    bottomNavBinding.notificationBadge.visibility = View.GONE
+                }
+            } catch (e: Exception) {
+                Log.w("AdminDashboard", "Error updating notification badge", e)
+                bottomNavBinding.notificationBadge.visibility = View.GONE
+            }
+        }
+    }
 
     private fun checkAdminAccess() {
+        // Permitir acceso a todos los usuarios
+        Log.d("AdminDashboard", "Panel de creador accesible para todos los usuarios")
+        // Comentado: restricción de acceso solo para administradores
+        /*
         val userId = sessionManager.getUserId()
         
         lifecycleScope.launch {
@@ -907,6 +1249,7 @@ class AdminDashboardFragment : Fragment() {
                 findNavController().navigateUp()
             }
         }
+        */
     }
 
     private fun getSyncRepository(): com.example.tareamov.data.sync.SyncRepository {
@@ -1020,5 +1363,43 @@ class AdminDashboardFragment : Fragment() {
         }
 
         override fun getItemCount() = users.size
+    }
+    
+    // ==================== MÉTODOS DE UTILIDAD ====================
+    
+    private fun showLoadingIndicator() {
+        try {
+            if (!::sectionsContainer.isInitialized) return
+            
+            hideLoadingIndicator() // Limpiar cualquier indicador anterior
+            
+            loadingView = ProgressBar(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    gravity = android.view.Gravity.CENTER
+                    setMargins(0, 100, 0, 100)
+                }
+                isIndeterminate = true
+            }
+            
+            sectionsContainer.addView(loadingView)
+            Log.d("AdminDashboard", "Loading indicator shown")
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error showing loading indicator", e)
+        }
+    }
+    
+    private fun hideLoadingIndicator() {
+        try {
+            loadingView?.let {
+                sectionsContainer?.removeView(it)
+                loadingView = null
+                Log.d("AdminDashboard", "Loading indicator hidden")
+            }
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error hiding loading indicator", e)
+        }
     }
 }

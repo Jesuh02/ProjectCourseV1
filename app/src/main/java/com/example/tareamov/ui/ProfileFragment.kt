@@ -70,21 +70,30 @@ class ProfileFragment : Fragment() {
         // Actualizar badge de notificaciones
         updateNotificationBadge(bottomNavBinding)
 
-        // Resaltar solo el icono de perfil en morado
-        bottomNavBinding.profileIconImageView.setColorFilter(
-            androidx.core.content.ContextCompat.getColor(requireContext(), R.color.purple_500)
-        )
+        // Resaltar solo el icono de perfil en morado (ahora con fondo pill)
+        val activeBackground = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.nav_item_background_active)
+        bottomNavBinding.profileIconContainer.background = activeBackground
+        
+        // Ensure icons are white
+        val whiteColor = android.graphics.Color.WHITE
+        bottomNavBinding.homeIconImageView.setColorFilter(whiteColor)
+        bottomNavBinding.exploreIconImageView.setColorFilter(whiteColor)
+        bottomNavBinding.activityIconImageView.setColorFilter(whiteColor)
+        bottomNavBinding.profileIconImageView.setColorFilter(whiteColor)
 
         bottomNavBinding.homeNavLayout.setOnClickListener {
+            updateBottomNavSelection(bottomNavBinding, "home")
             findNavController().navigate(R.id.action_profileFragment_to_videoHomeFragment)
         }
         bottomNavBinding.exploreButton.setOnClickListener {
+            updateBottomNavSelection(bottomNavBinding, "explore")
             findNavController().navigate(R.id.action_profileFragment_to_exploreFragment)
         }
         bottomNavBinding.goToHomeButton.setOnClickListener {
             findNavController().navigate(R.id.action_profileFragment_to_contentUploadFragment)
         }
         bottomNavBinding.activityButton.setOnClickListener {
+            updateBottomNavSelection(bottomNavBinding, "activity")
             findNavController().navigate(R.id.action_profileFragment_to_notificacionesFragment)
         }
         bottomNavBinding.profileNavButton.setOnClickListener {
@@ -105,6 +114,15 @@ class ProfileFragment : Fragment() {
 
         // Initial entrance animation
         animateEntrance()
+    }
+
+    private fun updateBottomNavSelection(bottomNavBinding: ComponentBottomNavigationBinding, selected: String) {
+        val activeBackground = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.nav_item_background_active)
+        
+        bottomNavBinding.homeIconContainer.background = if (selected == "home") activeBackground else null
+        bottomNavBinding.exploreIconContainer.background = if (selected == "explore") activeBackground else null
+        bottomNavBinding.activityIconContainer.background = if (selected == "activity") activeBackground else null
+        bottomNavBinding.profileIconContainer.background = if (selected == "profile") activeBackground else null
     }
 
     private fun animateEntrance() {
@@ -169,6 +187,8 @@ class ProfileFragment : Fragment() {
     // Eliminado: setupBottomNavigation(view) porque ahora se usa BottomNavigationBinding
 
     private fun setupMenuItems(view: View) {
+        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        
         val menuItems = mapOf(
             R.id.myChannelItem to "Mis cursos",
             R.id.creatorDashboardItem to "Panel de control del creador",
@@ -181,6 +201,13 @@ class ProfileFragment : Fragment() {
 
         menuItems.forEach { (id, message) ->
             val itemView = view.findViewById<LinearLayout>(id) ?: return@forEach
+            
+            // Ocultar "Panel de control del creador" si el usuario no tiene rol 2
+            if (id == R.id.creatorDashboardItem && !sessionManager.hasRole(2)) {
+                itemView.visibility = View.GONE
+                return@forEach
+            }
+            
             if (id == R.id.myChannelItem) {
                 itemView.setOnClickListener {
                     animateButtonPress(it)
@@ -411,7 +438,7 @@ class ProfileFragment : Fragment() {
     }
 
     private fun setupAdminButton(bottomNavBinding: ComponentBottomNavigationBinding) {
-         // Mostrar el botón de admin solo si el usuario es admin (rol 3)
+         // Mostrar el botón de admin solo si el usuario tiene rol 3 (administrador)
         val adminSlot = bottomNavBinding.adminSlot
         val goToAdminButton = bottomNavBinding.goToAdminButton
 
@@ -420,6 +447,7 @@ class ProfileFragment : Fragment() {
 
         val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
         if (!sess.hasRole(3)) {
+            // Usuario no tiene rol 3: ocultar el botón de admin
             adminSlot.visibility = View.GONE
             return
         }

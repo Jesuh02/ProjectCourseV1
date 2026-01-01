@@ -28,6 +28,21 @@ class MainActivity : AppCompatActivity() {
     lateinit var authViewModel: AuthViewModel
     lateinit var syncRepository: SyncRepository // Added
 
+    var isFullScreenMode = false
+        set(value) {
+            field = value
+            if (value) {
+                // Full screen (Video): Transparent status and nav bars
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            } else {
+                // Normal mode: Transparent status bar (shows black bg), Black nav bar
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+                window.navigationBarColor = android.graphics.Color.BLACK
+            }
+            ViewCompat.requestApplyInsets(findViewById(R.id.main))
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -35,8 +50,8 @@ class MainActivity : AppCompatActivity() {
 
         createNotificationChannel()
 
-        // Set system bars to black
-        window.statusBarColor = android.graphics.Color.BLACK
+        // Set system bars to transparent/black
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.BLACK
 
         // Adjust icons to be light (visible on black background)
@@ -47,7 +62,11 @@ class MainActivity : AppCompatActivity() {
 
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            if (isFullScreenMode) {
+                v.setPadding(0, 0, 0, 0)
+            } else {
+                v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            }
             insets
         }
 

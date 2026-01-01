@@ -424,14 +424,14 @@ class CreatedCourseAdapter(
             studentsTextView.text = "..."
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 try {
-                    // Fetch enrolled count from Supabase
-                    val enrolledCount = com.example.tareamov.service.SupabaseClient.fetchEnrolledCount(course.id)
+                    // Fetch enrolled count from progreso_estudiante table in Supabase
+                    val enrolledCount = com.example.tareamov.service.SupabaseClient.countStudentsInCourse(course.id)
                     
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        studentsTextView.text = if (enrolledCount == 1L) "1 estudiante" else "$enrolledCount estudiantes"
+                        studentsTextView.text = if (enrolledCount == 1) "1 estudiante" else "$enrolledCount estudiantes"
                     }
                 } catch (e: Exception) {
-                    Log.e("CreatedCourseAdapter", "Error fetching student count", e)
+                    Log.e("CreatedCourseAdapter", "Error fetching student count from Supabase", e)
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
                         studentsTextView.text = "0 estudiantes"
                     }

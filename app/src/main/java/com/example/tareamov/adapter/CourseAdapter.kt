@@ -472,24 +472,33 @@ class CourseAdapter(
     }
 
     /**
-     * Load real enrollment count from progreso_estudiante table
+     * Load real enrollment count from progreso_estudiante table (Supabase)
      */
     private fun loadEnrollmentCount(holder: CourseViewHolder, course: Course) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val db = AppDatabase.getDatabase(context)
-                
-                // Count real enrolled students from progreso_estudiante table
-                val enrolledCount = db.progresoEstudianteDao().contarEstudiantes(course.id)
+                // Count real enrolled students from progreso_estudiante table in Supabase
+                val enrolledCount = com.example.tareamov.service.SupabaseClient.countStudentsInCourse(course.id)
                 
                 withContext(Dispatchers.Main) {
                     val studentsText = if (enrolledCount == 1) "1 estudiante" else "$enrolledCount estudiantes"
                     holder.enrollmentTextView.text = studentsText
                 }
             } catch (e: Exception) {
-                Log.e("CourseAdapter", "Error loading enrollment count", e)
-                withContext(Dispatchers.Main) {
-                    holder.enrollmentTextView.text = "0 estudiantes"
+                Log.e("CourseAdapter", "Error loading enrollment count from Supabase", e)
+                // Fallback to local Room database
+                try {
+                    val db = AppDatabase.getDatabase(context)
+                    val localCount = db.progresoEstudianteDao().contarEstudiantes(course.id)
+                    withContext(Dispatchers.Main) {
+                        val studentsText = if (localCount == 1) "1 estudiante" else "$localCount estudiantes"
+                        holder.enrollmentTextView.text = studentsText
+                    }
+                } catch (localError: Exception) {
+                    Log.e("CourseAdapter", "Error loading enrollment count from local DB", localError)
+                    withContext(Dispatchers.Main) {
+                        holder.enrollmentTextView.text = "0 estudiantes"
+                    }
                 }
             }
         }
