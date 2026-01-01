@@ -39,6 +39,11 @@ class VideoAdapter(
 ) : RecyclerView.Adapter<VideoAdapter.VideoViewHolder>() {
 
     private var currentUserId: Long = -1L
+    private val pendingSeeks = mutableMapOf<String, Int>()
+
+    fun setPendingSeek(path: String, position: Int) {
+        pendingSeeks[path] = position
+    }
 
     fun setCurrentUserId(userId: Long) {
         this.currentUserId = userId
@@ -336,6 +341,17 @@ class VideoAdapter(
                         loadingProgressBar?.visibility = View.GONE
                         this.mediaPlayer = mp
                         mediaPlayerPrepared = true
+                        
+                        // Check for pending seek
+                        val uriString = bestUri.toString()
+                        val pathString = bestUri.path
+                        val seekPos = pendingSeeks[uriString] ?: (if (pathString != null) pendingSeeks[pathString] else null)
+                        if (seekPos != null && seekPos > 0) {
+                            mp.seekTo(seekPos)
+                            pendingSeeks.remove(uriString)
+                            if (pathString != null) pendingSeeks.remove(pathString)
+                        }
+
                         val videoWidth = mp.videoWidth
                         val videoHeight = mp.videoHeight
                         if (videoWidth > 0 && videoHeight > 0) {
@@ -462,7 +478,7 @@ class VideoAdapter(
             playPauseOverlay?.let { overlay ->
                 overlay.setImageResource(iconRes)
                 overlay.visibility = View.VISIBLE
-                overlay.alpha = 0.8f
+                overlay.alpha = 1.0f // Increased alpha for better visibility with background
                 
                 // Remove any existing callback
                 overlayRunnable?.let { overlayHandler.removeCallbacks(it) }
@@ -792,6 +808,15 @@ class VideoAdapter(
                         videoData.username
                     }
                     intent.putExtra("username", username ?: "")
+                    
+                    // Save current video position to restore in VideoPlayerActivity
+                    val currentVideoPosition = try {
+                        videoView.currentPosition
+                    } catch (e: Exception) {
+                        0
+                    }
+                    intent.putExtra("video_position", currentVideoPosition)
+                    Log.d("VideoAdapter", "Passing video position to fullscreen: $currentVideoPosition ms")
                     
                     // Pause current video before switching
                     pauseVideo()

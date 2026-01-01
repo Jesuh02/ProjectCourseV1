@@ -52,6 +52,10 @@ class VideoPlayerActivity : AppCompatActivity() {
         // Initialize Pip Manager
         pipManager = PipManager(this, binding.videoView)
 
+        // Initialize controls overlay background for dimming effect
+        binding.controlsOverlay.setBackgroundColor(android.graphics.Color.BLACK)
+        binding.controlsOverlay.background.alpha = 0
+
         // Immersive fullscreen
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.decorView.systemUiVisibility = (
@@ -70,10 +74,12 @@ class VideoPlayerActivity : AppCompatActivity() {
         val videoTitle = intent.getStringExtra("video_title") ?: getString(R.string.app_name)
         val videoDescription = intent.getStringExtra("video_description")
         val username = intent.getStringExtra("username")
+        val savedPosition = intent.getIntExtra("video_position", 0)
         binding.titleText.text = videoTitle
 
         Log.d("VideoPlayerActivity", "Received pathOrUri: $pathOrUri")
         Log.d("VideoPlayerActivity", "Received videoTitle: $videoTitle")
+        Log.d("VideoPlayerActivity", "Received saved position: $savedPosition ms")
 
         val uri = try {
             when {
@@ -165,6 +171,19 @@ class VideoPlayerActivity : AppCompatActivity() {
             } catch (_: Exception) { }
 
             setMuted(isMuted)
+            
+            // Restore saved video position from intent
+            if (savedPosition > 0) {
+                try {
+                    binding.videoView.seekTo(savedPosition)
+                    binding.currentTime.text = TimeUtils.formatTime(savedPosition)
+                    binding.seekBar.progress = savedPosition
+                    Log.d("VideoPlayerActivity", "Restored video position to $savedPosition ms")
+                } catch (e: Exception) {
+                    Log.e("VideoPlayerActivity", "Error restoring video position", e)
+                }
+            }
+            
             binding.videoView.start()
             startProgressUpdater()
 
@@ -248,6 +267,9 @@ class VideoPlayerActivity : AppCompatActivity() {
                 val i = Intent(this, com.example.tareamov.MainActivity::class.java)
                 i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 i.putExtra("open_video_home", true)
+                // Pass current position and path to restore state
+                i.putExtra("video_position", binding.videoView.currentPosition)
+                i.putExtra("video_path", pathOrUri)
                 startActivity(i)
                 finish()
             } catch (e: Exception) {
@@ -283,6 +305,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                     // Older devices: use the in-app floating fragment pathway
                     val i = Intent(this, com.example.tareamov.MainActivity::class.java)
                     i.putExtra("floating_video_path", uriToSend)
+                    i.putExtra("video_position", binding.videoView.currentPosition)
                     i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                     startActivity(i)
                     finish()
@@ -343,6 +366,9 @@ class VideoPlayerActivity : AppCompatActivity() {
             
             // Show Brightness Overlay with Controls via Manager
             brightnessManager.syncWithControls()
+            
+            // Animate background dimming
+            animateOverlayBackground(true)
         }
         scheduleAutoHide()
     }
@@ -358,6 +384,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 binding.skipForwardIcon.apply { alpha = 0f; visibility = View.GONE }
                 binding.playPauseOverlay.apply { alpha = 0f; visibility = View.GONE }
                 brightnessManager.hideOverlay(immediate = true)
+                animateOverlayBackground(false, immediate = true)
             } else {
                 fadeVisibility(binding.topBar, false)
                 fadeVisibility(binding.bottomBar, false)
@@ -366,8 +393,29 @@ class VideoPlayerActivity : AppCompatActivity() {
                 fadeVisibility(binding.playPauseOverlay, false)
                 
                 brightnessManager.hideOverlay(immediate = false)
+                animateOverlayBackground(false)
             }
         }
+    }
+
+    private fun animateOverlayBackground(show: Boolean, immediate: Boolean = false) {
+        val targetAlpha = if (show) 102 else 0 // 102 is approx 40% opacity (0x66)
+        val background = binding.controlsOverlay.background ?: return
+        
+        if (immediate) {
+            background.alpha = targetAlpha
+            return
+        }
+        
+        val currentAlpha = background.alpha
+        if (currentAlpha == targetAlpha) return
+        
+        val animator = android.animation.ValueAnimator.ofInt(currentAlpha, targetAlpha)
+        animator.duration = 250
+        animator.addUpdateListener { animation ->
+            background.alpha = animation.animatedValue as Int
+        }
+        animator.start()
     }
 
     private fun fadeVisibility(view: View, show: Boolean) {

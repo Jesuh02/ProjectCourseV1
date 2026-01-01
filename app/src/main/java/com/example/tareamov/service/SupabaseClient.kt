@@ -4730,13 +4730,111 @@ object SupabaseClient {
     }
     
     /**
-     * Add a user like to a video
+     * Check if a user has liked a video
+     */
+    suspend fun hasUserLikedVideo(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Use select=video_id to minimize data transfer (id column might not exist on join table), and count=exact to get the total
+            val url = "$baseUrl/rest/v1/user_video_likes?video_id=eq.$videoId&user_id=eq.$usuarioId&select=video_id"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Range", "0-0")
+                .addHeader("Prefer", "count=exact")
+                .build()
+                
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val contentRange = response.header("Content-Range")
+                    if (contentRange != null) {
+                        // Content-Range format: "0-0/1" or "*/0"
+                        val totalStr = contentRange.substringAfter("/")
+                        val total = totalStr.toIntOrNull()
+                        return@withContext (total ?: 0) > 0
+                    }
+                    // Fallback to body check
+                    val body = response.body?.string()
+                    return@withContext body != null && body != "[]"
+                }
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error checking if user $usuarioId liked video $videoId", e)
+            false
+        }
+    }
+
+    /**
+     * Add a user like to a video (Persistent)
      */
     suspend fun addUserVideoLike(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
-        // Table 'user_video_likes' does not exist in Supabase and we cannot create it.
-        // We only sync the count via incrementVideoLike.
-        Log.w("SupabaseClient", "addUserVideoLike: Skipped because 'user_video_likes' table is missing.")
-        return@withContext true
+        try {
+            val url = "$baseUrl/rest/v1/user_video_likes"
+            val key = effectiveApiKey()
+            
+            val body = gson.toJson(mapOf(
+                "video_id" to videoId,
+                "user_id" to usuarioId
+            )).toRequestBody(jsonMedia)
+            
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=minimal")
+                .build()
+                
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    // Also increment the counter
+                    incrementVideoLike(videoId)
+                    return@withContext true
+                } else {
+                    Log.e("SupabaseClient", "addUserVideoLike failed: ${response.code} ${response.message}")
+                    return@withContext false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error adding user like", e)
+            false
+        }
+    }
+
+    /**
+     * Remove a user like from a video (Persistent)
+     */
+    suspend fun removeUserVideoLike(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/user_video_likes?video_id=eq.$videoId&user_id=eq.$usuarioId"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .build()
+                
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    // Also decrement the counter
+                    decrementVideoLike(videoId)
+                    return@withContext true
+                } else {
+                    Log.e("SupabaseClient", "removeUserVideoLike failed: ${response.code}")
+                    return@withContext false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error removing user like", e)
+            false
+        }
     }
 
     suspend fun registerFcmToken(userId: Long, token: String): Boolean = withContext(Dispatchers.IO) {
@@ -4776,23 +4874,7 @@ object SupabaseClient {
         }
     }
 
-    /**
-     * Remove a user like from a video
-     */
-    suspend fun removeUserVideoLike(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
-        // Table 'user_video_likes' does not exist in Supabase.
-        Log.w("SupabaseClient", "removeUserVideoLike: Skipped because 'user_video_likes' table is missing.")
-        return@withContext true
-    }
 
-    /**
-     * Check if user has liked a video
-     */
-    suspend fun hasUserLikedVideo(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
-        // Table 'user_video_likes' does not exist in Supabase.
-        // We cannot check remote status for specific user.
-        return@withContext false
-    }
 
     /**
      * Fetch all video likes from Supabase
@@ -4827,6 +4909,44 @@ object SupabaseClient {
             }
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error fetching all video likes", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Fetch all user video likes for a specific user
+     */
+    suspend fun fetchUserVideoLikes(userId: Long): List<com.example.tareamov.data.entity.UserVideoLike> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/user_video_likes?user_id=eq.$userId&select=*"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                jsonArray.map { elem ->
+                    val obj = elem.asJsonObject
+                    com.example.tareamov.data.entity.UserVideoLike(
+                        id = if (obj.has("id") && !obj.get("id").isJsonNull) obj.get("id").asLong else 0L,
+                        videoId = obj.get("video_id").asLong,
+                        usuarioId = obj.get("user_id").asLong,
+                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) obj.get("created_at").asString else ""
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching user video likes", e)
             emptyList()
         }
     }

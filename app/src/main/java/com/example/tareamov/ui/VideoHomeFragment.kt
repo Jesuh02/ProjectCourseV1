@@ -107,6 +107,10 @@ class VideoHomeFragment : Fragment() {
 
     private var searchJob: kotlinx.coroutines.Job? = null
 
+    // Restore state variables
+    private var restorePosition = 0
+    private var restorePath: String? = null
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
@@ -119,6 +123,10 @@ class VideoHomeFragment : Fragment() {
     // In the onViewCreated method, update the goToHomeButton click listener
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // Check for restore arguments
+        restorePosition = arguments?.getInt("video_position", 0) ?: 0
+        restorePath = arguments?.getString("video_path")
 
         // Fix for bottom navigation overlapping with system bars
         val bottomNav = view.findViewById<View>(R.id.bottomNavigation)
@@ -201,11 +209,32 @@ class VideoHomeFragment : Fragment() {
             
             if (::videoAdapter.isInitialized) {
                 videoAdapter.updateVideos(videoList)
-                // Restore scroll position if needed
+                
                 val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
-                if (viewPager != null && viewModel.currentVideoIndex > 0 && viewModel.currentVideoIndex < videos.size) {
-                    if (viewPager.currentItem != viewModel.currentVideoIndex) {
-                        viewPager.setCurrentItem(viewModel.currentVideoIndex, false)
+                
+                // Check for restore path first
+                if (restorePath != null && restorePosition > 0) {
+                    val index = videos.indexOfFirst { it.videoUriString == restorePath || it.localFilePath == restorePath }
+                    if (index != -1) {
+                        viewPager?.setCurrentItem(index, false)
+                        videoAdapter.setPendingSeek(restorePath!!, restorePosition)
+                        // Clear restore path
+                        restorePath = null
+                        restorePosition = 0
+                    } else {
+                         // Fallback to ViewModel index
+                         if (viewPager != null && viewModel.currentVideoIndex > 0 && viewModel.currentVideoIndex < videos.size) {
+                            if (viewPager.currentItem != viewModel.currentVideoIndex) {
+                                viewPager.setCurrentItem(viewModel.currentVideoIndex, false)
+                            }
+                        }
+                    }
+                } else {
+                    // Restore scroll position from ViewModel
+                    if (viewPager != null && viewModel.currentVideoIndex > 0 && viewModel.currentVideoIndex < videos.size) {
+                        if (viewPager.currentItem != viewModel.currentVideoIndex) {
+                            viewPager.setCurrentItem(viewModel.currentVideoIndex, false)
+                        }
                     }
                 }
             }
@@ -971,6 +1000,19 @@ class VideoHomeFragment : Fragment() {
         lifecycleScope.launch {
             val userId = getCurrentUserId()
             videoAdapter.setCurrentUserId(userId)
+            
+            // Sync user likes from Supabase to ensure persistence across devices/restarts
+            if (userId > 0) {
+                withContext(Dispatchers.IO) {
+                    try {
+                        syncRepository.syncUserVideoLikesFromSupabase(userId)
+                    } catch (e: Exception) {
+                        Log.e("VideoHomeFragment", "Error syncing user likes", e)
+                    }
+                }
+                // Refresh adapter to show updated likes
+                videoAdapter.notifyDataSetChanged()
+            }
         }
 
         // Configurar orientación vertical para deslizar como TikTok

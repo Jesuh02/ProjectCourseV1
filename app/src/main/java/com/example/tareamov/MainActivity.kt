@@ -100,7 +100,9 @@ class MainActivity : AppCompatActivity() {
             rolRecursoDao,
             appDb.chatMessageDao(),
             appDb.fileContextDao(),
-            appDb.progresoEstudianteDao()
+            appDb.progresoEstudianteDao(),
+            appDb.videoLikeDao(),
+            appDb.videoCommentDao()
         )
 
         // Initialize SyncRepository cache helpers
@@ -265,14 +267,20 @@ class MainActivity : AppCompatActivity() {
         
         try {
             val path = intent.getStringExtra("floating_video_path")
+            val position = intent.getIntExtra("video_position", 0)
             if (!path.isNullOrEmpty()) {
-                showFloatingPlayer(path)
+                showFloatingPlayer(path, position)
             }
             // handle navigation back to VideoHomeFragment requested by other activities
             val openHome = intent.getBooleanExtra("open_video_home", false)
             if (openHome) {
                 try {
-                    navController.navigate(R.id.videoHomeFragment)
+                    val bundle = Bundle()
+                    if (position > 0) bundle.putInt("video_position", position)
+                    val videoPath = intent.getStringExtra("video_path")
+                    if (!videoPath.isNullOrEmpty()) bundle.putString("video_path", videoPath)
+                    
+                    navController.navigate(R.id.videoHomeFragment, bundle)
                 } catch (t: Throwable) { t.printStackTrace() }
             }
             
@@ -293,13 +301,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     // Public API to show an in-app floating video player. Pass a valid video URI string (file://, http://, content://)
-    fun showFloatingPlayer(videoUri: String) {
+    fun showFloatingPlayer(videoUri: String, startPosition: Int = 0) {
         try {
             val container = findViewById<android.view.ViewGroup>(R.id.floating_video_container)
             // make container visible
             container.visibility = android.view.View.VISIBLE
             // add fragment into container
-            val frag = com.example.tareamov.ui.FloatingVideoPlayerFragment.newInstance(videoUri)
+            val frag = com.example.tareamov.ui.FloatingVideoPlayerFragment.newInstance(videoUri, startPosition)
             val tx = supportFragmentManager.beginTransaction()
             tx.replace(R.id.floating_video_container, frag, "floating_player")
             tx.commitAllowingStateLoss()

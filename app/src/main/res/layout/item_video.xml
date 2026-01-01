@@ -32,9 +32,11 @@
     <!-- Play/Pause Overlay - Minimalist center icon -->
     <ImageView
         android:id="@+id/playPauseOverlay"
-        android:layout_width="72dp"
-        android:layout_height="72dp"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
         android:src="@drawable/ic_pause_overlay"
+        android:background="@drawable/bg_play_pause_overlay"
+        android:padding="14dp"
         android:visibility="gone"
         android:alpha="0.7"
         app:layout_constraintBottom_toBottomOf="parent"

@@ -16,10 +16,13 @@ class FloatingVideoPlayerFragment : Fragment() {
 
     companion object {
         private const val ARG_URI = "arg_video_uri"
-        fun newInstance(uri: String?): FloatingVideoPlayerFragment {
+        private const val ARG_POSITION = "arg_video_position"
+        
+        fun newInstance(uri: String?, position: Int = 0): FloatingVideoPlayerFragment {
             val f = FloatingVideoPlayerFragment()
             val b = Bundle()
             b.putString(ARG_URI, uri)
+            b.putInt(ARG_POSITION, position)
             f.arguments = b
             return f
         }
@@ -28,11 +31,13 @@ class FloatingVideoPlayerFragment : Fragment() {
     private lateinit var videoView: VideoView
     private lateinit var btnClose: ImageButton
     private lateinit var btnPlayPause: ImageButton
+    private var startPosition = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val s = arguments?.getString(ARG_URI)
         videoUri = if (s.isNullOrEmpty()) null else Uri.parse(s)
+        startPosition = arguments?.getInt(ARG_POSITION, 0) ?: 0
         setRetainInstance(true)
     }
 
@@ -50,6 +55,9 @@ class FloatingVideoPlayerFragment : Fragment() {
             videoView.setVideoURI(uri)
             videoView.setOnPreparedListener { mediaPlayer ->
                 mediaPlayer.isLooping = true
+                if (startPosition > 0) {
+                    mediaPlayer.seekTo(startPosition)
+                }
                 videoView.start()
                 btnPlayPause.setImageResource(android.R.drawable.ic_media_pause)
             }
