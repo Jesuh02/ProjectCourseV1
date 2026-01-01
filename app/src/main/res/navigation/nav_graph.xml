@@ -274,6 +274,12 @@
             app:destination="@id/videoHomeFragment"
             app:popUpTo="@id/videoHomeFragment"
             app:popUpToInclusive="false" />
+        <!-- Action to go back to UserProfileViewFragment -->
+        <action
+            android:id="@+id/action_videoDetailsFragment_to_userProfileViewFragment"
+            app:destination="@id/userProfileViewFragment"
+            app:popUpTo="@id/userProfileViewFragment"
+            app:popUpToInclusive="true" />
     </fragment>
 
     <!-- Course Creation Fragment - Update navigation to CourseDetailFragment -->
@@ -633,6 +639,9 @@
         <action
             android:id="@+id/action_userProfileViewFragment_to_courseCreationFragment"
             app:destination="@id/courseCreationFragment" />
+        <action
+            android:id="@+id/action_userProfileViewFragment_to_videoDetailsFragment"
+            app:destination="@id/videoDetailsFragment" />
     </fragment>
 
     <!-- Add ChatBot Fragment definition -->

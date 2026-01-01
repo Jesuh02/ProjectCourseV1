@@ -32,9 +32,9 @@ data class VideoData(
     @SerializedName("video_uri_string") val videoUriString: String? = null,
     @SerializedName("local_file_path") val localFilePath: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
-    val isPaid: Boolean = false,
+    @SerializedName("is_paid") val isPaid: Boolean = false,
     @SerializedName("thumbnail_uri") val thumbnailUri: String? = null,
-    val price: Double? = null,
+    @SerializedName("price") val price: Double? = null,
     @SerializedName("course_id") val courseId: Long? = null // ID del curso asociado
 ) {
     // Transient property that's not stored in the database

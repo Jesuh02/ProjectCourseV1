@@ -82,6 +82,7 @@ class UserProfileViewFragment : Fragment() {
     private lateinit var videoAdapter: YouTubeStyleVideoAdapter
     private lateinit var videoManager: VideoManager
     private lateinit var courseRepository: com.example.tareamov.repository.CourseRepository
+    private lateinit var syncRepository: com.example.tareamov.data.sync.SyncRepository
     private lateinit var sessionManager: SessionManager
     private lateinit var bottomNavBinding: ComponentBottomNavigationBinding
 
@@ -111,6 +112,9 @@ class UserProfileViewFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
+        // Setup video update listeners
+        setupVideoUpdateListeners()
+        
         try {
             // Initialize SessionManager
             sessionManager = SessionManager.getInstance(requireContext())
@@ -121,6 +125,29 @@ class UserProfileViewFragment : Fragment() {
             // Inicializar VideoManager y CourseRepository
             videoManager = VideoManager(requireContext())
             courseRepository = com.example.tareamov.repository.CourseRepository(requireContext())
+            
+            // Initialize SyncRepository
+            val db = AppDatabase.getDatabase(requireContext())
+            syncRepository = com.example.tareamov.data.sync.SyncRepository(
+                db.usuarioDao(),
+                db.personaDao(),
+                db.topicDao(),
+                db.contentItemDao(),
+                db.taskDao(),
+                db.subscriptionDao(),
+                db.taskSubmissionDao(),
+                db.videoDao(),
+                db.courseDao(),
+                db.rolDao(),
+                db.recursoDao(),
+                db.rolRecursoDao(),
+                db.chatMessageDao(),
+                db.fileContextDao(),
+                db.progresoEstudianteDao(),
+                db.videoLikeDao(),
+                db.videoCommentDao()
+            )
+            syncRepository.initWithContext(requireContext())
             
             // Obtener el nombre de usuario pasado como argumento (perfil que se está viendo)
             username = arguments?.getString("username")
@@ -1557,18 +1584,145 @@ class UserProfileViewFragment : Fragment() {
     }
     
     /**
+     * Update local video data immediately after return from edit screen
+     */
+    private fun updateLocalVideoData(
+        videoId: Long, 
+        title: String?, 
+        description: String?, 
+        isPaid: Boolean, 
+        thumbnailUri: String?
+    ) {
+        // Helper to update a list
+        fun updateList(list: MutableList<VideoData>) {
+            val index = list.indexOfFirst { it.id == videoId }
+            if (index != -1) {
+                val current = list[index]
+                val updated = current.copy(
+                    title = title ?: current.title,
+                    description = description ?: current.description,
+                    isPaid = isPaid,
+                    thumbnailUri = thumbnailUri ?: current.thumbnailUri
+                )
+                list[index] = updated
+            }
+        }
+
+        // Update all lists
+        updateList(allContent)
+        updateList(allCourses)
+        updateList(allVideos)
+        
+        // Update adapters
+        if (::contentAdapter.isInitialized) {
+            contentAdapter.updateCourses(allCourses)
+        }
+        
+        if (::videoAdapter.isInitialized) {
+            videoAdapter.updateVideos(allVideos)
+        }
+        
+        // Refresh filter view
+        filterContent()
+    }
+
+    private fun updateLocalVideoWithData(video: VideoData) {
+        Log.d("UserProfileView", "🔄 updateLocalVideoWithData called for video ID: ${video.id}, title: ${video.title}")
+        
+        // Helper to update a list
+        fun updateList(list: MutableList<VideoData>, listName: String) {
+            val index = list.indexOfFirst { it.id == video.id }
+            if (index != -1) {
+                Log.d("UserProfileView", "✅ Found video in $listName at index $index. Updating...")
+                list[index] = video
+            } else {
+                Log.d("UserProfileView", "⚠️ Video ID ${video.id} not found in $listName")
+            }
+        }
+
+        // Update all lists
+        updateList(allContent, "allContent")
+        updateList(allCourses, "allCourses")
+        updateList(allVideos, "allVideos")
+        
+        // Update adapters
+        if (::contentAdapter.isInitialized) {
+            contentAdapter.updateCourses(allCourses)
+            contentAdapter.notifyDataSetChanged() // Force update
+        }
+        
+        if (::videoAdapter.isInitialized) {
+            videoAdapter.updateVideos(allVideos)
+            videoAdapter.notifyDataSetChanged() // Force update
+        }
+        
+        // Refresh filter view
+        filterContent()
+    }
+
+    /**
      * Eliminar curso con confirmación - Identical to ExploreFragment deleteCourseFromTable
      */
     private fun deleteCourse(course: VideoData) {
         // Check if current user is the creator before allowing deletion
         if (getCurrentUsername() != null && getCurrentUsername() == course.username) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                try {
-                    // Show loading indicator
-                    Toast.makeText(requireContext(), "Eliminando curso...", Toast.LENGTH_SHORT).show()
+            // Show confirmation dialog
+            showDeleteConfirmationDialog(course)
+        } else {
+            Toast.makeText(requireContext(), "Solo el creador puede eliminar el curso", Toast.LENGTH_SHORT).show()
+            Log.w("UserProfileView", "Deletion denied: User '${getCurrentUsername()}' is not the course creator '${course.username}'")
+        }
+    }
 
-                    withContext(Dispatchers.IO) {
-                        // Delete from both Course table and VideoData table for complete cleanup
+    /**
+     * Show confirmation dialog for deletion
+     */
+    private fun showDeleteConfirmationDialog(course: VideoData) {
+        val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_confirm_delete, null)
+        val dialog = android.app.AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .create()
+        
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        // Set dialog message
+        val messageTextView = dialogView.findViewById<TextView>(R.id.confirmDeleteMessage)
+        messageTextView.text = "¿Estás seguro de que deseas eliminar '${course.title}'? Esta acción no se puede deshacer."
+
+        // Cancel button
+        dialogView.findViewById<TextView>(R.id.cancelDeleteButton).setOnClickListener {
+            dialog.dismiss()
+        }
+
+        // Confirm button
+        dialogView.findViewById<TextView>(R.id.confirmDeleteButton).setOnClickListener {
+            dialog.dismiss()
+            performDeleteCourse(course)
+        }
+
+        dialog.show()
+    }
+
+    /**
+     * Actually perform the course/video deletion
+     */
+    private fun performDeleteCourse(course: VideoData) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Show loading indicator
+                Toast.makeText(requireContext(), "Eliminando curso...", Toast.LENGTH_SHORT).show()
+
+                val deleteSuccess = withContext(Dispatchers.IO) {
+                    // Delete from Supabase first
+                    val supabaseVideoDeleted = SupabaseClient.deleteVideoById(course.id)
+                    val supabaseCourseDeleted = if (course.courseId != null) {
+                        SupabaseClient.deleteCourseById(course.courseId)
+                    } else {
+                        true // No courseId, nothing to delete
+                    }
+
+                    if (supabaseVideoDeleted && supabaseCourseDeleted) {
+                        // Delete from local database
                         courseRepository.deleteCourseById(course.id)
 
                         // Also delete from VideoData table to ensure complete removal
@@ -1577,41 +1731,56 @@ class UserProfileViewFragment : Fragment() {
                             courseRepository.deleteVideo(videoData)
                             Log.d("UserProfileView", "Course also deleted from VideoData table: ${course.id}")
                         }
-
-                        // Clean up any related thumbnails - REMOVED (Obsolete)
-                        // val thumbnailManager = com.example.tareamov.util.ThumbnailManager(requireContext())
-                        // thumbnailManager.deleteThumbnail(course.id)
+                        true
+                    } else {
+                        Log.w("UserProfileView", "Failed to delete from Supabase: video=$supabaseVideoDeleted, course=$supabaseCourseDeleted")
+                        false
                     }
+                }
 
-                    // Update UI on main thread
-                    withContext(Dispatchers.Main) {
-                        // Remove from local lists immediately for faster UI response
-                        val courseToRemove = allContent.find { it.id == course.id }
-                        if (courseToRemove != null) {
-                            allContent.remove(courseToRemove)
-                            allCourses.remove(courseToRemove)
-                            contentAdapter.removeCourse(course.id)
-                            Log.d("UserProfileView", "Course removed from local lists and adapter: ${course.title}")
+                // Update UI on main thread
+                withContext(Dispatchers.Main) {
+                    if (deleteSuccess) {
+                        // Remove from local lists immediately for faster UI response using ID to ensure correct removal
+                        val idToRemove = course.id
+                        
+                        // Remove from all lists
+                        allContent.removeAll { it.id == idToRemove }
+                        allCourses.removeAll { it.id == idToRemove }
+                        allVideos.removeAll { it.id == idToRemove }
+                        
+                        // Update adapters
+                        if (::contentAdapter.isInitialized) {
+                            contentAdapter.removeCourse(idToRemove)
                         }
+                        
+                        if (::videoAdapter.isInitialized) {
+                            videoAdapter.updateVideos(allVideos)
+                        }
+                        
+                        Log.d("UserProfileView", "Course removed from local lists and adapter: ${course.title}")
 
                         // Update counts
                         coursesCountTextView.text = allCourses.size.toString()
+                        videosCountTextView.text = allVideos.size.toString()
+                        updateCountBadges()
 
                         // Refresh the content display
                         filterContent()
-
+                        
                         Toast.makeText(requireContext(), "✅ Curso eliminado: ${course.title}", Toast.LENGTH_SHORT).show()
                         Log.d("UserProfileView", "Course successfully deleted: ${course.title}")
+                    } else {
+                        Toast.makeText(requireContext(), "❌ Error al eliminar el curso de Supabase", Toast.LENGTH_LONG).show()
                     }
+                }
 
-                } catch (e: Exception) {
-                    Log.e("UserProfileView", "Error deleting course: ${course.title}", e)
+            } catch (e: Exception) {
+                Log.e("UserProfileView", "Error deleting course: ${course.title}", e)
+                withContext(Dispatchers.Main) {
                     Toast.makeText(requireContext(), "❌ Error al eliminar el curso", Toast.LENGTH_SHORT).show()
                 }
             }
-        } else {
-            Toast.makeText(requireContext(), "Solo el creador puede eliminar el curso", Toast.LENGTH_SHORT).show()
-            Log.w("UserProfileView", "Deletion denied: User '${getCurrentUsername()}' is not the course creator '${course.username}'")
         }
     }
 
@@ -1630,12 +1799,43 @@ class UserProfileViewFragment : Fragment() {
                     // Update in Course table
                     updateCourseInTable(updatedCourse)
                 }
+                
+                // Actualizar las listas locales inmediatamente
+                withContext(Dispatchers.Main) {
+                    val contentIndex = allContent.indexOfFirst { it.id == course.id }
+                    if (contentIndex != -1) {
+                        allContent[contentIndex] = updatedCourse
+                    }
+                    val coursesIndex = allCourses.indexOfFirst { it.id == course.id }
+                    if (coursesIndex != -1) {
+                        allCourses[coursesIndex] = updatedCourse
+                    }
+                    val videosIndex = allVideos.indexOfFirst { it.id == course.id }
+                    if (videosIndex != -1) {
+                        allVideos[videosIndex] = updatedCourse
+                    }
+                    
+                    // Actualizar ambos adaptadores
+                    contentAdapter.notifyDataSetChanged()
+                    videoAdapter.updateVideos(allVideos)
+                    
+                    // Actualizar contadores
+                    updateCountBadges()
+                    
+                    // Refrescar la vista actual
+                    filterContent()
+                    
+                    Toast.makeText(requireContext(), "✅ Curso actualizado", Toast.LENGTH_SHORT).show()
+                }
 
                 Log.d("UserProfileView", "Course updated: $newTitle")
                 // Reload user content to show updated data
                 username?.let { loadUserData(it) }
             } catch (e: Exception) {
                 Log.e("UserProfileView", "Error updating course details", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "❌ Error al actualizar el curso", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -1818,6 +2018,108 @@ class UserProfileViewFragment : Fragment() {
                     callback(false)
                 }
             }
+        }
+    }
+    
+    /**
+     * Setup listeners for video updates from VideoDetailsFragment
+     */
+    private fun setupVideoUpdateListeners() {
+        try {
+            val navController = findNavController()
+            val currentBackStackEntry = navController.currentBackStackEntry
+            
+            // Listen for video updates via NavBackStackEntry savedStateHandle (more reliable)
+            currentBackStackEntry?.savedStateHandle?.getLiveData<Boolean>("videoUpdated")?.observe(viewLifecycleOwner) { updated ->
+                if (updated == true) {
+                    Log.d("UserProfileView", "🔔 Video update detected via SavedStateHandle!")
+                    
+                    val savedState = currentBackStackEntry.savedStateHandle
+                    val updatedVideoId = savedState.get<Long>("updatedVideoId") ?: 0L
+                    val updatedTitle = savedState.get<String>("updatedTitle") ?: ""
+                    val updatedDescription = savedState.get<String>("updatedDescription") ?: ""
+                    val updatedIsPaid = savedState.get<Boolean>("updatedIsPaid") ?: false
+                    val updatedThumbnailUri = savedState.get<String>("updatedThumbnailUri")
+                    
+                    Log.d("UserProfileView", "📝 Updating video - ID: $updatedVideoId, title: $updatedTitle")
+                    
+                    if (updatedVideoId > 0) {
+                        Log.d("UserProfileView", "🚀 Starting Supabase fetch for video ID: $updatedVideoId")
+                        // Fetch updated data from Supabase as requested
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            try {
+                                val updatedVideo = syncRepository.fetchVideoByIdFromSupabase(updatedVideoId)
+                                if (updatedVideo != null) {
+                                    Log.d("UserProfileView", "✅ Fetched updated video from Supabase: ${updatedVideo.title}")
+                                    updateLocalVideoWithData(updatedVideo)
+                                } else {
+                                    Log.w("UserProfileView", "⚠️ Failed to fetch updated video from Supabase, using local data")
+                                    updateLocalVideoData(updatedVideoId, updatedTitle, updatedDescription, updatedIsPaid, updatedThumbnailUri)
+                                }
+                            } catch (e: Exception) {
+                                Log.e("UserProfileView", "Error fetching updated video", e)
+                                updateLocalVideoData(updatedVideoId, updatedTitle, updatedDescription, updatedIsPaid, updatedThumbnailUri)
+                            }
+                            
+                            // Reload full user data as backup to ensure consistency
+                            username?.let { 
+                                Log.d("UserProfileView", "🔄 Reloading full user data for: $it")
+                                loadUserData(it) 
+                            }
+                        }
+                    }
+                    
+                    // Clear the state to avoid duplicate handling
+                    savedState.remove<Boolean>("videoUpdated")
+                    savedState.remove<Long>("updatedVideoId")
+                    savedState.remove<String>("updatedTitle")
+                    savedState.remove<String>("updatedDescription")
+                    savedState.remove<Boolean>("updatedIsPaid")
+                    savedState.remove<String>("updatedThumbnailUri")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("UserProfileView", "Error setting up SavedStateHandle listener", e)
+        }
+        
+        // Also listen via FragmentManager as backup
+        try {
+            requireActivity().supportFragmentManager.setFragmentResultListener("videoUpdated", viewLifecycleOwner) { key, bundle ->
+                Log.d("UserProfileView", "🔔 Fragment result received via FragmentManager! Key: $key")
+                
+                val updatedVideoId = bundle.getLong("updatedVideoId", 0L)
+                val updatedTitle = bundle.getString("updatedTitle", "")
+                val updatedDescription = bundle.getString("updatedDescription", "")
+                val updatedIsPaid = bundle.getBoolean("updatedIsPaid", false)
+                val updatedThumbnailUri = bundle.getString("updatedThumbnailUri")
+                
+                Log.d("UserProfileView", "📝 Received update - videoId: $updatedVideoId, title: $updatedTitle")
+                
+                if (updatedVideoId > 0) {
+                    Log.d("UserProfileView", "✅ Updating local data for video ID: $updatedVideoId")
+                    
+                    // Fetch updated data from Supabase as requested
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        try {
+                            val updatedVideo = syncRepository.fetchVideoByIdFromSupabase(updatedVideoId)
+                            if (updatedVideo != null) {
+                                Log.d("UserProfileView", "✅ Fetched updated video from Supabase: ${updatedVideo.title}")
+                                updateLocalVideoWithData(updatedVideo)
+                            } else {
+                                Log.w("UserProfileView", "⚠️ Failed to fetch updated video from Supabase, using local data")
+                                updateLocalVideoData(updatedVideoId, updatedTitle, updatedDescription, updatedIsPaid, updatedThumbnailUri)
+                            }
+                        } catch (e: Exception) {
+                            Log.e("UserProfileView", "Error fetching updated video", e)
+                            updateLocalVideoData(updatedVideoId, updatedTitle, updatedDescription, updatedIsPaid, updatedThumbnailUri)
+                        }
+                    }
+                } else {
+                    Log.w("UserProfileView", "⚠️ Invalid video ID received: $updatedVideoId")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("UserProfileView", "Error setting up FragmentResultListener", e)
         }
     }
 }

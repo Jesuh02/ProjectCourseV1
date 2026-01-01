@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.example.tareamov.util.SessionManager
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -32,7 +33,8 @@ class YouTubeStyleVideoAdapter(
     private var videos: MutableList<VideoData>,
     private val onVideoClickListener: (VideoData) -> Unit,
     private val onEditClickListener: ((VideoData) -> Unit)? = null,
-    private val onDeleteClickListener: ((VideoData) -> Unit)? = null
+    private val onDeleteClickListener: ((VideoData) -> Unit)? = null,
+    private var currentUsername: String? = null
 ) : RecyclerView.Adapter<YouTubeStyleVideoAdapter.VideoViewHolder>() {
 
     // Cache for video durations to avoid re-extracting
@@ -123,9 +125,19 @@ class YouTubeStyleVideoAdapter(
                     .start()
             }
 
-            // Configurar botón de más opciones
+            // Mostrar/ocultar botón de más opciones solo si el usuario actual es el propietario
+            val loggedInUsername = try {
+                currentUsername ?: SessionManager.getInstance(context).getUsername()
+            } catch (e: Exception) {
+                null
+            }
+
+            moreOptionsImageView.visibility = if (!loggedInUsername.isNullOrEmpty() && loggedInUsername == video.username) View.VISIBLE else View.GONE
+
             moreOptionsImageView.setOnClickListener {
-                showPopupMenu(it, video)
+                if (!loggedInUsername.isNullOrEmpty() && loggedInUsername == video.username) {
+                    showPopupMenu(it, video)
+                }
             }
         }
 

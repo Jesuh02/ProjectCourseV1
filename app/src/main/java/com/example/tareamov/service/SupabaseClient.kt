@@ -575,6 +575,36 @@ object SupabaseClient {
         }
     }
 
+    // Delete a video by id from the videos table
+    suspend fun deleteVideoById(id: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/videos?id=eq.${id}"
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    val bodyStr = respBody ?: ""
+                    Log.w("SupabaseClient", "deleteVideoById failed: ${resp.code} ${resp.message} body=$bodyStr")
+                    return@withContext false
+                }
+                Log.d("SupabaseClient", "deleteVideoById successful for id=$id")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "deleteVideoById exception", e)
+            return@withContext false
+        }
+    }
+
     suspend fun insertTopic(topic: com.example.tareamov.data.entity.Topic): Long? = withContext(Dispatchers.IO) {
         try {
             val map = mapOf(
@@ -1729,10 +1759,80 @@ object SupabaseClient {
 
     suspend fun fetchVideoById(id: Long): VideoData? = withContext(Dispatchers.IO) {
         try {
+            // Try typed mapping first
             val list = fetchList("videos?id=eq.$id", Array<VideoData>::class.java)
-            list.firstOrNull()
+            val video = list.firstOrNull()
+            
+            // Validate critical fields that might be null due to Gson unsafe allocation
+            // Even though Kotlin type says non-null, Gson can put null there
+            val isInvalid = video != null && (video.username == null || video.title == null)
+            
+            if (!isInvalid && video != null) {
+                return@withContext video
+            }
+            
+            if (isInvalid) Log.w("SupabaseClient", "fetchVideoById: Gson returned null fields, falling back to manual parse")
+            
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error fetching video by id $id", e)
+            Log.w("SupabaseClient", "fetchVideoById: typed fetch failed, falling back to manual parse", e)
+        }
+
+        // Manual fallback
+        try {
+            val req = buildGetRequest("videos?id=eq.$id")
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string()
+                if (!resp.isSuccessful || body.isNullOrEmpty()) return@withContext null
+                
+                val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
+                if (arr.size() == 0) return@withContext null
+                
+                val obj = arr.get(0).asJsonObject
+                val username = when {
+                    obj.has("username") && !obj.get("username").isJsonNull -> obj.get("username").asString
+                    obj.has("creator_username") && !obj.get("creator_username").isJsonNull -> obj.get("creator_username").asString
+                    obj.has("user") && !obj.get("user").isJsonNull -> obj.get("user").asString
+                    else -> "unknown"
+                }
+                val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                val videoUriString = when {
+                    obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
+                    obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
+                    obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
+                    else -> null
+                }
+                val localFilePath = obj.get("local_file_path")?.takeIf { !it.isJsonNull }?.asString
+                val thumbnailUri = when {
+                    obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull -> obj.get("thumbnail_uri").asString
+                    obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull -> obj.get("thumbnail").asString
+                    else -> null
+                }
+                val timestamp = try {
+                    obj.get("timestamp")?.takeIf { !it.isJsonNull }?.asLong
+                        ?: obj.get("created_at")?.takeIf { !it.isJsonNull }?.asString?.let { java.time.Instant.parse(it).toEpochMilli() }
+                        ?: System.currentTimeMillis()
+                } catch (_: Exception) { System.currentTimeMillis() }
+                val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
+
+                VideoData(
+                    id = id,
+                    username = username,
+                    description = description,
+                    title = title,
+                    videoUriString = videoUriString,
+                    localFilePath = localFilePath,
+                    timestamp = timestamp,
+                    isPaid = isPaid,
+                    thumbnailUri = thumbnailUri,
+                    price = price,
+                    courseId = courseId
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "fetchVideoById manual parse failed", e)
             null
         }
     }
@@ -3485,12 +3585,21 @@ object SupabaseClient {
             val map = mutableMapOf<String, Any?>()
             map["title"] = video.title
             map["description"] = video.description
-            map["video_uri"] = video.videoUri
+            map["video_uri_string"] = video.videoUriString
             map["thumbnail_uri"] = video.thumbnailUri
-            map["username"] = video.username
+            // map["username"] = video.username // Username should not be updated
             map["timestamp"] = video.timestamp
+            map["is_paid"] = video.isPaid
+            map["price"] = video.price
+            
+            // Include course_id if present
+            if (video.courseId != null) {
+                map["course_id"] = video.courseId
+            }
             
             val body = gson.toJson(map).toRequestBody(jsonMedia)
+            Log.d("SupabaseClient", "updateVideo payload: ${gson.toJson(map)}")
+            
             val url = "$baseUrl/rest/v1/videos?id=eq.${video.id}"
             
             val request = Request.Builder()
@@ -3504,7 +3613,13 @@ object SupabaseClient {
                 .build()
             
             client.newCall(request).execute().use { resp ->
-                return@withContext resp.isSuccessful
+                val bodyStr = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    Log.e("SupabaseClient", "updateVideo failed: ${resp.code} ${resp.message} body=$bodyStr")
+                    return@withContext false
+                }
+                Log.d("SupabaseClient", "updateVideo success: $bodyStr")
+                return@withContext true
             }
         } catch (e: Exception) {
             Log.e("SupabaseClient", "updateVideo exception", e)

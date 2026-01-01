@@ -31,6 +31,7 @@ import com.example.tareamov.data.entity.RolRecurso
 import com.example.tareamov.data.entity.VideoLike
 import com.example.tareamov.data.entity.UserVideoLike
 import com.example.tareamov.data.entity.VideoComment
+import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Notification
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -742,6 +743,17 @@ class SyncRepository(
             withContext(Dispatchers.IO) { supabaseClient.fetchTaskById(taskId) }
         } catch (e: Exception) {
             Log.w("SyncRepository", "fetchTaskByIdFromSupabase failed for id=$taskId", e)
+            null
+        }
+    }
+
+    // Fetch single video by id from Supabase
+    suspend fun fetchVideoByIdFromSupabase(videoId: Long): VideoData? {
+        return try {
+            if (!supabaseClient.isConfigured()) return null
+            withContext(Dispatchers.IO) { supabaseClient.fetchVideoById(videoId) }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchVideoByIdFromSupabase failed for id=$videoId", e)
             null
         }
     }

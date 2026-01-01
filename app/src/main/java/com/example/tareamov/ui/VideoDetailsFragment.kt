@@ -458,7 +458,7 @@ class VideoDetailsFragment : Fragment() {
                     
                     val success = withContext(Dispatchers.IO) {
                         // Fetch current video to get courseId
-                        val currentVideo = com.example.tareamov.service.SupabaseClient.getVideoById(videoId)
+                        val currentVideo = com.example.tareamov.service.SupabaseClient.fetchVideoById(videoId)
                         if (currentVideo != null) {
                             // Update Video
                             val updatedVideo = currentVideo.copy(
@@ -468,11 +468,12 @@ class VideoDetailsFragment : Fragment() {
                                 price = if (isPaidCourse) 9.99 else null,
                                 thumbnailUri = thumbnailUrl ?: currentVideo.thumbnailUri
                             )
-                            com.example.tareamov.service.SupabaseClient.updateVideo(updatedVideo)
+                            val videoUpdateSuccess = com.example.tareamov.service.SupabaseClient.updateVideo(updatedVideo)
                             
                             // Update Course
-                            if (currentVideo.courseId > 0) {
-                                val currentCourse = com.example.tareamov.service.SupabaseClient.getCourseById(currentVideo.courseId)
+                            val courseId = currentVideo.courseId
+                            if (courseId != null && courseId > 0) {
+                                val currentCourse = com.example.tareamov.service.SupabaseClient.fetchCourseById(courseId)
                                 if (currentCourse != null) {
                                     val updatedCourse = currentCourse.copy(
                                         title = title,
@@ -481,10 +482,10 @@ class VideoDetailsFragment : Fragment() {
                                         price = if (isPaidCourse) 9.99 else 0.0,
                                         thumbnailUri = thumbnailUrl ?: currentCourse.thumbnailUri
                                     )
-                                    com.example.tareamov.service.SupabaseClient.updateCourse(updatedCourse)
+                                    com.example.tareamov.service.SupabaseClient.updateCourseById(updatedCourse.id, updatedCourse)
                                 }
                             }
-                            true
+                            videoUpdateSuccess
                         } else {
                             false
                         }
@@ -492,11 +493,48 @@ class VideoDetailsFragment : Fragment() {
                     
                     if (success) {
                         updateLoadingProgress(100, "¡Actualizado exitosamente! ✓", false)
+                        
                         kotlinx.coroutines.delay(800)
                         hideProfessionalLoading()
+                        
                         if (isAdded) {
+                            val navController = findNavController()
+                            
+                            // Send result via NavBackStackEntry for more reliable delivery
+                            try {
+                                val backStackEntry = navController.previousBackStackEntry
+                                if (backStackEntry != null) {
+                                    backStackEntry.savedStateHandle["videoUpdated"] = true
+                                    backStackEntry.savedStateHandle["updatedVideoId"] = videoId
+                                    backStackEntry.savedStateHandle["updatedTitle"] = title
+                                    backStackEntry.savedStateHandle["updatedDescription"] = description
+                                    backStackEntry.savedStateHandle["updatedIsPaid"] = isPaidCourse
+                                    backStackEntry.savedStateHandle["updatedThumbnailUri"] = thumbnailUrl
+                                    Log.d("VideoDetailsFragment", "SavedStateHandle updated for video ID: $videoId, title: $title")
+                                } else {
+                                    Log.w("VideoDetailsFragment", "No previousBackStackEntry found")
+                                }
+                            } catch (e: Exception) {
+                                Log.e("VideoDetailsFragment", "Error setting savedStateHandle", e)
+                            }
+                            
+                            // Also send via FragmentManager as backup
+                            try {
+                                val resultBundle = Bundle().apply {
+                                    putLong("updatedVideoId", videoId)
+                                    putString("updatedTitle", title)
+                                    putString("updatedDescription", description)
+                                    putBoolean("updatedIsPaid", isPaidCourse)
+                                    putString("updatedThumbnailUri", thumbnailUrl)
+                                }
+                                requireActivity().supportFragmentManager.setFragmentResult("videoUpdated", resultBundle)
+                                Log.d("VideoDetailsFragment", "Fragment result sent via FragmentManager for videoId: $videoId")
+                            } catch (e: Exception) {
+                                Log.e("VideoDetailsFragment", "Error sending fragment result", e)
+                            }
+                            
                             Toast.makeText(context, "Video actualizado correctamente", Toast.LENGTH_SHORT).show()
-                            findNavController().navigateUp()
+                            navController.navigateUp()
                         }
                     } else {
                         hideProfessionalLoading()

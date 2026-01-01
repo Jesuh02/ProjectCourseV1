@@ -105,8 +105,14 @@ class EditProfileFragment : Fragment() {
     }
 
     private fun openImagePicker() {
-        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-        pickImageLauncher.launch(intent)
+        // Use ACTION_GET_CONTENT to allow selecting from any content provider (Gallery, Drive, Photos, etc.)
+        val intent = Intent(Intent.ACTION_GET_CONTENT)
+        intent.type = "image/*"
+        intent.addCategory(Intent.CATEGORY_OPENABLE)
+        
+        // Create a chooser to ensure the user sees all available options
+        val chooser = Intent.createChooser(intent, "Seleccionar imagen de perfil")
+        pickImageLauncher.launch(chooser)
     }
 
     private fun loadUserData() {

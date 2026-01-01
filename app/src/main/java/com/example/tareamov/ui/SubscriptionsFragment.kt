@@ -12,7 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
@@ -65,6 +65,10 @@ fun SubscriptionsScreen(onBackClick: () -> Unit, onUserClick: (String) -> Unit) 
     var subscriptions by remember { mutableStateOf<List<Usuario>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     
+    // Search state
+    var isSearchActive by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    
     // Get current user ID from SessionManager (needs context)
     val context = androidx.compose.ui.platform.LocalContext.current
     
@@ -77,25 +81,73 @@ fun SubscriptionsScreen(onBackClick: () -> Unit, onUserClick: (String) -> Unit) 
         isLoading = false
     }
 
+    val filteredSubscriptions = if (searchQuery.isEmpty()) {
+        subscriptions
+    } else {
+        subscriptions.filter { it.usuario.contains(searchQuery, ignoreCase = true) }
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Todas las suscripciones", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { /* Search action */ }) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.White)
-                    }
-                },
-                windowInsets = WindowInsets(0.dp),
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Black
+            if (isSearchActive) {
+                TopAppBar(
+                    title = {
+                        TextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Buscar...", color = Color.Gray) },
+                            singleLine = true,
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                cursorColor = Color.White,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { 
+                            isSearchActive = false 
+                            searchQuery = ""
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close Search", tint = Color.White)
+                        }
+                    },
+                    actions = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear", tint = Color.White)
+                            }
+                        }
+                    },
+                    windowInsets = WindowInsets(0.dp),
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Black
+                    )
                 )
-            )
+            } else {
+                TopAppBar(
+                    title = { Text("Todas las suscripciones", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+                    navigationIcon = {
+                        IconButton(onClick = onBackClick) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { isSearchActive = true }) {
+                            Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.White)
+                        }
+                    },
+                    windowInsets = WindowInsets(0.dp),
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Black
+                    )
+                )
+            }
         },
         containerColor = Color.Black
     ) { paddingValues ->
@@ -125,7 +177,7 @@ fun SubscriptionsScreen(onBackClick: () -> Unit, onUserClick: (String) -> Unit) 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(subscriptions) { user ->
+                    items(filteredSubscriptions) { user ->
                         SubscriptionItem(user, onUserClick)
                     }
                 }
