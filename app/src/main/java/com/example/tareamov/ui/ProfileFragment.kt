@@ -131,37 +131,73 @@ class ProfileFragment : Fragment() {
     }
 
     private fun handleImageSelection(uri: Uri) {
-        try {
-            // Copy to internal storage to ensure persistence
-            val inputStream = requireContext().contentResolver.openInputStream(uri)
-            val file = File(requireContext().filesDir, "profile_${System.currentTimeMillis()}.jpg")
-            val outputStream = FileOutputStream(file)
-            inputStream?.copyTo(outputStream)
-            inputStream?.close()
-            outputStream.close()
-
-            val savedUri = Uri.fromFile(file).toString()
-
-            // Update Session
-            val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-            sessionManager.saveUserAvatar(savedUri)
-
-            // Update UI
-            Glide.with(this)
-                .load(file)
-                .circleCrop()
-                .into(profileImage)
-            
-            // Notify user
-            Toast.makeText(requireContext(), "Foto de perfil actualizada", Toast.LENGTH_SHORT).show()
-            
-            // Set flag to reload elsewhere if needed
-            requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                .edit().putBoolean("profile_updated", true).apply()
-
-        } catch (e: Exception) {
-            Log.e("ProfileFragment", "Error saving image", e)
-            Toast.makeText(requireContext(), "Error al guardar la imagen", Toast.LENGTH_SHORT).show()
+        // Show initial feedback
+        Toast.makeText(requireContext(), "Procesando imagen...", Toast.LENGTH_SHORT).show()
+        
+        lifecycleScope.launch {
+            try {
+                val context = requireContext()
+                
+                // 1. Upload to Cloudflare R2
+                Toast.makeText(context, "Subiendo a la nube...", Toast.LENGTH_SHORT).show()
+                
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
+                val username = sessionManager.getUsername() ?: "user_${System.currentTimeMillis()}"
+                val timestamp = System.currentTimeMillis()
+                val customFileName = "avatar_${username}_$timestamp"
+                
+                // Upload image to Cloudflare R2
+                val uploadResult = com.example.tareamov.service.CloudflareR2Service.uploadImage(
+                    context = context,
+                    imageUri = uri,
+                    customFileName = customFileName
+                )
+                
+                if (uploadResult is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success) {
+                    val publicUrl = uploadResult.url
+                    Log.d("ProfileFragment", "Avatar uploaded to R2: $publicUrl")
+                    
+                    // 2. Update Supabase
+                    val userId = sessionManager.getUserId()
+                    if (userId != -1L) {
+                        val currentUser = com.example.tareamov.service.SupabaseClient.fetchUsuarioById(userId)
+                        
+                        if (currentUser != null) {
+                            val updatedUser = currentUser.copy(avatar = publicUrl)
+                            val success = com.example.tareamov.service.SupabaseClient.updateUsuario(updatedUser)
+                            
+                            if (success) {
+                                // 3. Update Local Session
+                                sessionManager.saveUserAvatar(publicUrl)
+                                
+                                // 4. Update UI
+                                Glide.with(this@ProfileFragment)
+                                    .load(publicUrl)
+                                    .circleCrop()
+                                    .into(profileImage)
+                                    
+                                Toast.makeText(context, "Avatar actualizado correctamente", Toast.LENGTH_SHORT).show()
+                                
+                                // Notify other components
+                                requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                                    .edit().putBoolean("profile_updated", true).apply()
+                            } else {
+                                Toast.makeText(context, "Error actualizando base de datos", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                             Toast.makeText(context, "Usuario no encontrado", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        Toast.makeText(context, "Error: Sesión inválida", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    val errorMsg = (uploadResult as? com.example.tareamov.service.CloudflareR2Service.UploadResult.Error)?.message ?: "Error desconocido"
+                    Toast.makeText(context, "Error subiendo imagen: $errorMsg", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e("ProfileFragment", "Error updating avatar", e)
+                Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -241,7 +277,6 @@ class ProfileFragment : Fragment() {
         val menuItems = mapOf(
             R.id.myChannelItem to "Mis cursos",
             R.id.creatorDashboardItem to "Panel de control del creador",
-            R.id.analyticsItem to "Analíticas",
             R.id.subscriptionsItem to "Suscripciones",
             R.id.dropsItem to "Cursos gratuitos",
             R.id.turboItem to "Premium",
@@ -284,6 +319,13 @@ class ProfileFragment : Fragment() {
                             Toast.makeText(requireContext(), "Error de navegación", Toast.LENGTH_SHORT).show()
                         }
                     }
+                }
+            } else if (id == R.id.dropsItem) {
+                itemView.setOnClickListener {
+                    animateButtonPress(it)
+                    // Navigate to ExploreFragment and request "Free courses" filter (index 4)
+                    val bundle = Bundle().apply { putInt("filter_index", 4) }
+                    findNavController().navigate(R.id.action_profileFragment_to_exploreFragment, bundle)
                 }
             } else {
                 itemView.setOnClickListener {

@@ -234,6 +234,27 @@ class EditProfileFragment : Fragment() {
                 // Create repositories
                 val usuarioRepository = UsuarioRepository(usuarioDao)
                 val personaRepository = PersonaRepository(personaDao, usuarioDao)
+                
+                // Create SyncRepository for remote updates
+                val syncRepository = com.example.tareamov.data.sync.SyncRepository(
+                    usuarioDao,
+                    personaDao,
+                    db.topicDao(),
+                    db.contentItemDao(),
+                    db.taskDao(),
+                    db.subscriptionDao(),
+                    db.taskSubmissionDao(),
+                    db.videoDao(),
+                    db.courseDao(),
+                    db.rolDao(),
+                    db.recursoDao(),
+                    db.rolRecursoDao(),
+                    db.chatMessageDao(),
+                    db.fileContextDao(),
+                    db.progresoEstudianteDao(),
+                    db.videoLikeDao(),
+                    db.videoCommentDao()
+                )
 
                 // Check if username is already taken (if changed)
                 if (newUsername != currentUser?.usuario) {
@@ -267,19 +288,17 @@ class EditProfileFragment : Fragment() {
                         )
                         // Also try to update remote Persona in Supabase
                         try {
-                            if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                                val remotePersona = com.example.tareamov.data.entity.Persona(
-                                    id = currentPersona!!.id,
-                                    identificacion = currentPersona!!.identificacion,
-                                    nombres = displayName,
-                                    apellidos = currentPersona!!.apellidos,
-                                    telefono = currentPersona!!.telefono,
-                                    direccion = currentPersona!!.direccion,
-                                    fechaNacimiento = currentPersona!!.fechaNacimiento
-                                )
-                                val updated = com.example.tareamov.service.SupabaseClient.updatePersona(remotePersona)
-                                Log.d("EditProfileFragment", "Supabase updatePersona result: $updated")
-                            }
+                            val remotePersona = com.example.tareamov.data.entity.Persona(
+                                id = currentPersona!!.id,
+                                identificacion = currentPersona!!.identificacion,
+                                nombres = displayName,
+                                apellidos = currentPersona!!.apellidos,
+                                telefono = currentPersona!!.telefono,
+                                direccion = currentPersona!!.direccion,
+                                fechaNacimiento = currentPersona!!.fechaNacimiento
+                            )
+                            val updated = syncRepository.updatePersonaRemote(remotePersona)
+                            Log.d("EditProfileFragment", "SyncRepository updatePersonaRemote result: $updated")
                         } catch (e: Exception) {
                             Log.w("EditProfileFragment", "Failed to update persona on Supabase", e)
                         }
@@ -293,27 +312,17 @@ class EditProfileFragment : Fragment() {
                         // First, try to update remote Usuario in Supabase with avatar URL
                         var remoteUpdateSuccess = false
                         try {
-                            if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                                val remoteUsuario = com.example.tareamov.data.entity.Usuario(
-                                    id = currentUser!!.id,
-                                    usuario = newUsername,
-                                    contrasena = currentUser!!.contrasena,
-                                    persona_id = currentUser!!.persona_id,
-                                    rol_id = currentUser!!.rol_id,
-                                    email = currentUser!!.email,
-                                    avatar = avatarUrl, // Include R2 avatar URL
-                                    isActive = currentUser!!.isActive,
-                                    emailVerified = currentUser!!.emailVerified,
-                                    lastLogin = currentUser!!.lastLogin,
-                                    createdAt = currentUser!!.createdAt
-                                )
-                                remoteUpdateSuccess = com.example.tareamov.service.SupabaseClient.updateUsuario(remoteUsuario)
-                                Log.d("EditProfileFragment", "Supabase updateUsuario result: $remoteUpdateSuccess, avatar: $avatarUrl")
-                                
-                                // Small delay to ensure Supabase has processed the update
-                                if (remoteUpdateSuccess) {
-                                    kotlinx.coroutines.delay(500)
-                                }
+                            // Use the new profile update method to avoid issues with other fields
+                            remoteUpdateSuccess = syncRepository.updateUsuarioProfileRemote(
+                                userId = currentUser!!.id,
+                                username = newUsername,
+                                avatarUrl = avatarUrl
+                            )
+                            Log.d("EditProfileFragment", "SyncRepository updateUsuarioProfileRemote result: $remoteUpdateSuccess, avatar: $avatarUrl")
+                            
+                            // Small delay to ensure Supabase has processed the update
+                            if (remoteUpdateSuccess) {
+                                kotlinx.coroutines.delay(500)
                             }
                         } catch (e: Exception) {
                             Log.w("EditProfileFragment", "Failed to update usuario on Supabase", e)

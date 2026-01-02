@@ -33,6 +33,7 @@ class ChatMessageAdapter(
     private val onAddCalificationClick: (ChatMessage) -> Unit = {},
     private val onRejectCalificationClick: (ChatMessage) -> Unit = {},
     private val onEditUserMessageClick: (ChatMessage) -> Unit = {},
+    private val onTTSClick: (ChatMessage) -> Unit = {},
     private var taskInfo: TaskInfo? = null
 ) : ListAdapter<ChatMessage, ChatMessageAdapter.MessageViewHolder>(MessageDiffCallback()) {
 
@@ -48,6 +49,10 @@ class ChatMessageAdapter(
     fun setUserAvatarUrl(url: String?) {
         currentUserAvatarUrl = url
         notifyDataSetChanged()
+    }
+    
+    fun getCurrentUserAvatarUrl(): String? {
+        return currentUserAvatarUrl
     }
 
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -146,6 +151,12 @@ class ChatMessageAdapter(
         private val editButtonUser: ImageButton? = try {
             itemView.findViewById(R.id.editButtonUser)
         } catch (e: Exception) { null }
+        // TTS buttons - Temporarily null until layout IDs are added
+        // TODO: Add ttsButton and ttsButtonUser ImageButtons to item_chat_message_improved.xml
+        // Then uncomment: private val ttsButton: ImageButton? = itemView.findViewById(R.id.ttsButton)
+        // Then uncomment: private val ttsButtonUser: ImageButton? = itemView.findViewById(R.id.ttsButtonUser)
+        private val ttsButton: ImageButton? = null
+        private val ttsButtonUser: ImageButton? = null
 
         fun bind(message: ChatMessage) {
             if (message.isFromUser) {
@@ -285,6 +296,10 @@ class ChatMessageAdapter(
             shareButton.setOnClickListener {
                 shareMessage(message.message)
             }
+            
+            ttsButton?.setOnClickListener {
+                onTTSClick(message)
+            }
         }
 
         private fun setupUserMessageActions(message: ChatMessage) {
@@ -292,6 +307,8 @@ class ChatMessageAdapter(
             copyButtonUser.setImageResource(R.drawable.ic_copy_minimal)
             shareButtonUser.setImageResource(R.drawable.ic_share_minimal)
             editButtonUser?.setImageResource(R.drawable.ic_edit_minimal)
+            // TODO: Replace with proper TTS icon (ic_volume_minimal)
+            ttsButtonUser?.setImageResource(android.R.drawable.ic_lock_silent_mode_off)
 
             copyButtonUser.setOnClickListener {
                 copyToClipboard(message.message)
@@ -303,6 +320,10 @@ class ChatMessageAdapter(
             
             editButtonUser?.setOnClickListener {
                 onEditUserMessageClick(message)
+            }
+            
+            ttsButtonUser?.setOnClickListener {
+                onTTSClick(message)
             }
         }
         
@@ -333,7 +354,7 @@ class ChatMessageAdapter(
         }
         
         private fun formatBoldText(text: String): SpannableString {
-            // Process markdown formatting: **bold**, *italic*, _italic_, ##headers
+            // Process markdown formatting: **bold**, *italic*, _italic_, #headers, ##headers, ###headers
             val result = StringBuilder()
             val boldRanges = mutableListOf<Pair<Int, Int>>()
             val italicRanges = mutableListOf<Pair<Int, Int>>()
@@ -347,9 +368,31 @@ class ChatMessageAdapter(
                         if (endIndex != -1) {
                             val startPos = result.length
                             val boldContent = text.substring(i + 2, endIndex)
+                            // Recursively process nested markdown in bold content
                             result.append(boldContent)
                             boldRanges.add(Pair(startPos, result.length))
                             i = endIndex + 2
+                        } else {
+                            result.append(text[i])
+                            i++
+                        }
+                    }
+                    // Italic with single asterisk: *text* (but not **)
+                    text[i] == '*' && (i + 1 >= text.length || text[i + 1] != '*') && (i == 0 || !text[i-1].isLetterOrDigit()) -> {
+                        // Find closing * that is not part of **
+                        var endIndex = i + 1
+                        while (endIndex < text.length) {
+                            if (text[endIndex] == '*' && (endIndex + 1 >= text.length || text[endIndex + 1] != '*')) {
+                                break
+                            }
+                            endIndex++
+                        }
+                        if (endIndex < text.length && endIndex > i + 1) {
+                            val startPos = result.length
+                            val italicContent = text.substring(i + 1, endIndex)
+                            result.append(italicContent)
+                            italicRanges.add(Pair(startPos, result.length))
+                            i = endIndex + 1
                         } else {
                             result.append(text[i])
                             i++
@@ -369,15 +412,21 @@ class ChatMessageAdapter(
                             i++
                         }
                     }
-                    // Headers: ## text -> just bold without ##
-                    text[i] == '#' && i + 1 < text.length && text[i + 1] == '#' -> {
-                        // Skip the ## and any following space
-                        i += 2
-                        while (i < text.length && text[i] == ' ') i++
+                    // Headers: #, ##, ### at start of line -> bold without #
+                    text[i] == '#' && (i == 0 || text[i - 1] == '\n') -> {
+                        // Count number of # characters
+                        var hashCount = 0
+                        var j = i
+                        while (j < text.length && text[j] == '#') {
+                            hashCount++
+                            j++
+                        }
+                        // Skip any spaces after #
+                        while (j < text.length && text[j] == ' ') j++
                         // Find end of line
-                        val lineEnd = text.indexOf('\n', i).let { if (it == -1) text.length else it }
+                        val lineEnd = text.indexOf('\n', j).let { if (it == -1) text.length else it }
                         val startPos = result.length
-                        val headerContent = text.substring(i, lineEnd)
+                        val headerContent = text.substring(j, lineEnd)
                         result.append(headerContent)
                         boldRanges.add(Pair(startPos, result.length))
                         i = lineEnd

@@ -940,7 +940,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                                 val filename = json.optString("filename", "reporte.xlsx")
                                 val rows = json.optInt("rows", 0)
                                 
-                                // Create a single message with the attachment info
+                                // Create a single message with the attachment info (WITHOUT adding to input bar)
                                 val uri = android.net.Uri.parse(url)
                                 val file = AttachedFile(
                                     uri = uri,
@@ -950,16 +950,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                                     isPreUploaded = true
                                 )
                                 
-                                // Add message with attachment
+                                // Add message with attachment (file only in message metadata, NOT in input bar)
                                 addMessageToChat("✅ Excel generado ($rows filas). Descargar aquí: $url", false, file)
-                                
-                                // Attach the generated file to the input area for "mixing with prompt"
-                                try {
-                                    addAttachedFile(file)
-                                    addMessageToChat("📎 Archivo adjuntado automáticamente a la barra de escritura. Puedes hacer preguntas sobre él.", false)
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Error attaching generated file", e)
-                                }
                                 
                                 // Open URL
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
@@ -1113,6 +1105,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                         val jsonContent = JSONArray().apply {
                             put(JSONObject().apply {
                                 put("type", "file")
+                                put("fileType", attachedFile.type)
                                 put("uri", remoteUrl)
                                 put("name", attachedFile.name)
                             })
@@ -2330,6 +2323,20 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
                 addWelcomeMessage()
             }
         }
+        
+        // Fetch avatar for new user
+        lifecycleScope.launch {
+            try {
+                currentUser?.let { username ->
+                    val avatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(username)
+                    avatar?.let { 
+                        currentUserAvatar = it
+                        chatAdapter.setUserAvatarUrl(it) 
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
     }
     
     override fun onUserLoggedOut(previousUser: String?) {
@@ -2361,15 +2368,31 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
     }
     
     private fun showClearHistoryDialog() {
-        android.app.AlertDialog.Builder(requireContext())
-            .setTitle("Limpiar historial")
-            .setMessage("¿Estás seguro de que quieres eliminar todo el historial de chat? Esta acción no se puede deshacer.")
-            .setPositiveButton("Sí, limpiar") { _, _ ->
+        val dialogView = layoutInflater.inflate(R.layout.dialog_confirm_liquid_glass, null)
+        val dialog = android.app.AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .create()
+        
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        
+        dialogView.findViewById<TextView>(R.id.dialogTitle).text = "Limpiar historial"
+        dialogView.findViewById<TextView>(R.id.dialogMessage).text = 
+            "¿Estás seguro de que quieres eliminar todo el historial de chat? Esta acción no se puede deshacer."
+        
+        dialogView.findViewById<TextView>(R.id.positiveButton).apply {
+            text = "Sí, limpiar"
+            setOnClickListener {
                 clearChatHistory()
                 Toast.makeText(requireContext(), "Historial limpiado", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
             }
-            .setNegativeButton("Cancelar", null)
-            .show()
+        }
+        
+        dialogView.findViewById<TextView>(R.id.negativeButton).setOnClickListener {
+            dialog.dismiss()
+        }
+        
+        dialog.show()
     }
     
     private fun showChatHistoryDialog() {
@@ -2388,34 +2411,63 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             ¿Qué deseas hacer?
         """.trimIndent()
         
-        val options = arrayOf("Exportar Chat", "Nueva Sesión")
-
-        android.app.AlertDialog.Builder(requireContext())
-            .setTitle("Opciones")
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> exportChatHistory()
-                    1 -> startNewSession()
-                }
-            }
-            .setNegativeButton("Cancelar", null)
-            .show()
+        val dialogView = layoutInflater.inflate(R.layout.dialog_chat_options_liquid_glass, null)
+        val dialog = android.app.AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .create()
+        
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        
+        dialogView.findViewById<TextView>(R.id.dialogTitle).text = "Opciones"
+        dialogView.findViewById<TextView>(R.id.dialogMessage).text = message
+        
+        dialogView.findViewById<LinearLayout>(R.id.exportChatOption).setOnClickListener {
+            exportChatHistory()
+            dialog.dismiss()
+        }
+        
+        dialogView.findViewById<LinearLayout>(R.id.newSessionOption).setOnClickListener {
+            startNewSession()
+            dialog.dismiss()
+        }
+        
+        dialogView.findViewById<TextView>(R.id.cancelButton).setOnClickListener {
+            dialog.dismiss()
+        }
+        
+        dialog.show()
     }
 
     // toggleExcelMode removed
     
     private fun startNewSession() {
-        android.app.AlertDialog.Builder(requireContext())
-            .setTitle("Nueva sesión")
-            .setMessage("¿Quieres empezar una nueva sesión? La conversación actual se guardará.")
-            .setPositiveButton("Sí") { _, _ ->
+        val dialogView = layoutInflater.inflate(R.layout.dialog_confirm_liquid_glass, null)
+        val dialog = android.app.AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .create()
+        
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        
+        dialogView.findViewById<TextView>(R.id.dialogTitle).text = "Nueva sesión"
+        dialogView.findViewById<TextView>(R.id.dialogMessage).text = 
+            "¿Quieres empezar una nueva sesión? La conversación actual se guardará."
+        
+        dialogView.findViewById<TextView>(R.id.positiveButton).apply {
+            text = "Sí"
+            setOnClickListener {
                 saveChatHistory() // Save current session
                 createNewSession()
                 addWelcomeMessage()
                 Toast.makeText(requireContext(), "Nueva sesión iniciada", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
             }
-            .setNegativeButton("Cancelar", null)
-            .show()
+        }
+        
+        dialogView.findViewById<TextView>(R.id.negativeButton).setOnClickListener {
+            dialog.dismiss()
+        }
+        
+        dialog.show()
     }
     
     private fun exportChatHistory() {
@@ -2654,7 +2706,10 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
                 
             } catch (e: Exception) {
                 Log.e("DatabaseQueryFragment", "Error editing message", e)
-                Toast.makeText(requireContext(), "Error al editar mensaje: ${e.message}", Toast.LENGTH_SHORT).show()
+                // Check if fragment is still attached before showing Toast
+                if (isAdded && context != null) {
+                    Toast.makeText(requireContext(), "Error al editar mensaje: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

@@ -228,46 +228,6 @@
                                 android:src="@drawable/ic_arrow_forward"
                                 app:tint="#666666" />
                         </LinearLayout>
-
-                        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#2C2C2E" android:layout_marginStart="64dp" />
-
-                        <!-- Analytics -->
-                        <LinearLayout
-                            android:id="@+id/analyticsItem"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:padding="16dp"
-                            android:gravity="center_vertical"
-                            android:background="?attr/selectableItemBackground"
-                            android:clickable="true"
-                            android:focusable="true">
-
-                            <ImageView
-                                android:layout_width="32dp"
-                                android:layout_height="32dp"
-                                android:src="@drawable/ic_analytics"
-                                android:background="@drawable/bg_rounded_icon_background"
-                                android:backgroundTint="#30D158"
-                                android:padding="6dp"
-                                app:tint="#FFFFFF" />
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:layout_marginStart="16dp"
-                                android:text="Analíticas"
-                                android:textColor="#FFFFFF"
-                                android:textSize="16sp"
-                                android:fontFamily="sans-serif-medium" />
-
-                            <ImageView
-                                android:layout_width="16dp"
-                                android:layout_height="16dp"
-                                android:src="@drawable/ic_arrow_forward"
-                                app:tint="#666666" />
-                        </LinearLayout>
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 

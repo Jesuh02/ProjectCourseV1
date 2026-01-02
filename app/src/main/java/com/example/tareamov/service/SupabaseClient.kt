@@ -971,6 +971,42 @@ object SupabaseClient {
         }
     }
 
+    // Update only profile fields (username, avatar) to avoid issues with other fields
+    suspend fun updateUsuarioProfile(userId: Long, username: String, avatarUrl: String?): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val map = mutableMapOf<String, Any?>()
+            map["username"] = username
+            if (avatarUrl != null) {
+                map["avatar"] = avatarUrl
+            }
+            
+            val body = gson.toJson(map).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/usuarios?id=eq.$userId"
+
+            val request = Request.Builder()
+                .url(url)
+                .patch(body)
+                .addHeader("apikey", effectiveApiKey())
+                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "updateUsuarioProfile failed status=${resp.code} body=${resp.body?.string()}")
+                    return@withContext false
+                }
+                Log.d("SupabaseClient", "updateUsuarioProfile success for id: $userId")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "updateUsuarioProfile exception", e)
+            return@withContext false
+        }
+    }
+
     suspend fun insertTaskSubmission(submission: com.example.tareamov.data.entity.TaskSubmission): Long? = withContext(Dispatchers.IO) {
         try {
             if (!isConfigured()) {
@@ -2596,6 +2632,67 @@ object SupabaseClient {
             return@withContext deduped
         } catch (e: Exception) {
             android.util.Log.e("SupabaseClient", "Error fetching courses (paged): ${e.message}", e)
+            return@withContext emptyList()
+        }
+    }
+
+    // Fetch FREE courses from Supabase (server-side filter is_premium=false)
+    suspend fun fetchFreeCourses(): List<Course> = withContext(Dispatchers.IO) {
+        val pageSize = 1000 // safe chunk size for PostgREST
+        var offset = 0
+        var page = 0
+        val all = mutableListOf<Course>()
+        try {
+            while (true) {
+                // Added is_premium=eq.false filter
+                val path = "courses?select=*&is_premium=eq.false&order=timestamp.desc&limit=$pageSize&offset=$offset"
+                android.util.Log.d("SupabaseClient", "fetchFreeCourses[p$page]: Requesting $path")
+                val request = buildGetRequest(path)
+                var shouldStop = false
+                client.newCall(request).execute().use { resp ->
+                    val body = resp.body?.string()
+                    
+                    if (!resp.isSuccessful) {
+                        android.util.Log.w("SupabaseClient", "GET $path failed: ${resp.code}")
+                        shouldStop = true
+                    }
+
+                    if (!shouldStop && body.isNullOrEmpty()) {
+                        shouldStop = true
+                    }
+
+                    val pageItems = if (!shouldStop) {
+                        try {
+                            val arr = underscoredGson.fromJson(body, Array<Course>::class.java)
+                            arr?.toList() ?: emptyList()
+                        } catch (e: Exception) {
+                            android.util.Log.e("SupabaseClient", "fetchFreeCourses[p$page]: JSON parse error: ${e.message}", e)
+                            emptyList()
+                        }
+                    } else emptyList()
+
+                    all.addAll(pageItems)
+
+                    if (pageItems.size < pageSize) {
+                        shouldStop = true
+                    }
+                }
+                if (shouldStop) {
+                    break
+                }
+                page += 1
+                offset += pageSize
+
+                if (page > 500) {
+                    break
+                }
+            }
+
+            val deduped = all.distinctBy { it.id }
+            android.util.Log.d("SupabaseClient", "fetchFreeCourses: DONE -> total=${deduped.size}")
+            return@withContext deduped
+        } catch (e: Exception) {
+            android.util.Log.e("SupabaseClient", "Error fetching free courses: ${e.message}", e)
             return@withContext emptyList()
         }
     }

@@ -563,6 +563,22 @@ class SyncRepository(
             emptyList()
         }
     }
+
+    // Fetch FREE courses from Supabase (server-side filter)
+    suspend fun fetchFreeCoursesFromSupabase(): List<Course> {
+        return try {
+            if (!supabaseClient.isConfigured()) {
+                Log.d("SyncRepository", "Supabase not configured - fetchFreeCoursesFromSupabase returning empty list")
+                return emptyList()
+            }
+            val list = withContext(Dispatchers.IO) { supabaseClient.fetchFreeCourses() }
+            Log.d("SyncRepository", "fetchFreeCoursesFromSupabase: fetched ${list.size} courses from Supabase")
+            list
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchFreeCoursesFromSupabase failed", e)
+            emptyList()
+        }
+    }
     
     // Fetch courses with pagination
     suspend fun fetchCoursesPaginated(
@@ -1431,6 +1447,54 @@ class SyncRepository(
             result
         } catch (e: Exception) {
             Log.e("SyncRepository", "updateTaskRemote failed for task ${task.id}", e)
+            false
+        }
+    }
+
+    // Update Persona remotely via SupabaseClient
+    suspend fun updatePersonaRemote(persona: Persona): Boolean {
+        return try {
+            if (!supabaseClient.isConfigured()) {
+                Log.e("SyncRepository", "updatePersonaRemote: SupabaseClient not configured")
+                return false
+            }
+            val result = withContext(Dispatchers.IO) { supabaseClient.updatePersona(persona) }
+            Log.d("SyncRepository", "updatePersonaRemote result: $result for persona ${persona.id}")
+            result
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "updatePersonaRemote failed for persona ${persona.id}", e)
+            false
+        }
+    }
+
+    // Update Usuario remotely via SupabaseClient
+    suspend fun updateUsuarioRemote(usuario: Usuario): Boolean {
+        return try {
+            if (!supabaseClient.isConfigured()) {
+                Log.e("SyncRepository", "updateUsuarioRemote: SupabaseClient not configured")
+                return false
+            }
+            val result = withContext(Dispatchers.IO) { supabaseClient.updateUsuario(usuario) }
+            Log.d("SyncRepository", "updateUsuarioRemote result: $result for usuario ${usuario.id}")
+            result
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "updateUsuarioRemote failed for usuario ${usuario.id}", e)
+            false
+        }
+    }
+
+    // Update Usuario profile (username, avatar) remotely via SupabaseClient
+    suspend fun updateUsuarioProfileRemote(userId: Long, username: String, avatarUrl: String?): Boolean {
+        return try {
+            if (!supabaseClient.isConfigured()) {
+                Log.e("SyncRepository", "updateUsuarioProfileRemote: SupabaseClient not configured")
+                return false
+            }
+            val result = withContext(Dispatchers.IO) { supabaseClient.updateUsuarioProfile(userId, username, avatarUrl) }
+            Log.d("SyncRepository", "updateUsuarioProfileRemote result: $result for usuario $userId")
+            result
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "updateUsuarioProfileRemote failed for usuario $userId", e)
             false
         }
     }

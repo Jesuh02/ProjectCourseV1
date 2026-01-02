@@ -1990,16 +1990,14 @@ class ExploreFragment : Fragment() {
                 if (isNetworkAvailable()) {
                     val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
                     val sessionUserId = session.getUserId()
-                    val serverCourses = withContext(Dispatchers.IO) {
-                        try {
-                            com.example.tareamov.service.SupabaseClient.fetchCourses()
-                        } catch (t: Throwable) {
-                            emptyList<com.example.tareamov.data.entity.Course>()
-                        }
+                    
+                    // Use server-side filtered fetch for free courses
+                    val freeCourses = withContext(Dispatchers.IO) {
+                        getSyncRepository().fetchFreeCoursesFromSupabase()
                     }
 
-                    val free = serverCourses.filter { it.isPremium != true && (sessionUserId <= 0L || it.creatorUserId != sessionUserId) }
-                        .sortedByDescending { it.timestamp }
+                    // Show all free courses including own courses
+                    val free = freeCourses.sortedByDescending { it.timestamp }
 
                     coursesList.clear()
                     coursesList.addAll(free)
@@ -2013,7 +2011,7 @@ class ExploreFragment : Fragment() {
                     
                     updateActiveFilterUI("Cursos Gratis")
                     if (free.isEmpty()) showDarkToast("No hay cursos gratuitos disponibles") else showDarkToast("Mostrando ${free.size} cursos gratis")
-                    Log.d("ExploreFragment", "Filtered to show free courses (server): ${free.size} courses")
+                    Log.d("ExploreFragment", "Filtered to show free courses (server-side filter): ${free.size} courses")
                     return@launch
                 }
 

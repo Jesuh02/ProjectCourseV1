@@ -96,4 +96,8 @@
     <color name="purple_dark_background">#1A0B2E</color>
     <color name="card_purple_glass">#2D1B4E</color>
     <color name="purple_accent">#8B7FFF</color>
+    
+    <!-- Text-to-Speech Colors -->
+    <color name="text_secondary">#555555</color>
+    <color name="accent_green">#10A37F</color>
 </resources>

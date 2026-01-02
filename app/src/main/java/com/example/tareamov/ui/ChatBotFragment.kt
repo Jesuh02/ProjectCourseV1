@@ -21,6 +21,7 @@ import com.example.tareamov.data.entity.FileContext
 import com.example.tareamov.data.entity.TaskSubmission
 
 import com.example.tareamov.service.FileAnalysisService
+import com.example.tareamov.service.TTSService
 import com.example.tareamov.ui.adapter.ChatMessageAdapter
 import com.example.tareamov.adapter.TaskOverlayAdapter
 import com.example.tareamov.adapter.TaskItem
@@ -106,6 +107,7 @@ class ChatBotFragment : Fragment() {
     private lateinit var database: AppDatabase
 
     private lateinit var fileAnalysisService: FileAnalysisService
+    private lateinit var ttsService: TTSService
     private lateinit var sessionManager: com.example.tareamov.util.SessionManager
     // Listener instance so we can remove it in onDestroyView
     private var sessionChangeListener: com.example.tareamov.util.SessionManager.UserChangeListener? = null
@@ -345,6 +347,7 @@ class ChatBotFragment : Fragment() {
         database = AppDatabase.getDatabase(requireContext())
 
         fileAnalysisService = FileAnalysisService(requireContext())
+        ttsService = TTSService.getInstance(requireContext())
         sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
         syncRepository = com.example.tareamov.data.sync.SyncRepository(
             usuarioDao = database.usuarioDao(),
@@ -447,6 +450,8 @@ class ChatBotFragment : Fragment() {
         cursorCheckHandler.removeCallbacks(cursorCheckRunnable)
         // Eliminar el listener de sesión para evitar fugas
         sessionChangeListener?.let { com.example.tareamov.util.SessionManager.removeUserChangeListener(it) }
+        // Detener reproducción TTS si está activa
+        ttsService.stopPlayback()
     }
 
     private fun initializeViews(view: View) {
@@ -716,6 +721,9 @@ class ChatBotFragment : Fragment() {
             onEditUserMessageClick = { message ->
                 handleEditUserMessage(message)
             },
+            onTTSClick = { message ->
+                handleTTSClick(message)
+            },
             taskInfo = null // Se actualizará dinámicamente cuando se cargue la información
         )
         // Set bot avatar to DeepSeek image and current user avatar from session
@@ -729,6 +737,16 @@ class ChatBotFragment : Fragment() {
             override fun onUserChanged(previousUser: String?, newUser: String?) {
                 val updated = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUserAvatar()
                 chatAdapter.setUserAvatarUrl(updated)
+                
+                // Also try to fetch fresh avatar from Supabase
+                lifecycleScope.launch {
+                    try {
+                        if (!newUser.isNullOrBlank()) {
+                            val avatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(newUser)
+                            avatar?.let { chatAdapter.setUserAvatarUrl(it) }
+                        }
+                    } catch (_: Exception) {}
+                }
             }
 
             override fun onUserLoggedOut(previousUser: String?) {
@@ -888,7 +906,7 @@ class ChatBotFragment : Fragment() {
                 isFromUser = true,
                 sessionId = sessionId,
                 senderUsername = sessionManager.getUsername(),
-                senderAvatar = sessionManager.getUserAvatar()
+                senderAvatar = sessionManager.getUserAvatar() ?: chatAdapter.getCurrentUserAvatarUrl()
             )
             withContext(Dispatchers.IO) {
                 val savedUserId = database.chatMessageDao().insertMessage(userMessage)
@@ -2249,76 +2267,137 @@ El archivo enviado está vacío o no se pudo leer su contenido.
     }
 
     /**
-     * Procesa la edición del mensaje: actualiza el mensaje original y elimina respuestas subsecuentes
+     * Maneja el click en el botón TTS para reproducir el mensaje con voz
      */
-    private fun handleMessageEdit(originalMessage: ChatMessage, newMessageText: String) {
+    private fun handleTTSClick(message: ChatMessage) {
         lifecycleScope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    // 1. Obtener todos los mensajes después del mensaje editado
-                    val allMessages = database.chatMessageDao().getAllMessages().first()
-                    var messageIndex = -1
-                    for (i in allMessages.indices) {
-                        if (allMessages[i].id == originalMessage.id) {
-                            messageIndex = i
-                            break
-                        }
-                    }
-                    
-                    if (messageIndex != -1) {
-                        // 2. Eliminar todos los mensajes posteriores (respuestas del bot y otros mensajes)
-                        val messagesToDelete = allMessages.drop(messageIndex + 1)
-                        messagesToDelete.forEach { msg ->
-                            database.chatMessageDao().deleteMessage(msg)
-                        }
-                        
-                        // 3. Actualizar el mensaje original con el nuevo texto
-                        val updatedMessage = originalMessage.copy(
-                            message = newMessageText,
-                            timestamp = System.currentTimeMillis() // Actualizar timestamp
-                        )
-                        database.chatMessageDao().updateMessage(updatedMessage)
-                    }
-                }
-
-                // 4. Recargar mensajes en la UI
-                loadMessages()
+                // Detener cualquier reproducción anterior
+                ttsService.stopPlayback()
                 
-                // 5. Procesar el mensaje editado directamente sin duplicar
-                withContext(Dispatchers.Main) {
-                    // Mostrar indicador de procesamiento
-                    loadingProgressBar.visibility = View.VISIBLE
+                // Mostrar feedback visual
+                Toast.makeText(
+                    requireContext(),
+                    "🔊 Reproduciendo mensaje...",
+                    Toast.LENGTH_SHORT
+                ).show()
+                
+                // Reproducir el mensaje con voz natural (usando voz NOVA por defecto)
+                ttsService.speak(
+                    text = message.message,
+                    voice = TTSService.Voice.NOVA,
+                    onStart = {
+                        Log.d("ChatBotFragment", "TTS playback started")
+                    },
+                    onComplete = {
+                        lifecycleScope.launch {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    requireContext(),
+                                    "✅ Reproducción completada",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    },
+                    onError = { error ->
+                        lifecycleScope.launch {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    requireContext(),
+                                    "❌ Error de TTS: $error",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                Log.e("ChatBotFragment", "TTS error: $error")
+                            }
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                Toast.makeText(
+                    requireContext(),
+                    "❌ Error al reproducir: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+                Log.e("ChatBotFragment", "TTS exception: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * Procesa la edición del mensaje: actualiza el mensaje original y elimina respuestas subsecuentes
+     * Adaptado a ChatMessageAdapter que usa ListAdapter y base de datos
+     */
+    private fun handleMessageEdit(originalMessage: ChatMessage, newText: String) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    // 1. Get all messages from database
+                    val allMessages = database.chatMessageDao().getAllMessages().first()
+                    val messageIndex = allMessages.indexOfFirst { it.id == originalMessage.id }
                     
-                    // Procesar directamente con el AI
+                    if (messageIndex == -1) {
+                        Log.e("ChatBotFragment", "Message not found in database")
+                        return@withContext
+                    }
+                    
+                    // 2. Delete all messages after the edited one
+                    val messagesToDelete = allMessages.drop(messageIndex + 1)
+                    messagesToDelete.forEach { msg ->
+                        database.chatMessageDao().deleteMessage(msg)
+                    }
+                    
+                    // 3. Update the original message with new text
+                    val updatedMessage = originalMessage.copy(message = newText)
+                    database.chatMessageDao().updateMessage(updatedMessage)
+                }
+                
+                withContext(Dispatchers.Main) {
+                    // 4. Reload messages in UI
+                    loadMessages()
+                    
+                    // 5. Show loading spinner
+                    loadingProgressBar.visibility = View.VISIBLE
+                    scrollToBottomSmooth()
+                    
                     try {
-                        val botResponse = analizarEntregaYFeedback(newMessageText, currentFileContext)
+                        // 6. Re-process the message with new text
+                        val response = if (currentFileContext != null) {
+                            analizarEntregaYFeedback(newText, currentFileContext)
+                        } else {
+                            generateFallbackResponse(newText)
+                        }
                         
-                        // Crear respuesta del bot
+                        // 7. Hide spinner
+                        loadingProgressBar.visibility = View.GONE
+                        
+                        // 8. Add new bot response
+                        val hasCalification = detectCalification(newText, response)
                         val botMessage = ChatMessage(
-                            message = botResponse,
+                            message = response,
                             isFromUser = false,
-                            timestamp = System.currentTimeMillis(),
                             sessionId = sessionId,
-                            hasCalification = detectCalification(newMessageText, botResponse),
+                            hasCalification = hasCalification,
                             calificationAdded = false,
                             senderUsername = "DeepSeek",
                             senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                         )
                         
-                        // Guardar respuesta del bot en la base de datos
                         withContext(Dispatchers.IO) {
                             database.chatMessageDao().insertMessage(botMessage)
                         }
                         
-                        // Recargar mensajes para mostrar la nueva respuesta
+                        // 9. Reload messages to show new response
                         loadMessages()
+                        scrollToBottomSmooth()
                         
                     } catch (e: Exception) {
-                        Log.e("ChatBotFragment", "Error processing edited message", e)
+                        // Hide spinner
+                        loadingProgressBar.visibility = View.GONE
+                        
                         val errorMessage = ChatMessage(
-                            message = "Error al procesar el mensaje editado: ${e.message}",
+                            message = "Error al procesar la consulta editada: ${e.message}",
                             isFromUser = false,
-                            timestamp = System.currentTimeMillis(),
                             sessionId = sessionId,
                             hasCalification = false,
                             calificationAdded = false,
@@ -2329,17 +2408,20 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         withContext(Dispatchers.IO) {
                             database.chatMessageDao().insertMessage(errorMessage)
                         }
+                        
                         loadMessages()
-                    } finally {
-                        loadingProgressBar.visibility = View.GONE
                     }
+                    
+                    Log.d("ChatBotFragment", "Successfully edited message: ${originalMessage.id}")
                 }
                 
             } catch (e: Exception) {
-                Log.e("ChatBotFragment", "Error in handleMessageEdit", e)
-                withContext(Dispatchers.Main) {
-                    loadingProgressBar.visibility = View.GONE
-                    Toast.makeText(requireContext(), "Error al editar mensaje", Toast.LENGTH_SHORT).show()
+                Log.e("ChatBotFragment", "Error editing message", e)
+                // Check if fragment is still attached before showing Toast
+                if (isAdded && context != null) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "Error al editar mensaje: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }

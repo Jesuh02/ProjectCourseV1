@@ -358,8 +358,8 @@ class DatabaseChatAdapter(
         }
         
         /**
-         * Format text with Markdown bold (**text**) and remove asterisks
-         * Converts **bold** to actual bold spans and removes the asterisks
+         * Format text with Markdown: **bold**, *italic*, _italic_, #headers
+         * Removes markdown markers and applies proper text styling
          */
         private fun formatBoldText(text: String): SpannableString {
             var processedText = text
@@ -369,29 +369,94 @@ class DatabaseChatAdapter(
                 processedText = formatMarkdownTable(text)
             }
             
-            // Process Markdown bold (**text**) - remove asterisks and track positions
-            val boldPattern = Regex("\\*\\*(.+?)\\*\\*")
+            // Process markdown formatting and build result
+            val result = StringBuilder()
             val boldRanges = mutableListOf<Pair<Int, Int>>()
+            val italicRanges = mutableListOf<Pair<Int, Int>>()
             
-            // First pass: find all bold sections and calculate their final positions
-            var offset = 0
-            var tempText = processedText
-            
-            boldPattern.findAll(processedText).forEach { match ->
-                val adjustedStart = match.range.first - offset
-                val contentLength = match.groupValues[1].length
-                boldRanges.add(Pair(adjustedStart, adjustedStart + contentLength))
-                offset += 4 // Remove 4 asterisks (2 on each side)
+            var i = 0
+            while (i < processedText.length) {
+                when {
+                    // Bold: **text**
+                    i + 1 < processedText.length && processedText[i] == '*' && processedText[i + 1] == '*' -> {
+                        val endIndex = processedText.indexOf("**", i + 2)
+                        if (endIndex != -1) {
+                            val startPos = result.length
+                            val boldContent = processedText.substring(i + 2, endIndex)
+                            result.append(boldContent)
+                            boldRanges.add(Pair(startPos, result.length))
+                            i = endIndex + 2
+                        } else {
+                            result.append(processedText[i])
+                            i++
+                        }
+                    }
+                    // Italic with single asterisk: *text* (but not **)
+                    processedText[i] == '*' && (i + 1 >= processedText.length || processedText[i + 1] != '*') && (i == 0 || !processedText[i-1].isLetterOrDigit()) -> {
+                        // Find closing * that is not part of **
+                        var endIndex = i + 1
+                        while (endIndex < processedText.length) {
+                            if (processedText[endIndex] == '*' && (endIndex + 1 >= processedText.length || processedText[endIndex + 1] != '*')) {
+                                break
+                            }
+                            endIndex++
+                        }
+                        if (endIndex < processedText.length && endIndex > i + 1) {
+                            val startPos = result.length
+                            val italicContent = processedText.substring(i + 1, endIndex)
+                            result.append(italicContent)
+                            italicRanges.add(Pair(startPos, result.length))
+                            i = endIndex + 1
+                        } else {
+                            result.append(processedText[i])
+                            i++
+                        }
+                    }
+                    // Italic: _text_ (but not in middle of word)
+                    processedText[i] == '_' && (i == 0 || !processedText[i-1].isLetterOrDigit()) -> {
+                        val endIndex = processedText.indexOf('_', i + 1)
+                        if (endIndex != -1 && (endIndex + 1 >= processedText.length || !processedText[endIndex + 1].isLetterOrDigit())) {
+                            val startPos = result.length
+                            val italicContent = processedText.substring(i + 1, endIndex)
+                            result.append(italicContent)
+                            italicRanges.add(Pair(startPos, result.length))
+                            i = endIndex + 1
+                        } else {
+                            result.append(processedText[i])
+                            i++
+                        }
+                    }
+                    // Headers: #, ##, ### at start of line -> bold without #
+                    processedText[i] == '#' && (i == 0 || processedText[i - 1] == '\n') -> {
+                        // Count number of # characters
+                        var hashCount = 0
+                        var j = i
+                        while (j < processedText.length && processedText[j] == '#') {
+                            hashCount++
+                            j++
+                        }
+                        // Skip any spaces after #
+                        while (j < processedText.length && processedText[j] == ' ') j++
+                        // Find end of line
+                        val lineEnd = processedText.indexOf('\n', j).let { if (it == -1) processedText.length else it }
+                        val startPos = result.length
+                        val headerContent = processedText.substring(j, lineEnd)
+                        result.append(headerContent)
+                        boldRanges.add(Pair(startPos, result.length))
+                        i = lineEnd
+                    }
+                    else -> {
+                        result.append(processedText[i])
+                        i++
+                    }
+                }
             }
             
-            // Remove all ** markers
-            tempText = tempText.replace("**", "")
-            processedText = tempText
+            val finalText = result.toString()
+            val spannableString = SpannableString(finalText)
             
-            val spannableString = SpannableString(processedText)
-            
-            // Apply bold to all tracked ranges from Markdown
-            boldRanges.forEach { (start, end) ->
+            // Apply bold spans
+            for ((start, end) in boldRanges) {
                 if (start >= 0 && end <= spannableString.length && start < end) {
                     spannableString.setSpan(
                         StyleSpan(Typeface.BOLD),
@@ -402,8 +467,20 @@ class DatabaseChatAdapter(
                 }
             }
             
+            // Apply italic spans
+            for ((start, end) in italicRanges) {
+                if (start >= 0 && end <= spannableString.length && start < end) {
+                    spannableString.setSpan(
+                        StyleSpan(Typeface.ITALIC),
+                        start,
+                        end,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+            }
+            
             // Also apply bold to lines with ":" (existing functionality)
-            val lines = processedText.split("\n")
+            val lines = finalText.split("\n")
             var currentPos = 0
             
             for (line in lines) {
