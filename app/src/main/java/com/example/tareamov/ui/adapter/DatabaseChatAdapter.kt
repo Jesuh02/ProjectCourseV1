@@ -28,7 +28,8 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 class DatabaseChatAdapter(
-    private val onEditUserMessageClick: (ChatMessage) -> Unit = {}
+    private val onTTSClick: (ChatMessage) -> Unit = {},
+    private val onEditClick: (ChatMessage) -> Unit = {}
 ) : RecyclerView.Adapter<DatabaseChatAdapter.MessageViewHolder>() {
     
     private val messages = mutableListOf<ChatMessage>()
@@ -168,10 +169,7 @@ class DatabaseChatAdapter(
         private val shareButton: ImageButton = itemView.findViewById(R.id.shareButton)
         private val copyButtonUser: ImageButton = itemView.findViewById(R.id.copyButtonUser)
         private val shareButtonUser: ImageButton = itemView.findViewById(R.id.shareButtonUser)
-        // Make editButtonUser nullable and safe to avoid crashes if not found in layout
-        private val editButtonUser: ImageButton? = try {
-            itemView.findViewById(R.id.editButtonUser)
-        } catch (e: Exception) { null }
+        private val editButtonUser: ImageButton = itemView.findViewById(R.id.editButtonUser)
         private val userAvatarImageView: ImageView? = itemView.findViewById(R.id.userAvatar)
         private val botAvatarImageView: ImageView? = itemView.findViewById(R.id.botAvatar)
 
@@ -186,6 +184,11 @@ class DatabaseChatAdapter(
         
         private val attachedFileType: TextView? = try {
             itemView.findViewById(R.id.attachedFileType)
+        } catch (e: Exception) { null }
+        
+        // TTS buttons
+        private val speakButton: ImageButton? = try {
+            itemView.findViewById(R.id.speakButton)
         } catch (e: Exception) { null }
 
         fun bind(message: ChatMessage, shouldAnimate: Boolean = true) {
@@ -319,13 +322,38 @@ class DatabaseChatAdapter(
             shareButton.setOnClickListener {
                 shareMessage(message.text)
             }
+            
+            speakButton?.apply {
+                // Update icon based on playing state
+                if (message.isPlaying) {
+                    if (message.isPaused) {
+                        setImageResource(android.R.drawable.ic_media_play)
+                        setColorFilter(android.graphics.Color.parseColor("#FFA500")) // Orange tint when paused
+                    } else {
+                        setImageResource(android.R.drawable.ic_media_pause)
+                        setColorFilter(android.graphics.Color.parseColor("#10A37F")) // Green tint when playing
+                    }
+                } else {
+                    setImageResource(R.drawable.ic_volume_up_minimal)
+                    setColorFilter(android.graphics.Color.parseColor("#555555")) // Default tint
+                }
+                
+                setOnClickListener {
+                    android.util.Log.d("DatabaseChatAdapter", "TTS button clicked for message: ${message.messageId}")
+                    onTTSClick(message)
+                }
+            }
         }
 
         private fun setupUserMessageActions(message: ChatMessage) {
             // Use minimal icons for user actions too
             copyButtonUser.setImageResource(R.drawable.ic_copy_minimal)
             shareButtonUser.setImageResource(R.drawable.ic_share_minimal)
-            editButtonUser?.setImageResource(R.drawable.ic_edit_minimal)
+            editButtonUser.setImageResource(R.drawable.ic_edit_minimal)
+
+            editButtonUser.setOnClickListener {
+                onEditClick(message)
+            }
 
             copyButtonUser.setOnClickListener {
                 copyToClipboard(message.text)
@@ -334,10 +362,15 @@ class DatabaseChatAdapter(
             shareButtonUser.setOnClickListener {
                 shareMessage(message.text)
             }
-            
-            // Safe call on nullable editButtonUser
-            editButtonUser?.setOnClickListener {
-                onEditUserMessageClick(message)
+
+            // Allow editing on long click
+            userMessageContainer.setOnLongClickListener {
+                onEditClick(message)
+                true
+            }
+            userMessageTextView.setOnLongClickListener {
+                onEditClick(message)
+                true
             }
         }
         

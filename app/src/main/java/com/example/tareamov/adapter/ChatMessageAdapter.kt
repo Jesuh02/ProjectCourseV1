@@ -32,8 +32,8 @@ import java.util.*
 class ChatMessageAdapter(
     private val onAddCalificationClick: (ChatMessage) -> Unit = {},
     private val onRejectCalificationClick: (ChatMessage) -> Unit = {},
-    private val onEditUserMessageClick: (ChatMessage) -> Unit = {},
     private val onTTSClick: (ChatMessage) -> Unit = {},
+    private val onEditClick: (ChatMessage) -> Unit = {},
     private var taskInfo: TaskInfo? = null
 ) : ListAdapter<ChatMessage, ChatMessageAdapter.MessageViewHolder>(MessageDiffCallback()) {
 
@@ -147,16 +147,12 @@ class ChatMessageAdapter(
         private val shareButton: ImageButton = itemView.findViewById(R.id.shareButton)
         private val copyButtonUser: ImageButton = itemView.findViewById(R.id.copyButtonUser)
         private val shareButtonUser: ImageButton = itemView.findViewById(R.id.shareButtonUser)
-        // Make editButtonUser nullable and safe to avoid crashes if not found in layout
-        private val editButtonUser: ImageButton? = try {
-            itemView.findViewById(R.id.editButtonUser)
+        private val editButtonUser: ImageButton = itemView.findViewById(R.id.editButtonUser)
+        
+        // TTS buttons
+        private val speakButton: ImageButton? = try {
+            itemView.findViewById(R.id.speakButton)
         } catch (e: Exception) { null }
-        // TTS buttons - Temporarily null until layout IDs are added
-        // TODO: Add ttsButton and ttsButtonUser ImageButtons to item_chat_message_improved.xml
-        // Then uncomment: private val ttsButton: ImageButton? = itemView.findViewById(R.id.ttsButton)
-        // Then uncomment: private val ttsButtonUser: ImageButton? = itemView.findViewById(R.id.ttsButtonUser)
-        private val ttsButton: ImageButton? = null
-        private val ttsButtonUser: ImageButton? = null
 
         fun bind(message: ChatMessage) {
             if (message.isFromUser) {
@@ -297,8 +293,25 @@ class ChatMessageAdapter(
                 shareMessage(message.message)
             }
             
-            ttsButton?.setOnClickListener {
-                onTTSClick(message)
+            speakButton?.apply {
+                // Update icon based on playing state
+                if (message.isPlaying) {
+                    if (message.isPaused) {
+                        setImageResource(android.R.drawable.ic_media_play)
+                        setColorFilter(android.graphics.Color.parseColor("#FFA500")) // Orange tint when paused
+                    } else {
+                        setImageResource(android.R.drawable.ic_media_pause)
+                        setColorFilter(android.graphics.Color.parseColor("#10A37F")) // Green tint when playing
+                    }
+                } else {
+                    setImageResource(R.drawable.ic_volume_up_minimal)
+                    setColorFilter(android.graphics.Color.parseColor("#555555")) // Default tint
+                }
+                
+                setOnClickListener {
+                    android.util.Log.d("ChatMessageAdapter", "TTS button clicked for message: ${message.id}")
+                    onTTSClick(message)
+                }
             }
         }
 
@@ -306,9 +319,11 @@ class ChatMessageAdapter(
             // Use minimal icons for user actions too
             copyButtonUser.setImageResource(R.drawable.ic_copy_minimal)
             shareButtonUser.setImageResource(R.drawable.ic_share_minimal)
-            editButtonUser?.setImageResource(R.drawable.ic_edit_minimal)
-            // TODO: Replace with proper TTS icon (ic_volume_minimal)
-            ttsButtonUser?.setImageResource(android.R.drawable.ic_lock_silent_mode_off)
+            editButtonUser.setImageResource(R.drawable.ic_edit_minimal)
+
+            editButtonUser.setOnClickListener {
+                onEditClick(message)
+            }
 
             copyButtonUser.setOnClickListener {
                 copyToClipboard(message.message)
@@ -317,13 +332,15 @@ class ChatMessageAdapter(
             shareButtonUser.setOnClickListener {
                 shareMessage(message.message)
             }
-            
-            editButtonUser?.setOnClickListener {
-                onEditUserMessageClick(message)
+
+            // Allow editing on long click
+            userMessageContainer.setOnLongClickListener {
+                onEditClick(message)
+                true
             }
-            
-            ttsButtonUser?.setOnClickListener {
-                onTTSClick(message)
+            userMessageTextView.setOnLongClickListener {
+                onEditClick(message)
+                true
             }
         }
         

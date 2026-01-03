@@ -19,7 +19,9 @@ data class ChatMessage(
     val senderAvatar: String? = null,
     val attachedFileUrl: String? = null, // URL del archivo adjunto (si existe)
     val attachedFileName: String? = null, // Nombre del archivo adjunto
-    val attachedFileType: String? = null // Tipo de archivo (ej: "excel")
+    val attachedFileType: String? = null, // Tipo de archivo (ej: "excel")
+    var isPlaying: Boolean = false, // Estado de reproducción de audio (TTS)
+    var isPaused: Boolean = false // Estado de pausa de audio (TTS)
 ) {
     /**
      * Convierte el mensaje a formato de cadena para persistencia

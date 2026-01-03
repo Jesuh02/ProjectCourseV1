@@ -28,6 +28,12 @@ data class ChatMessage(
     val attachedFileUrl: String? = null,
     val attachedFileName: String? = null,
     val attachedFileType: String? = null
-)
+) {
+    @androidx.room.Ignore
+    var isPlaying: Boolean = false
+    
+    @androidx.room.Ignore
+    var isPaused: Boolean = false
+}
 
 //Hola Herazo...

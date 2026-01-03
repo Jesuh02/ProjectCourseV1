@@ -38,6 +38,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var autoHideRunnable: Runnable? = null
     private var pendingUserSeekMs: Int? = null
     private var isScrubbing: Boolean = false
+    private var hasError: Boolean = false
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,7 +75,14 @@ class VideoPlayerActivity : AppCompatActivity() {
         val videoTitle = intent.getStringExtra("video_title") ?: getString(R.string.app_name)
         val videoDescription = intent.getStringExtra("video_description")
         val username = intent.getStringExtra("username")
-        val savedPosition = intent.getIntExtra("video_position", 0)
+        
+        // Determine start position: prefer saved state (recreation), then intent (fresh start)
+        val savedPosition = if (savedInstanceState != null && savedInstanceState.containsKey("video_position")) {
+            savedInstanceState.getInt("video_position")
+        } else {
+            intent.getIntExtra("video_position", 0)
+        }
+        
         binding.titleText.text = videoTitle
 
         Log.d("VideoPlayerActivity", "Received pathOrUri: $pathOrUri")
@@ -131,101 +139,162 @@ class VideoPlayerActivity : AppCompatActivity() {
         // Mostrar spinner mientras se carga el video
         binding.loadingSpinner.visibility = View.VISIBLE
 
-        binding.videoView.setVideoURI(uri)
-        binding.videoView.setOnPreparedListener { mp ->
-            mediaPlayer = mp
-            mediaPlayerPrepared = true
-            mp.isLooping = true
-            binding.totalTime.text = TimeUtils.formatTime(mp.duration)
-            binding.seekBar.max = mp.duration
-
-            // Ocultar spinner cuando el video esté listo
-            binding.loadingSpinner.visibility = View.GONE
-
-            // Ajuste explícito de aspecto para modo visualización (sin tocar)
-            try {
-                val videoW = mp.videoWidth
-                val videoH = mp.videoHeight
-                if (videoW > 0 && videoH > 0) {
-                    val dm = resources.displayMetrics
-                    val screenW = dm.widthPixels
-                    val screenH = dm.heightPixels
-                    val videoRatio = videoW.toFloat() / videoH
-                    val screenRatio = screenW.toFloat() / screenH
-
-                    val (targetW, targetH) = if (videoRatio > screenRatio) {
-                        // Video más ancho: ajusta al ancho de pantalla, deja barras arriba/abajo si toca
-                        val h = (screenW / videoRatio).toInt()
-                        screenW to h
-                    } else {
-                        // Video más alto o cuadrado: ajusta a la altura, deja barras a los lados si toca
-                        val w = (screenH * videoRatio).toInt()
-                        w to screenH
-                    }
-
-                    val lp = binding.videoView.layoutParams
-                    lp.width = targetW
-                    lp.height = targetH
-                    binding.videoView.layoutParams = lp
-                }
-            } catch (_: Exception) { }
-
-            setMuted(isMuted)
-            
-            // Restore saved video position from intent
-            if (savedPosition > 0) {
-                try {
-                    binding.videoView.seekTo(savedPosition)
-                    binding.currentTime.text = TimeUtils.formatTime(savedPosition)
-                    binding.seekBar.progress = savedPosition
-                    Log.d("VideoPlayerActivity", "Restored video position to $savedPosition ms")
-                } catch (e: Exception) {
-                    Log.e("VideoPlayerActivity", "Error restoring video position", e)
-                }
-            }
-            
-            binding.videoView.start()
-            startProgressUpdater()
-
-            // Sync when seek completes
-            try {
-                mp.setOnSeekCompleteListener {
-                    if (!isScrubbing) {
-                        val pos = binding.videoView.currentPosition
-                        binding.currentTime.text = TimeUtils.formatTime(pos)
-                        binding.seekBar.progress = pos
-                    }
-                }
-            } catch (_: Exception) { }
-
-            // Listener para buffering (muestra spinner mientras se carga más contenido)
-            try {
-                mp.setOnInfoListener { _, what, _ ->
-                    when (what) {
-                        MediaPlayer.MEDIA_INFO_BUFFERING_START -> {
-                            // Video está buffeando, mostrar spinner
-                            binding.loadingSpinner.visibility = View.VISIBLE
-                            Log.d("VideoPlayerActivity", "Buffering started")
-                        }
-                        MediaPlayer.MEDIA_INFO_BUFFERING_END -> {
-                            // Buffering terminado, ocultar spinner
-                            binding.loadingSpinner.visibility = View.GONE
-                            Log.d("VideoPlayerActivity", "Buffering ended")
-                        }
-                    }
-                    false
-                }
-            } catch (_: Exception) { }
-        }
-
+        // IMPORTANT: Set error listener BEFORE setting video URI to catch early errors
         binding.videoView.setOnErrorListener { _, what, extra ->
-            Log.e("VideoPlayerActivity", "Error playing video: what=$what, extra=$extra")
+            if (hasError) return@setOnErrorListener true
+            hasError = true
             mediaPlayerPrepared = false
+            
+            Log.e("VideoPlayerActivity", "Error playing video: what=$what, extra=$extra")
+            progressRunnable?.let { uiHandler.removeCallbacks(it) }
+            
             // Ocultar spinner si hay error
             binding.loadingSpinner.visibility = View.GONE
-            Toast.makeText(this, "Error al reproducir el video", Toast.LENGTH_SHORT).show()
-            finish()
+            
+            val errorMsg = when (what) {
+                MediaPlayer.MEDIA_ERROR_UNKNOWN -> "Error desconocido o formato no soportado"
+                MediaPlayer.MEDIA_ERROR_SERVER_DIED -> "Error de servidor de medios"
+                else -> "Error de reproducción ($what)"
+            }
+            
+            if (!isFinishing) {
+                Toast.makeText(this, errorMsg, Toast.LENGTH_SHORT).show()
+                finish()
+            }
             true
+        }
+
+        binding.videoView.setVideoURI(uri)
+        binding.videoView.setOnPreparedListener { mp ->
+            if (hasError || isFinishing) {
+                Log.w("VideoPlayerActivity", "onPrepared called but hasError=$hasError isFinishing=$isFinishing, ignoring")
+                return@setOnPreparedListener
+            }
+            try {
+                mediaPlayer = mp
+                
+                // Verify MediaPlayer is actually prepared before accessing properties
+                val duration = try { 
+                    val d = mp.duration
+                    if (d <= 0) {
+                        Log.e("VideoPlayerActivity", "Invalid duration: $d - video source may be corrupt or inaccessible")
+                        hasError = true
+                        binding.loadingSpinner.visibility = View.GONE
+                        if (!isFinishing) {
+                            Toast.makeText(this@VideoPlayerActivity, "El video no se puede reproducir (formato no soportado o archivo corrupto)", Toast.LENGTH_SHORT).show()
+                            finish()
+                        }
+                        return@setOnPreparedListener
+                    } else d
+                } catch (e: Exception) { 
+                    Log.e("VideoPlayerActivity", "Error getting duration", e)
+                    hasError = true
+                    binding.loadingSpinner.visibility = View.GONE
+                    if (!isFinishing) {
+                        Toast.makeText(this@VideoPlayerActivity, "Error al cargar el video", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
+                    return@setOnPreparedListener
+                }
+                
+                // Only mark as prepared after successful duration check
+                mediaPlayerPrepared = true
+                mp.isLooping = true
+                
+                binding.totalTime.text = TimeUtils.formatTime(duration)
+                binding.seekBar.max = duration
+
+                // Ocultar spinner cuando el video esté listo
+                binding.loadingSpinner.visibility = View.GONE
+
+                // Ajuste explícito de aspecto para modo visualización (sin tocar)
+                try {
+                    val videoW = mp.videoWidth
+                    val videoH = mp.videoHeight
+                    if (videoW > 0 && videoH > 0) {
+                        val dm = resources.displayMetrics
+                        val screenW = dm.widthPixels
+                        val screenH = dm.heightPixels
+                        val videoRatio = videoW.toFloat() / videoH
+                        val screenRatio = screenW.toFloat() / screenH
+
+                        val (targetW, targetH) = if (videoRatio > screenRatio) {
+                            // Video más ancho: ajusta al ancho de pantalla, deja barras arriba/abajo si toca
+                            val h = (screenW / videoRatio).toInt()
+                            screenW to h
+                        } else {
+                            // Video más alto o cuadrado: ajusta a la altura, deja barras a los lados si toca
+                            val w = (screenH * videoRatio).toInt()
+                            w to screenH
+                        }
+
+                        val lp = binding.videoView.layoutParams
+                        lp.width = targetW
+                        lp.height = targetH
+                        binding.videoView.layoutParams = lp
+                    }
+                } catch (_: Exception) { }
+
+                setMuted(isMuted)
+                
+                // Restore saved video position from intent
+                if (savedPosition > 0) {
+                    try {
+                        mp.seekTo(savedPosition)
+                        binding.currentTime.text = TimeUtils.formatTime(savedPosition)
+                        binding.seekBar.progress = savedPosition
+                        Log.d("VideoPlayerActivity", "Restored video position to $savedPosition ms")
+                    } catch (e: Exception) {
+                        Log.e("VideoPlayerActivity", "Error restoring video position", e)
+                    }
+                }
+                
+                if (!hasError) {
+                    try {
+                        mp.start()
+                        startProgressUpdater()
+                    } catch (e: Exception) {
+                        Log.e("VideoPlayerActivity", "Error starting playback", e)
+                        hasError = true
+                        mediaPlayerPrepared = false
+                    }
+                }
+
+                // Sync when seek completes
+                try {
+                    mp.setOnSeekCompleteListener {
+                        if (!isScrubbing) {
+                            try {
+                                val pos = mp.currentPosition
+                                binding.currentTime.text = TimeUtils.formatTime(pos)
+                                binding.seekBar.progress = pos
+                            } catch (e: Exception) { Log.e("VideoPlayerActivity", "Error in OnSeekComplete", e) }
+                        }
+                    }
+                } catch (_: Exception) { }
+
+                // Listener para buffering (muestra spinner mientras se carga más contenido)
+                try {
+                    mp.setOnInfoListener { _, what, _ ->
+                        when (what) {
+                            MediaPlayer.MEDIA_INFO_BUFFERING_START -> {
+                                // Video está buffeando, mostrar spinner
+                                binding.loadingSpinner.visibility = View.VISIBLE
+                                Log.d("VideoPlayerActivity", "Buffering started")
+                            }
+                            MediaPlayer.MEDIA_INFO_BUFFERING_END -> {
+                                // Buffering terminado, ocultar spinner
+                                binding.loadingSpinner.visibility = View.GONE
+                                Log.d("VideoPlayerActivity", "Buffering ended")
+                            }
+                        }
+                        false
+                    }
+                } catch (_: Exception) { }
+            } catch (e: Exception) {
+                Log.e("VideoPlayerActivity", "Error in onPrepared", e)
+                mediaPlayerPrepared = false
+            }
         }
 
     // Start with controls hidden
@@ -252,13 +321,18 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
 
         binding.playPauseOverlay.setOnClickListener {
-            if (binding.videoView.isPlaying) {
-                binding.videoView.pause()
-            } else {
-                binding.videoView.start()
+            if (!mediaPlayerPrepared) return@setOnClickListener
+            try {
+                if (binding.videoView.isPlaying) {
+                    binding.videoView.pause()
+                } else {
+                    binding.videoView.start()
+                }
+                updatePlayPauseIcon()
+                scheduleAutoHide()
+            } catch (e: Exception) {
+                Log.e("VideoPlayerActivity", "Error toggling play/pause", e)
             }
-            updatePlayPauseIcon()
-            scheduleAutoHide()
         }
 
         binding.backButton.setOnClickListener {
@@ -443,14 +517,20 @@ class VideoPlayerActivity : AppCompatActivity() {
         progressRunnable?.let { uiHandler.removeCallbacks(it) }
         progressRunnable = object : Runnable {
             override fun run() {
+                if (isFinishing || !mediaPlayerPrepared) return
+
                 try {
-                    if (!isScrubbing) {
+                    if (!isScrubbing && binding.videoView.isPlaying) {
                         val pos = binding.videoView.currentPosition
                         binding.seekBar.progress = pos
                         binding.currentTime.text = TimeUtils.formatTime(pos)
                     }
+                } catch (e: Exception) {
+                    Log.w("VideoPlayerActivity", "Error updating progress: ${e.message}")
                 } finally {
-                    uiHandler.postDelayed(this, 500)
+                    if (!isFinishing) {
+                        uiHandler.postDelayed(this, 500)
+                    }
                 }
             }
         }
@@ -481,18 +561,28 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun seekBy(deltaMs: Int) {
-        val duration = if (binding.videoView.duration > 0) binding.videoView.duration else binding.seekBar.max
-        val newPos = (binding.videoView.currentPosition + deltaMs).coerceIn(0, duration)
-        binding.videoView.seekTo(newPos)
-        binding.currentTime.text = TimeUtils.formatTime(newPos)
-        showControls()
+        if (!mediaPlayerPrepared) return
+        try {
+            val duration = if (binding.videoView.duration > 0) binding.videoView.duration else binding.seekBar.max
+            val newPos = (binding.videoView.currentPosition + deltaMs).coerceIn(0, duration)
+            binding.videoView.seekTo(newPos)
+            binding.currentTime.text = TimeUtils.formatTime(newPos)
+            showControls()
+        } catch (e: Exception) {
+            Log.e("VideoPlayerActivity", "Error seeking", e)
+        }
     }
 
     private fun updatePlayPauseIcon() {
-        if (binding.videoView.isPlaying) {
-            binding.playPauseOverlay.setImageResource(R.drawable.ic_pause_overlay)
-        } else {
-            binding.playPauseOverlay.setImageResource(R.drawable.ic_play_overlay)
+        if (!mediaPlayerPrepared) return
+        try {
+            if (binding.videoView.isPlaying) {
+                binding.playPauseOverlay.setImageResource(R.drawable.ic_pause_overlay)
+            } else {
+                binding.playPauseOverlay.setImageResource(R.drawable.ic_play_overlay)
+            }
+        } catch (e: Exception) {
+            Log.e("VideoPlayerActivity", "Error updating play/pause icon", e)
         }
     }
 
@@ -534,6 +624,27 @@ class VideoPlayerActivity : AppCompatActivity() {
             binding.topBar.visibility = View.VISIBLE
             binding.bottomBar.visibility = View.VISIBLE
             binding.controlsOverlay.visibility = View.VISIBLE
+            
+            // Ensure controls are ready and progress is updating
+            showControls()
+            try {
+                if (mediaPlayerPrepared && binding.videoView.isPlaying) {
+                    startProgressUpdater()
+                }
+            } catch (e: Exception) {
+                Log.e("VideoPlayerActivity", "Error resuming from PIP", e)
+            }
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        try {
+            if (mediaPlayerPrepared) {
+                outState.putInt("video_position", binding.videoView.currentPosition)
+            }
+        } catch (e: Exception) {
+            Log.e("VideoPlayerActivity", "Error saving state", e)
         }
     }
 

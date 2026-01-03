@@ -718,11 +718,11 @@ class ChatBotFragment : Fragment() {
             onRejectCalificationClick = { message ->
                 handleRejectCalification(message)
             },
-            onEditUserMessageClick = { message ->
-                handleEditUserMessage(message)
-            },
             onTTSClick = { message ->
                 handleTTSClick(message)
+            },
+            onEditClick = { message ->
+                showEditMessageDialog(message)
             },
             taskInfo = null // Se actualizará dinámicamente cuando se cargue la información
         )
@@ -895,6 +895,161 @@ class ChatBotFragment : Fragment() {
      * 2. llama3:latest: califica (1-10) y da retroalimentación al usuario en base al veredicto.
      * El cliente solo envía el mensaje del usuario y el contenido completo del archivo (descripcionTarea).
      */
+    private fun showEditMessageDialog(message: ChatMessage) {
+        val context = context ?: return
+        
+        val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_edit_message, null)
+        val editMessageInput = dialogView.findViewById<EditText>(R.id.editMessageInput)
+        val saveButton = dialogView.findViewById<View>(R.id.saveButton)
+        val cancelButton = dialogView.findViewById<View>(R.id.cancelButton)
+        
+        editMessageInput.setText(message.message)
+        editMessageInput.setSelection(message.message.length)
+        
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(context)
+            .setView(dialogView)
+            .setCancelable(true)
+            .create()
+            
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        
+        saveButton.setOnClickListener {
+            val newText = editMessageInput.text.toString().trim()
+            if (newText.isNotEmpty() && newText != message.message) {
+                handleEditAndResend(message, newText)
+            }
+            dialog.dismiss()
+        }
+        
+        cancelButton.setOnClickListener {
+            dialog.dismiss()
+        }
+        
+        dialog.show()
+    }
+
+    private fun handleEditAndResend(message: ChatMessage, newText: String) {
+        lifecycleScope.launch {
+            // 1. Update message in DB and remove subsequent messages
+            withContext(Dispatchers.IO) {
+                // Update the message text
+                val updatedMessage = message.copy(message = newText)
+                database.chatMessageDao().updateMessage(updatedMessage)
+                
+                // Delete all messages AFTER this one
+                val allMessages = database.chatMessageDao().getAllMessages().first()
+                val messageIndex = allMessages.indexOfFirst { it.id == message.id }
+                
+                if (messageIndex != -1 && messageIndex < allMessages.size - 1) {
+                    val messagesToDelete = allMessages.subList(messageIndex + 1, allMessages.size)
+                    messagesToDelete.forEach { 
+                        database.chatMessageDao().deleteMessage(it) 
+                    }
+                }
+            }
+            
+            // 2. Refresh UI
+            loadMessages()
+            
+            // 3. Resend to LLM (Reuse sendMessage logic but without creating new user message)
+            // We'll call a modified version of the logic inside sendMessage
+            processMessageWithLLM(newText)
+        }
+    }
+
+    private fun processMessageWithLLM(messageText: String) {
+        lifecycleScope.launch {
+            loadingProgressBar.visibility = View.VISIBLE
+            
+            // Prepare context variables (similar to sendMessage)
+            val effectiveTaskDescription = taskDescription
+            val effectiveFileContent = currentFileContext?.fileContent ?: ""
+            val effectiveJsonContent = currentFileContext?.jsonContent ?: ""
+            val effectiveMetadata = currentFileContext?.metadata ?: ""
+
+            // Data class local para capturar tanto el texto como la nota del backend
+            data class LLMResponse(val text: String, val nota: Float?)
+
+            try {
+                val llmResponse = withContext(Dispatchers.IO) {
+                    try {
+                        val currentSubmissionId = currentFileContext?.submissionId
+                        val currentTaskIdForRequest = currentSubmissionId
+                        val currentStudentId = sessionManager.getUserId()
+                        
+                        val body = com.example.tareamov.network.MicroservicioPromptRequest(
+                            prompt = messageText,
+                            ollamaUrl = getOllamaUrl(),
+                            taskDescription = if (effectiveTaskDescription.isNotEmpty()) effectiveTaskDescription else "",
+                            fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else "",
+                            jsonContent = if (effectiveJsonContent.isNotEmpty()) effectiveJsonContent else null,
+                            metadata = if (effectiveMetadata.isNotEmpty()) effectiveMetadata else null,
+                            userId = sessionManager.getUserId(),
+                            submissionId = currentSubmissionId,
+                            taskId = currentTaskIdForRequest,
+                            studentId = currentStudentId,
+                            fileUri = null
+                        )   
+                        
+                        val currentUserId = sessionManager.getUserId()
+                        val bodyWithUserId = body.copy(userId = currentUserId)
+                        val res = microservicioApi.procesarPrompt(bodyWithUserId)
+                        
+                        if (res.respuesta_texto.isNullOrBlank()) {
+                            if (effectiveFileContent.isBlank() || effectiveFileContent.length < 50) {
+                                LLMResponse("El archivo enviado está vacío o no se pudo leer su contenido.", 0f)
+                            } else {
+                                LLMResponse("Hubo un problema al procesar tu solicitud.", null)
+                            }
+                        } else {
+                            LLMResponse(res.respuesta_texto, res.nota)
+                        }
+                    } catch (e: Exception) {
+                        LLMResponse("Error al procesar la solicitud: ${e.message}", null)
+                    }
+                }
+                
+                val response = llmResponse.text.replace("#", "").replace("**", "")
+                
+                val hasCalification = detectCalification(messageText, response) || llmResponse.nota != null
+                val calificationValue = if (llmResponse.nota != null) {
+                    val notaValue = llmResponse.nota
+                    if (notaValue % 1 == 0f) "${notaValue.toInt()}/10" else String.format("%.1f/10", notaValue)
+                } else {
+                    extractCalificationValue(response)
+                }
+                
+                val botMessage = ChatMessage(
+                    message = response,
+                    isFromUser = false,
+                    sessionId = sessionId,
+                    hasCalification = hasCalification,
+                    calificationValue = calificationValue,
+                    calificationAdded = false,
+                    senderUsername = "DeepSeek",
+                    senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
+                )
+                withContext(Dispatchers.IO) {
+                    val savedBotId = database.chatMessageDao().insertMessage(botMessage)
+                    try {
+                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
+                        val toSend = botMessage.copy(id = savedBotId)
+                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            supabaseRepo.upsert("chat_messages", toSend)
+                        }
+                    } catch (e: Exception) { }
+                }
+                
+                loadMessages()
+                
+            } catch (e: Exception) {
+                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                loadingProgressBar.visibility = View.GONE
+            }
+        }
+    }
+
     private fun sendMessage() {
         val messageText = messageEditText.text.toString().trim()
         if (messageText.isEmpty()) return
@@ -1670,7 +1825,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     }
                 }
                 
-                val response = llmResponse.text
+                val response = llmResponse.text.replace("#", "").replace("**", "")
                 
                 // Usar la nota del backend si está disponible, sino extraerla del texto
                 val hasCalification = detectCalification(messageText, response) || llmResponse.nota != null
@@ -2230,41 +2385,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
     /**
      * Maneja la edición de un mensaje del usuario
      */
-    private fun handleEditUserMessage(message: ChatMessage) {
-        // Crear un diálogo para editar el mensaje
-        val editText = EditText(requireContext()).apply {
-            setText(message.message)
-            setSelection(message.message.length) // Poner cursor al final
-            hint = "Editar mensaje..."
-            setTextColor(ContextCompat.getColor(requireContext(), android.R.color.white))
-            setHintTextColor(ContextCompat.getColor(requireContext(), android.R.color.darker_gray))
-            backgroundTintList = ContextCompat.getColorStateList(requireContext(), android.R.color.white)
-        }
 
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("✏️ Editar Mensaje")
-            .setMessage("Modifica tu mensaje y se volverá a enviar al modelo:")
-            .setView(editText)
-            .setPositiveButton("🔄 Actualizar y Reenviar") { _, _ ->
-                val newMessageText = editText.text.toString().trim()
-                if (newMessageText.isNotEmpty() && newMessageText != message.message) {
-                    handleMessageEdit(message, newMessageText)
-                }
-            }
-            .setNegativeButton("❌ Cancelar", null)
-            .create()
-            .apply {
-                // Estilo del diálogo
-                window?.setBackgroundDrawableResource(android.R.color.black)
-                show()
-                getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setTextColor(
-                    ContextCompat.getColor(requireContext(), android.R.color.holo_green_light)
-                )
-                getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.setTextColor(
-                    ContextCompat.getColor(requireContext(), android.R.color.holo_red_light)
-                )
-            }
-    }
 
     /**
      * Maneja el click en el botón TTS para reproducir el mensaje con voz
@@ -2272,15 +2393,45 @@ El archivo enviado está vacío o no se pudo leer su contenido.
     private fun handleTTSClick(message: ChatMessage) {
         lifecycleScope.launch {
             try {
-                // Detener cualquier reproducción anterior
+                if (message.isPlaying) {
+                    // Toggle Pause/Resume
+                    if (ttsService.isCurrentlyPlaying()) {
+                        ttsService.pausePlayback()
+                        message.isPaused = true
+                        if (isAdded && context != null) {
+                            Toast.makeText(requireContext(), "⏸️ Pausado", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        ttsService.resumePlayback()
+                        message.isPaused = false
+                        if (isAdded && context != null) {
+                            Toast.makeText(requireContext(), "▶️ Reanudando", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    chatAdapter.notifyDataSetChanged()
+                    return@launch
+                }
+
+                // Stop any current playback and reset states
                 ttsService.stopPlayback()
+                chatAdapter.currentList.forEach { 
+                    it.isPlaying = false 
+                    it.isPaused = false
+                }
+                
+                // Set playing state
+                message.isPlaying = true
+                message.isPaused = false
+                chatAdapter.notifyDataSetChanged()
                 
                 // Mostrar feedback visual
-                Toast.makeText(
-                    requireContext(),
-                    "🔊 Reproduciendo mensaje...",
-                    Toast.LENGTH_SHORT
-                ).show()
+                if (isAdded && context != null) {
+                    Toast.makeText(
+                        requireContext(),
+                        "🔊 Reproduciendo mensaje...",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
                 
                 // Reproducir el mensaje con voz natural (usando voz NOVA por defecto)
                 ttsService.speak(
@@ -2292,140 +2443,53 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     onComplete = {
                         lifecycleScope.launch {
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(
-                                    requireContext(),
-                                    "✅ Reproducción completada",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                message.isPlaying = false
+                                message.isPaused = false
+                                chatAdapter.notifyDataSetChanged()
+                                if (isAdded && context != null) {
+                                    Toast.makeText(
+                                        requireContext(),
+                                        "✅ Reproducción completada",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
                             }
                         }
                     },
                     onError = { error ->
                         lifecycleScope.launch {
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(
-                                    requireContext(),
-                                    "❌ Error de TTS: $error",
-                                    Toast.LENGTH_LONG
-                                ).show()
+                                message.isPlaying = false
+                                message.isPaused = false
+                                chatAdapter.notifyDataSetChanged()
+                                if (isAdded && context != null) {
+                                    Toast.makeText(
+                                        requireContext(),
+                                        "❌ Error de TTS: $error",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
                                 Log.e("ChatBotFragment", "TTS error: $error")
                             }
                         }
                     }
                 )
             } catch (e: Exception) {
-                Toast.makeText(
-                    requireContext(),
-                    "❌ Error al reproducir: ${e.message}",
-                    Toast.LENGTH_LONG
-                ).show()
-                Log.e("ChatBotFragment", "TTS exception: ${e.message}", e)
+                message.isPlaying = false
+                message.isPaused = false
+                chatAdapter.notifyDataSetChanged()
+                if (isAdded && context != null) {
+                    Toast.makeText(
+                        requireContext(),
+                        "❌ Error al reproducir: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
     }
 
-    /**
-     * Procesa la edición del mensaje: actualiza el mensaje original y elimina respuestas subsecuentes
-     * Adaptado a ChatMessageAdapter que usa ListAdapter y base de datos
-     */
-    private fun handleMessageEdit(originalMessage: ChatMessage, newText: String) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    // 1. Get all messages from database
-                    val allMessages = database.chatMessageDao().getAllMessages().first()
-                    val messageIndex = allMessages.indexOfFirst { it.id == originalMessage.id }
-                    
-                    if (messageIndex == -1) {
-                        Log.e("ChatBotFragment", "Message not found in database")
-                        return@withContext
-                    }
-                    
-                    // 2. Delete all messages after the edited one
-                    val messagesToDelete = allMessages.drop(messageIndex + 1)
-                    messagesToDelete.forEach { msg ->
-                        database.chatMessageDao().deleteMessage(msg)
-                    }
-                    
-                    // 3. Update the original message with new text
-                    val updatedMessage = originalMessage.copy(message = newText)
-                    database.chatMessageDao().updateMessage(updatedMessage)
-                }
-                
-                withContext(Dispatchers.Main) {
-                    // 4. Reload messages in UI
-                    loadMessages()
-                    
-                    // 5. Show loading spinner
-                    loadingProgressBar.visibility = View.VISIBLE
-                    scrollToBottomSmooth()
-                    
-                    try {
-                        // 6. Re-process the message with new text
-                        val response = if (currentFileContext != null) {
-                            analizarEntregaYFeedback(newText, currentFileContext)
-                        } else {
-                            generateFallbackResponse(newText)
-                        }
-                        
-                        // 7. Hide spinner
-                        loadingProgressBar.visibility = View.GONE
-                        
-                        // 8. Add new bot response
-                        val hasCalification = detectCalification(newText, response)
-                        val botMessage = ChatMessage(
-                            message = response,
-                            isFromUser = false,
-                            sessionId = sessionId,
-                            hasCalification = hasCalification,
-                            calificationAdded = false,
-                            senderUsername = "DeepSeek",
-                            senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
-                        )
-                        
-                        withContext(Dispatchers.IO) {
-                            database.chatMessageDao().insertMessage(botMessage)
-                        }
-                        
-                        // 9. Reload messages to show new response
-                        loadMessages()
-                        scrollToBottomSmooth()
-                        
-                    } catch (e: Exception) {
-                        // Hide spinner
-                        loadingProgressBar.visibility = View.GONE
-                        
-                        val errorMessage = ChatMessage(
-                            message = "Error al procesar la consulta editada: ${e.message}",
-                            isFromUser = false,
-                            sessionId = sessionId,
-                            hasCalification = false,
-                            calificationAdded = false,
-                            senderUsername = "DeepSeek",
-                            senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
-                        )
-                        
-                        withContext(Dispatchers.IO) {
-                            database.chatMessageDao().insertMessage(errorMessage)
-                        }
-                        
-                        loadMessages()
-                    }
-                    
-                    Log.d("ChatBotFragment", "Successfully edited message: ${originalMessage.id}")
-                }
-                
-            } catch (e: Exception) {
-                Log.e("ChatBotFragment", "Error editing message", e)
-                // Check if fragment is still attached before showing Toast
-                if (isAdded && context != null) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(requireContext(), "Error al editar mensaje: ${e.message}", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-        }
-    }
+
 
     /**
      * Muestra el overlay con las tareas calificadas

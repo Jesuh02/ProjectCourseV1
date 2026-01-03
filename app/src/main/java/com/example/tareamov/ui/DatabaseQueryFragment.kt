@@ -42,6 +42,7 @@ import com.example.tareamov.service.ServerEndpointResolver
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import android.widget.EditText
+import android.widget.Button
 import android.provider.OpenableColumns
 
 class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
@@ -58,6 +59,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     
     // MCP HTTP Client for CourseV by YisusFactory MCP Server (connects via HTTP to Node.js server)
     private lateinit var mcpHttpClient: com.example.tareamov.service.MCPHttpClient
+    
+    // TTS Service
+    private lateinit var ttsService: com.example.tareamov.service.TTSService
     
     // Enhanced chat state management per user
     private val chatHistory = mutableListOf<ChatMessage>()
@@ -316,6 +320,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
 
 
         database = AppDatabase.getDatabase(requireContext())
+        
+        // Initialize TTS Service
+        ttsService = com.example.tareamov.service.TTSService.getInstance(requireContext())
 
         
         // Initialize MCP HTTP Client for tareamov-mcp-server
@@ -645,10 +652,73 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         Log.d("DatabaseQueryFragment", "Updated user indicator to: $username")
     }
 
-    private fun setupChatRecyclerView() {
-        chatAdapter = DatabaseChatAdapter { message ->
-            handleEditUserMessage(message)
+    private fun showEditMessageDialog(message: ChatMessage) {
+        val context = context ?: return
+        
+        val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_edit_message, null)
+        val editMessageInput = dialogView.findViewById<EditText>(R.id.editMessageInput)
+        val saveButton = dialogView.findViewById<View>(R.id.saveButton)
+        val cancelButton = dialogView.findViewById<View>(R.id.cancelButton)
+        
+        editMessageInput.setText(message.text)
+        editMessageInput.setSelection(message.text.length)
+        
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(context)
+            .setView(dialogView)
+            .setCancelable(true)
+            .create()
+            
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        
+        saveButton.setOnClickListener {
+            val newText = editMessageInput.text.toString().trim()
+            if (newText.isNotEmpty() && newText != message.text) {
+                handleEditAndResend(message, newText)
+            }
+            dialog.dismiss()
         }
+        
+        cancelButton.setOnClickListener {
+            dialog.dismiss()
+        }
+        
+        dialog.show()
+    }
+
+    private fun handleEditAndResend(message: ChatMessage, newText: String) {
+        // 1. Update message in list
+        val index = chatHistory.indexOfFirst { it.messageId == message.messageId }
+        if (index != -1) {
+            // Update the message
+            val updatedMessage = message.copy(text = newText)
+            chatHistory[index] = updatedMessage
+            
+            // Remove subsequent messages
+            if (index < chatHistory.size - 1) {
+                val countToRemove = chatHistory.size - 1 - index
+                repeat(countToRemove) {
+                    chatHistory.removeAt(chatHistory.size - 1)
+                }
+            }
+            
+            // Reload adapter
+            chatAdapter.clear()
+            chatHistory.forEach { chatAdapter.addMessage(it) }
+            
+            // 2. Resend to LLM (skip adding user message again)
+            processQuery(newText, skipUserMessage = true)
+        }
+    }
+
+    private fun setupChatRecyclerView() {
+        chatAdapter = DatabaseChatAdapter(
+            onTTSClick = { message ->
+                handleTTSClick(message)
+            },
+            onEditClick = { message ->
+                showEditMessageDialog(message)
+            }
+        )
         
         // Set user avatar from session
         val userAvatar = sessionManager.getUserAvatar()
@@ -1070,13 +1140,15 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         return false
     }
 
-    private fun processQuery(query: String) {
+    private fun processQuery(query: String, skipUserMessage: Boolean = false) {
         Log.d("DatabaseQueryFragment", "=== MAIN QUERY PROCESSING ===")
         Log.d("DatabaseQueryFragment", "User Query: $query")
         
-        // Add user message to chat first
+        // Add user message to chat first (only if not skipped)
         val attachedFile = if (attachedFiles.isNotEmpty()) attachedFiles[0] else null
-        addMessageToChat(query, true, attachedFile)
+        if (!skipUserMessage) {
+            addMessageToChat(query, true, attachedFile)
+        }
         
         // Immediately clear attached files from UI after sending
         if (attachedFiles.isNotEmpty()) {
@@ -2594,127 +2666,16 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
         // adapter.submitList(parseResults(result))
     }
 
-    private fun handleEditUserMessage(message: ChatMessage) {
-        val builder = androidx.appcompat.app.AlertDialog.Builder(requireContext())
-        builder.setTitle("Editar Mensaje")
-        
-        // Create EditText with current message
-        val editText = android.widget.EditText(requireContext()).apply {
-            setText(message.text)
-            setSelection(text.length) // Place cursor at end
-            setPadding(32, 24, 32, 24)
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.GRAY)
-            setBackgroundResource(android.R.color.transparent)
-            textSize = 16f
-        }
-        
-        // Create container with padding and black background
-        val container = android.widget.FrameLayout(requireContext()).apply {
-            addView(editText)
-            setPadding(48, 32, 48, 32)
-            setBackgroundColor(Color.BLACK)
-        }
-        
-        builder.setView(container)
-        
-        // Style the dialog
-        val dialog = builder.create().apply {
-            window?.setBackgroundDrawableResource(android.R.color.black)
-            setOnShowListener {
-                // Style buttons
-                getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.apply {
-                    setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.parseColor("#4CAF50"))
-                    setPadding(32, 16, 32, 16)
-                }
-                getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.apply {
-                    setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.parseColor("#f44336"))
-                    setPadding(32, 16, 32, 16)
-                }
-            }
-        }
-        
-        dialog.setButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE, "Enviar") { _, _ ->
-            val newText = editText.text.toString().trim()
-            if (newText.isNotEmpty() && newText != message.text) {
-                handleMessageEdit(message, newText)
-            }
-        }
-        
-        dialog.setButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE, "Cancelar") { _, _ ->
-            dialog.dismiss()
-        }
-        
-        dialog.show()
-    }
+
     
-    private fun handleMessageEdit(originalMessage: ChatMessage, newText: String) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                // Find the message in both chat history and adapter
-                val historyIndex = chatHistory.indexOfFirst { it.messageId == originalMessage.messageId }
-                
-                if (historyIndex != -1) {
-                    // Update the message text in chat history
-                    val updatedMessage = chatHistory[historyIndex].copy(text = newText)
-                    chatHistory[historyIndex] = updatedMessage
-                    
-                    // Update the message in the adapter
-                    chatAdapter.updateMessage(originalMessage.messageId, newText)
-                    
-                    // Remove ALL messages after the edited message (both user and bot responses)
-                    val messagesToRemove = chatHistory.drop(historyIndex + 1)
-                    messagesToRemove.forEach { messageToRemove ->
-                        chatAdapter.removeMessageById(messageToRemove.messageId)
-                        totalMessageCount--
-                    }
-                    // Remove from chat history
-                    while (chatHistory.size > historyIndex + 1) {
-                        chatHistory.removeAt(historyIndex + 1)
-                    }
-                    
-                    // Show spinner for new response
-                    binding.sendButton.visibility = View.GONE
-                    binding.loadingSpinner.visibility = View.VISIBLE
-                    scrollToBottom(smooth = true)
-                    
-                    try {
-                        val result = processQueryWithMCPServer(newText)
-                        
-                        // Hide spinner
-                        binding.loadingSpinner.visibility = View.GONE
-                        binding.sendButton.visibility = View.VISIBLE
-                        
-                        // Add new bot response
-                        addMessageToChat(result, false)
-                        
-                    } catch (e: Exception) {
-                        // Hide spinner
-                        binding.loadingSpinner.visibility = View.GONE
-                        binding.sendButton.visibility = View.VISIBLE
-                        
-                        addMessageToChat("Error al procesar la consulta editada: ${e.message}", false)
-                    }
-                    
-                    // Save updated chat history
-                    saveChatHistory()
-                    
-                    Log.d("DatabaseQueryFragment", "Successfully edited message: ${originalMessage.messageId}")
-                }
-                
-            } catch (e: Exception) {
-                Log.e("DatabaseQueryFragment", "Error editing message", e)
-                // Check if fragment is still attached before showing Toast
-                if (isAdded && context != null) {
-                    Toast.makeText(requireContext(), "Error al editar mensaje: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
+
 
     override fun onDestroyView() {
+        // Stop TTS playback
+        if (::ttsService.isInitialized) {
+            ttsService.stopPlayback()
+        }
+
         // Save chat history before destroying view
         saveChatHistory()
         
@@ -2761,6 +2722,110 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
         } else {
             // Update user indicator even if user didn't change
             updateUserIndicator()
+        }
+    }
+
+    /**
+     * Maneja el click en el botón TTS para reproducir el mensaje con voz
+     */
+    private fun handleTTSClick(message: ChatMessage) {
+        lifecycleScope.launch {
+            try {
+                if (message.isPlaying) {
+                    // Toggle Pause/Resume
+                    if (ttsService.isCurrentlyPlaying()) {
+                        ttsService.pausePlayback()
+                        message.isPaused = true
+                        if (isAdded && context != null) {
+                            Toast.makeText(requireContext(), "⏸️ Pausado", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        ttsService.resumePlayback()
+                        message.isPaused = false
+                        if (isAdded && context != null) {
+                            Toast.makeText(requireContext(), "▶️ Reanudando", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    chatAdapter.notifyDataSetChanged()
+                    return@launch
+                }
+
+                // Stop any current playback and reset states
+                ttsService.stopPlayback()
+                
+                // Reset all messages
+                chatAdapter.getMessages().forEach { 
+                    it.isPlaying = false 
+                    it.isPaused = false
+                }
+                
+                // Set playing state
+                message.isPlaying = true
+                message.isPaused = false
+                chatAdapter.notifyDataSetChanged()
+                
+                // Mostrar feedback visual
+                if (isAdded && context != null) {
+                    Toast.makeText(
+                        requireContext(),
+                        "🔊 Reproduciendo mensaje...",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                
+                // Reproducir el mensaje con voz natural (usando voz NOVA por defecto)
+                ttsService.speak(
+                    text = message.text,
+                    voice = com.example.tareamov.service.TTSService.Voice.NOVA,
+                    onStart = {
+                        Log.d("DatabaseQueryFragment", "TTS playback started")
+                    },
+                    onComplete = {
+                        lifecycleScope.launch {
+                            withContext(Dispatchers.Main) {
+                                message.isPlaying = false
+                                message.isPaused = false
+                                chatAdapter.notifyDataSetChanged()
+                                if (isAdded && context != null) {
+                                    Toast.makeText(
+                                        requireContext(),
+                                        "✅ Reproducción completada",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+                    },
+                    onError = { error ->
+                        lifecycleScope.launch {
+                            withContext(Dispatchers.Main) {
+                                message.isPlaying = false
+                                message.isPaused = false
+                                chatAdapter.notifyDataSetChanged()
+                                if (isAdded && context != null) {
+                                    Toast.makeText(
+                                        requireContext(),
+                                        "❌ Error de TTS: $error",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                                Log.e("DatabaseQueryFragment", "TTS error: $error")
+                            }
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                message.isPlaying = false
+                message.isPaused = false
+                chatAdapter.notifyDataSetChanged()
+                if (isAdded && context != null) {
+                    Toast.makeText(
+                        requireContext(),
+                        "❌ Error al reproducir: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         }
     }
 }
