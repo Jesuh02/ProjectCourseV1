@@ -770,6 +770,14 @@ class LoginFragment : Fragment() {
                             avatarUri = user.avatar
                         )
                         
+                        // Add role ID to session for hasRole() checks
+                        sessionManager.addRole(user.rol_id.toInt())
+                        
+                        // Ensure admin role (3) is set if applicable
+                        if (user.rol_id == 3L) {
+                            sessionManager.setAdminStatus(true)
+                        }
+                        
                         // Store userId in SharedPreferences
                         val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                         sharedPrefs.edit().putLong("current_user_id", user.id).apply()
@@ -1007,6 +1015,14 @@ class LoginFragment : Fragment() {
                         avatarUri = currentUser.avatar
                     )
                     
+                    // Add role ID to session for hasRole() checks
+                    sessionManager.addRole(currentUser.rol_id.toInt())
+                    
+                    // Ensure admin role (3) is set if applicable
+                    if (currentUser.rol_id == 3L) {
+                        sessionManager.setAdminStatus(true)
+                    }
+                    
                     val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                     sharedPrefs.edit().putLong("current_user_id", currentUser.id).apply()
                     
@@ -1104,6 +1120,14 @@ class LoginFragment : Fragment() {
                                 roleName = "user",
                                 avatarUri = currentUser.avatar
                             )
+                            
+                            // Add role ID to session for hasRole() checks
+                            sessionManager.addRole(currentUser.rol_id.toInt())
+                            
+                            // Ensure admin role (3) is set if applicable
+                            if (currentUser.rol_id == 3L) {
+                                sessionManager.setAdminStatus(true)
+                            }
                             
                             val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                             sharedPrefs.edit().putLong("current_user_id", currentUser.id).apply()

@@ -101,6 +101,15 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             usuarioWithRole.rolNombre, 
                             avatarUri
                         )
+                        
+                        // Add role ID to session for hasRole() checks
+                        val roleId = fullUser?.rol_id?.toInt() ?: 1
+                        sessionManager.addRole(roleId)
+                        
+                        // Ensure admin role (3) is set if the role name is 'admin'
+                        if (usuarioWithRole.rolNombre.equals("admin", ignoreCase = true)) {
+                            sessionManager.addRole(3)
+                        }
 
                         _loginResult.value = LoginResult(
                             success = true, 
