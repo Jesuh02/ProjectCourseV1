@@ -885,6 +885,46 @@ class VideoHomeFragment : Fragment() {
     }
 
     private fun setupVideoViewPager(view: View) {
+        // CRITICAL: Sync user likes FIRST before creating adapter to ensure like state persists
+        lifecycleScope.launch {
+            val userId = getCurrentUserId()
+            
+            Log.d("VideoHomeFragment", "======== LIKE SYNC START ========")
+            Log.d("VideoHomeFragment", "Current user ID: $userId")
+            
+            // Sync user likes from Supabase to ensure persistence across devices/restarts
+            if (userId > 0) {
+                val syncSuccess = withContext(Dispatchers.IO) {
+                    try {
+                        Log.d("VideoHomeFragment", "Fetching user likes from Supabase...")
+                        syncRepository.syncUserVideoLikesFromSupabase(userId)
+                        
+                        // Verify sync by checking local database
+                        val localLikes = syncRepository.videoLikeDao?.getLikedVideoIdsByUser(userId) ?: emptyList()
+                        Log.d("VideoHomeFragment", "Local database now has ${localLikes.size} likes: $localLikes")
+                        
+                        true
+                    } catch (e: Exception) {
+                        Log.e("VideoHomeFragment", "Error syncing user likes", e)
+                        false
+                    }
+                }
+                
+                Log.d("VideoHomeFragment", "Sync completed: success=$syncSuccess")
+            } else {
+                Log.w("VideoHomeFragment", "No valid user ID, skipping like sync")
+            }
+            
+            Log.d("VideoHomeFragment", "======== LIKE SYNC END ========")
+            
+            // NOW create adapter after sync completes
+            withContext(Dispatchers.Main) {
+                initializeVideoAdapter(view, userId)
+            }
+        }
+    }
+    
+    private fun initializeVideoAdapter(view: View, currentUserId: Long) {
         // Inicializar el adaptador con la lista de videos y callback para profile clicks
         videoAdapter = VideoAdapter(
             videoList,
@@ -961,14 +1001,31 @@ class VideoHomeFragment : Fragment() {
                 checkIfSubscribed(creatorId)
             },
             onLikeToggle = { videoData, isLiked ->
-                lifecycleScope.launch(Dispatchers.IO) {
+                lifecycleScope.launch {
                     try {
                         val userId = getCurrentUserId()
                         if (userId > 0) {
-                            syncRepository.toggleVideoLike(videoData.id, userId, isLiked)
+                            // Toggle like in background
+                            val success = withContext(Dispatchers.IO) {
+                                syncRepository.toggleVideoLike(videoData.id, userId, isLiked)
+                            }
+                            
+                            if (success) {
+                                Log.d("VideoHomeFragment", "Like toggled successfully for video ${videoData.id}, liked=$isLiked")
+                            } else {
+                                Log.e("VideoHomeFragment", "Failed to toggle like for video ${videoData.id}")
+                                // Revert UI state on failure by refreshing
+                                withContext(Dispatchers.Main) {
+                                    videoAdapter.notifyDataSetChanged()
+                                }
+                            }
                         }
                     } catch (e: Exception) {
                         Log.e("VideoHomeFragment", "Error toggling like", e)
+                        // Revert UI on error
+                        withContext(Dispatchers.Main) {
+                            videoAdapter.notifyDataSetChanged()
+                        }
                     }
                 }
             },
@@ -992,28 +1049,12 @@ class VideoHomeFragment : Fragment() {
             }
         )
 
+        // Set current user ID
+        videoAdapter.setCurrentUserId(currentUserId)
+
         // Configurar el ViewPager2
         val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
         viewPager.adapter = videoAdapter
-
-        // Load current user ID and pass to adapter
-        lifecycleScope.launch {
-            val userId = getCurrentUserId()
-            videoAdapter.setCurrentUserId(userId)
-            
-            // Sync user likes from Supabase to ensure persistence across devices/restarts
-            if (userId > 0) {
-                withContext(Dispatchers.IO) {
-                    try {
-                        syncRepository.syncUserVideoLikesFromSupabase(userId)
-                    } catch (e: Exception) {
-                        Log.e("VideoHomeFragment", "Error syncing user likes", e)
-                    }
-                }
-                // Refresh adapter to show updated likes
-                videoAdapter.notifyDataSetChanged()
-            }
-        }
 
         // Configurar orientación vertical para deslizar como TikTok
         viewPager.orientation = androidx.viewpager2.widget.ViewPager2.ORIENTATION_VERTICAL

@@ -59,7 +59,7 @@ class SyncRepository(
     private val chatMessageDao: com.example.tareamov.data.dao.ChatMessageDao,
     private val fileContextDao: com.example.tareamov.data.dao.FileContextDao,
     private val progresoEstudianteDao: com.example.tareamov.data.dao.ProgresoEstudianteDao,
-    private val videoLikeDao: VideoLikeDao? = null,
+    val videoLikeDao: VideoLikeDao? = null, // Made public for like state verification
     private val videoCommentDao: VideoCommentDao? = null
 ) {
     // SharedPreferences-based cache to store last remote 'updated_at' per table
@@ -2977,12 +2977,21 @@ class SyncRepository(
         try {
             // Check local first (faster)
             val localLiked = videoLikeDao?.hasUserLikedVideo(videoId, usuarioId) ?: false
-            if (localLiked) return@withContext true
+            Log.d("SyncRepository", "hasUserLikedVideo: video=$videoId, user=$usuarioId, localLiked=$localLiked")
+            
+            if (localLiked) {
+                Log.d("SyncRepository", "Like found in local DB - returning true")
+                return@withContext true
+            }
             
             // If not found locally, check Supabase (Persistent check)
+            Log.d("SyncRepository", "Not found locally, checking Supabase...")
             val remoteLiked = supabaseClient.hasUserLikedVideo(videoId, usuarioId)
+            Log.d("SyncRepository", "Supabase check: remoteLiked=$remoteLiked")
+            
             if (remoteLiked) {
                 // Sync to local so next time it's faster
+                Log.d("SyncRepository", "Syncing like from Supabase to local DB")
                 try {
                     videoLikeDao?.let { dao ->
                         // Ensure video exists locally first
@@ -3126,9 +3135,13 @@ class SyncRepository(
      */
     suspend fun syncUserVideoLikesFromSupabase(userId: Long) = withContext(Dispatchers.IO) {
         try {
+            Log.d("SyncRepository", "Starting sync of user video likes for user $userId")
             val remoteUserLikes = supabaseClient.fetchUserVideoLikes(userId)
+            Log.d("SyncRepository", "Fetched ${remoteUserLikes.size} likes from Supabase")
+            
             remoteUserLikes.forEach { like ->
                 videoLikeDao?.insertUserLike(like)
+                Log.d("SyncRepository", "Synced like: video=${like.videoId}, user=${like.usuarioId}")
             }
             Log.d("SyncRepository", "Synced ${remoteUserLikes.size} user video likes for user $userId")
         } catch (e: Exception) {

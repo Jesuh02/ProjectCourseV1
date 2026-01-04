@@ -4832,8 +4832,11 @@ object SupabaseClient {
     suspend fun hasUserLikedVideo(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             // Use select=video_id to minimize data transfer (id column might not exist on join table), and count=exact to get the total
-            val url = "$baseUrl/rest/v1/user_video_likes?video_id=eq.$videoId&user_id=eq.$usuarioId&select=video_id"
+            // Fixed: Use usuario_id instead of user_id to match database schema
+            val url = "$baseUrl/rest/v1/user_video_likes?video_id=eq.$videoId&usuario_id=eq.$usuarioId&select=video_id"
             val key = effectiveApiKey()
+            
+            Log.d("SupabaseClient", "Checking if user $usuarioId liked video $videoId")
             
             val request = Request.Builder()
                 .url(url)
@@ -4873,9 +4876,12 @@ object SupabaseClient {
             val url = "$baseUrl/rest/v1/user_video_likes"
             val key = effectiveApiKey()
             
+            Log.d("SupabaseClient", "Adding like for video $videoId by user $usuarioId")
+            
+            // Fixed: Use usuario_id instead of user_id to match database schema
             val body = gson.toJson(mapOf(
                 "video_id" to videoId,
-                "user_id" to usuarioId
+                "usuario_id" to usuarioId
             )).toRequestBody(jsonMedia)
             
             val request = Request.Builder()
@@ -4908,8 +4914,11 @@ object SupabaseClient {
      */
     suspend fun removeUserVideoLike(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
-            val url = "$baseUrl/rest/v1/user_video_likes?video_id=eq.$videoId&user_id=eq.$usuarioId"
+            // Fixed: Use usuario_id instead of user_id to match database schema
+            val url = "$baseUrl/rest/v1/user_video_likes?video_id=eq.$videoId&usuario_id=eq.$usuarioId"
             val key = effectiveApiKey()
+            
+            Log.d("SupabaseClient", "Removing like for video $videoId by user $usuarioId")
             
             val request = Request.Builder()
                 .url(url)
@@ -5015,8 +5024,11 @@ object SupabaseClient {
      */
     suspend fun fetchUserVideoLikes(userId: Long): List<com.example.tareamov.data.entity.UserVideoLike> = withContext(Dispatchers.IO) {
         try {
-            val url = "$baseUrl/rest/v1/user_video_likes?user_id=eq.$userId&select=*"
+            // Fixed: Use usuario_id instead of user_id to match database schema
+            val url = "$baseUrl/rest/v1/user_video_likes?usuario_id=eq.$userId&select=*"
             val key = effectiveApiKey()
+            
+            Log.d("SupabaseClient", "Fetching user video likes for userId=$userId")
             
             val request = Request.Builder()
                 .url(url)
@@ -5027,17 +5039,22 @@ object SupabaseClient {
                 .build()
             
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext emptyList()
+                if (!response.isSuccessful) {
+                    Log.e("SupabaseClient", "Failed to fetch user likes: ${response.code}")
+                    return@withContext emptyList()
+                }
                 
                 val body = response.body?.string() ?: return@withContext emptyList()
                 val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                Log.d("SupabaseClient", "Fetched ${jsonArray.size()} likes from Supabase")
                 
                 jsonArray.map { elem ->
                     val obj = elem.asJsonObject
                     com.example.tareamov.data.entity.UserVideoLike(
                         id = if (obj.has("id") && !obj.get("id").isJsonNull) obj.get("id").asLong else 0L,
                         videoId = obj.get("video_id").asLong,
-                        usuarioId = obj.get("user_id").asLong,
+                        usuarioId = obj.get("usuario_id").asLong,
                         createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) obj.get("created_at").asString else ""
                     )
                 }

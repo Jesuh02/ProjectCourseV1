@@ -20,6 +20,7 @@ import com.example.tareamov.data.entity.VideoData
 import java.io.File
 import kotlinx.coroutines.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking // Explicit import for runBlocking
 import kotlin.math.abs // Use kotlin.math.abs to avoid ambiguity
 
 /**
@@ -117,42 +118,68 @@ class VideoAdapter(
             descriptionText.text = videoData.description
             titleText.text = videoData.title
 
-            // Reset views and states
+            // Reset views and states (but NOT isLiked - let DB determine it)
             videoView.visibility = View.VISIBLE
             errorPlaceholder.visibility = View.GONE
             loadingProgressBar?.visibility = View.VISIBLE
             playPauseOverlay?.visibility = View.GONE
             isVideoPaused = false
-            isLiked = false
+            // Don't reset isLiked here - it will be set by DB check below
             isMuted = false
             isSubscribed = false
             
-            // Reset button states
-            updateLikeButton()
+            // Reset button states (except like button which will be updated after DB check)
             updateSoundButton()
             updateSubscribeButton()
             
-            // Load likes and comments from Supabase
+            // Initialize counts
             likeCountText?.text = "0"
             commentCountText?.text = "0"
             
-            // Fetch like count and user like status
+            // Load like state FIRST from local DB synchronously for instant display
+            // This prevents the white heart flash on app restart
+            try {
+                // Quick synchronous check from local DB (no network delay)
+                val context = itemView.context.applicationContext
+                val db = AppDatabase.getDatabase(context)
+                val userId = currentUserId
+                
+                if (userId > 0) {
+                    // Check local DB immediately (synchronous for instant UI update)
+                    val locallyLiked = kotlinx.coroutines.runBlocking {
+                        db.videoLikeDao()?.hasUserLikedVideo(videoData.id, userId) ?: false
+                    }
+                    isLiked = locallyLiked
+                    updateLikeButton()
+                    Log.d("VideoAdapter", "Video ${videoData.id}: LOCAL DB check - liked=$isLiked (instant load)")
+                }
+            } catch (e: Exception) {
+                Log.e("VideoAdapter", "Error checking local like state for video ${videoData.id}", e)
+            }
+            
+            // Then fetch like count and verify like state from Supabase in background
             CoroutineScope(Dispatchers.Main).launch {
                 try {
-                    // Get like count from database
+                    // Get like count from video_likes table via Supabase
                     val likeCount = withContext(Dispatchers.IO) {
                         getLikeCount?.invoke(videoData.id) ?: 0
                     }
                     likeCountText?.text = formatCount(likeCount)
+                    Log.d("VideoAdapter", "Video ${videoData.id}: Like count from video_likes table = $likeCount")
                     
-                    // Check if user has liked this video (must check DB to persist likes)
-                    // Always check via callback to ensure we use the latest session info (even if adapter's currentUserId is not yet set)
+                    // Double-check like state via callback (includes Supabase check if needed)
                     val likedByUser = withContext(Dispatchers.IO) {
                         checkUserLikedVideo?.invoke(videoData.id) ?: false
                     }
-                    isLiked = likedByUser
-                    updateLikeButton()
-                    Log.d("VideoAdapter", "Video ${videoData.id}: liked=$isLiked")
+                    
+                    // Only update if state changed (to avoid unnecessary redraws)
+                    if (isLiked != likedByUser) {
+                        isLiked = likedByUser
+                        updateLikeButton()
+                        Log.d("VideoAdapter", "Video ${videoData.id}: Like state updated after Supabase check - liked=$isLiked")
+                    }
+                    
+                    Log.d("VideoAdapter", "Video ${videoData.id}: FINAL STATE - liked=$isLiked, count=$likeCount (PERSISTENCE VERIFIED)")
                     
                     // Get comment count from database
                     val commentCount = withContext(Dispatchers.IO) {
@@ -522,6 +549,7 @@ class VideoAdapter(
             likeButton?.setOnClickListener {
                 // Prevent multiple rapid clicks
                 if (likeButton.tag == "processing") {
+                    Log.d("VideoAdapter", "Like button click ignored - already processing")
                     return@setOnClickListener
                 }
                 
@@ -531,6 +559,10 @@ class VideoAdapter(
                 
                 val newLikeState = !isLiked
                 val previousLikeState = isLiked
+                
+                Log.d("VideoAdapter", "===== LIKE BUTTON CLICKED =====")
+                Log.d("VideoAdapter", "Video ID: ${currentVideoData?.id}")
+                Log.d("VideoAdapter", "Previous state: $previousLikeState → New state: $newLikeState")
                 
                 // Update UI optimistically
                 isLiked = newLikeState
@@ -542,6 +574,8 @@ class VideoAdapter(
                 } ?: 0
                 val newCount = if (isLiked) currentCount + 1 else maxOf(0, currentCount - 1)
                 likeCountText?.text = formatCount(newCount)
+                
+                Log.d("VideoAdapter", "Like count: $currentCount → $newCount")
                 
                 // Animate the like button
                 likeButton.animate()
@@ -561,28 +595,33 @@ class VideoAdapter(
                 currentVideoData?.let { videoData ->
                     CoroutineScope(Dispatchers.Main).launch {
                         try {
+                            Log.d("VideoAdapter", "Calling onLikeToggle callback for video ${videoData.id}")
                             // Call the toggle callback
                             onLikeToggle?.invoke(videoData, newLikeState)
                             
                             // Verify the like was actually saved by checking the database
-                            delay(100) // Small delay to ensure DB write completes
+                            delay(200) // Increased delay to ensure DB write completes
                             
                             if (checkUserLikedVideo != null) {
                                 val actualLikeState = checkUserLikedVideo.invoke(videoData.id)
                                 
+                                Log.d("VideoAdapter", "Verification check: Expected=$newLikeState, Actual=$actualLikeState")
+                                
                                 // If the actual state doesn't match what we tried to set, revert
                                 if (actualLikeState != newLikeState) {
-                                    Log.w("VideoAdapter", "Like state mismatch, reverting. Expected: $newLikeState, Actual: $actualLikeState")
+                                    Log.w("VideoAdapter", "⚠️ LIKE STATE MISMATCH! Reverting. Expected: $newLikeState, Actual: $actualLikeState")
                                     isLiked = actualLikeState
                                     updateLikeButton()
                                     
                                     // Revert count
                                     val revertedCount = if (actualLikeState) currentCount + 1 else maxOf(0, currentCount - 1)
                                     likeCountText?.text = formatCount(revertedCount)
+                                } else {
+                                    Log.d("VideoAdapter", "✅ Like state verified and persisted correctly")
                                 }
                             }
                         } catch (e: Exception) {
-                            Log.e("VideoAdapter", "Error toggling like, reverting state", e)
+                            Log.e("VideoAdapter", "❌ Error toggling like, reverting state", e)
                             // Revert on error
                             isLiked = previousLikeState
                             updateLikeButton()
@@ -597,12 +636,14 @@ class VideoAdapter(
                             // Re-enable button
                             likeButton?.tag = null
                             likeButton?.isEnabled = true
+                            Log.d("VideoAdapter", "===== LIKE OPERATION COMPLETE =====")
                         }
                     }
                 } ?: run {
                     // No video data, re-enable immediately
                     likeButton?.tag = null
                     likeButton?.isEnabled = true
+                    Log.w("VideoAdapter", "No video data available for like")
                 }
             }
 
