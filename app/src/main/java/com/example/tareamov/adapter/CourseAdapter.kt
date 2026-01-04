@@ -516,42 +516,55 @@ class CourseAdapter(
             return
         }
 
-        // Use cached subscription status if available
-        val isSubscribed = subscriptionStatus[creatorUserId] ?: false
+        // Use Supabase to check real-time subscription status
         
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val db = AppDatabase.getDatabase(context)
+                // Get current user's ID
+                val currentUserId = if (currentUsername != null) {
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                } else null
                 
-                // Get subscriber count for this creator
-                val subscriberCount = db.subscriptionDao().getSubscriptionCountForCreator(creatorUserId)
+                // Fetch subscriber count from Supabase (always fresh)
+                val subscriberCount = com.example.tareamov.service.SupabaseClient.fetchSubscriberCount(creatorUserId)
+                
+                // Check if current user is subscribed to this creator from Supabase
+                val isSubscribed = if (currentUserId != null && currentUserId != creatorUserId) {
+                    com.example.tareamov.service.SupabaseClient.isSubscribedRemote(currentUserId, creatorUserId)
+                } else false
+                
+                Log.d("CourseAdapter", "Subscription status for creator $creatorUserId: isSubscribed=$isSubscribed, count=$subscriberCount")
                 
                 withContext(Dispatchers.Main) {
                     // Update subscriber count
-                    val countText = if (subscriberCount == 1) "1 suscriptor" else "$subscriberCount suscriptores"
+                    val countText = if (subscriberCount == 1L) "1 suscriptor" else "$subscriberCount suscriptores"
                     holder.subscriberCountTextView.text = countText
                     
-                    // Update subscription button based on cached status
+                    // Update subscription button based on real-time status from Supabase
                     if (isSubscribed) {
-                        holder.subscribeButton.text = "Suscrito"
+                        holder.subscribeButton.text = "Desuscribirse"
                         holder.subscribeButton.setBackgroundResource(R.drawable.button_subscribed)
+                        holder.subscribeButton.setTextColor(ContextCompat.getColor(context, R.color.white))
                     } else {
                         holder.subscribeButton.text = "Suscribirse"
                         holder.subscribeButton.setBackgroundResource(R.drawable.button_premium)
+                        holder.subscribeButton.setTextColor(ContextCompat.getColor(context, R.color.white))
                     }
                     
-                    // Set button click listener
+                    // Set button click listener - pass current subscription status
                     holder.subscribeButton.setOnClickListener {
                         onSubscriptionClickListener?.invoke(course, isSubscribed)
                     }
                     
-                    holder.subscribeButton.isEnabled = true
+                    holder.subscribeButton.isEnabled = currentUserId != null && currentUserId != creatorUserId
                 }
             } catch (e: Exception) {
-                Log.e("CourseAdapter", "Error loading subscription data", e)
+                Log.e("CourseAdapter", "Error loading subscription data from Supabase", e)
                 withContext(Dispatchers.Main) {
                     holder.subscriberCountTextView.text = "0 suscriptores"
                     holder.subscribeButton.text = "Suscribirse"
+                    holder.subscribeButton.setBackgroundResource(R.drawable.button_premium)
+                    holder.subscribeButton.setTextColor(ContextCompat.getColor(context, R.color.white))
                     holder.subscribeButton.isEnabled = true
                 }
             }

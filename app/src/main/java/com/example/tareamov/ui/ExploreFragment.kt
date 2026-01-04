@@ -537,31 +537,48 @@ class ExploreFragment : Fragment() {
                 val db = AppDatabase.getDatabase(requireContext())
                 
                 if (isCurrentlySubscribed) {
-                    // Unsubscribe
-                    db.subscriptionDao().unsubscribeFromCreator(currentUserId, creatorUserId)
+                    // UNSUBSCRIBE - Delete from Supabase first (authoritative)
+                    val unsubscribeSuccess = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.deleteSubscriptionFromSupabase(currentUserId, creatorUserId)
+                    }
                     
-                    // Also sync to Supabase
-                    syncUnsubscriptionToSupabase(currentUserId, creatorUserId)
-                    
-                    showDarkToast("✅ Te has desuscrito")
-                    Log.d("ExploreFragment", "User $currentUserId unsubscribed from $creatorUserId")
+                    if (unsubscribeSuccess) {
+                        // Also remove from local database
+                        db.subscriptionDao().unsubscribeFromCreator(currentUserId, creatorUserId)
+                        
+                        showDarkToast("✅ Te has desuscrito correctamente")
+                        Log.d("ExploreFragment", "User $currentUserId unsubscribed from creator $creatorUserId")
+                    } else {
+                        showDarkToast("❌ Error al desuscribirse, intenta de nuevo")
+                    }
                 } else {
-                    // Subscribe
-                    db.subscriptionDao().subscribeToCreator(currentUserId, creatorUserId)
+                    // SUBSCRIBE - Insert to Supabase first (authoritative)
+                    val subscribeSuccess = withContext(Dispatchers.IO) {
+                        val subscription = com.example.tareamov.data.entity.Subscription(
+                            subscriberId = currentUserId,
+                            creatorId = creatorUserId,
+                            subscriptionDate = System.currentTimeMillis()
+                        )
+                        com.example.tareamov.service.SupabaseClient.insertSubscriptionToSupabase(subscription)
+                    }
                     
-                    // Also sync to Supabase
-                    syncSubscriptionToSupabase(currentUserId, creatorUserId)
-                    
-                    showDarkToast("🎉 Te has suscrito")
-                    Log.d("ExploreFragment", "User $currentUserId subscribed to $creatorUserId")
+                    if (subscribeSuccess) {
+                        // Also save to local database
+                        db.subscriptionDao().subscribeToCreator(currentUserId, creatorUserId)
+                        
+                        showDarkToast("🎉 ¡Te has suscrito exitosamente!")
+                        Log.d("ExploreFragment", "User $currentUserId subscribed to creator $creatorUserId")
+                    } else {
+                        showDarkToast("❌ Error al suscribirse, intenta de nuevo")
+                    }
                 }
                 
-                // Refresh the adapter to update subscription states
-                coursesAdapter.notifyDataSetChanged()
+                // Refresh the courses list to update subscription states
+                loadCourses(forceRemote = true)
                 
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error handling subscription", e)
-                showDarkToast("❌ Error al procesar la suscripción")
+                showDarkToast("❌ Error al procesar la suscripción: ${e.message}")
             }
         }
     }
