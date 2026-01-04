@@ -937,6 +937,7 @@ class VideoHomeFragment : Fragment() {
             },
             onUsernameClick = { videoData ->
                 // Navigate to CourseDetailFragment using course_id from video
+                // OR show message and redirect to profile if video has no course
                 lifecycleScope.launch {
                     try {
                         // Use courseId directly from video if available
@@ -952,43 +953,63 @@ class VideoHomeFragment : Fragment() {
                                 navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
                             }
                         } else {
-                            // Fallback: search for course by title and username
-                            val act = requireActivity()
-                            var matchingCourse: com.example.tareamov.data.entity.Course? = null
-
-                            if (act is com.example.tareamov.MainActivity) {
-                                try {
-                                    // Try fetching by creator and matching title
-                                    val remoteList = withContext(Dispatchers.IO) {
-                                        act.syncRepository.fetchCoursesByCreatorFromSupabase(videoData.username ?: "")
+                            // Video has no course - get username and navigate to profile
+                            val username = videoData.username
+                            
+                            // If username is empty, try to get it from a different source
+                            val displayUsername = if (username.isNullOrBlank()) {
+                                // Try to get username from video title or other metadata
+                                withContext(Dispatchers.IO) {
+                                    try {
+                                        // Get the creator username from a course with the same title if it exists
+                                        val act = requireActivity()
+                                        if (act is com.example.tareamov.MainActivity) {
+                                            val remoteList = act.syncRepository.fetchCoursesByCreatorFromSupabase("")
+                                            val matchingCourse = remoteList.firstOrNull { c ->
+                                                (c.title ?: "").equals(videoData.title ?: "", ignoreCase = true)
+                                            }
+                                            if (matchingCourse != null && matchingCourse.creatorUserId != null) {
+                                                com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(matchingCourse.creatorUserId)
+                                            } else {
+                                                null
+                                            }
+                                        } else null
+                                    } catch (e: Exception) {
+                                        Log.w("VideoHomeFragment", "Could not get username: ${e.message}")
+                                        null
                                     }
-                                    matchingCourse = remoteList.firstOrNull { c ->
-                                        (c.title ?: "").equals(videoData.title ?: "", ignoreCase = true)
-                                    }
-                                } catch (e: Exception) {
-                                    Log.w("VideoHomeFragment", "Supabase course lookup failed: ${e.message}", e)
                                 }
+                            } else {
+                                username
                             }
 
-                            val bundle = Bundle().apply {
-                                if (matchingCourse != null) {
-                                    putLong("courseId", matchingCourse.id ?: -1L)
-                                    putString("courseName", matchingCourse.title ?: videoData.title)
+                            // Show message that user hasn't created a course
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    context, 
+                                    "Este usuario no ha creado un curso", 
+                                    Toast.LENGTH_SHORT
+                                ).show()
+
+                                // Navigate to user profile
+                                if (!displayUsername.isNullOrBlank()) {
+                                    val bundle = Bundle().apply {
+                                        putString("username", displayUsername)
+                                    }
+                                    
+                                    val navController = findNavController()
+                                    if (navController.currentDestination?.id == R.id.videoHomeFragment) {
+                                        navController.navigate(R.id.userProfileViewFragment, bundle)
+                                    }
                                 } else {
-                                    putLong("courseId", -1L)
-                                    putString("courseName", videoData.title)
+                                    Log.w("VideoHomeFragment", "Could not navigate to profile - no username available")
                                 }
-                            }
-
-                            // Check if current destination is still VideoHomeFragment before navigating
-                            val navController = findNavController()
-                            if (navController.currentDestination?.id == R.id.videoHomeFragment) {
-                                navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                                Unit
                             }
                         }
                     } catch (e: Exception) {
-                        Log.e("VideoHomeFragment", "Error navigating to CourseDetailFragment for video ${videoData.id}", e)
-                        Toast.makeText(context, "No se pudo abrir el curso", Toast.LENGTH_SHORT).show()
+                        Log.e("VideoHomeFragment", "Error navigating for video ${videoData.id}", e)
+                        Toast.makeText(context, "No se pudo abrir el perfil", Toast.LENGTH_SHORT).show()
                     }
                 }
             },

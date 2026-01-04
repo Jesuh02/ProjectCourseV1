@@ -115,15 +115,8 @@ data class VideoData(
                 val uri = Uri.parse(videoUriString)
                 // Accept http(s) and file schemes
                 if (uri.scheme == "http" || uri.scheme == "https") {
-                    // Fix R2 URLs that are missing file extensions
-                    var fixedUrl = videoUriString
-                    if (fixedUrl.contains(".r2.dev/videos/") && 
-                        !fixedUrl.matches(Regex(".*\\.(mp4|mov|avi|mkv|webm|3gp|flv)$"))) {
-                        // URL doesn't have a video extension, add .mp4 as default
-                        fixedUrl += ".mp4"
-                        Log.d("VideoData", "Fixed R2 URL missing extension: $videoUriString -> $fixedUrl")
-                    }
-                    return Uri.parse(fixedUrl)
+                    // R2 files are stored WITHOUT extension, use URL as-is
+                    return uri
                 }
                 // For file:// scheme, check if file exists
                 if (uri.scheme == "file" || uri.scheme == "content") {
@@ -134,16 +127,11 @@ data class VideoData(
                             return uri
                         }
                     }
-                    // File doesn't exist locally, try R2 fallback with filename
+                    // File doesn't exist locally, try R2 fallback with filename (WITHOUT extension)
                     val fileName = videoUriString?.substringAfterLast("/")
                     if (!fileName.isNullOrEmpty()) {
-                        // Ensure filename has extension
-                        val fileNameWithExt = if (fileName.contains(".")) {
-                            fileName
-                        } else {
-                            "$fileName.mp4"
-                        }
-                        val r2FallbackUrl = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/$fileNameWithExt"
+                        // R2 files are stored WITHOUT extension
+                        val r2FallbackUrl = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/$fileName"
                         return Uri.parse(r2FallbackUrl)
                     }
                 }

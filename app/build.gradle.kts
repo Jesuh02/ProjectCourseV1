@@ -200,6 +200,10 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.cardview:cardview:1.0.0")
 
+    // ExoPlayer (Media3) for robust video playback with problematic metadata
+    implementation("androidx.media3:media3-exoplayer:1.2.1")
+    implementation("androidx.media3:media3-ui:1.2.1")
+    implementation("androidx.media3:media3-common:1.2.1")
 
     // CircleImageView for circular profile images
     implementation("de.hdodenhof:circleimageview:3.1.0")

@@ -2,6 +2,7 @@ package com.example.tareamov.adapter
 
 import android.media.MediaPlayer // Added for MediaPlayer
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -22,6 +23,13 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking // Explicit import for runBlocking
 import kotlin.math.abs // Use kotlin.math.abs to avoid ambiguity
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 
 /**
  * Adaptador para mostrar videos en un ViewPager2 con estilo
@@ -98,7 +106,7 @@ class VideoAdapter(
         
         private var currentJob: Job? = null
         private var mediaPlayer: MediaPlayer? = null
-    private var mediaPlayerPrepared: Boolean = false
+        private var mediaPlayerPrepared: Boolean = false
         private var isVideoPaused = false
         private var isLiked = false
         private var isMuted = false
@@ -107,6 +115,11 @@ class VideoAdapter(
         private var overlayRunnable: Runnable? = null
         private var currentCreatorId: Long = -1L
         private var currentVideoData: VideoData? = null
+        
+        // ExoPlayer for reliable looping on remote URLs
+        private var exoPlayer: ExoPlayer? = null
+        private val playerView: PlayerView? = itemView.findViewById(R.id.playerView)
+        private var useExoPlayer: Boolean = false
 
         private fun showErrorPlaceholder() {
             videoView.visibility = View.GONE
@@ -339,92 +352,16 @@ class VideoAdapter(
                 try {
                     Log.d("VideoAdapter", "Setting video URI: $bestUri (scheme: ${bestUri.scheme})")
                     
-                    // Check if it's a local file URI and if the file exists
-                    // For HTTP/HTTPS URLs (R2 streaming), skip the file existence check
-                    if (bestUri.scheme == "file") {
-                        val file = File(bestUri.path ?: "")
-                        if (!file.exists()) {
-                            Log.w("VideoAdapter", "Local video file does not exist: ${bestUri.path}, trying R2 fallback")
-                            // Try to get R2 URL as fallback
-                            val fileName = bestUri.path?.substringAfterLast("/")
-                            if (!fileName.isNullOrEmpty()) {
-                                val r2FallbackUrl = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/$fileName"
-                                Log.d("VideoAdapter", "Trying R2 fallback URL: $r2FallbackUrl")
-                                videoView.setVideoURI(Uri.parse(r2FallbackUrl))
-                            } else {
-                                showErrorPlaceholder()
-                                errorPlaceholder.text = "Video no disponible"
-                                return
-                            }
-                        } else {
-                            videoView.setVideoURI(bestUri)
-                        }
+                    // Determine if we should use ExoPlayer (remote URLs) or VideoView (local files)
+                    val isRemoteUrl = bestUri.scheme == "http" || bestUri.scheme == "https"
+                    useExoPlayer = isRemoteUrl
+                    
+                    if (useExoPlayer) {
+                        Log.d("VideoAdapter", "Using ExoPlayer for remote URL: $bestUri")
+                        setupExoPlayer(bestUri)
                     } else {
-                        // For HTTP/HTTPS URLs (streaming from R2 or other sources)
-                        videoView.setVideoURI(bestUri)
-                    }
-
-                    videoView.setOnPreparedListener { mp ->
-                        loadingProgressBar?.visibility = View.GONE
-                        this.mediaPlayer = mp
-                        mediaPlayerPrepared = true
-                        
-                        // Check for pending seek
-                        val uriString = bestUri.toString()
-                        val pathString = bestUri.path
-                        val seekPos = pendingSeeks[uriString] ?: (if (pathString != null) pendingSeeks[pathString] else null)
-                        if (seekPos != null && seekPos > 0) {
-                            mp.seekTo(seekPos)
-                            pendingSeeks.remove(uriString)
-                            if (pathString != null) pendingSeeks.remove(pathString)
-                        }
-
-                        val videoWidth = mp.videoWidth
-                        val videoHeight = mp.videoHeight
-                        if (videoWidth > 0 && videoHeight > 0) {
-                            val parentWidth = (videoView.parent as View).width
-                            val parentHeight = (videoView.parent as View).height
-                            
-                            val videoRatio = videoWidth.toFloat() / videoHeight.toFloat()
-                            val screenRatio = parentWidth.toFloat() / parentHeight.toFloat()
-                            
-                            val params = videoView.layoutParams
-                            
-                            // Responsive Logic:
-                            // Horizontal videos (Landscape): Fit Width (Letterbox) to show full content
-                            // Vertical videos (Portrait): Center Crop (Fill Screen) for immersive experience
-                            if (videoWidth > videoHeight) {
-                                // Horizontal Video -> Fit Width
-                                params.width = parentWidth
-                                params.height = (parentWidth / videoRatio).toInt()
-                            } else {
-                                // Vertical/Square Video -> Center Crop (Fill Screen)
-                                if (videoRatio > screenRatio) {
-                                    // Video is wider than screen (relative to height) -> Fit Height, Crop Width
-                                    params.height = parentHeight
-                                    params.width = (parentHeight * videoRatio).toInt()
-                                } else {
-                                    // Video is taller/same as screen (relative to width) -> Fit Width, Crop Height
-                                    params.width = parentWidth
-                                    params.height = (parentWidth / videoRatio).toInt()
-                                }
-                            }
-                            videoView.layoutParams = params
-                        }
-                        mp.setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)
-                        mp.isLooping = true
-                        videoView.start()
-                    }
-
-                    videoView.setOnErrorListener { _, what, extra ->
-                        Log.e("VideoAdapter", "Video playback error: what=$what, extra=$extra")
-                        mediaPlayerPrepared = false
-                        showErrorPlaceholder()
-                        true
-                    }
-
-                    videoView.setOnClickListener {
-                        togglePlayPause()
+                        Log.d("VideoAdapter", "Using VideoView for local file: $bestUri")
+                        setupVideoView(bestUri)
                     }
                 } catch (e: Exception) {
                     Log.e("VideoAdapter", "Error setting video URI", e)
@@ -434,47 +371,423 @@ class VideoAdapter(
                 Log.e("VideoAdapter", "No valid video URI available. videoUriString='${videoData.videoUriString}', localFilePath='${videoData.localFilePath}'")
                 showErrorPlaceholder()
             }
-        }        /**
+        }
+        
+        /**
+         * Setup ExoPlayer for remote URLs - more reliable looping
+         */
+        private fun setupExoPlayer(uri: Uri) {
+            // Show ExoPlayer view, hide VideoView
+            playerView?.visibility = View.VISIBLE
+            videoView.visibility = View.GONE
+            
+            // Release any existing player
+            releaseExoPlayer()
+            
+            // Detect emulator for audio handling
+            val isEmulator = Build.FINGERPRINT.contains("generic") || 
+                    Build.FINGERPRINT.contains("unknown") ||
+                    Build.MODEL.contains("google_sdk") ||
+                    Build.MODEL.contains("Emulator") ||
+                    Build.MODEL.contains("Android SDK built for x86") ||
+                    Build.MANUFACTURER.contains("Genymotion") ||
+                    Build.BRAND.startsWith("generic") ||
+                    Build.DEVICE.startsWith("generic") ||
+                    "google_sdk" == Build.PRODUCT ||
+                    Build.HARDWARE.contains("ranchu") ||
+                    Build.HARDWARE.contains("goldfish")
+            
+            if (isEmulator) {
+                Log.w("VideoAdapter", "Running on emulator - starting muted to avoid audio issues")
+                isMuted = true
+                updateSoundButton()
+            }
+            
+            try {
+                val context = itemView.context
+                
+                // Create ExoPlayer with custom configuration for better error resilience
+                val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(context).apply {
+                    setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+                    setEnableAudioFloatOutput(true)
+                }
+                
+                // Load control with tolerant buffering
+                val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(15000, 50000, 2500, 5000)
+                    .build()
+                
+                exoPlayer = ExoPlayer.Builder(context, renderersFactory)
+                    .setLoadControl(loadControl)
+                    .setHandleAudioBecomingNoisy(false)
+                    .build().also { player ->
+                    playerView?.player = player
+                    
+                    // Set audio attributes
+                    val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
+                        .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                        .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE)
+                        .build()
+                    player.setAudioAttributes(audioAttributes, false)
+                    
+                    // Set volume
+                    player.volume = if (isMuted) 0f else 1f
+                    
+                    // Set media item
+                    val mediaItem = MediaItem.fromUri(uri)
+                    player.setMediaItem(mediaItem)
+                    
+                    // CRITICAL: Enable seamless looping
+                    player.repeatMode = Player.REPEAT_MODE_ONE
+                    player.playWhenReady = true
+                    
+                    // Track error recovery
+                    var errorRecoveryAttempts = 0
+                    val maxErrorRecoveryAttempts = 5
+                    
+                    // Add playback listener
+                    player.addListener(object : Player.Listener {
+                        override fun onPlaybackStateChanged(playbackState: Int) {
+                            when (playbackState) {
+                                Player.STATE_READY -> {
+                                    Log.d("VideoAdapter", "ExoPlayer: STATE_READY - looping enabled")
+                                    mediaPlayerPrepared = true
+                                    errorRecoveryAttempts = 0
+                                    loadingProgressBar?.visibility = View.GONE
+                                }
+                                Player.STATE_BUFFERING -> {
+                                    Log.d("VideoAdapter", "ExoPlayer: STATE_BUFFERING")
+                                    loadingProgressBar?.visibility = View.VISIBLE
+                                }
+                                Player.STATE_ENDED -> {
+                                    // This shouldn't happen with REPEAT_MODE_ONE, but just in case
+                                    Log.d("VideoAdapter", "ExoPlayer: STATE_ENDED (backup restart)")
+                                    player.seekTo(0)
+                                    player.play()
+                                }
+                                Player.STATE_IDLE -> {
+                                    Log.d("VideoAdapter", "ExoPlayer: STATE_IDLE")
+                                }
+                            }
+                        }
+                        
+                        override fun onVideoSizeChanged(videoSize: VideoSize) {
+                            // Dynamically adjust resize mode based on video orientation
+                            val videoWidth = videoSize.width
+                            val videoHeight = videoSize.height
+                            
+                            if (videoWidth > 0 && videoHeight > 0) {
+                                val isVertical = videoHeight > videoWidth
+                                
+                                if (isVertical) {
+                                    // Vertical video: FIXED_HEIGHT to fill screen height responsively
+                                    // This shows the complete video scaled to fill the height
+                                    playerView?.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT
+                                    Log.d("VideoAdapter", "Vertical video detected (${videoWidth}x${videoHeight}), using FIXED_HEIGHT mode")
+                                } else {
+                                    // Horizontal video: FIT to show complete video (letterbox)
+                                    playerView?.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                    Log.d("VideoAdapter", "Horizontal video detected (${videoWidth}x${videoHeight}), using FIT mode")
+                                }
+                            }
+                        }
+                        
+                        override fun onIsPlayingChanged(isPlaying: Boolean) {
+                            Log.d("VideoAdapter", "ExoPlayer: isPlaying=$isPlaying")
+                        }
+                        
+                        override fun onPlayerError(error: PlaybackException) {
+                            Log.e("VideoAdapter", "ExoPlayer error: ${error.message}, code=${error.errorCode}", error)
+                            
+                            // Check if audio error on emulator
+                            val isAudioError = error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                                    error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
+                                    error.message?.contains("audio", ignoreCase = true) == true ||
+                                    error.message?.contains("pcm", ignoreCase = true) == true
+                            
+                            if ((isAudioError || isEmulator) && errorRecoveryAttempts < maxErrorRecoveryAttempts) {
+                                errorRecoveryAttempts++
+                                Log.w("VideoAdapter", "Audio error detected, attempting recovery #$errorRecoveryAttempts")
+                                
+                                try {
+                                    player.volume = 0f
+                                    isMuted = true
+                                    updateSoundButton()
+                                    
+                                    Handler(Looper.getMainLooper()).postDelayed({
+                                        try {
+                                            player.prepare()
+                                            player.play()
+                                        } catch (_: Exception) {}
+                                    }, 200)
+                                } catch (e: Exception) {
+                                    Log.e("VideoAdapter", "Recovery failed", e)
+                                }
+                            } else if (errorRecoveryAttempts >= maxErrorRecoveryAttempts) {
+                                Log.e("VideoAdapter", "Max recovery attempts reached, showing error")
+                                showErrorPlaceholder()
+                            }
+                        }
+                    })
+                    
+                    // Prepare and start
+                    player.prepare()
+                }
+                
+                // Set click listener on PlayerView for pause/play
+                playerView?.setOnClickListener {
+                    togglePlayPause()
+                }
+                
+            } catch (e: Exception) {
+                Log.e("VideoAdapter", "Error setting up ExoPlayer, falling back to VideoView", e)
+                useExoPlayer = false
+                setupVideoView(uri)
+            }
+        }
+        
+        /**
+         * Setup VideoView for local files
+         */
+        private fun setupVideoView(bestUri: Uri) {
+            // Show VideoView, hide ExoPlayer
+            videoView.visibility = View.VISIBLE
+            playerView?.visibility = View.GONE
+            
+            // Release ExoPlayer if it was used
+            releaseExoPlayer()
+            
+            // Check if it's a local file and handle accordingly
+            if (bestUri.scheme == "file") {
+                val file = File(bestUri.path ?: "")
+                if (!file.exists()) {
+                    Log.w("VideoAdapter", "Local video file does not exist: ${bestUri.path}, trying R2 fallback")
+                    val fileName = bestUri.path?.substringAfterLast("/")
+                    if (!fileName.isNullOrEmpty()) {
+                        val r2FallbackUrl = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/$fileName"
+                        Log.d("VideoAdapter", "Trying R2 fallback URL: $r2FallbackUrl")
+                        // Use ExoPlayer for remote fallback
+                        useExoPlayer = true
+                        setupExoPlayer(Uri.parse(r2FallbackUrl))
+                        return
+                    } else {
+                        showErrorPlaceholder()
+                        errorPlaceholder.text = "Video no disponible"
+                        return
+                    }
+                } else {
+                    videoView.setVideoURI(bestUri)
+                }
+            } else {
+                videoView.setVideoURI(bestUri)
+            }
+
+            videoView.setOnPreparedListener { mp ->
+                loadingProgressBar?.visibility = View.GONE
+                this.mediaPlayer = mp
+                mediaPlayerPrepared = true
+                
+                // Get video duration
+                val duration = try {
+                    val d = mp.duration
+                    if (d <= 0 || d == Int.MIN_VALUE) -1 else d
+                } catch (e: Exception) { -1 }
+                Log.d("VideoAdapter", "VideoView prepared, duration: $duration ms")
+                
+                // Check for pending seek
+                val uriString = bestUri.toString()
+                val pathString = bestUri.path
+                val seekPos = pendingSeeks[uriString] ?: (if (pathString != null) pendingSeeks[pathString] else null)
+                if (seekPos != null && seekPos > 0) {
+                    mp.seekTo(seekPos)
+                    pendingSeeks.remove(uriString)
+                    if (pathString != null) pendingSeeks.remove(pathString)
+                }
+
+                // Configure video sizing
+                val videoWidth = mp.videoWidth
+                val videoHeight = mp.videoHeight
+                if (videoWidth > 0 && videoHeight > 0) {
+                    val parentWidth = (videoView.parent as View).width
+                    val parentHeight = (videoView.parent as View).height
+                    val videoRatio = videoWidth.toFloat() / videoHeight.toFloat()
+                    val screenRatio = parentWidth.toFloat() / parentHeight.toFloat()
+                    val params = videoView.layoutParams
+                    
+                    if (videoWidth > videoHeight) {
+                        params.width = parentWidth
+                        params.height = (parentWidth / videoRatio).toInt()
+                    } else {
+                        if (videoRatio > screenRatio) {
+                            params.height = parentHeight
+                            params.width = (parentHeight * videoRatio).toInt()
+                        } else {
+                            params.width = parentWidth
+                            params.height = (parentWidth / videoRatio).toInt()
+                        }
+                    }
+                    videoView.layoutParams = params
+                }
+                
+                mp.setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)
+                
+                // Enable native looping
+                mp.isLooping = true
+                Log.d("VideoAdapter", "VideoView native looping enabled")
+                
+                // Buffering listener
+                mp.setOnInfoListener { _, what, _ ->
+                    when (what) {
+                        MediaPlayer.MEDIA_INFO_BUFFERING_START -> {
+                            loadingProgressBar?.visibility = View.VISIBLE
+                        }
+                        MediaPlayer.MEDIA_INFO_BUFFERING_END, 
+                        MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START -> {
+                            loadingProgressBar?.visibility = View.GONE
+                        }
+                    }
+                    true
+                }
+                
+                // Completion listener as backup
+                mp.setOnCompletionListener { player ->
+                    Log.d("VideoAdapter", "VideoView onCompletion (backup)")
+                    Handler(Looper.getMainLooper()).post {
+                        try {
+                            if (mediaPlayerPrepared && !isVideoPaused) {
+                                player.seekTo(0)
+                                player.start()
+                            }
+                        } catch (e: Exception) {
+                            Log.e("VideoAdapter", "Error in completion restart", e)
+                        }
+                    }
+                }
+                
+                // Start playback
+                try {
+                    videoView.start()
+                    Log.d("VideoAdapter", "VideoView playback started")
+                } catch (e: Exception) {
+                    Log.e("VideoAdapter", "Error starting VideoView", e)
+                }
+            }
+
+            // Error listener
+            var recoverableErrorCount = 0
+            val maxRecoverableErrors = 10
+            var lastErrorTime = 0L
+            
+            videoView.setOnErrorListener { _, what, extra ->
+                Log.e("VideoAdapter", "VideoView error: what=$what, extra=$extra")
+                
+                val currentTime = System.currentTimeMillis()
+                if (currentTime - lastErrorTime > 5000) {
+                    recoverableErrorCount = 0
+                }
+                lastErrorTime = currentTime
+                
+                val isRecoverableError = when {
+                    what == -2147483648 && extra == 0 -> true
+                    what == -38 && extra == 0 -> true
+                    what == MediaPlayer.MEDIA_ERROR_UNKNOWN && extra == -2147483648 -> true
+                    what == MediaPlayer.MEDIA_ERROR_UNKNOWN && extra == 0 -> true
+                    what == 1 && extra == -2147483648 -> true
+                    else -> false
+                }
+                
+                if (isRecoverableError && recoverableErrorCount < maxRecoverableErrors) {
+                    recoverableErrorCount++
+                    Log.w("VideoAdapter", "Recoverable error #$recoverableErrorCount, continuing")
+                    
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try {
+                            if (!isVideoPaused) {
+                                videoView.seekTo(0)
+                                videoView.start()
+                            }
+                        } catch (_: Exception) {}
+                    }, 100)
+                    
+                    return@setOnErrorListener true
+                }
+                
+                Log.e("VideoAdapter", "Non-recoverable error")
+                mediaPlayerPrepared = false
+                showErrorPlaceholder()
+                true
+            }
+
+            videoView.setOnClickListener {
+                togglePlayPause()
+            }
+        }
+        
+        /**
+         * Release ExoPlayer resources
+         */
+        private fun releaseExoPlayer() {
+            try {
+                exoPlayer?.release()
+                exoPlayer = null
+            } catch (_: Exception) {}
+        }
+        
+        /**
          * Pausa la reproducción del video
          */
         fun pauseVideo() {
-            if (videoView.isPlaying) {
-                videoView.pause()
-                isVideoPaused = true
+            isVideoPaused = true
+            if (useExoPlayer) {
+                exoPlayer?.pause()
+            } else {
+                if (videoView.isPlaying) {
+                    videoView.pause()
+                }
             }
-        }/**
+        }
+        
+        /**
          * Inicia la reproducción del video
          */
         fun playVideo() {
             try {
-                if (!videoView.isPlaying && !isVideoPaused) {
-                    // Only auto-play if the user hasn't manually paused it
-                    videoView.start()
+                if (!isVideoPaused) {
+                    if (useExoPlayer) {
+                        exoPlayer?.play()
+                    } else {
+                        if (!videoView.isPlaying) {
+                            videoView.start()
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("VideoAdapter", "Error playing video", e)
             }
-        }/**
+        }
+        
+        /**
          * Sets the mute state of the video.
          */
         fun setMuteState(mute: Boolean) {
-            // update desired mute state immediately
             isMuted = mute
-
-            // If MediaPlayer is prepared, apply volume immediately. If not, it will be applied
-            // inside the onPreparedListener when the player becomes ready.
             val volume = if (isMuted) 0f else 1f
-            if (mediaPlayerPrepared) {
+            
+            if (useExoPlayer) {
+                try {
+                    exoPlayer?.volume = volume
+                } catch (e: Exception) {
+                    Log.e("VideoAdapter", "Error setting ExoPlayer volume", e)
+                }
+            } else if (mediaPlayerPrepared) {
                 try {
                     mediaPlayer?.setVolume(volume, volume)
                 } catch (e: IllegalStateException) {
                     Log.e("VideoAdapter", "Error setting volume, MediaPlayer might not be ready.", e)
-                    // keep isMuted flag; volume will be applied later when prepared
                     mediaPlayerPrepared = false
                 }
             } else {
-                // not prepared yet: volume will be applied when onPreparedListener runs
-                Log.d("VideoAdapter", "MediaPlayer not prepared yet; saved mute state=$isMuted")
+                Log.d("VideoAdapter", "Player not prepared yet; saved mute state=$isMuted")
             }
         }
 
@@ -483,15 +796,28 @@ class VideoAdapter(
          */
         private fun togglePlayPause() {
             try {
-                if (videoView.isPlaying) {
-                    videoView.pause()
+                val isPlaying = if (useExoPlayer) {
+                    exoPlayer?.isPlaying ?: false
+                } else {
+                    videoView.isPlaying
+                }
+                
+                if (isPlaying) {
+                    if (useExoPlayer) {
+                        exoPlayer?.pause()
+                    } else {
+                        videoView.pause()
+                    }
                     isVideoPaused = true
                     showPlayPauseOverlay(R.drawable.ic_play_overlay)
-                    // Mostrar botón de pantalla completa durante 2 segundos al pausar
                     showFullscreenButtonTemporarily()
                     Log.d("VideoAdapter", "Video paused by user tap")
                 } else {
-                    videoView.start()
+                    if (useExoPlayer) {
+                        exoPlayer?.play()
+                    } else {
+                        videoView.start()
+                    }
                     isVideoPaused = false
                     showPlayPauseOverlay(R.drawable.ic_pause_overlay)
                     Log.d("VideoAdapter", "Video resumed by user tap")
@@ -852,7 +1178,11 @@ class VideoAdapter(
                     
                     // Save current video position to restore in VideoPlayerActivity
                     val currentVideoPosition = try {
-                        videoView.currentPosition
+                        if (useExoPlayer) {
+                            exoPlayer?.currentPosition?.toInt() ?: 0
+                        } else {
+                            videoView.currentPosition
+                        }
                     } catch (e: Exception) {
                         0
                     }

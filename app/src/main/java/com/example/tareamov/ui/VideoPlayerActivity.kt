@@ -14,6 +14,10 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import com.example.tareamov.R
 import com.example.tareamov.databinding.ActivityVideoPlayerBinding
 import com.example.tareamov.util.TimeUtils
@@ -28,6 +32,11 @@ class VideoPlayerActivity : AppCompatActivity() {
     private lateinit var pipManager: PipManager
     // private lateinit var uriPermissionManager: UriPermissionManager
 
+    // ExoPlayer for robust video playback
+    private var exoPlayer: ExoPlayer? = null
+    private var useExoPlayer: Boolean = true // Default to ExoPlayer
+    
+    // Legacy MediaPlayer (for VideoView fallback)
     private var mediaPlayer: MediaPlayer? = null
     private var mediaPlayerPrepared: Boolean = false
     private var isControlsVisible = false
@@ -138,33 +147,398 @@ class VideoPlayerActivity : AppCompatActivity() {
 
         // Mostrar spinner mientras se carga el video
         binding.loadingSpinner.visibility = View.VISIBLE
+        
+        // Use ExoPlayer for R2 URLs (more robust with problematic metadata)
+        // Use VideoView for local files (simpler)
+        val isRemoteUrl = uri.scheme == "http" || uri.scheme == "https"
+        useExoPlayer = isRemoteUrl
+        
+        if (useExoPlayer) {
+            Log.d("VideoPlayerActivity", "Using ExoPlayer for remote URL: $uri")
+            setupExoPlayer(uri, savedPosition)
+        } else {
+            Log.d("VideoPlayerActivity", "Using VideoView for local file: $uri")
+            setupVideoView(uri, savedPosition)
+        }
+        
+        // Setup all control listeners
+        setupControlListeners(pathOrUri)
+    }
+    
+    /**
+     * Setup ExoPlayer for robust video playback (handles problematic R2 videos)
+     */
+    private fun setupExoPlayer(uri: Uri, savedPosition: Int) {
+        try {
+            // Show ExoPlayer view, hide VideoView
+            binding.playerView.visibility = View.VISIBLE
+            binding.videoView.visibility = View.GONE
+            
+            // Detect if running on emulator (audio issues are common on emulators)
+            val isEmulator = Build.FINGERPRINT.contains("generic") || 
+                    Build.FINGERPRINT.contains("unknown") ||
+                    Build.MODEL.contains("google_sdk") ||
+                    Build.MODEL.contains("Emulator") ||
+                    Build.MODEL.contains("Android SDK built for x86") ||
+                    Build.MANUFACTURER.contains("Genymotion") ||
+                    Build.BRAND.startsWith("generic") ||
+                    Build.DEVICE.startsWith("generic") ||
+                    "google_sdk" == Build.PRODUCT ||
+                    Build.HARDWARE.contains("ranchu") ||
+                    Build.HARDWARE.contains("goldfish")
+            
+            if (isEmulator) {
+                Log.w("VideoPlayerActivity", "Running on emulator - audio may be muted to avoid hardware issues")
+            }
+            
+            // Create ExoPlayer with custom configuration for better error resilience
+            val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(this).apply {
+                // Enable decoder fallback - if hardware decoder fails, use software
+                setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+                // Enable floating point audio output to avoid some audio issues
+                setEnableAudioFloatOutput(true)
+            }
+            
+            // Create load control with more tolerant buffering
+            val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    15000,  // Min buffer before playback starts
+                    50000,  // Max buffer size
+                    2500,   // Min buffer to resume after rebuffer
+                    5000    // Min buffer while playing
+                )
+                .build()
+            
+            // Create ExoPlayer instance with custom config
+            exoPlayer = ExoPlayer.Builder(this, renderersFactory)
+                .setLoadControl(loadControl)
+                .setHandleAudioBecomingNoisy(false) // Don't pause on audio focus loss
+                .build().also { player ->
+                binding.playerView.player = player
+                
+                // Set audio attributes to allow playback even with audio issues
+                val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
+                    .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                    .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build()
+                player.setAudioAttributes(audioAttributes, false) // false = don't handle audio focus
+                
+                // On emulator, start muted to avoid audio hardware issues
+                if (isEmulator) {
+                    isMuted = true
+                    player.volume = 0f
+                    binding.muteButton.setImageResource(R.drawable.ic_sound_muted_minimal)
+                    Log.d("VideoPlayerActivity", "Started muted on emulator to avoid audio issues")
+                } else {
+                    player.volume = if (isMuted) 0f else 1f
+                }
+                
+                // Set media item
+                val mediaItem = MediaItem.fromUri(uri)
+                player.setMediaItem(mediaItem)
+                
+                // Configure playback
+                player.repeatMode = Player.REPEAT_MODE_ONE
+                player.playWhenReady = true
+                
+                // Track error recovery attempts
+                var errorRecoveryAttempts = 0
+                val maxErrorRecoveryAttempts = 3
+                var lastKnownPosition = 0L
+                
+                // Add listener for playback events
+                player.addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        when (playbackState) {
+                            Player.STATE_READY -> {
+                                Log.d("VideoPlayerActivity", "ExoPlayer: STATE_READY")
+                                mediaPlayerPrepared = true
+                                errorRecoveryAttempts = 0 // Reset on successful playback
+                                binding.loadingSpinner.visibility = View.GONE
+                                
+                                // Setup duration and seek bar
+                                val duration = player.duration.toInt().coerceAtLeast(0)
+                                binding.totalTime.text = TimeUtils.formatTime(duration)
+                                binding.seekBar.max = duration
+                                
+                                // Restore saved position (only once)
+                                if (savedPosition > 0 && lastKnownPosition == 0L) {
+                                    player.seekTo(savedPosition.toLong())
+                                    lastKnownPosition = savedPosition.toLong()
+                                    Log.d("VideoPlayerActivity", "ExoPlayer: Restored position to $savedPosition ms")
+                                }
+                                
+                                // Start progress updater
+                                startExoPlayerProgressUpdater()
+                                
+                                // Start with controls hidden
+                                hideControls(immediate = true)
+                            }
+                            Player.STATE_BUFFERING -> {
+                                Log.d("VideoPlayerActivity", "ExoPlayer: STATE_BUFFERING")
+                                binding.loadingSpinner.visibility = View.VISIBLE
+                                // Save position during buffering
+                                lastKnownPosition = player.currentPosition
+                            }
+                            Player.STATE_ENDED -> {
+                                Log.d("VideoPlayerActivity", "ExoPlayer: STATE_ENDED")
+                                // Player is set to repeat, so this shouldn't happen
+                            }
+                            Player.STATE_IDLE -> {
+                                Log.d("VideoPlayerActivity", "ExoPlayer: STATE_IDLE")
+                            }
+                        }
+                    }
+                    
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        Log.d("VideoPlayerActivity", "ExoPlayer: isPlaying=$isPlaying")
+                        if (isPlaying) {
+                            lastKnownPosition = player.currentPosition
+                        }
+                        updatePlayPauseIcon()
+                    }
+                    
+                    override fun onPlayerError(error: PlaybackException) {
+                        Log.e("VideoPlayerActivity", "ExoPlayer error: ${error.message}, code=${error.errorCode}", error)
+                        
+                        // Check if this is an audio-related error that we can recover from
+                        val isAudioError = error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                                error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
+                                error.message?.contains("audio", ignoreCase = true) == true ||
+                                error.message?.contains("AudioTrack", ignoreCase = true) == true ||
+                                error.message?.contains("pcm", ignoreCase = true) == true
+                        
+                        if ((isAudioError || isEmulator) && errorRecoveryAttempts < maxErrorRecoveryAttempts) {
+                            errorRecoveryAttempts++
+                            Log.w("VideoPlayerActivity", "Audio/emulator error detected, attempting recovery #$errorRecoveryAttempts from position $lastKnownPosition")
+                            
+                            // Try to recover by muting and continuing playback
+                            try {
+                                player.volume = 0f // Mute to avoid audio issues
+                                isMuted = true
+                                
+                                uiHandler.post {
+                                    binding.muteButton.setImageResource(R.drawable.ic_sound_muted_minimal)
+                                }
+                                
+                                // Clear error and restart from last known position
+                                player.prepare()
+                                if (lastKnownPosition > 0) {
+                                    player.seekTo(lastKnownPosition)
+                                }
+                                player.play()
+                                
+                                uiHandler.post {
+                                    Toast.makeText(this@VideoPlayerActivity, 
+                                        "Audio silenciado para continuar reproducción", 
+                                        Toast.LENGTH_SHORT).show()
+                                }
+                                return
+                            } catch (recoveryError: Exception) {
+                                Log.e("VideoPlayerActivity", "Error during audio recovery", recoveryError)
+                            }
+                        }
+                        
+                        // Only mark as fatal error after recovery attempts exhausted
+                        hasError = true
+                        mediaPlayerPrepared = false
+                        binding.loadingSpinner.visibility = View.GONE
+                        
+                        // ExoPlayer is more tolerant, but some errors are still fatal
+                        if (!isFinishing) {
+                            Toast.makeText(this@VideoPlayerActivity, "Error de reproducción: ${error.message}", Toast.LENGTH_SHORT).show()
+                            finish()
+                        }
+                    }
+                })
+                
+                // Prepare player
+                player.prepare()
+            }
+        } catch (e: Exception) {
+            Log.e("VideoPlayerActivity", "Error setting up ExoPlayer", e)
+            // Fallback to VideoView
+            useExoPlayer = false
+            setupVideoView(uri, savedPosition)
+        }
+    }
+    
+    /**
+     * Setup VideoView for local file playback (fallback)
+     */
+    private fun setupVideoView(uri: Uri, savedPosition: Int) {
+        // Show VideoView, hide ExoPlayer view
+        binding.videoView.visibility = View.VISIBLE
+        binding.playerView.visibility = View.GONE
+        
+        // Track recoverable errors to avoid infinite loops
+        var recoverableErrorCount = 0
+        val maxRecoverableErrors = 5
 
-        // IMPORTANT: Set error listener BEFORE setting video URI to catch early errors
+        // Set error listener - be VERY tolerant for R2 videos with incomplete metadata
         binding.videoView.setOnErrorListener { _, what, extra ->
+            Log.e("VideoPlayerActivity", "VideoView error: what=$what, extra=$extra")
+            
+            val isRecoverableError = when {
+                what == -2147483648 && extra == 0 -> true
+                what == -38 && extra == 0 -> true
+                what == MediaPlayer.MEDIA_ERROR_UNKNOWN && extra == -2147483648 -> true
+                else -> false
+            }
+            
+            if (isRecoverableError && recoverableErrorCount < maxRecoverableErrors) {
+                recoverableErrorCount++
+                Log.w("VideoPlayerActivity", "Ignoring recoverable error #$recoverableErrorCount")
+                return@setOnErrorListener true
+            }
+            
             if (hasError) return@setOnErrorListener true
             hasError = true
             mediaPlayerPrepared = false
-            
-            Log.e("VideoPlayerActivity", "Error playing video: what=$what, extra=$extra")
             progressRunnable?.let { uiHandler.removeCallbacks(it) }
-            
-            // Ocultar spinner si hay error
             binding.loadingSpinner.visibility = View.GONE
             
-            val errorMsg = when (what) {
-                MediaPlayer.MEDIA_ERROR_UNKNOWN -> "Error desconocido o formato no soportado"
-                MediaPlayer.MEDIA_ERROR_SERVER_DIED -> "Error de servidor de medios"
-                else -> "Error de reproducción ($what)"
-            }
-            
             if (!isFinishing) {
-                Toast.makeText(this, errorMsg, Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Error de reproducción ($what)", Toast.LENGTH_SHORT).show()
                 finish()
             }
             true
         }
 
         binding.videoView.setVideoURI(uri)
+        setupVideoViewListeners(savedPosition)
+    }
+    
+    private fun setupControlListeners(pathOrUri: String?) {
+        // Start with controls hidden
+        hideControls(immediate = true)
+
+        // Interaction: swipe for brightness (left), tap for controls
+        binding.controlsOverlay.setOnTouchListener { _, event ->
+            if (brightnessManager.onTouch(event)) {
+                return@setOnTouchListener true
+            }
+            if (event.action == android.view.MotionEvent.ACTION_UP) {
+                if (isControlsVisible) hideControls() else showControls()
+                return@setOnTouchListener true
+            }
+            true
+        }
+
+        binding.playPauseOverlay.setOnClickListener {
+            if (!mediaPlayerPrepared) return@setOnClickListener
+            try {
+                if (useExoPlayer) {
+                    // ExoPlayer toggle
+                    exoPlayer?.let { player ->
+                        if (player.isPlaying) player.pause() else player.play()
+                    }
+                } else {
+                    // VideoView toggle
+                    val mp = mediaPlayer
+                    if (mp != null) {
+                        if (mp.isPlaying) mp.pause() else mp.start()
+                    } else {
+                        if (binding.videoView.isPlaying) binding.videoView.pause() else binding.videoView.start()
+                    }
+                }
+                updatePlayPauseIcon()
+                scheduleAutoHide()
+            } catch (e: Exception) {
+                Log.e("VideoPlayerActivity", "Error toggling play/pause", e)
+            }
+        }
+
+        binding.backButton.setOnClickListener {
+            try {
+                val i = Intent(this, com.example.tareamov.MainActivity::class.java)
+                i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                i.putExtra("open_video_home", true)
+                val currentPos = try { 
+                    if (useExoPlayer) exoPlayer?.currentPosition?.toInt() ?: 0 
+                    else mediaPlayer?.currentPosition ?: binding.videoView.currentPosition 
+                } catch (_: Exception) { 0 }
+                i.putExtra("video_position", currentPos)
+                i.putExtra("video_path", pathOrUri)
+                startActivity(i)
+                finish()
+            } catch (e: Exception) {
+                Log.w("VideoPlayerActivity", "Failed to navigate to VideoHomeFragment via MainActivity", e)
+                finish()
+            }
+        }
+
+        binding.btnFloatingMode.setOnClickListener {
+            try {
+                if (pathOrUri.isNullOrEmpty()) {
+                    Toast.makeText(this, "URI de video no disponible para modo flotante", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        pipManager.enterPipMode()
+                    } catch (pipEx: Exception) {
+                        Log.w("VideoPlayerActivity", "PIP failed, falling back to in-app floating", pipEx)
+                        val i = Intent(this, com.example.tareamov.MainActivity::class.java)
+                        i.putExtra("floating_video_path", pathOrUri)
+                        i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        startActivity(i)
+                        finish()
+                    }
+                } else {
+                    val i = Intent(this, com.example.tareamov.MainActivity::class.java)
+                    i.putExtra("floating_video_path", pathOrUri)
+                    val currentPos = try { mediaPlayer?.currentPosition ?: binding.videoView.currentPosition } catch (_: Exception) { 0 }
+                    i.putExtra("video_position", currentPos)
+                    i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    startActivity(i)
+                    finish()
+                }
+            } catch (e: Exception) {
+                Log.e("VideoPlayerActivity", "Error initiating floating mode", e)
+                Toast.makeText(this, "No se pudo abrir el modo flotante", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        binding.skipBackIcon.setOnClickListener { seekBy(-10_000) }
+        binding.skipForwardIcon.setOnClickListener { seekBy(10_000) }
+
+        binding.muteButton.setOnClickListener {
+            isMuted = !isMuted
+            setMuted(isMuted)
+        }
+
+        binding.seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    pendingUserSeekMs = progress
+                    binding.currentTime.text = TimeUtils.formatTime(progress)
+                    showControls()
+                }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {
+                cancelAutoHide()
+                isScrubbing = true
+                showControls()
+            }
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                pendingUserSeekMs?.let { target ->
+                    try {
+                        if (useExoPlayer) {
+                            exoPlayer?.seekTo(target.toLong())
+                        } else {
+                            mediaPlayer?.seekTo(target) ?: binding.videoView.seekTo(target)
+                        }
+                    } catch (_: Exception) {}
+                }
+                pendingUserSeekMs = null
+                isScrubbing = false
+                scheduleAutoHide()
+            }
+        })
+    }
+    
+    private fun setupVideoViewListeners(savedPosition: Int) {
         binding.videoView.setOnPreparedListener { mp ->
             if (hasError || isFinishing) {
                 Log.w("VideoPlayerActivity", "onPrepared called but hasError=$hasError isFinishing=$isFinishing, ignoring")
@@ -173,28 +547,16 @@ class VideoPlayerActivity : AppCompatActivity() {
             try {
                 mediaPlayer = mp
                 
-                // Verify MediaPlayer is actually prepared before accessing properties
+                // Get duration - use default if invalid (some R2 videos have incomplete metadata)
                 val duration = try { 
                     val d = mp.duration
                     if (d <= 0) {
-                        Log.e("VideoPlayerActivity", "Invalid duration: $d - video source may be corrupt or inaccessible")
-                        hasError = true
-                        binding.loadingSpinner.visibility = View.GONE
-                        if (!isFinishing) {
-                            Toast.makeText(this@VideoPlayerActivity, "El video no se puede reproducir (formato no soportado o archivo corrupto)", Toast.LENGTH_SHORT).show()
-                            finish()
-                        }
-                        return@setOnPreparedListener
+                        Log.w("VideoPlayerActivity", "Invalid duration: $d - using default 0 (video may still play)")
+                        0 // Don't reject the video, just use 0 as duration
                     } else d
                 } catch (e: Exception) { 
-                    Log.e("VideoPlayerActivity", "Error getting duration", e)
-                    hasError = true
-                    binding.loadingSpinner.visibility = View.GONE
-                    if (!isFinishing) {
-                        Toast.makeText(this@VideoPlayerActivity, "Error al cargar el video", Toast.LENGTH_SHORT).show()
-                        finish()
-                    }
-                    return@setOnPreparedListener
+                    Log.w("VideoPlayerActivity", "Error getting duration, using 0: ${e.message}")
+                    0 // Don't reject, try to play anyway
                 }
                 
                 // Only mark as prepared after successful duration check
@@ -296,135 +658,6 @@ class VideoPlayerActivity : AppCompatActivity() {
                 mediaPlayerPrepared = false
             }
         }
-
-    // Start with controls hidden
-    hideControls(immediate = true)
-
-    // Interaction: swipe for brightness (left), tap for controls
-        binding.controlsOverlay.setOnTouchListener { _, event ->
-            // Delegate touch to BrightnessManager first
-            if (brightnessManager.onTouch(event)) {
-                return@setOnTouchListener true
-            }
-            
-            // If not consumed by brightness, handle tap for controls
-            if (event.action == android.view.MotionEvent.ACTION_UP) {
-                if (isControlsVisible) {
-                    hideControls()
-                } else {
-                    showControls()
-                }
-                return@setOnTouchListener true
-            }
-            
-            true
-        }
-
-        binding.playPauseOverlay.setOnClickListener {
-            if (!mediaPlayerPrepared) return@setOnClickListener
-            try {
-                if (binding.videoView.isPlaying) {
-                    binding.videoView.pause()
-                } else {
-                    binding.videoView.start()
-                }
-                updatePlayPauseIcon()
-                scheduleAutoHide()
-            } catch (e: Exception) {
-                Log.e("VideoPlayerActivity", "Error toggling play/pause", e)
-            }
-        }
-
-        binding.backButton.setOnClickListener {
-            try {
-                // Instead of finishing the app, navigate back to the VideoHomeFragment hosted by MainActivity
-                val i = Intent(this, com.example.tareamov.MainActivity::class.java)
-                i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                i.putExtra("open_video_home", true)
-                // Pass current position and path to restore state
-                i.putExtra("video_position", binding.videoView.currentPosition)
-                i.putExtra("video_path", pathOrUri)
-                startActivity(i)
-                finish()
-            } catch (e: Exception) {
-                Log.w("VideoPlayerActivity", "Failed to navigate to VideoHomeFragment via MainActivity", e)
-                finish()
-            }
-        }
-
-        binding.btnFloatingMode.setOnClickListener {
-            try {
-                val uriToSend = pathOrUri
-                if (uriToSend.isNullOrEmpty()) {
-                    Toast.makeText(this, "URI de video no disponible para modo flotante", Toast.LENGTH_SHORT).show()
-                    return@setOnClickListener
-                }
-
-                // Prefer system Picture-in-Picture when available (Android O+). This keeps playback
-                // visible after leaving the app. Otherwise fallback to the existing in-app floating container.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    try {
-                        pipManager.enterPipMode()
-                        // Do not finish activity: leaving it in PIP keeps playback.
-                    } catch (pipEx: Exception) {
-                        Log.w("VideoPlayerActivity", "PIP failed, falling back to in-app floating", pipEx)
-                        // fallback to MainActivity in-app floating
-                        val i = Intent(this, com.example.tareamov.MainActivity::class.java)
-                        i.putExtra("floating_video_path", uriToSend)
-                        i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        startActivity(i)
-                        finish()
-                    }
-                } else {
-                    // Older devices: use the in-app floating fragment pathway
-                    val i = Intent(this, com.example.tareamov.MainActivity::class.java)
-                    i.putExtra("floating_video_path", uriToSend)
-                    i.putExtra("video_position", binding.videoView.currentPosition)
-                    i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    startActivity(i)
-                    finish()
-                }
-            } catch (e: Exception) {
-                Log.e("VideoPlayerActivity", "Error initiating floating mode", e)
-                Toast.makeText(this, "No se pudo abrir el modo flotante", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        binding.skipBackIcon.setOnClickListener { seekBy(-10_000) }
-        binding.skipForwardIcon.setOnClickListener { seekBy(10_000) }
-
-    binding.muteButton.setOnClickListener {
-            isMuted = !isMuted
-            setMuted(isMuted)
-        }
-        
-
-        binding.seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) {
-                    // No buscar en caliente: solo actualiza tiempo mostrado y guarda posición
-                    pendingUserSeekMs = progress
-                    binding.currentTime.text = TimeUtils.formatTime(progress)
-                    // Keep controls visible while scrubbing
-                    showControls()
-                }
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {
-                // Cancel auto hide while dragging
-                cancelAutoHide()
-                isScrubbing = true
-                showControls()
-            }
-            override fun onStopTrackingTouch(sb: SeekBar?) {
-                // Realiza el seek definitivo al soltar
-                pendingUserSeekMs?.let { target ->
-                    try { binding.videoView.seekTo(target) } catch (_: Exception) {}
-                }
-                pendingUserSeekMs = null
-                isScrubbing = false
-                scheduleAutoHide()
-            }
-        })
     }
 
     private fun showControls() {
@@ -536,26 +769,51 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
         uiHandler.post(progressRunnable!!)
     }
+    
+    private fun startExoPlayerProgressUpdater() {
+        progressRunnable?.let { uiHandler.removeCallbacks(it) }
+        progressRunnable = object : Runnable {
+            override fun run() {
+                if (isFinishing || !mediaPlayerPrepared || exoPlayer == null) return
+
+                try {
+                    val player = exoPlayer ?: return
+                    if (!isScrubbing) {
+                        val pos = player.currentPosition.toInt()
+                        binding.seekBar.progress = pos
+                        binding.currentTime.text = TimeUtils.formatTime(pos)
+                    }
+                } catch (e: Exception) {
+                    Log.w("VideoPlayerActivity", "Error updating ExoPlayer progress: ${e.message}")
+                } finally {
+                    if (!isFinishing && mediaPlayerPrepared) {
+                        uiHandler.postDelayed(this, 250)
+                    }
+                }
+            }
+        }
+        uiHandler.post(progressRunnable!!)
+    }
 
     private fun setMuted(muted: Boolean) {
         // Update desired mute state immediately
         isMuted = muted
         
-        // Only apply volume if MediaPlayer is prepared
         if (mediaPlayerPrepared) {
             try {
                 val volume = if (muted) 0f else 1f
-                mediaPlayer?.setVolume(volume, volume)
+                if (useExoPlayer) {
+                    exoPlayer?.volume = volume
+                } else {
+                    mediaPlayer?.setVolume(volume, volume)
+                }
                 binding.muteButton.setImageResource(if (muted) R.drawable.ic_sound_muted_minimal else R.drawable.ic_sound_minimal)
-            } catch (e: IllegalStateException) {
-                Log.e("VideoPlayerActivity", "Error setting volume, MediaPlayer might not be ready.", e)
-                // Keep isMuted flag; volume will be applied later when prepared
-                mediaPlayerPrepared = false
+            } catch (e: Exception) {
+                Log.e("VideoPlayerActivity", "Error setting volume", e)
             }
         } else {
-            // Not prepared yet: volume will be applied when onPreparedListener runs
-            Log.d("VideoPlayerActivity", "MediaPlayer not prepared yet; saved mute state=$isMuted")
-            // Still update button appearance
+            // Not prepared yet: volume will be applied when player is ready
+            Log.d("VideoPlayerActivity", "Player not prepared yet; saved mute state=$isMuted")
             binding.muteButton.setImageResource(if (muted) R.drawable.ic_sound_muted_minimal else R.drawable.ic_sound_minimal)
         }
     }
@@ -563,10 +821,19 @@ class VideoPlayerActivity : AppCompatActivity() {
     private fun seekBy(deltaMs: Int) {
         if (!mediaPlayerPrepared) return
         try {
-            val duration = if (binding.videoView.duration > 0) binding.videoView.duration else binding.seekBar.max
-            val newPos = (binding.videoView.currentPosition + deltaMs).coerceIn(0, duration)
-            binding.videoView.seekTo(newPos)
-            binding.currentTime.text = TimeUtils.formatTime(newPos)
+            if (useExoPlayer) {
+                val player = exoPlayer ?: return
+                val duration = player.duration.toInt().coerceAtLeast(1)
+                val currentPos = player.currentPosition.toInt()
+                val newPos = (currentPos + deltaMs).coerceIn(0, duration)
+                player.seekTo(newPos.toLong())
+                binding.currentTime.text = TimeUtils.formatTime(newPos)
+            } else {
+                val duration = if (binding.videoView.duration > 0) binding.videoView.duration else binding.seekBar.max
+                val newPos = (binding.videoView.currentPosition + deltaMs).coerceIn(0, duration)
+                binding.videoView.seekTo(newPos)
+                binding.currentTime.text = TimeUtils.formatTime(newPos)
+            }
             showControls()
         } catch (e: Exception) {
             Log.e("VideoPlayerActivity", "Error seeking", e)
@@ -576,7 +843,16 @@ class VideoPlayerActivity : AppCompatActivity() {
     private fun updatePlayPauseIcon() {
         if (!mediaPlayerPrepared) return
         try {
-            if (binding.videoView.isPlaying) {
+            val isPlaying = if (useExoPlayer) {
+                exoPlayer?.isPlaying ?: false
+            } else {
+                try {
+                    mediaPlayer?.isPlaying ?: binding.videoView.isPlaying
+                } catch (_: Exception) {
+                    binding.videoView.isPlaying
+                }
+            }
+            if (isPlaying) {
                 binding.playPauseOverlay.setImageResource(R.drawable.ic_pause_overlay)
             } else {
                 binding.playPauseOverlay.setImageResource(R.drawable.ic_play_overlay)
@@ -588,10 +864,18 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        // If the activity enters background but is in PIP mode, keep playback as-is (playing or paused).
-        // Only pause playback when the activity is fully paused and NOT in PIP mode.
-        if (!isInPictureInPictureMode && binding.videoView.isPlaying) {
-            binding.videoView.pause()
+        // If the activity enters background but is in PIP mode, keep playback as-is
+        if (!isInPictureInPictureMode) {
+            try {
+                if (useExoPlayer) {
+                    exoPlayer?.pause()
+                } else {
+                    val isPlaying = mediaPlayer?.isPlaying ?: binding.videoView.isPlaying
+                    if (isPlaying) {
+                        mediaPlayer?.pause() ?: binding.videoView.pause()
+                    }
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -628,8 +912,12 @@ class VideoPlayerActivity : AppCompatActivity() {
             // Ensure controls are ready and progress is updating
             showControls()
             try {
-                if (mediaPlayerPrepared && binding.videoView.isPlaying) {
-                    startProgressUpdater()
+                if (mediaPlayerPrepared) {
+                    if (useExoPlayer) {
+                        startExoPlayerProgressUpdater()
+                    } else if (binding.videoView.isPlaying) {
+                        startProgressUpdater()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("VideoPlayerActivity", "Error resuming from PIP", e)
@@ -641,7 +929,12 @@ class VideoPlayerActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
         try {
             if (mediaPlayerPrepared) {
-                outState.putInt("video_position", binding.videoView.currentPosition)
+                val currentPos = if (useExoPlayer) {
+                    exoPlayer?.currentPosition?.toInt() ?: 0
+                } else {
+                    binding.videoView.currentPosition
+                }
+                outState.putInt("video_position", currentPos)
             }
         } catch (e: Exception) {
             Log.e("VideoPlayerActivity", "Error saving state", e)
@@ -652,6 +945,18 @@ class VideoPlayerActivity : AppCompatActivity() {
         super.onDestroy()
         progressRunnable?.let { uiHandler.removeCallbacks(it) }
         pipManager.unregisterReceiver()
+        
+        // Release ExoPlayer
+        try { 
+            exoPlayer?.release()
+            exoPlayer = null
+        } catch (_: Exception) { }
+        
+        // Release VideoView/MediaPlayer
+        try { 
+            mediaPlayer?.release()
+            mediaPlayer = null
+        } catch (_: Exception) { }
         try { binding.videoView.stopPlayback() } catch (_: Exception) { }
     }
 }

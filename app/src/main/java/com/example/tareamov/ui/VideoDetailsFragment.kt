@@ -381,9 +381,52 @@ class VideoDetailsFragment : Fragment() {
             return
         }
 
+        // If in edit mode, proceed directly
+        if (isEditMode) {
+            proceedWithVideoSave(title, description, currentUsername, createCourse = true)
+            return
+        }
+
+        // Show dialog asking if user wants to create a course
+        showCreateCourseDialog(title, description, currentUsername)
+    }
+
+    /**
+     * Shows a dialog asking if the user wants to create a course with this video
+     */
+    private fun showCreateCourseDialog(title: String, description: String, currentUsername: String) {
+        val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_create_course, null)
+        
+        val dialog = android.app.AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .setCancelable(false)
+            .create()
+        
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        
+        val confirmButton = dialogView.findViewById<android.widget.TextView>(R.id.confirmCreateCourseButton)
+        val cancelButton = dialogView.findViewById<android.widget.TextView>(R.id.cancelCreateCourseButton)
+        
+        confirmButton.setOnClickListener {
+            dialog.dismiss()
+            proceedWithVideoSave(title, description, currentUsername, createCourse = true)
+        }
+        
+        cancelButton.setOnClickListener {
+            dialog.dismiss()
+            proceedWithVideoSave(title, description, currentUsername, createCourse = false)
+        }
+        
+        dialog.show()
+    }
+
+    /**
+     * Proceeds with video save, optionally creating a course
+     */
+    private fun proceedWithVideoSave(title: String, description: String, currentUsername: String, createCourse: Boolean) {
         // Show professional loading screen
         showProfessionalLoading(
-            if (isEditMode) "Actualizando Curso" else "Creando tu Curso",
+            if (isEditMode) "Actualizando Curso" else if (createCourse) "Creando tu Curso" else "Subiendo Video",
             if (isEditMode) "Guardando cambios..." else "Preparando archivos..."
         )
 
@@ -752,52 +795,59 @@ class VideoDetailsFragment : Fragment() {
                     
                     Log.d("VideoDetailsFragment", "Creating new video with ID: $nextVideoId")
 
-                    // First, create the course (will get its own auto-generated ID)
-                    updateLoadingProgress(90, "Creando curso...", false)
-                    val newCourse = com.example.tareamov.data.entity.Course(
-                        id = 0, // Supabase auto-generates
-                        title = title,
-                        description = description,
-                        creatorUserId = userId, // Foreign key to usuarios.id
-                        thumbnailUri = thumbnailUrl, // Miniatura subida a R2
-                        videoUri = finalVideoUri, // Use R2 URL or local URI
-                        isPremium = isPaidCourse,
-                        price = if (isPaidCourse) 9.99 else 0.0,
-                        creationDate = System.currentTimeMillis().toString(),
-                        timestamp = System.currentTimeMillis()
-                    )
-                    
-                    Log.d("VideoDetailsFragment", "Creating course with creatorUserId: $userId, title: $title")
-                    
-                    val courseRemoteId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.insertCourse(newCourse)
-                    }
-                    
-                    if (courseRemoteId == null || courseRemoteId <= 0) {
-                        hideProfessionalLoading()
-                        if (isAdded) context?.let { Toast.makeText(it, "Error creando el curso asociado", Toast.LENGTH_SHORT).show() }
-                        Log.e("VideoDetailsFragment", "Failed to create course - courseRemoteId: $courseRemoteId")
-                        return@launch
-                    }
-                    
-                    Log.d("VideoDetailsFragment", "Course created with ID: $courseRemoteId")
+                    // Variable to hold course ID (null if not creating a course)
+                    var courseRemoteId: Long? = null
 
-                    // Now create video with the specific ID and courseId reference
+                    // Only create course if user chose to
+                    if (createCourse) {
+                        updateLoadingProgress(90, "Creando curso...", false)
+                        val newCourse = com.example.tareamov.data.entity.Course(
+                            id = 0, // Supabase auto-generates
+                            title = title,
+                            description = description,
+                            creatorUserId = userId, // Foreign key to usuarios.id
+                            thumbnailUri = thumbnailUrl, // Miniatura subida a R2
+                            videoUri = finalVideoUri, // Use R2 URL or local URI
+                            isPremium = isPaidCourse,
+                            price = if (isPaidCourse) 9.99 else 0.0,
+                            creationDate = System.currentTimeMillis().toString(),
+                            timestamp = System.currentTimeMillis()
+                        )
+                        
+                        Log.d("VideoDetailsFragment", "Creating course with creatorUserId: $userId, title: $title")
+                        
+                        courseRemoteId = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.insertCourse(newCourse)
+                        }
+                        
+                        if (courseRemoteId == null || courseRemoteId <= 0) {
+                            hideProfessionalLoading()
+                            if (isAdded) context?.let { Toast.makeText(it, "Error creando el curso asociado", Toast.LENGTH_SHORT).show() }
+                            Log.e("VideoDetailsFragment", "Failed to create course - courseRemoteId: $courseRemoteId")
+                            return@launch
+                        }
+                        
+                        Log.d("VideoDetailsFragment", "Course created with ID: $courseRemoteId")
+                    } else {
+                        Log.d("VideoDetailsFragment", "User chose not to create a course - video will be standalone")
+                        updateLoadingProgress(90, "Preparando video...", false)
+                    }
+
+                    // Now create video with the specific ID and optional courseId reference
                     updateLoadingProgress(95, "Guardando video...", false)
-                    // NO incluir username - se obtiene desde course_id en el backend/app
                     val videoData = VideoData(
                         id = nextVideoId,
-                        username = "", // NO se envía a Supabase, se deriva desde course_id
+                        username = currentUsername, // Keep username for standalone videos
                         description = description,
                         title = title,
                         videoUriString = finalVideoUri, // Use R2 URL or local URI
                         isPaid = isPaidCourse,
                         price = if (isPaidCourse) 9.99 else null,
-                        courseId = courseRemoteId, // Link to the course
+                        courseId = courseRemoteId, // null if no course created, otherwise link to the course
                         timestamp = System.currentTimeMillis()
                     )
                     
-                    Log.d("VideoDetailsFragment", "Attempting to insert video with ID: $nextVideoId, courseId: $courseRemoteId")
+                    Log.d("VideoDetailsFragment", "Attempting to insert video with ID: $nextVideoId, courseId: ${courseRemoteId ?: "null (standalone video)"}")
                     
                     val remoteId = withContext(Dispatchers.IO) {
                         com.example.tareamov.service.SupabaseClient.insertVideo(videoData)
@@ -812,8 +862,13 @@ class VideoDetailsFragment : Fragment() {
                         hideProfessionalLoading()
                         
                         if (isAdded) {
-                            context?.let { Toast.makeText(it, "✅ Video guardado con ID $remoteId, Curso ID $courseRemoteId", Toast.LENGTH_LONG).show() }
-                            Log.d("VideoDetailsFragment", "Video saved successfully with ID: $remoteId, linked to course: $courseRemoteId")
+                            val successMessage = if (createCourse) {
+                                "✅ Video guardado con ID $remoteId, Curso ID $courseRemoteId"
+                            } else {
+                                "✅ Video guardado con ID $remoteId (sin curso)"
+                            }
+                            context?.let { Toast.makeText(it, successMessage, Toast.LENGTH_LONG).show() }
+                            Log.d("VideoDetailsFragment", "Video saved successfully with ID: $remoteId, courseId: ${courseRemoteId ?: "none"}")
                             
                             // Navigate to VideoHomeFragment after creating video
                             try {
