@@ -1072,6 +1072,9 @@ class VideoHomeFragment : Fragment() {
 
         // Set current user ID
         videoAdapter.setCurrentUserId(currentUserId)
+        
+        // Set initial active position to 0 (first video)
+        videoAdapter.setActivePosition(0)
 
         // Configurar el ViewPager2
         val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
@@ -1082,9 +1085,25 @@ class VideoHomeFragment : Fragment() {
 
         // Desactivar el overscroll effect (el efecto de rebote al final de la lista)
         viewPager.getChildAt(0).overScrollMode = View.OVER_SCROLL_NEVER        // Listener para cambios de página
+        var previousPosition = -1
         viewPager.registerOnPageChangeCallback(object : androidx.viewpager2.widget.ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
                 super.onPageSelected(position)
+                
+                Log.d("VideoHomeFragment", "Page selected: $position (previous: $previousPosition)")
+                
+                // CRITICAL: Set the active position FIRST - this determines which video plays audio
+                videoAdapter.setActivePosition(position)
+                
+                // Pausar el video anterior antes de reproducir el nuevo
+                if (previousPosition != -1 && previousPosition != position) {
+                    val recyclerView = viewPager.getChildAt(0) as? RecyclerView
+                    val prevHolder = recyclerView?.findViewHolderForAdapterPosition(previousPosition) as? VideoAdapter.VideoViewHolder
+                    prevHolder?.pauseVideo()
+                    Log.d("VideoHomeFragment", "Paused previous video at position: $previousPosition")
+                }
+                previousPosition = position
+                
                 currentVideoIndex = position
                 viewModel.currentVideoIndex = position
 
@@ -1094,11 +1113,12 @@ class VideoHomeFragment : Fragment() {
                     viewModel.loadMoreVideos()
                 }
 
-                // Pausar todos los videos y reproducir solo el actual
-                val viewHolder = (viewPager.getChildAt(0) as RecyclerView)
-                    .findViewHolderForAdapterPosition(position) as? VideoAdapter.VideoViewHolder
+                // Reproducir solo el video actual
+                val recyclerView = viewPager.getChildAt(0) as? RecyclerView
+                val viewHolder = recyclerView?.findViewHolderForAdapterPosition(position) as? VideoAdapter.VideoViewHolder
                 viewHolder?.playVideo()
                 viewHolder?.setMuteState(isMuted) // Apply current mute state
+                Log.d("VideoHomeFragment", "Playing video at position: $position")
 
                 // Actualizar la información en pantalla (ya no necesario, cada video maneja su propia info)
                 // displayVideo(videoList[position]) - Removed as video info is handled by individual items
@@ -1204,12 +1224,53 @@ class VideoHomeFragment : Fragment() {
         super.onPause()
         unregisterNetworkCallback()
         
+        // Pause and mute all videos when leaving fragment
+        pauseAllVideos()
+        
         // Disable full screen mode via MainActivity
         (requireActivity() as? MainActivity)?.isFullScreenMode = false
     }
 
     override fun onDestroyView() {
+        // Release all video players before destroying view
+        releaseAllVideos()
         super.onDestroyView()
+    }
+    
+    /**
+     * Pause all videos in the ViewPager
+     */
+    private fun pauseAllVideos() {
+        try {
+            val viewPager = view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
+            val recyclerView = viewPager?.getChildAt(0) as? RecyclerView
+            recyclerView?.let { rv ->
+                for (i in 0 until rv.childCount) {
+                    val holder = rv.getChildViewHolder(rv.getChildAt(i)) as? VideoAdapter.VideoViewHolder
+                    holder?.pauseVideo()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("VideoHomeFragment", "Error pausing all videos", e)
+        }
+    }
+    
+    /**
+     * Release all video players
+     */
+    private fun releaseAllVideos() {
+        try {
+            val viewPager = view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
+            val recyclerView = viewPager?.getChildAt(0) as? RecyclerView
+            recyclerView?.let { rv ->
+                for (i in 0 until rv.childCount) {
+                    val holder = rv.getChildViewHolder(rv.getChildAt(i)) as? VideoAdapter.VideoViewHolder
+                    holder?.releasePlayer()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("VideoHomeFragment", "Error releasing all videos", e)
+        }
     }
 
     private fun registerNetworkCallback() {

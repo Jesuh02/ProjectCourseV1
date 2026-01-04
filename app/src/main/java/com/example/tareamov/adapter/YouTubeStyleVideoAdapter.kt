@@ -58,6 +58,10 @@ class YouTubeStyleVideoAdapter(
 
     override fun getItemCount(): Int = videos.size
 
+    fun getItem(position: Int): VideoData? {
+        return if (position in 0 until videos.size) videos[position] else null
+    }
+
     fun updateVideos(newVideos: List<VideoData>) {
         val diffCallback = VideoDiffCallback(videos, newVideos)
         val diffResult = DiffUtil.calculateDiff(diffCallback)
@@ -83,7 +87,55 @@ class YouTubeStyleVideoAdapter(
         private val channelNameTextView: TextView = itemView.findViewById(R.id.channelNameTextView)
         private val videoInfoTextView: TextView = itemView.findViewById(R.id.videoInfoTextView)
         private val moreOptionsImageView: ImageView = itemView.findViewById(R.id.moreOptionsImageView)
-          fun bind(video: VideoData) {
+        private val videoPreviewView: android.widget.VideoView? = itemView.findViewById(R.id.videoPreviewView)
+        
+        private var currentVideo: VideoData? = null
+
+        /**
+         * Play muted video preview in the thumbnail area
+         */
+        fun playPreview(videoUri: String) {
+            if (videoPreviewView == null) return
+            try {
+                videoPreviewView.visibility = View.VISIBLE
+                thumbnailImageView.visibility = View.INVISIBLE
+                
+                val uri = android.net.Uri.parse(videoUri)
+                videoPreviewView.setVideoURI(uri)
+                
+                videoPreviewView.setOnPreparedListener { mp ->
+                    mp.setVolume(0f, 0f) // Mute
+                    mp.isLooping = true
+                    videoPreviewView.start()
+                }
+                videoPreviewView.setOnErrorListener { _, _, _ ->
+                    stopPreview()
+                    true
+                }
+            } catch (e: Exception) {
+                Log.e("YouTubeStyleVideoAdapter", "Error playing preview", e)
+                stopPreview()
+            }
+        }
+
+        /**
+         * Stop video preview and show thumbnail
+         */
+        fun stopPreview() {
+            if (videoPreviewView == null) return
+            try {
+                if (videoPreviewView.isPlaying) {
+                    videoPreviewView.stopPlayback()
+                }
+                videoPreviewView.visibility = View.GONE
+                thumbnailImageView.visibility = View.VISIBLE
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+
+        fun bind(video: VideoData) {
+            currentVideo = video
             // Establecer título del video con máximo 2 líneas
             titleTextView.maxLines = 2
             titleTextView.text = video.title

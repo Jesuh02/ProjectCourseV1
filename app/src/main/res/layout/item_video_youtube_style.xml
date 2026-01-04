@@ -29,6 +29,14 @@
                 android:background="#333333"
                 tools:src="@drawable/placeholder_image" />
 
+            <!-- Video Preview View -->
+            <VideoView
+                android:id="@+id/videoPreviewView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_gravity="center"
+                android:visibility="gone" />
+
             <!-- Duración del video -->
             <TextView
                 android:id="@+id/videoDurationTextView"

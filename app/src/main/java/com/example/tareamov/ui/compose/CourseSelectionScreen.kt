@@ -176,6 +176,68 @@ fun CourseSelectionScreen(
                         // Add some bottom padding for the list
                         setPadding(0, 0, 0, 32)
                         clipToPadding = true 
+                        
+                        // Video Preview Logic
+                        var currentPreviewPos = -1
+                        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                        
+                        fun stopPreview() {
+                            if (currentPreviewPos != -1) {
+                                val holder = findViewHolderForAdapterPosition(currentPreviewPos) as? CourseAdapter.CourseViewHolder
+                                holder?.stopPreview()
+                                currentPreviewPos = -1
+                            }
+                        }
+                        
+                        val runnable = Runnable {
+                            val lm = layoutManager as? LinearLayoutManager ?: return@Runnable
+                            val first = lm.findFirstVisibleItemPosition()
+                            val last = lm.findLastVisibleItemPosition()
+                            if (first == RecyclerView.NO_POSITION || last == RecyclerView.NO_POSITION) return@Runnable
+                            
+                            val center = height / 2
+                            var minDst = Int.MAX_VALUE
+                            var centerPos = -1
+                            
+                            for (i in first..last) {
+                                val v = lm.findViewByPosition(i) ?: continue
+                                val vCenter = (v.top + v.bottom) / 2
+                                val dst = Math.abs(center - vCenter)
+                                if (dst < minDst) {
+                                    minDst = dst
+                                    centerPos = i
+                                }
+                            }
+                            
+                            if (centerPos != -1 && centerPos != currentPreviewPos) {
+                                stopPreview()
+                                val holder = findViewHolderForAdapterPosition(centerPos) as? CourseAdapter.CourseViewHolder
+                                val adapter = adapter as? CourseAdapter
+                                val course = adapter?.getItem(centerPos)
+                                val uri = course?.localFilePath ?: course?.videoUri
+                                if (!uri.isNullOrEmpty()) {
+                                    holder?.playPreview(uri)
+                                    currentPreviewPos = centerPos
+                                }
+                            }
+                        }
+                        
+                        addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                                    handler.postDelayed(runnable, 1000)
+                                } else {
+                                    handler.removeCallbacks(runnable)
+                                    stopPreview()
+                                }
+                            }
+                            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                                if (Math.abs(dy) > 0) {
+                                    handler.removeCallbacks(runnable)
+                                    stopPreview()
+                                }
+                            }
+                        })
                     }
                 },
                 update = { recyclerView ->

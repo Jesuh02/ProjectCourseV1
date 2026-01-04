@@ -49,6 +49,24 @@ class VideoAdapter(
 
     private var currentUserId: Long = -1L
     private val pendingSeeks = mutableMapOf<String, Int>()
+    
+    // Track the currently active (playing with audio) video position
+    private var currentActivePosition: Int = -1
+    
+    /**
+     * Set the active position - only this position will have audio enabled
+     */
+    fun setActivePosition(position: Int) {
+        currentActivePosition = position
+        Log.d("VideoAdapter", "Active position set to: $position")
+    }
+    
+    /**
+     * Check if a position is the currently active one
+     */
+    fun isActivePosition(position: Int): Boolean {
+        return position == currentActivePosition
+    }
 
     fun setPendingSeek(path: String, position: Int) {
         pendingSeeks[path] = position
@@ -430,8 +448,13 @@ class VideoAdapter(
                         .build()
                     player.setAudioAttributes(audioAttributes, false)
                     
-                    // Set volume
-                    player.volume = if (isMuted) 0f else 1f
+                    // Check if this is the active position - if not, start muted
+                    val position = bindingAdapterPosition
+                    val isActive = isActivePosition(position)
+                    
+                    // Set volume - MUTE if not active position OR if user has muted
+                    player.volume = if (!isActive || isMuted) 0f else 1f
+                    Log.d("VideoAdapter", "ExoPlayer setup: position=$position, isActive=$isActive, volume=${player.volume}")
                     
                     // Set media item
                     val mediaItem = MediaItem.fromUri(uri)
@@ -439,7 +462,9 @@ class VideoAdapter(
                     
                     // CRITICAL: Enable seamless looping
                     player.repeatMode = Player.REPEAT_MODE_ONE
-                    player.playWhenReady = true
+                    
+                    // Only auto-play if this is the active position
+                    player.playWhenReady = isActive
                     
                     // Track error recovery
                     var errorRecoveryAttempts = 0
@@ -629,7 +654,14 @@ class VideoAdapter(
                     videoView.layoutParams = params
                 }
                 
-                mp.setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)
+                // Check if this is the active position - if not, start muted
+                val position = bindingAdapterPosition
+                val isActive = isActivePosition(position)
+                
+                // Set volume - MUTE if not active position OR if user has muted
+                val volume = if (!isActive || isMuted) 0f else 1f
+                mp.setVolume(volume, volume)
+                Log.d("VideoAdapter", "VideoView setup: position=$position, isActive=$isActive, volume=$volume")
                 
                 // Enable native looping
                 mp.isLooping = true
@@ -664,12 +696,16 @@ class VideoAdapter(
                     }
                 }
                 
-                // Start playback
-                try {
-                    videoView.start()
-                    Log.d("VideoAdapter", "VideoView playback started")
-                } catch (e: Exception) {
-                    Log.e("VideoAdapter", "Error starting VideoView", e)
+                // Start playback only if this is the active position
+                if (isActive) {
+                    try {
+                        videoView.start()
+                        Log.d("VideoAdapter", "VideoView playback started for active position $position")
+                    } catch (e: Exception) {
+                        Log.e("VideoAdapter", "Error starting VideoView", e)
+                    }
+                } else {
+                    Log.d("VideoAdapter", "VideoView prepared but not started (not active position $position)")
                 }
             }
 
@@ -734,32 +770,91 @@ class VideoAdapter(
         }
         
         /**
-         * Pausa la reproducción del video
+         * Pausa la reproducción del video y silencia el audio INMEDIATAMENTE
          */
         fun pauseVideo() {
             isVideoPaused = true
+            Log.d("VideoAdapter", "pauseVideo called for position ${bindingAdapterPosition}")
+            
             if (useExoPlayer) {
-                exoPlayer?.pause()
+                try {
+                    // CRITICAL: Mute FIRST, then pause to prevent audio leak
+                    exoPlayer?.volume = 0f
+                    exoPlayer?.pause()
+                    Log.d("VideoAdapter", "ExoPlayer paused and muted")
+                } catch (e: Exception) {
+                    Log.e("VideoAdapter", "Error pausing ExoPlayer", e)
+                }
             } else {
-                if (videoView.isPlaying) {
-                    videoView.pause()
+                try {
+                    // CRITICAL: Mute FIRST, then pause
+                    mediaPlayer?.setVolume(0f, 0f)
+                    if (videoView.isPlaying) {
+                        videoView.pause()
+                    }
+                    Log.d("VideoAdapter", "VideoView paused and muted")
+                } catch (e: Exception) {
+                    Log.e("VideoAdapter", "Error pausing VideoView", e)
                 }
             }
         }
         
         /**
+         * Stops and releases all video resources
+         */
+        fun releasePlayer() {
+            isVideoPaused = true
+            currentJob?.cancel()
+            
+            // Release ExoPlayer
+            try {
+                exoPlayer?.stop()
+                exoPlayer?.release()
+                exoPlayer = null
+            } catch (e: Exception) {
+                Log.e("VideoAdapter", "Error releasing ExoPlayer", e)
+            }
+            
+            // Release VideoView/MediaPlayer
+            try {
+                if (videoView.isPlaying) {
+                    videoView.stopPlayback()
+                }
+                mediaPlayer?.setVolume(0f, 0f)
+                mediaPlayer?.stop()
+                mediaPlayer?.release()
+                mediaPlayer = null
+                mediaPlayerPrepared = false
+            } catch (e: Exception) {
+                Log.e("VideoAdapter", "Error releasing VideoView/MediaPlayer", e)
+            }
+        }
+        
+        /**
          * Inicia la reproducción del video
+         * Solo reproduce con audio si esta es la posición activa
          */
         fun playVideo() {
             try {
-                if (!isVideoPaused) {
-                    if (useExoPlayer) {
-                        exoPlayer?.play()
-                    } else {
-                        if (!videoView.isPlaying) {
-                            videoView.start()
-                        }
+                isVideoPaused = false
+                val position = bindingAdapterPosition
+                Log.d("VideoAdapter", "playVideo called for position $position")
+                
+                if (useExoPlayer) {
+                    exoPlayer?.let { player ->
+                        // Restore volume based on mute state
+                        player.volume = if (isMuted) 0f else 1f
+                        player.play()
+                        Log.d("VideoAdapter", "ExoPlayer started for position $position")
                     }
+                } else {
+                    // Restore volume based on mute state
+                    val volume = if (isMuted) 0f else 1f
+                    mediaPlayer?.setVolume(volume, volume)
+                    if (!videoView.isPlaying) {
+                        videoView.start()
+                    }
+                    Log.d("VideoAdapter", "VideoView started for position $position")
                 }
             } catch (e: Exception) {
                 Log.e("VideoAdapter", "Error playing video", e)
@@ -1529,11 +1624,41 @@ class VideoAdapter(
 
     override fun onViewAttachedToWindow(holder: VideoViewHolder) {
         super.onViewAttachedToWindow(holder)
-        holder.playVideo()
+        val position = holder.bindingAdapterPosition
+        Log.d("VideoAdapter", "onViewAttachedToWindow: position=$position, activePosition=$currentActivePosition")
+        
+        // ONLY play if this is the currently active position
+        // This prevents multiple videos from playing audio during scroll
+        if (position == currentActivePosition) {
+            holder.playVideo()
+        } else {
+            // For non-active positions, ensure they are paused and muted
+            holder.pauseVideo()
+        }
     }
 
     override fun onViewDetachedFromWindow(holder: VideoViewHolder) {
         super.onViewDetachedFromWindow(holder)
+        val position = holder.bindingAdapterPosition
+        Log.d("VideoAdapter", "onViewDetachedFromWindow: position=$position")
+        
+        // ALWAYS pause and mute when detached - this is critical to prevent audio leaks
         holder.pauseVideo()
+    }
+    
+    /**
+     * Pause all videos - call this when fragment is paused
+     */
+    fun pauseAllVideos() {
+        // This will be called by the fragment's onPause
+        // Individual holders are paused via onViewDetachedFromWindow
+    }
+    
+    /**
+     * Release all video resources - call this when fragment is destroyed
+     */
+    fun releaseAllPlayers() {
+        // This signals that all players should be released
+        // Individual holders handle their own cleanup
     }
 }

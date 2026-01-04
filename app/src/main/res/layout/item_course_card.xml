@@ -38,6 +38,14 @@
                     android:src="@drawable/bg_course_placeholder_card"
                     tools:src="@drawable/bg_course_placeholder_card" />
 
+                <!-- Video Preview View -->
+                <VideoView
+                    android:id="@+id/courseVideoPreview"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_gravity="center"
+                    android:visibility="gone" />
+
                 <!-- Overlay text like in the image (hidden by default, YouTube style) -->
                 <TextView
                     android:id="@+id/overlayText"

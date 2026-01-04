@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
@@ -93,6 +95,11 @@ class UserProfileViewFragment : Fragment() {
     private var filteredContent = mutableListOf<VideoData>() // For search results
     private var currentFilter = ContentType.COURSE
     private var isSearchMode = false
+    
+    // Video preview handling
+    private val previewHandler = Handler(Looper.getMainLooper())
+    private var previewRunnable: Runnable? = null
+    private var currentPreviewPosition = -1
     private var currentSearchQuery = ""
     
     // Variable para el usuario cuyo perfil se está viendo
@@ -482,6 +489,31 @@ class UserProfileViewFragment : Fragment() {
                 // RecyclerView optimizations
                 setHasFixedSize(true)
                 setItemViewCacheSize(10)
+                
+                // Video preview scroll listener
+                addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                    override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                        when (newState) {
+                            RecyclerView.SCROLL_STATE_IDLE -> {
+                                // Start preview after 1 second of idle
+                                previewRunnable = Runnable { startPreviewForCenterItem() }
+                                previewHandler.postDelayed(previewRunnable!!, 1000)
+                            }
+                            else -> {
+                                // Stop preview when scrolling
+                                previewHandler.removeCallbacks(previewRunnable ?: return)
+                                stopCurrentPreview()
+                            }
+                        }
+                    }
+                    
+                    override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                        if (Math.abs(dy) > 5) {
+                            previewHandler.removeCallbacks(previewRunnable ?: return)
+                            stopCurrentPreview()
+                        }
+                    }
+                })
             }
         } catch (e: Exception) {
             Log.e("UserProfileViewFragment", "Error setting up RecyclerView: ${e.message}")
@@ -496,8 +528,70 @@ class UserProfileViewFragment : Fragment() {
         }
     }
 
-    
+    /**
+     * Start video preview for the center item in RecyclerView
+     */
+    private fun startPreviewForCenterItem() {
+        val layoutManager = contentRecyclerView.layoutManager as? LinearLayoutManager ?: return
+        val firstPos = layoutManager.findFirstVisibleItemPosition()
+        val lastPos = layoutManager.findLastVisibleItemPosition()
+        
+        if (firstPos == RecyclerView.NO_POSITION || lastPos == RecyclerView.NO_POSITION) return
+        
+        val centerY = contentRecyclerView.height / 2
+        var minDistance = Int.MAX_VALUE
+        var centerPos = -1
+        
+        for (i in firstPos..lastPos) {
+            val view = layoutManager.findViewByPosition(i) ?: continue
+            val viewCenterY = (view.top + view.bottom) / 2
+            val distance = Math.abs(centerY - viewCenterY)
+            if (distance < minDistance) {
+                minDistance = distance
+                centerPos = i
+            }
+        }
+        
+        if (centerPos != -1 && centerPos != currentPreviewPosition) {
+            stopCurrentPreview()
+            
+            // Get the video URI based on current adapter type
+            val videoUri: String? = if (currentFilter == ContentType.COURSE) {
+                val course = contentAdapter.getItem(centerPos)
+                course?.localFilePath ?: course?.videoUriString
+            } else {
+                val video = videoAdapter.getItem(centerPos)
+                video?.localFilePath ?: video?.videoUriString
+            }
+            
+            if (!videoUri.isNullOrEmpty()) {
+                if (currentFilter == ContentType.COURSE) {
+                    val holder = contentRecyclerView.findViewHolderForAdapterPosition(centerPos) as? CreatedCourseAdapter.CourseViewHolder
+                    holder?.playPreview(videoUri)
+                } else {
+                    val holder = contentRecyclerView.findViewHolderForAdapterPosition(centerPos) as? YouTubeStyleVideoAdapter.VideoViewHolder
+                    holder?.playPreview(videoUri)
+                }
+                currentPreviewPosition = centerPos
+            }
+        }
+    }
 
+    /**
+     * Stop current video preview
+     */
+    private fun stopCurrentPreview() {
+        if (currentPreviewPosition != -1) {
+            if (currentFilter == ContentType.COURSE) {
+                val holder = contentRecyclerView.findViewHolderForAdapterPosition(currentPreviewPosition) as? CreatedCourseAdapter.CourseViewHolder
+                holder?.stopPreview()
+            } else {
+                val holder = contentRecyclerView.findViewHolderForAdapterPosition(currentPreviewPosition) as? YouTubeStyleVideoAdapter.VideoViewHolder
+                holder?.stopPreview()
+            }
+            currentPreviewPosition = -1
+        }
+    }
 
     private fun setupFilterButtons() {
         coursesFilterButton.setOnClickListener {
@@ -1379,6 +1473,10 @@ class UserProfileViewFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        // Clean up video preview
+        previewHandler.removeCallbacks(previewRunnable ?: Runnable {})
+        stopCurrentPreview()
+        
         // Clean up any resources
         if (::contentAdapter.isInitialized) {
             contentAdapter.stopAllVideos()

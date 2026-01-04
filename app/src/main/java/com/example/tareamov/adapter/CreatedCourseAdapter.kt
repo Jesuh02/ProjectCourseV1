@@ -81,9 +81,16 @@ class CreatedCourseAdapter(
     override fun onViewDetachedFromWindow(holder: CourseViewHolder) {
         super.onViewDetachedFromWindow(holder)
         holder.stopAutoPlay()
+        holder.stopPreview()
     }
 
-    override fun getItemCount(): Int = courses.size    /**
+    override fun getItemCount(): Int = courses.size
+
+    fun getItem(position: Int): VideoData? {
+        return if (position in 0 until courses.size) courses[position] else null
+    }
+
+    /**
      * Actualiza la lista de cursos y notifica al adaptador
      */
     fun updateCourses(newCourses: List<VideoData>) {
@@ -256,7 +263,7 @@ class CreatedCourseAdapter(
      */
     inner class CourseViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val thumbnailImageView: ImageView = itemView.findViewById(R.id.courseThumbnailImageView)
-        private val videoView: VideoView? = null // VideoView is not in item_course_card.xml
+        private val videoPreview: VideoView? = itemView.findViewById(R.id.courseVideoPreview)
         private val titleTextView: TextView = itemView.findViewById(R.id.courseTitleTextView)
         private val studentsTextView: TextView = itemView.findViewById(R.id.courseEnrollmentTextView)
         private val categoryTextView: TextView = itemView.findViewById(R.id.courseCategoryTextView)
@@ -659,6 +666,49 @@ class CreatedCourseAdapter(
             val canModify = currentUsername != null && currentUsername == course.username
             Log.d("CreatedCourseAdapter", "ViewHolder permission check for '${course.title}' - Current: '$currentUsername', Creator: '${course.username}', Can modify: $canModify")
             return canModify
+        }
+
+        /**
+         * Play muted video preview in the thumbnail area
+         */
+        fun playPreview(videoUri: String) {
+            if (videoPreview == null) return
+            try {
+                videoPreview.visibility = View.VISIBLE
+                thumbnailImageView.visibility = View.INVISIBLE
+                
+                val uri = Uri.parse(videoUri)
+                videoPreview.setVideoURI(uri)
+                
+                videoPreview.setOnPreparedListener { mp ->
+                    mp.setVolume(0f, 0f) // Mute
+                    mp.isLooping = true
+                    videoPreview.start()
+                }
+                videoPreview.setOnErrorListener { _, _, _ ->
+                    stopPreview()
+                    true
+                }
+            } catch (e: Exception) {
+                Log.e("CreatedCourseAdapter", "Error playing preview", e)
+                stopPreview()
+            }
+        }
+
+        /**
+         * Stop video preview and show thumbnail
+         */
+        fun stopPreview() {
+            if (videoPreview == null) return
+            try {
+                if (videoPreview.isPlaying) {
+                    videoPreview.stopPlayback()
+                }
+                videoPreview.visibility = View.GONE
+                thumbnailImageView.visibility = View.VISIBLE
+            } catch (e: Exception) {
+                // Ignore
+            }
         }
 
         fun startAutoPlay() {

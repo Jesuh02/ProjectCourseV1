@@ -59,6 +59,9 @@ class CourseAdapter(
         val enrollmentTextView: TextView = itemView.findViewById(R.id.courseEnrollmentTextView)
         val premiumBadge: View = itemView.findViewById(R.id.premiumBadge)
         val overlayText: TextView = itemView.findViewById(R.id.overlayText)
+        // Video Preview
+        val videoPreview: android.widget.VideoView? = itemView.findViewById(R.id.courseVideoPreview)
+
         // Subscription elements
         val creatorAvatarImageView: de.hdodenhof.circleimageview.CircleImageView = itemView.findViewById(R.id.creatorAvatarImageView)
         val subscriberCountTextView: TextView = itemView.findViewById(R.id.subscriberCountTextView)
@@ -74,6 +77,42 @@ class CourseAdapter(
         val ownerStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.ownerStatusContainer)
         // CRUD action elements - moreOptionsButton is now directly in the layout
         val moreOptionsButton: android.widget.ImageButton? = itemView.findViewById(R.id.moreOptionsButton)
+
+        fun playPreview(videoUri: String) {
+            if (videoPreview == null) return
+            try {
+                videoPreview.visibility = View.VISIBLE
+                thumbnailImageView.visibility = View.INVISIBLE
+                
+                val uri = android.net.Uri.parse(videoUri)
+                videoPreview.setVideoURI(uri)
+                
+                videoPreview.setOnPreparedListener { mp ->
+                    mp.setVolume(0f, 0f) // Mute
+                    mp.isLooping = true
+                    videoPreview.start()
+                }
+                videoPreview.setOnErrorListener { _, _, _ ->
+                    stopPreview()
+                    true
+                }
+            } catch (e: Exception) {
+                stopPreview()
+            }
+        }
+
+        fun stopPreview() {
+            if (videoPreview == null) return
+            try {
+                if (videoPreview.isPlaying) {
+                    videoPreview.stopPlayback()
+                }
+                videoPreview.visibility = View.GONE
+                thumbnailImageView.visibility = View.VISIBLE
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CourseViewHolder {
@@ -406,6 +445,10 @@ class CourseAdapter(
     }
 
     override fun getItemCount(): Int = courses.size
+
+    fun getItem(position: Int): Course? {
+        return if (position in courses.indices) courses[position] else null
+    }
 
     fun updateCourses(newCourses: List<Course>) {
         // Always show newest courses first to match Supabase ordering

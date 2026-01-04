@@ -92,6 +92,66 @@ class ExploreFragment : Fragment() {
     // Network monitoring
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+    // Video Preview Logic
+    private val previewHandler = Handler(Looper.getMainLooper())
+    private var currentPreviewPosition = -1
+    private val previewRunnable = Runnable {
+        startPreviewForCenterItem()
+    }
+
+    private fun startPreviewForCenterItem() {
+        val view = view ?: return
+        val coursesRecyclerView = view.findViewById<RecyclerView>(R.id.coursesRecyclerView) ?: return
+        val layoutManager = coursesRecyclerView.layoutManager as? LinearLayoutManager ?: return
+        
+        val firstVisible = layoutManager.findFirstVisibleItemPosition()
+        val lastVisible = layoutManager.findLastVisibleItemPosition()
+        
+        if (firstVisible == RecyclerView.NO_POSITION || lastVisible == RecyclerView.NO_POSITION) return
+        
+        // Find center item
+        val recyclerViewCenter = coursesRecyclerView.height / 2
+        var minDistance = Int.MAX_VALUE
+        var centerPosition = -1
+        
+        for (i in firstVisible..lastVisible) {
+            val itemView = layoutManager.findViewByPosition(i) ?: continue
+            val itemCenter = (itemView.top + itemView.bottom) / 2
+            val distance = Math.abs(recyclerViewCenter - itemCenter)
+            if (distance < minDistance) {
+                minDistance = distance
+                centerPosition = i
+            }
+        }
+        
+        if (centerPosition != -1 && centerPosition != currentPreviewPosition) {
+            stopCurrentPreview()
+            
+            val holder = coursesRecyclerView.findViewHolderForAdapterPosition(centerPosition) as? CourseAdapter.CourseViewHolder
+            if (holder != null) {
+                val course = coursesAdapter.getItem(centerPosition)
+                if (course != null) {
+                    val videoUri = course.localFilePath ?: course.videoUri
+                    if (!videoUri.isNullOrEmpty()) {
+                        holder.playPreview(videoUri)
+                        currentPreviewPosition = centerPosition
+                    }
+                }
+            }
+        }
+    }
+
+    private fun stopCurrentPreview() {
+        val view = view ?: return
+        val coursesRecyclerView = view.findViewById<RecyclerView>(R.id.coursesRecyclerView) ?: return
+        
+        if (currentPreviewPosition != -1) {
+            val holder = coursesRecyclerView.findViewHolderForAdapterPosition(currentPreviewPosition) as? CourseAdapter.CourseViewHolder
+            holder?.stopPreview()
+            currentPreviewPosition = -1
+        }
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
@@ -719,6 +779,27 @@ class ExploreFragment : Fragment() {
         coursesRecyclerView.layoutManager = LinearLayoutManager(requireContext(), RecyclerView.VERTICAL, false)
         // coursesRecyclerView.setHasFixedSize(true) // Removed to fix lint error: InvalidSetHasFixedSize
         coursesRecyclerView.setItemViewCacheSize(100)
+
+        // Add scroll listener for video preview
+        coursesRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                super.onScrollStateChanged(recyclerView, newState)
+                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    previewHandler.postDelayed(previewRunnable, 1000)
+                } else {
+                    previewHandler.removeCallbacks(previewRunnable)
+                    stopCurrentPreview()
+                }
+            }
+
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                super.onScrolled(recyclerView, dx, dy)
+                if (Math.abs(dy) > 0) {
+                    previewHandler.removeCallbacks(previewRunnable)
+                    stopCurrentPreview()
+                }
+            }
+        })
 
         Log.d("ExploreFragment", "Setting up adapter with currentUsername: $currentUsername")
 
