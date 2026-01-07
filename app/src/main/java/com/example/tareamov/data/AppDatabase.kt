@@ -25,8 +25,8 @@ import com.example.tareamov.data.dao.RolDao
 import com.example.tareamov.data.dao.RecursoDao
 import com.example.tareamov.data.dao.RolRecursoDao
 import com.example.tareamov.data.dao.ProgresoEstudianteDao
-import com.example.tareamov.data.dao.VideoLikeDao
 import com.example.tareamov.data.dao.VideoCommentDao
+import com.example.tareamov.data.dao.LikeDao
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.VideoData
@@ -42,14 +42,13 @@ import com.example.tareamov.data.entity.Rol
 import com.example.tareamov.data.entity.Recurso
 import com.example.tareamov.data.entity.RolRecurso
 import com.example.tareamov.data.entity.ProgresoEstudiante
-import com.example.tareamov.data.entity.VideoLike
-import com.example.tareamov.data.entity.UserVideoLike
 import com.example.tareamov.data.entity.VideoComment
+import com.example.tareamov.data.entity.Like
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-// In the @Database annotation, add Purchase to the entities list
+// Polymorphic likes table replaces video_likes and user_video_likes
 @Database(
     entities = [
         Persona::class,
@@ -67,11 +66,10 @@ import kotlinx.coroutines.launch
         Recurso::class,
         RolRecurso::class,
         ProgresoEstudiante::class,
-        VideoLike::class,
-        UserVideoLike::class,
-        VideoComment::class
+        VideoComment::class,
+        Like::class  // Polymorphic likes table (replaces VideoLike and UserVideoLike)
     ],
-    version = 32, // Updated version to add parent_id to video_comments
+    version = 35, // Updated version - removed VideoLike and UserVideoLike entities
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -90,8 +88,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recursoDao(): RecursoDao  // Add RecursoDao
     abstract fun rolRecursoDao(): RolRecursoDao  // Add RolRecursoDao
     abstract fun progresoEstudianteDao(): ProgresoEstudianteDao  // Add ProgresoEstudianteDao
-    abstract fun videoLikeDao(): VideoLikeDao  // Add VideoLikeDao
     abstract fun videoCommentDao(): VideoCommentDao  // Add VideoCommentDao
+    abstract fun likeDao(): LikeDao  // Polymorphic likes DAO (replaces videoLikeDao)
 
     // Métodos para notificar cambios en la base de datos
     fun notifyDataChanged() {

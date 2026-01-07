@@ -19,6 +19,10 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     private val _currentUsername = MutableStateFlow<String?>(null)
     val currentUsername: StateFlow<String?> = _currentUsername.asStateFlow()
     
+    // Current user ID for adapter subscription checks
+    private val _currentUserId = MutableStateFlow<Long?>(null)
+    val currentUserId: StateFlow<Long?> = _currentUserId.asStateFlow()
+    
     // Master list of all enrolled courses
     private var allEnrolledCourses = listOf<Course>()
     
@@ -34,6 +38,10 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     // Cache for subscription status
     private val _subscriptionStatus = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
     val subscriptionStatus: StateFlow<Map<Long, Boolean>> = _subscriptionStatus.asStateFlow()
+    
+    // Refresh trigger to force adapter update
+    private val _refreshTrigger = MutableStateFlow(0)
+    val refreshTrigger: StateFlow<Int> = _refreshTrigger.asStateFlow()
     
     private val database by lazy { AppDatabase.getDatabase(getApplication()) }
     
@@ -55,7 +63,7 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
             database.chatMessageDao(),
             database.fileContextDao(),
             database.progresoEstudianteDao(),
-            database.videoLikeDao(),
+            database.likeDao(),
             database.videoCommentDao()
         ).apply {
             initWithContext(getApplication())
@@ -63,8 +71,31 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     }
     
     init {
+        loadCurrentUserId()
         loadEnrolledCourses()
         loadSubscriptionStatus()
+    }
+    
+    /**
+     * Load current user ID from session
+     */
+    private fun loadCurrentUserId() {
+        viewModelScope.launch {
+            try {
+                val session = com.example.tareamov.util.SessionManager.getInstance(getApplication())
+                val username = session.getUsername()
+                _currentUsername.value = username
+                
+                if (username != null) {
+                    val userId = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+                    }
+                    _currentUserId.value = userId
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
     
     fun updateSearchQuery(query: String) {
@@ -73,21 +104,21 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     }
     
     /**
-     * Load subscription status for enrolled courses
+     * Load subscription status for enrolled courses from Supabase
      */
     private fun loadSubscriptionStatus() {
         viewModelScope.launch {
             try {
-                val session = com.example.tareamov.util.SessionManager.getInstance(getApplication())
-                val userId = session.getUserId()
+                val userId = _currentUserId.value ?: return@launch
                 
                 if (userId > 0L) {
                     val subscriptionMap = mutableMapOf<Long, Boolean>()
                     
-                    // Check subscription status for each course creator
+                    // Check subscription status for each course creator from Supabase (real-time)
                     allEnrolledCourses.forEach { course ->
                         val isSubscribed = withContext(Dispatchers.IO) {
-                            database.subscriptionDao().isUserSubscribedToCreator(userId, course.creatorUserId)
+                            // Use Supabase for real-time subscription status
+                            com.example.tareamov.service.SupabaseClient.isSubscribedRemote(userId, course.creatorUserId)
                         }
                         subscriptionMap[course.creatorUserId] = isSubscribed
                     }
@@ -113,11 +144,9 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     fun handleSubscriptionClick(course: Course, isCurrentlySubscribed: Boolean) {
         viewModelScope.launch {
             try {
-                val session = com.example.tareamov.util.SessionManager.getInstance(getApplication())
-                val userId = session.getUserId()
-                val currentUsername = session.getUsername()
+                val userId = _currentUserId.value ?: return@launch
                 
-                if (userId == -1L || currentUsername == null) {
+                if (userId <= 0L) {
                     // Handle error - user not logged in
                     return@launch
                 }
@@ -129,22 +158,25 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                     return@launch
                 }
                 
-                if (isCurrentlySubscribed) {
-                    // Unsubscribe
-                    database.subscriptionDao().unsubscribeFromCreator(userId, creatorUserId)
-                    // Sync to Supabase
-                    com.example.tareamov.service.SupabaseClient.unsubscribeFromCreator(userId, creatorUserId)
-                } else {
-                    // Subscribe
-                    database.subscriptionDao().subscribeToCreator(userId, creatorUserId)
-                    // Sync to Supabase
-                    com.example.tareamov.service.SupabaseClient.subscribeToCreator(userId, creatorUserId)
+                withContext(Dispatchers.IO) {
+                    if (isCurrentlySubscribed) {
+                        // Unsubscribe - sync to local DB and Supabase
+                        database.subscriptionDao().unsubscribeFromCreator(userId, creatorUserId)
+                        com.example.tareamov.service.SupabaseClient.unsubscribeFromCreator(userId, creatorUserId)
+                    } else {
+                        // Subscribe - sync to local DB and Supabase
+                        database.subscriptionDao().subscribeToCreator(userId, creatorUserId)
+                        com.example.tareamov.service.SupabaseClient.subscribeToCreator(userId, creatorUserId)
+                    }
                 }
                 
-                // Update local subscription status
+                // Update local subscription status immediately (optimistic update)
                 val updatedStatus = _subscriptionStatus.value.toMutableMap()
                 updatedStatus[creatorUserId] = !isCurrentlySubscribed
                 _subscriptionStatus.value = updatedStatus
+                
+                // Trigger adapter refresh
+                _refreshTrigger.value = _refreshTrigger.value + 1
                 
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -172,6 +204,14 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                 val session = com.example.tareamov.util.SessionManager.getInstance(getApplication())
                 val userId = session.getUserId()
                 _currentUsername.value = session.getUsername()
+                
+                // Also fetch and store the actual user ID from Supabase for accurate subscription checks
+                if (_currentUsername.value != null && _currentUserId.value == null) {
+                    val supabaseUserId = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(_currentUsername.value!!)
+                    }
+                    _currentUserId.value = supabaseUserId
+                }
                 
                 if (userId > 0L) {
                     // 1. Fetch ALL courses first (to have full data, consistent with ExploreFragment)

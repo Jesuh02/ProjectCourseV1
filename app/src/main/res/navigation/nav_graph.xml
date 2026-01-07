@@ -677,6 +677,10 @@
         <action
             android:id="@+id/action_courseSelectionFragment_to_selectTopicFragment"
             app:destination="@id/selectTopicFragment" />
+        <!-- Action to navigate to user profile when clicking on creator -->
+        <action
+            android:id="@+id/action_courseSelectionFragment_to_userProfileViewFragment"
+            app:destination="@id/userProfileViewFragment" />
     </fragment>
 
     <!-- Reinforcement Learning Fragment -->

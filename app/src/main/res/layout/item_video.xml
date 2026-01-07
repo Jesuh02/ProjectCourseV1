@@ -6,6 +6,18 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
+    <!-- Thumbnail for instant display while video loads -->
+    <ImageView
+        android:id="@+id/thumbnailView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:visibility="visible"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <VideoView
         android:id="@+id/videoView"
         android:layout_width="match_parent"
@@ -96,19 +108,16 @@
             android:fontFamily="sans-serif-medium" />
     </LinearLayout>
 
-    <!-- Error Placeholder -->
+    <!-- Error Placeholder REMOVED as per requirements -->
+    <!--
     <TextView
         android:id="@+id/errorPlaceholder"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="No se pudo cargar el video"
-        android:textColor="#AAAAAA"
-        android:textSize="16sp"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        ...
+    />
+    -->
 
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- RIGHT SIDE ACTION BUTTONS - Professional Instagram/TikTok Style -->

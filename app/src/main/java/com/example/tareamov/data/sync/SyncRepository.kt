@@ -15,8 +15,8 @@ import com.example.tareamov.data.dao.CourseDao
 import com.example.tareamov.data.dao.RolDao
 import com.example.tareamov.data.dao.RecursoDao
 import com.example.tareamov.data.dao.RolRecursoDao
-import com.example.tareamov.data.dao.VideoLikeDao
 import com.example.tareamov.data.dao.VideoCommentDao
+import com.example.tareamov.data.dao.LikeDao
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Topic
@@ -28,11 +28,10 @@ import com.example.tareamov.data.entity.Rol
 import com.example.tareamov.data.entity.Course
 import com.example.tareamov.data.entity.Recurso
 import com.example.tareamov.data.entity.RolRecurso
-import com.example.tareamov.data.entity.VideoLike
-import com.example.tareamov.data.entity.UserVideoLike
 import com.example.tareamov.data.entity.VideoComment
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Notification
+import com.example.tareamov.data.entity.Like
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -59,7 +58,7 @@ class SyncRepository(
     private val chatMessageDao: com.example.tareamov.data.dao.ChatMessageDao,
     private val fileContextDao: com.example.tareamov.data.dao.FileContextDao,
     private val progresoEstudianteDao: com.example.tareamov.data.dao.ProgresoEstudianteDao,
-    val videoLikeDao: VideoLikeDao? = null, // Made public for like state verification
+    private val likeDao: LikeDao? = null, // Polymorphic likes DAO (replaces videoLikeDao)
     private val videoCommentDao: VideoCommentDao? = null
 ) {
     // SharedPreferences-based cache to store last remote 'updated_at' per table
@@ -742,6 +741,23 @@ class SyncRepository(
         }
     }
 
+    // Fetch single topic by id from Supabase
+    suspend fun fetchTopicByIdFromSupabase(topicId: Long): Topic? {
+        Log.d("SyncRepository", "📚 fetchTopicByIdFromSupabase called for topicId=$topicId")
+        return try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "⚠️ Supabase not configured!")
+                return null
+            }
+            val topic = withContext(Dispatchers.IO) { supabaseClient.fetchTopicById(topicId) }
+            Log.d("SyncRepository", "📚 fetchTopicByIdFromSupabase: returned topic=${topic?.name} for topicId=$topicId")
+            topic
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "❌ fetchTopicByIdFromSupabase failed for topicId=$topicId", e)
+            null
+        }
+    }
+
     suspend fun fetchTasksByTopicIdsFromSupabase(topicIds: List<Long>): List<Task> {
         return try {
             if (!supabaseClient.isConfigured() || topicIds.isEmpty()) return emptyList()
@@ -958,30 +974,47 @@ class SyncRepository(
         }
     }
 
-    // Fetch videos by creator user ID from Supabase (using 2-step fetch to avoid raw SQL)
+    // Fetch videos by creator user ID from Supabase
+    // This method fetches videos from TWO sources:
+    // 1. Videos linked via course_id (courses created by this user)
+    // 2. Videos with remote_id = userId (videos directly associated with the creator)
     suspend fun fetchVideosByCreatorUserIdFromSupabase(userId: Long): List<com.example.tareamov.data.entity.VideoData> {
         return try {
             if (!supabaseClient.isConfigured()) {
                 return emptyList()
             }
             
-            // Step 1: Fetch courses for this user
-            val courses = withContext(Dispatchers.IO) { supabaseClient.fetchCoursesByCreatorUserId(userId) }
-            val courseIds = courses.map { it.id }
-            
-            if (courseIds.isEmpty()) {
-                return emptyList()
-            }
-            
-            // Step 2: Fetch videos for these courses
-            val videos = withContext(Dispatchers.IO) { supabaseClient.fetchVideosByCourseIds(courseIds) }
-            
-            // We need to inject the username since it's not in the video table.
-            // We can get it from the user ID if needed, but for now let's try to get it from SupabaseClient helper
+            // Get username for the videos
             val username = withContext(Dispatchers.IO) { supabaseClient.getUsernameFromUserId(userId) } ?: ""
             
-            val result = videos.map { it.copy(username = username) }
-            result
+            // Fetch videos from both sources sequentially (simpler and avoids coroutine scope issues)
+            val videosByCourse = withContext(Dispatchers.IO) {
+                // Step 1: Fetch courses for this user
+                val courses = supabaseClient.fetchCoursesByCreatorUserId(userId)
+                val courseIds = courses.map { it.id }
+                
+                if (courseIds.isEmpty()) {
+                    emptyList()
+                } else {
+                    // Step 2: Fetch videos for these courses
+                    supabaseClient.fetchVideosByCourseIds(courseIds)
+                }
+            }
+            
+            val videosByRemoteId = withContext(Dispatchers.IO) {
+                // Fetch videos where remote_id = userId (direct creator association)
+                supabaseClient.fetchVideosByRemoteId(userId)
+            }
+            
+            // Combine and deduplicate by video ID
+            val allVideos = (videosByCourse + videosByRemoteId)
+                .distinctBy { video -> video.id }
+                .map { video -> video.copy(username = username, remoteId = userId) }
+                .sortedByDescending { video -> video.timestamp }
+            
+            Log.d("SyncRepository", "fetchVideosByCreatorUserIdFromSupabase: Found ${videosByCourse.size} via courses, ${videosByRemoteId.size} via remote_id, ${allVideos.size} total unique videos for userId=$userId")
+            
+            allVideos
         } catch (e: Exception) {
             Log.w("SyncRepository", "fetchVideosByCreatorUserIdFromSupabase failed for userId=$userId", e)
             emptyList()
@@ -2848,13 +2881,50 @@ class SyncRepository(
     //    return supabaseClient.fetchAllSubmissionsForCourse(courseId)
     // }
 
+    /**
+     * Toggle like on a video comment.
+     * Uses the normalized video_comment_likes table via SupabaseClient REST API.
+     * Returns Pair(isNowLiked, newLikeCount)
+     */
+    suspend fun toggleVideoCommentLike(commentId: Long, videoId: Long, userId: Long, authorId: Long): Pair<Boolean, Int> {
+        return withContext(Dispatchers.IO) {
+            val result = supabaseClient.toggleVideoCommentLike(commentId, userId)
+            val isLiked = result.first
+            val newCount = result.second
+            
+            // Send notification if user liked (not unliked) and it's not their own comment
+            if (isLiked && authorId != userId) {
+                try {
+                    val localUser = usuarioDao.getUsuarioById(userId)
+                    val localVideo = videoDao.getVideoById(videoId)
+                    
+                    val notification = Notification(
+                        userId = authorId,
+                        type = Notification.TYPE_LIKE,
+                        title = "Me gusta en tu comentario",
+                        message = "${localUser?.usuario ?: "Alguien"} reaccionó a tu comentario",
+                        senderUsername = localUser?.usuario,
+                        senderAvatarUrl = localUser?.avatar,
+                        thumbnailUrl = localVideo?.thumbnailUri ?: localVideo?.videoUriString,
+                        relatedId = videoId
+                    )
+                    supabaseClient.insertNotification(notification)
+                } catch (e: Exception) {
+                    Log.e("SyncRepository", "Error sending like notification", e)
+                }
+            }
+            return@withContext result
+        }
+    }
+    
+    /**
+     * Like a video comment (legacy method, use toggleVideoCommentLike for toggle behavior)
+     */
     suspend fun likeVideoComment(commentId: Long, videoId: Long, userId: Long, authorId: Long): Boolean {
         return withContext(Dispatchers.IO) {
-             val repo = com.example.tareamov.data.repository.SupabaseRepository()
-             // This toggles the like in the DB and returns the new state (true=liked, false=unliked)
-             val isLiked = repo.likeVideoComment(commentId, userId)
+             val success = supabaseClient.likeVideoComment(commentId, userId)
              
-             if (isLiked && authorId != userId) {
+             if (success && authorId != userId) {
                 try {
                     val localUser = usuarioDao.getUsuarioById(userId)
                     val localVideo = videoDao.getVideoById(videoId)
@@ -2874,21 +2944,52 @@ class SyncRepository(
                     Log.e("SyncRepository", "Error sending like notification", e)
                 }
              }
-             return@withContext isLiked
+             return@withContext success
         }
     }
     
+    /**
+     * Unlike a video comment
+     */
+    suspend fun unlikeVideoComment(commentId: Long, userId: Long): Boolean {
+        return withContext(Dispatchers.IO) {
+            supabaseClient.unlikeVideoComment(commentId, userId)
+        }
+    }
+    
+    /**
+     * Get like count for a video comment
+     */
     suspend fun getCommentLikeCount(commentId: Long): Int {
         return withContext(Dispatchers.IO) {
-             val repo = com.example.tareamov.data.repository.SupabaseRepository()
-             repo.getCommentLikeCount(commentId)
+            supabaseClient.getVideoCommentLikeCount(commentId)
         }
     }
     
+    /**
+     * Check if user has liked a video comment
+     */
     suspend fun hasUserLikedComment(commentId: Long, userId: Long): Boolean {
         return withContext(Dispatchers.IO) {
-             val repo = com.example.tareamov.data.repository.SupabaseRepository()
-             repo.hasUserLikedComment(commentId, userId)
+            supabaseClient.hasUserLikedVideoComment(commentId, userId)
+        }
+    }
+    
+    /**
+     * Get like counts for multiple comments at once
+     */
+    suspend fun getCommentLikeCounts(commentIds: List<Long>): Map<Long, Int> {
+        return withContext(Dispatchers.IO) {
+            supabaseClient.getVideoCommentLikeCounts(commentIds)
+        }
+    }
+    
+    /**
+     * Get which comments the user has liked from a list
+     */
+    suspend fun getUserLikedComments(userId: Long, commentIds: List<Long>): Set<Long> {
+        return withContext(Dispatchers.IO) {
+            supabaseClient.getUserLikedComments(userId, commentIds)
         }
     }
 
@@ -2921,112 +3022,33 @@ class SyncRepository(
         }
     }
 
-    // ========== VIDEO LIKES SYNC OPERATIONS ==========
+    // ========== VIDEO LIKES SYNC OPERATIONS (Using Polymorphic Likes Table) ==========
     
     /**
-     * Get like count for a video (from Supabase first, fallback to local)
+     * Get like count for a video (from Supabase polymorphic likes table)
      */
     suspend fun getVideoLikeCount(videoId: Long): Int = withContext(Dispatchers.IO) {
         try {
-            // Try from Supabase first
+            // Get count directly from Supabase polymorphic likes table
             val remoteCount = supabaseClient.getVideoLikeCount(videoId)
-            if (remoteCount != null) {
-                // Update local cache
-                videoLikeDao?.let { dao ->
-                    // Ensure video exists locally before inserting/updating like
-                    val localVideo = videoDao.getVideoById(videoId)
-                    if (localVideo == null) {
-                        val remoteVideo = supabaseClient.fetchVideoById(videoId)
-                        if (remoteVideo != null) {
-                            // Sanitize remote video
-                            val safeVideo = remoteVideo.copy(
-                                username = remoteVideo.username ?: "Unknown",
-                                description = remoteVideo.description ?: "",
-                                title = remoteVideo.title ?: "Untitled Video"
-                            )
-                            videoDao.insertVideo(safeVideo)
-                        } else {
-                            // If video doesn't exist remotely either, we can't store the like count locally
-                            // Just return the remote count
-                            return@let
-                        }
-                    }
-
-                    val existing = dao.getLikesByVideoId(videoId)
-                    if (existing != null) {
-                        dao.updateVideoLike(existing.copy(likeCount = remoteCount))
-                    } else {
-                        dao.insertVideoLike(VideoLike(videoId = videoId, likeCount = remoteCount))
-                    }
-                }
-                return@withContext remoteCount
-            }
-            
-            // Fallback to local
-            return@withContext videoLikeDao?.getLikeCount(videoId) ?: 0
+            return@withContext remoteCount ?: 0
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error getting like count for video $videoId", e)
-            videoLikeDao?.getLikeCount(videoId) ?: 0
+            0
         }
     }
     
     /**
-     * Check if user has liked a video
+     * Check if user has liked a video (using polymorphic likes table)
      */
     suspend fun hasUserLikedVideo(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
-            // Check local first (faster)
-            val localLiked = videoLikeDao?.hasUserLikedVideo(videoId, usuarioId) ?: false
-            Log.d("SyncRepository", "hasUserLikedVideo: video=$videoId, user=$usuarioId, localLiked=$localLiked")
+            Log.d("SyncRepository", "hasUserLikedVideo: video=$videoId, user=$usuarioId")
             
-            if (localLiked) {
-                Log.d("SyncRepository", "Like found in local DB - returning true")
-                return@withContext true
-            }
-            
-            // If not found locally, check Supabase (Persistent check)
-            Log.d("SyncRepository", "Not found locally, checking Supabase...")
+            // Check Supabase directly (polymorphic likes table)
             val remoteLiked = supabaseClient.hasUserLikedVideo(videoId, usuarioId)
             Log.d("SyncRepository", "Supabase check: remoteLiked=$remoteLiked")
             
-            if (remoteLiked) {
-                // Sync to local so next time it's faster
-                Log.d("SyncRepository", "Syncing like from Supabase to local DB")
-                try {
-                    videoLikeDao?.let { dao ->
-                        // Ensure video exists locally first
-                        if (videoDao.getVideoById(videoId) == null) {
-                            val remoteVideo = supabaseClient.fetchVideoById(videoId)
-                            if (remoteVideo != null) {
-                                 val safeVideo = remoteVideo.copy(
-                                    username = remoteVideo.username ?: "Unknown",
-                                    description = remoteVideo.description ?: "",
-                                    title = remoteVideo.title ?: "Untitled Video"
-                                )
-                                videoDao.insertVideo(safeVideo)
-                            }
-                        }
-                        
-                        // Ensure user exists locally (basic check)
-                        if (usuarioDao.getUsuarioById(usuarioId) == null) {
-                            val remoteUser = supabaseClient.fetchUsuarioById(usuarioId)
-                            if (remoteUser != null) {
-                                // Try to insert user (might fail if persona missing, but worth a try)
-                                try {
-                                    usuarioDao.insertUsuario(remoteUser)
-                                } catch (e: Exception) {
-                                    Log.w("SyncRepository", "Could not sync user $usuarioId for like: ${e.message}")
-                                }
-                            }
-                        }
-                        
-                        val userLike = UserVideoLike(videoId = videoId, usuarioId = usuarioId)
-                        dao.insertUserLike(userLike)
-                    }
-                } catch (e: Exception) {
-                    Log.e("SyncRepository", "Failed to sync like to local DB", e)
-                }
-            }
             return@withContext remoteLiked
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error checking user like status", e)
@@ -3035,82 +3057,30 @@ class SyncRepository(
     }
     
     /**
-     * Toggle like on a video
+     * Toggle like on a video (using polymorphic likes table)
      */
     suspend fun toggleVideoLike(videoId: Long, usuarioId: Long, isLiked: Boolean): Boolean = withContext(Dispatchers.IO) {
         try {
-            // First, check the current state in the database
-            val currentLikeState = videoLikeDao?.hasUserLikedVideo(videoId, usuarioId) ?: false
+            // Check the current state in Supabase
+            val currentLikeState = supabaseClient.hasUserLikedVideo(videoId, usuarioId)
             
             // If the requested state matches the current state, no action needed
             if (currentLikeState == isLiked) {
                 Log.d("SyncRepository", "Like state already matches requested state ($isLiked) for video $videoId, user $usuarioId")
                 return@withContext true
             }
-            
-            // Ensure video exists locally
-            val localVideo = videoDao.getVideoById(videoId)
-            if (localVideo == null) {
-                val remoteVideo = supabaseClient.fetchVideoById(videoId)
-                if (remoteVideo != null) {
-                    // Sanitize remote video to prevent NPE on non-null fields
-                    val safeVideo = remoteVideo.copy(
-                        username = remoteVideo.username ?: "Unknown",
-                        description = remoteVideo.description ?: "",
-                        title = remoteVideo.title ?: "Untitled Video"
-                    )
-                    videoDao.insertVideo(safeVideo)
-                } else {
-                    Log.e("SyncRepository", "Cannot toggle like: Video $videoId not found locally or remotely")
-                    return@withContext false
-                }
-            }
-
-            // Ensure user exists locally
-            val localUser = usuarioDao.getUsuarioById(usuarioId)
-            if (localUser == null) {
-                val remoteUser = supabaseClient.fetchUsuarioById(usuarioId)
-                if (remoteUser != null) {
-                    usuarioDao.insertUsuario(remoteUser)
-                } else {
-                    Log.e("SyncRepository", "Cannot toggle like: User $usuarioId not found locally or remotely")
-                    return@withContext false
-                }
-            }
 
             if (isLiked) {
-                // Add like - but verify it doesn't already exist
-                if (currentLikeState) {
-                    Log.w("SyncRepository", "User $usuarioId already liked video $videoId, skipping duplicate like")
-                    return@withContext true
-                }
-                
-                // Update local
-                videoLikeDao?.let { dao ->
-                    val userLike = UserVideoLike(videoId = videoId, usuarioId = usuarioId)
-                    dao.insertUserLike(userLike)
-                    dao.incrementLikeCount(videoId)
-                }
-                // Sync to Supabase (Persistent)
-                supabaseClient.addUserVideoLike(videoId, usuarioId)
-                Log.d("SyncRepository", "Added like for video $videoId by user $usuarioId")
+                // Add like to polymorphic likes table
+                val success = supabaseClient.addUserVideoLike(videoId, usuarioId)
+                Log.d("SyncRepository", "Added like for video $videoId by user $usuarioId: $success")
+                return@withContext success
             } else {
-                // Remove like - but verify it exists first
-                if (!currentLikeState) {
-                    Log.w("SyncRepository", "User $usuarioId hasn't liked video $videoId, skipping unlike")
-                    return@withContext true
-                }
-                
-                // Update local
-                videoLikeDao?.let { dao ->
-                    dao.deleteUserLike(videoId, usuarioId)
-                    dao.decrementLikeCount(videoId)
-                }
-                // Sync to Supabase (Persistent)
-                supabaseClient.removeUserVideoLike(videoId, usuarioId)
-                Log.d("SyncRepository", "Removed like for video $videoId by user $usuarioId")
+                // Remove like from polymorphic likes table
+                val success = supabaseClient.removeUserVideoLike(videoId, usuarioId)
+                Log.d("SyncRepository", "Removed like for video $videoId by user $usuarioId: $success")
+                return@withContext success
             }
-            return@withContext true
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error toggling like for video $videoId", e)
             false
@@ -3118,34 +3088,22 @@ class SyncRepository(
     }
     
     /**
-     * Sync all video likes from Supabase to local database
+     * Sync user video likes for a specific user (from polymorphic likes table)
+     * Returns list of video IDs that user has liked
      */
-    suspend fun syncVideoLikesFromSupabase() = withContext(Dispatchers.IO) {
-        try {
-            val remoteLikes = supabaseClient.fetchAllVideoLikes()
-            videoLikeDao?.insertAllVideoLikes(remoteLikes)
-            Log.d("SyncRepository", "Synced ${remoteLikes.size} video likes from Supabase")
-        } catch (e: Exception) {
-            Log.e("SyncRepository", "Error syncing video likes from Supabase", e)
-        }
-    }
-
-    /**
-     * Sync user video likes for a specific user
-     */
-    suspend fun syncUserVideoLikesFromSupabase(userId: Long) = withContext(Dispatchers.IO) {
+    suspend fun syncUserVideoLikesFromSupabase(userId: Long): List<Long> = withContext(Dispatchers.IO) {
         try {
             Log.d("SyncRepository", "Starting sync of user video likes for user $userId")
             val remoteUserLikes = supabaseClient.fetchUserVideoLikes(userId)
-            Log.d("SyncRepository", "Fetched ${remoteUserLikes.size} likes from Supabase")
+            Log.d("SyncRepository", "Fetched ${remoteUserLikes.size} video likes from Supabase")
             
-            remoteUserLikes.forEach { like ->
-                videoLikeDao?.insertUserLike(like)
-                Log.d("SyncRepository", "Synced like: video=${like.videoId}, user=${like.usuarioId}")
-            }
-            Log.d("SyncRepository", "Synced ${remoteUserLikes.size} user video likes for user $userId")
+            // Return list of video IDs the user has liked
+            val likedVideoIds = remoteUserLikes.map { it.entityId }
+            Log.d("SyncRepository", "User $userId has liked videos: $likedVideoIds")
+            return@withContext likedVideoIds
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error syncing user video likes from Supabase", e)
+            emptyList()
         }
     }
     
@@ -3614,35 +3572,71 @@ class SyncRepository(
     }
     
     // Delete topic from Supabase
-    suspend fun deleteTopicFromSupabase(topicId: Long) {
+    suspend fun deleteTopicFromSupabase(topicId: Long): Boolean {
         try {
-            supabaseRepo.deleteTopic(topicId)
-            Log.d("SyncRepository", "Successfully deleted topic $topicId from Supabase")
+            val success = supabaseClient.deleteTopic(topicId)
+            if (success) {
+                Log.d("SyncRepository", "Successfully deleted topic $topicId from Supabase")
+                return true
+            } else {
+                Log.w("SyncRepository", "Failed to delete topic $topicId via SupabaseClient")
+                return false
+            }
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error deleting topic $topicId from Supabase", e)
-            throw e
+            return false
         }
     }
     
     // Delete task from Supabase
-    suspend fun deleteTaskFromSupabase(taskId: Long) {
+    suspend fun deleteTaskFromSupabase(taskId: Long): Boolean {
         try {
-            supabaseRepo.deleteTask(taskId)
-            Log.d("SyncRepository", "Successfully deleted task $taskId from Supabase")
+            val success = supabaseClient.deleteTask(taskId)
+            if (success) {
+                Log.d("SyncRepository", "Successfully deleted task $taskId from Supabase")
+                return true
+            } else {
+                Log.w("SyncRepository", "Failed to delete task $taskId via SupabaseClient")
+                return false
+            }
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error deleting task $taskId from Supabase", e)
-            throw e
+            return false
+        }
+    }
+    
+    // Delete all content items for a specific task from Supabase
+    suspend fun deleteContentItemsByTaskIdFromSupabase(taskId: Long): Boolean {
+        return try {
+            val success = supabaseClient.deleteContentItemsByTaskId(taskId)
+            if (success) {
+                Log.d("SyncRepository", "Successfully deleted all content items for taskId=$taskId from Supabase")
+            } else {
+                Log.w("SyncRepository", "Using deprecrated fallback for DELETE content_items by task_id=$taskId")
+                supabaseRepo.deleteContentItemsByTaskId(taskId)
+            }
+            success
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error deleting content items for taskId=$taskId from Supabase", e)
+            false
         }
     }
     
     // Delete content item from Supabase
-    suspend fun deleteContentItemFromSupabase(contentItemId: Long) {
+    suspend fun deleteContentItemFromSupabase(contentItemId: Long): Boolean {
         try {
-            supabaseRepo.deleteContentItem(contentItemId)
-            Log.d("SyncRepository", "Successfully deleted content item $contentItemId from Supabase")
+            val success = supabaseClient.deleteContentItem(contentItemId)
+            if (success) {
+                Log.d("SyncRepository", "Successfully deleted content item $contentItemId from Supabase")
+                return true
+            } else {
+                Log.w("SyncRepository", "Failed to delete content item $contentItemId via SupabaseClient")
+                // Fallback attempt removed to ensure consistency with SupabaseClient usage
+                return false
+            }
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error deleting content item $contentItemId from Supabase", e)
-            throw e
+            return false
         }
     }
 

@@ -101,7 +101,7 @@ class MainActivity : AppCompatActivity() {
             appDb.chatMessageDao(),
             appDb.fileContextDao(),
             appDb.progresoEstudianteDao(),
-            appDb.videoLikeDao(),
+            appDb.likeDao(),
             appDb.videoCommentDao()
         )
 

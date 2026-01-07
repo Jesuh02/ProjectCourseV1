@@ -4,8 +4,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
 import android.text.style.StyleSpan
 import android.graphics.Typeface
 import android.view.LayoutInflater
@@ -28,6 +31,7 @@ import com.bumptech.glide.Glide
 import com.example.tareamov.util.SessionManager
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.regex.Pattern
 
 class ChatMessageAdapter(
     private val onAddCalificationClick: (ChatMessage) -> Unit = {},
@@ -225,8 +229,31 @@ class ChatMessageAdapter(
                     formatBotMessage(message.message)
                 }
                 
-                botMessageTextView.text = formatBoldText(formattedMessage)
+                // Apply formatting and make URLs clickable
+                val spannableText = formatBoldTextWithLinks(formattedMessage, itemView.context)
+                botMessageTextView.text = spannableText
+                botMessageTextView.movementMethod = LinkMovementMethod.getInstance()
                 botMessageTime.text = timeFormat.format(Date(message.timestamp))
+                
+                // Show attached file for bot messages (Excel downloads, etc.)
+                if (message.attachedFileUrl != null && message.attachedFileName != null) {
+                    attachedFileContainer?.visibility = View.VISIBLE
+                    attachedFileName?.text = message.attachedFileName
+                    attachedFileType?.text = message.attachedFileType ?: "📊 Excel"
+                    
+                    // Make the file container clickable to download/open
+                    attachedFileContainer?.setOnClickListener {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW)
+                            intent.data = Uri.parse(message.attachedFileUrl)
+                            itemView.context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(itemView.context, "No se pudo abrir el archivo", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    attachedFileContainer?.visibility = View.GONE
+                }
                 
                 // Setup action buttons for bot messages
                 setupBotMessageActions(message)
@@ -479,6 +506,55 @@ class ChatMessageAdapter(
                         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                 }
+            }
+            
+            return spannableString
+        }
+        
+        /**
+         * Format text with bold/italic markdown AND make URLs clickable
+         */
+        private fun formatBoldTextWithLinks(text: String, context: Context): SpannableString {
+            // First apply markdown formatting
+            val formattedText = formatBoldText(text)
+            
+            // Now find and make URLs clickable
+            val urlPattern = Pattern.compile(
+                "(https?://[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]+)",
+                Pattern.CASE_INSENSITIVE
+            )
+            
+            val matcher = urlPattern.matcher(formattedText)
+            val spannableString = SpannableString(formattedText)
+            
+            while (matcher.find()) {
+                val urlStart = matcher.start()
+                val urlEnd = matcher.end()
+                val url = matcher.group()
+                
+                val clickableSpan = object : ClickableSpan() {
+                    override fun onClick(widget: View) {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "No se pudo abrir el enlace", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    
+                    override fun updateDrawState(ds: android.text.TextPaint) {
+                        super.updateDrawState(ds)
+                        ds.color = android.graphics.Color.parseColor("#4FC3F7") // Light blue link color
+                        ds.isUnderlineText = true
+                    }
+                }
+                
+                spannableString.setSpan(
+                    clickableSpan,
+                    urlStart,
+                    urlEnd,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
             }
             
             return spannableString

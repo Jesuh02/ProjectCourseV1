@@ -728,6 +728,24 @@ class CourseTaskFragment : Fragment() {
                     }
                 }
                 
+                // IMPORTANT: Delete existing content items BEFORE inserting new ones
+                // This prevents duplicates when updating a task
+                if (taskId > 0 && savedTaskId > 0) {
+                    Log.d("CourseTaskFragment", "Deleting existing content items for taskId=$savedTaskId before saving new ones")
+                    withContext(Dispatchers.IO) {
+                        try {
+                            val deleted = syncRepo.deleteContentItemsByTaskIdFromSupabase(savedTaskId)
+                            if (deleted) {
+                                Log.d("CourseTaskFragment", "Successfully deleted old content items for taskId=$savedTaskId")
+                            } else {
+                                Log.w("CourseTaskFragment", "Failed to delete old content items for taskId=$savedTaskId")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("CourseTaskFragment", "Error deleting old content items", e)
+                        }
+                    }
+                }
+                
                 for (i in 0 until contentContainer.childCount) {
                     val itemView = contentContainer.getChildAt(i)
                     val contentUri = itemView.tag as? Uri

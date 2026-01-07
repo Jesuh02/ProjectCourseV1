@@ -122,6 +122,12 @@ class CourseTopicFragment : Fragment() {
     val courseId = arguments?.getLong("courseId", -1L) ?: -1L
     val courseName = arguments?.getString("courseName") ?: ""
     val argTopicNumber = arguments?.getInt("topicNumber", 0) ?: 0
+    val isEditMode = arguments?.getBoolean("isEditMode", false) ?: false
+
+        // If editing an existing topic, load its data
+        if (topicId > 0 && isEditMode) {
+            loadTopicData(topicId, view)
+        }
 
         val addTaskButton = view.findViewById<LinearLayout>(R.id.addTaskButton)
         addTaskButton.setOnClickListener {
@@ -168,6 +174,121 @@ class CourseTopicFragment : Fragment() {
         addDocumentButton.setOnClickListener {
             openDocumentPicker()
         }
+    }
+
+    /**
+     * Load existing topic data from Supabase when editing
+     */
+    private fun loadTopicData(topicId: Long, view: View) {
+        val topicNameEditText = view.findViewById<EditText>(R.id.topicNameEditText)
+        val topicDescriptionEditText = view.findViewById<EditText>(R.id.topicDescriptionEditText)
+        val topicTitleTextView = view.findViewById<TextView>(R.id.topicTitleTextView)
+        val contentContainer = view.findViewById<LinearLayout>(R.id.contentContainer)
+        
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val activity = requireActivity()
+                if (activity !is com.example.tareamov.MainActivity) {
+                    Log.e("CourseTopicFragment", "Invalid activity context")
+                    return@launch
+                }
+                
+                // Fetch topic from Supabase
+                val topic = withContext(Dispatchers.IO) {
+                    activity.syncRepository.fetchTopicByIdFromSupabase(topicId)
+                }
+                
+                if (topic != null) {
+                    // Update UI with topic data
+                    topicNameEditText?.setText(topic.name)
+                    topicDescriptionEditText?.setText(topic.description)
+                    topicTitleTextView?.text = "Editar: ${topic.name}"
+                    topicNumber = topic.orderIndex
+                    
+                    Log.d("CourseTopicFragment", "✅ Loaded topic data: name='${topic.name}', description='${topic.description}'")
+                    
+                    // Load content items for this topic
+                    val contentItems = withContext(Dispatchers.IO) {
+                        activity.syncRepository.fetchContentItemsByTopicIdsFromSupabase(listOf(topicId))
+                    }
+                    
+                    // Filter only topic-level content (not task content)
+                    val topicContentItems = contentItems.filter { it.taskId == null || it.taskId == 0L }
+                    
+                    Log.d("CourseTopicFragment", "📄 Found ${topicContentItems.size} content items for topic $topicId")
+                    
+                    // Add existing content items to the container
+                    for (contentItem in topicContentItems) {
+                        addExistingContentToList(contentItem, contentContainer)
+                    }
+                } else {
+                    Log.w("CourseTopicFragment", "Topic $topicId not found in Supabase")
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "No se pudo cargar el tema", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseTopicFragment", "Error loading topic data", e)
+                if (isAdded && context != null) {
+                    Toast.makeText(requireContext(), "Error al cargar datos del tema: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+    
+    /**
+     * Add existing content item to the UI container (for edit mode)
+     */
+    private fun addExistingContentToList(contentItem: com.example.tareamov.data.entity.ContentItem, contentContainer: LinearLayout?) {
+        if (contentContainer == null) return
+        
+        val inflater = LayoutInflater.from(context)
+        val contentView = inflater.inflate(R.layout.item_course_content, contentContainer, false)
+        
+        val contentNameView = contentView.findViewById<TextView>(R.id.contentNameView)
+        val contentIconView = contentView.findViewById<ImageView>(R.id.contentIconView)
+        val deleteButton = contentView.findViewById<ImageButton>(R.id.deleteContentButton)
+        
+        // Show cloud emoji if it's an R2 URL
+        val isR2Url = CloudflareR2Service.isR2Url(contentItem.uriString)
+        val displayName = if (isR2Url) "☁️ ${contentItem.name ?: "Archivo adjunto"}" else contentItem.name ?: "Archivo adjunto"
+        contentNameView.text = displayName
+        
+        // Set appropriate icon based on content type
+        when (contentItem.contentType.lowercase()) {
+            "video" -> contentIconView.setImageResource(android.R.drawable.ic_media_play)
+            "pdf", "document" -> contentIconView.setImageResource(android.R.drawable.ic_menu_edit)
+            else -> contentIconView.setImageResource(android.R.drawable.ic_menu_help)
+        }
+        
+        // Set up delete button
+        deleteButton.setOnClickListener {
+            // Remove from UI
+            contentContainer.removeView(contentView)
+            
+            // Delete from Supabase
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    com.example.tareamov.service.SupabaseClient.deleteContentItem(contentItem.id)
+                    Log.d("CourseTopicFragment", "✅ Deleted content item ${contentItem.id} from Supabase")
+                    
+                    // Also delete from R2 if applicable
+                    if (isR2Url) {
+                        CloudflareR2Service.deleteFile(contentItem.uriString)
+                    }
+                } catch (e: Exception) {
+                    Log.e("CourseTopicFragment", "Error deleting content item", e)
+                }
+            }
+        }
+        
+        // Store content item data as tags (for potential updates)
+        contentView.tag = Uri.parse(contentItem.uriString)
+        contentView.setTag(R.id.content_type_tag, contentItem.contentType)
+        contentView.setTag(R.id.content_id_tag, contentItem.id) // Store ID for existing items
+        
+        contentContainer.addView(contentView)
+        Log.d("CourseTopicFragment", "📄 Added existing content: ${contentItem.name}, type: ${contentItem.contentType}")
     }
 
     // Update this function to actually save the topic and navigate
@@ -542,10 +663,15 @@ class CourseTopicFragment : Fragment() {
 
                 val savedTopicId = withContext(Dispatchers.IO) {
                     if (topicId > 0) {
-                        // Update would require a SupabaseClient.updateTopic method
-                        // For now, we'll just use the existing ID
-                        Log.d("CourseTopicFragment", "Updating topic $topicId (update not yet implemented)")
-                        topicId
+                        // Update existing topic in Supabase
+                        val updateSuccess = com.example.tareamov.service.SupabaseClient.updateTopic(topicToSave)
+                        if (updateSuccess) {
+                            Log.d("CourseTopicFragment", "✅ Topic $topicId updated successfully")
+                            topicId
+                        } else {
+                            Log.e("CourseTopicFragment", "❌ Failed to update topic $topicId")
+                            -1L
+                        }
                     } else {
                         // Insert new topic to Supabase using regular insert (we already have correct courseId)
                         activity.syncRepository.insertTopicRemote(topicToSave)
@@ -586,18 +712,25 @@ class CourseTopicFragment : Fragment() {
                         Log.w("CourseTopicFragment", "⚠️ No content items in container to save!")
                     }
                     
-                    // Save new content items
+                    // Save new content items (skip existing ones that have an ID)
                     for (i in 0 until itemCount) {
                         val contentView = contentContainer.getChildAt(i)
                         val contentUri = contentView.tag as? Uri
                         val contentType = contentView.getTag(R.id.content_type_tag) as? String
+                        val existingContentId = contentView.getTag(R.id.content_id_tag) as? Long
                         val contentName = contentView.findViewById<TextView>(R.id.contentNameView)?.text.toString()
                             ?.removePrefix("☁️ ") // Remove cloud emoji prefix for clean name
 
-                        Log.d("CourseTopicFragment", "📦 Processing content item $i: uri=$contentUri, type=$contentType, name=$contentName")
+                        Log.d("CourseTopicFragment", "📦 Processing content item $i: uri=$contentUri, type=$contentType, name=$contentName, existingId=$existingContentId")
+
+                        // Skip items that already exist in Supabase (have an ID)
+                        if (existingContentId != null && existingContentId > 0) {
+                            Log.d("CourseTopicFragment", "⏭️ Skipping existing content item with id=$existingContentId")
+                            continue
+                        }
 
                         if (contentUri != null && contentType != null) {
-                            Log.d("CourseTopicFragment", "📦 Saving ContentItem: topicId=$savedTopicId, name='$contentName', type='$contentType', uri='${contentUri}'")
+                            Log.d("CourseTopicFragment", "📦 Saving NEW ContentItem: topicId=$savedTopicId, name='$contentName', type='$contentType', uri='${contentUri}'")
                             
                             val contentItem = com.example.tareamov.data.entity.ContentItem(
                                 id = 0, // Supabase will auto-generate

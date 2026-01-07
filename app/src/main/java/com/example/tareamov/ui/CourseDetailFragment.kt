@@ -1880,9 +1880,10 @@ class CourseDetailFragment : Fragment() {
             topicDescriptionTextView.visibility = View.GONE
         }
 
-        // Configure edit/delete buttons - only visible for course creator
-        editTopicButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
-        deleteTopicButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+        // Configure edit/delete buttons - only visible for course creator AND only in documents tab
+        val showTopicButtons = isCurrentUserCreator && currentTab == "documentos"
+        editTopicButton?.visibility = if (showTopicButtons) View.VISIBLE else View.GONE
+        deleteTopicButton?.visibility = if (showTopicButtons) View.VISIBLE else View.GONE
 
         editTopicButton?.setOnClickListener {
             navigateToEditTopic(topic.id)
@@ -2039,35 +2040,50 @@ class CourseDetailFragment : Fragment() {
             // El click se maneja en los items individuales de contenido
         }
         
+        // CRITICAL: Clear container IMMEDIATELY before async load to prevent duplicates
+        taskContentContainer?.removeAllViews()
+        
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 Log.d("CourseDetailFragment", "Loading content items for taskId=${task.id}")
                 
-                // Fetch content items from Supabase (don't save to local Room to avoid FK errors)
+                // Clear again at start of async block to ensure no race conditions
+                taskContentContainer?.removeAllViews()
+                
+                // Fetch content items from Supabase ONLY (don't mix with local to avoid duplicates)
                 var contentItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
                     syncRepository.fetchContentItemsByTaskIdFromSupabase(task.id)
                 }
                 
-                // Fallback to local database only if Supabase returned empty
+                Log.d("CourseDetailFragment", "Loaded ${contentItems.size} content items from Supabase for taskId=${task.id}")
+                
+                // Only fallback to local if Supabase is not configured or returned empty AND we have network issues
                 if (contentItems.isEmpty()) {
-                    contentItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val localItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
                         AppDatabase.getDatabase(requireContext()).contentItemDao().getContentItemsByTaskId(task.id)
                     }
-                    Log.d("CourseDetailFragment", "Loaded ${contentItems.size} content items from local DB for taskId=${task.id}")
-                } else {
-                    Log.d("CourseDetailFragment", "Loaded ${contentItems.size} content items from Supabase for taskId=${task.id}")
+                    // Only use local items if Supabase truly returned nothing
+                    if (localItems.isNotEmpty()) {
+                        contentItems = localItems
+                        Log.d("CourseDetailFragment", "Fallback: Loaded ${contentItems.size} content items from local DB for taskId=${task.id}")
+                    }
                 }
                 
                 Log.d("CourseDetailFragment", "Found ${contentItems.size} content items for taskId=${task.id}")
                 
+                // NO DEDUPLICATION: We must show all items from DB (even duplicates) so user can delete them
+                // The user explicitly requires seeing all records to manage the "content_items" table in Supabase
+                val uniqueContentItems = contentItems
+                
+                Log.d("CourseDetailFragment", "Displaying all ${uniqueContentItems.size} content items (duplicates included)")
+                
                 // Always show the container section for better UX
-                taskContentContainer?.removeAllViews()
                 contentSeparator?.visibility = View.VISIBLE
                 taskContentLabel?.visibility = View.VISIBLE
                 taskContentContainer?.visibility = View.VISIBLE
                 
-                if (contentItems.isNotEmpty()) {
-                    for (contentItem in contentItems) {
+                if (uniqueContentItems.isNotEmpty()) {
+                    for (contentItem in uniqueContentItems) {
                         Log.d("CourseDetailFragment", "Adding content item: name=${contentItem.name}, type=${contentItem.contentType}, uri=${contentItem.uriString}, isR2=${CloudflareR2Service.isR2Url(contentItem.uriString)}")
                         
                         val contentItemView = LayoutInflater.from(context).inflate(
@@ -2196,6 +2212,12 @@ class CourseDetailFragment : Fragment() {
 
         // Cancel previous job if active to prevent race conditions and duplication
         refreshJob?.cancel()
+        
+        // Reset loading flag to prevent blocking - this is a lightweight refresh, not full load
+        isLoadingCourseDetails = false
+        
+        // Show skeleton during refresh
+        startSkeletonAnimation()
 
         refreshJob = CoroutineScope(Dispatchers.Main).launch {
             try {
@@ -2278,6 +2300,10 @@ class CourseDetailFragment : Fragment() {
                 if (e !is kotlinx.coroutines.CancellationException) {
                     Log.e("CourseDetailFragment", "Error refreshing topics", e)
                 }
+            } finally {
+                // Always stop skeleton animation when refresh completes
+                stopSkeletonAnimation()
+                Log.d("CourseDetailFragment", "✅ Refresh complete, skeleton hidden")
             }
         }
     }
@@ -3187,44 +3213,50 @@ class CourseDetailFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                var deleteSuccess = false
                 withContext(Dispatchers.IO) {
-                    val database = AppDatabase.getDatabase(requireContext())
+                    // 1. Delete from remote (Supabase) FIRST
+                    val remoteSuccess = syncRepository.deleteTopicFromSupabase(topic.id)
                     
-                    // Delete all content items associated with this topic
-                    val contentItems = database.contentItemDao().getContentItemsForTopic(topic.id)
-                    for (item in contentItems) {
-                        database.contentItemDao().deleteContentItem(item.id)
-                    }
+                    if (remoteSuccess) {
+                        val database = AppDatabase.getDatabase(requireContext())
                     
-                    // Delete all tasks associated with this topic
-                    val tasks = database.taskDao().getTasksForTopic(topic.id)
-                    for (task in tasks) {
-                        // Delete task submissions first
-                        database.taskSubmissionDao().deleteSubmissionsForTask(task.id)
-                        // Delete task content items
-                        val taskContent = database.contentItemDao().getContentItemsForTask(task.id)
-                        for (taskItem in taskContent) {
-                            database.contentItemDao().deleteContentItem(taskItem.id)
+                        // Delete all content items associated with this topic
+                        val contentItems = database.contentItemDao().getContentItemsForTopic(topic.id)
+                        for (item in contentItems) {
+                            database.contentItemDao().deleteContentItem(item.id)
                         }
-                        // Delete the task
-                        database.taskDao().deleteTask(task.id)
-                    }
-                    
-                    // Finally, delete the topic
-                    database.topicDao().deleteTopic(topic.id)
-                    
-                    // Delete from remote (Supabase)
-                    try {
-                        syncRepository.deleteTopicFromSupabase(topic.id)
-                    } catch (e: Exception) {
-                        Log.w("CourseDetailFragment", "Failed to delete topic from Supabase", e)
+                        
+                        // Delete all tasks associated with this topic
+                        val tasks = database.taskDao().getTasksForTopic(topic.id)
+                        for (task in tasks) {
+                            // Delete task submissions first
+                            database.taskSubmissionDao().deleteSubmissionsForTask(task.id)
+                            // Delete task content items
+                            val taskContent = database.contentItemDao().getContentItemsForTask(task.id)
+                            for (taskItem in taskContent) {
+                                database.contentItemDao().deleteContentItem(taskItem.id)
+                            }
+                            // Delete the task
+                            database.taskDao().deleteTask(task.id)
+                        }
+                        
+                        // Finally, delete the topic
+                        database.topicDao().deleteTopic(topic.id)
+                        deleteSuccess = true
+                    } else {
+                        Log.w("CourseDetailFragment", "Aborting local topic delete because remote delete failed")
                     }
                 }
                 
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "Tema eliminado exitosamente", Toast.LENGTH_SHORT).show()
-                    // Reload the course details to refresh the UI
-                    loadCourseDetails()
+                    if (deleteSuccess) {
+                        Toast.makeText(requireContext(), "Tema eliminado exitosamente", Toast.LENGTH_SHORT).show()
+                        // Reload the course details to refresh the UI
+                        loadCourseDetails()
+                    } else {
+                        Toast.makeText(requireContext(), "Error: No se pudo eliminar el tema de Supabase. Verifique su conexión.", Toast.LENGTH_LONG).show()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("CourseDetailFragment", "Error deleting topic", e)
@@ -3261,33 +3293,39 @@ class CourseDetailFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                var deleteSuccess = false
                 withContext(Dispatchers.IO) {
-                    val database = AppDatabase.getDatabase(requireContext())
+                    // 1. Delete from remote (Supabase) FIRST
+                    val remoteSuccess = syncRepository.deleteTaskFromSupabase(task.id)
                     
-                    // Delete all task submissions
-                    database.taskSubmissionDao().deleteSubmissionsForTask(task.id)
-                    
-                    // Delete all content items associated with this task
-                    val taskContent = database.contentItemDao().getContentItemsForTask(task.id)
-                    for (item in taskContent) {
-                        database.contentItemDao().deleteContentItem(item.id)
-                    }
-                    
-                    // Delete the task
-                    database.taskDao().deleteTask(task.id)
-                    
-                    // Delete from remote (Supabase)
-                    try {
-                        syncRepository.deleteTaskFromSupabase(task.id)
-                    } catch (e: Exception) {
-                        Log.w("CourseDetailFragment", "Failed to delete task from Supabase", e)
+                    if (remoteSuccess) {
+                        val database = AppDatabase.getDatabase(requireContext())
+                        
+                        // Delete all task submissions
+                        database.taskSubmissionDao().deleteSubmissionsForTask(task.id)
+                        
+                        // Delete all content items associated with this task
+                        val taskContent = database.contentItemDao().getContentItemsForTask(task.id)
+                        for (item in taskContent) {
+                            database.contentItemDao().deleteContentItem(item.id)
+                        }
+                        
+                        // Delete the task
+                        database.taskDao().deleteTask(task.id)
+                        deleteSuccess = true
+                    } else {
+                        Log.w("CourseDetailFragment", "Aborting local task delete because remote delete failed")
                     }
                 }
                 
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "Tarea eliminada exitosamente", Toast.LENGTH_SHORT).show()
-                    // Reload the course details to refresh the UI
-                    loadCourseDetails()
+                    if (deleteSuccess) {
+                        Toast.makeText(requireContext(), "Tarea eliminada exitosamente", Toast.LENGTH_SHORT).show()
+                        // Reload the course details to refresh the UI
+                        loadCourseDetails()
+                    } else {
+                        Toast.makeText(requireContext(), "Error: No se pudo eliminar la tarea de Supabase. Verifique su conexión.", Toast.LENGTH_LONG).show()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("CourseDetailFragment", "Error deleting task", e)
@@ -3324,22 +3362,29 @@ class CourseDetailFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                var deleteSuccess = false
                 withContext(Dispatchers.IO) {
-                    val database = AppDatabase.getDatabase(requireContext())
-                    database.contentItemDao().deleteContentItem(contentItem.id)
+                    // 1. Delete from remote (Supabase) FIRST to ensure consistency
+                    val remoteSuccess = syncRepository.deleteContentItemFromSupabase(contentItem.id)
                     
-                    // Delete from remote (Supabase)
-                    try {
-                        syncRepository.deleteContentItemFromSupabase(contentItem.id)
-                    } catch (e: Exception) {
-                        Log.w("CourseDetailFragment", "Failed to delete content from Supabase", e)
+                    if (remoteSuccess) {
+                        // 2. Only delete from local DB if remote delete succeeded
+                        val database = AppDatabase.getDatabase(requireContext())
+                        database.contentItemDao().deleteContentItem(contentItem.id)
+                        deleteSuccess = true
+                    } else {
+                        Log.w("CourseDetailFragment", "Aborting local delete because remote delete failed for item ${contentItem.id}")
                     }
                 }
                 
                 withContext(Dispatchers.Main) {
-                    // Remove the view from the container
-                    container.removeView(contentView)
-                    Toast.makeText(requireContext(), "Contenido eliminado exitosamente", Toast.LENGTH_SHORT).show()
+                    if (deleteSuccess) {
+                        // Remove the view from the container
+                        container.removeView(contentView)
+                        Toast.makeText(requireContext(), "Contenido eliminado exitosamente", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(requireContext(), "Error: No se pudo eliminar de Supabase. Verifique su conexión e intente nuevamente.", Toast.LENGTH_LONG).show()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("CourseDetailFragment", "Error deleting content", e)

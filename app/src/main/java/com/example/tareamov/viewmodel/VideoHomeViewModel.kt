@@ -25,6 +25,10 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
     // State for loading
     private val _isLoading = MutableLiveData<Boolean>(false)
     val isLoading: LiveData<Boolean> = _isLoading
+    
+    // State for error (no connection or load failure)
+    private val _hasError = MutableLiveData<Boolean>(false)
+    val hasError: LiveData<Boolean> = _hasError
 
     // State for current video index
     var currentVideoIndex: Int = 0
@@ -51,7 +55,7 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
             chatMessageDao = database.chatMessageDao(),
             fileContextDao = database.fileContextDao(),
             progresoEstudianteDao = database.progresoEstudianteDao(),
-            videoLikeDao = database.videoLikeDao(),
+            likeDao = database.likeDao(),
             videoCommentDao = database.videoCommentDao()
         )
         
@@ -78,9 +82,27 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         _isLoading.value = true
+        _hasError.value = false // Reset error state on new load
         viewModelScope.launch {
             try {
                 Log.d("VideoHomeViewModel", "Loading videos (refresh=$isRefresh, target=$targetVideoId)")
+                
+                // OPTIMIZATION: Load from local cache FIRST for instant display
+                // This happens in parallel with network fetch
+                val localCacheJob = viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        val database = AppDatabase.getDatabase(getApplication())
+                        val cachedVideos = database.videoDao().getAllVideos()
+                        if (cachedVideos.isNotEmpty() && _videoList.value.isNullOrEmpty()) {
+                            withContext(Dispatchers.Main) {
+                                _videoList.value = cachedVideos.take(pageSize)
+                                Log.d("VideoHomeViewModel", "Loaded ${cachedVideos.size} videos from local cache (instant)")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("VideoHomeViewModel", "Local cache load failed", e)
+                    }
+                }
 
                 // If a specific video is requested, try to fetch it first
                 var targetVideo: VideoData? = null
@@ -118,8 +140,17 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
 
                 _videoList.value = newList
                 
+                // OPTIMIZATION: Pre-cache thumbnails and video metadata for instant display
+                preCacheVideoAssets(newList)
+                
+                // Set error if no videos loaded
+                if (newList.isEmpty()) {
+                    _hasError.value = true
+                }
+                
             } catch (e: Exception) {
                 Log.e("VideoHomeViewModel", "Error loading videos", e)
+                _hasError.value = true
             } finally {
                 _isLoading.value = false
             }
@@ -150,11 +181,48 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
                     val combinedList = currentList.toMutableList()
                     combinedList.addAll(newVideos)
                     _videoList.value = combinedList
+                    
+                    // Pre-cache the new videos too
+                    preCacheVideoAssets(newVideos)
                 }
             } catch (e: Exception) {
                 Log.e("VideoHomeViewModel", "Error loading more videos", e)
             } finally {
                 _isLoading.value = false
+            }
+        }
+    }
+    
+    /**
+     * Pre-cache thumbnails and video metadata for instant display.
+     * This runs in the background and improves perceived loading speed.
+     */
+    private fun preCacheVideoAssets(videos: List<VideoData>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<android.app.Application>()
+                
+                // Pre-cache thumbnails using Glide
+                videos.forEach { video ->
+                    video.thumbnailUri?.let { thumbnailUrl ->
+                        if (thumbnailUrl.isNotEmpty()) {
+                            try {
+                                // Download thumbnail to disk cache
+                                com.bumptech.glide.Glide.with(context)
+                                    .downloadOnly()
+                                    .load(thumbnailUrl)
+                                    .submit()
+                                    .get() // Block to ensure it's cached
+                            } catch (e: Exception) {
+                                // Ignore individual thumbnail failures
+                            }
+                        }
+                    }
+                }
+                
+                Log.d("VideoHomeViewModel", "Pre-cached ${videos.size} video thumbnails")
+            } catch (e: Exception) {
+                Log.w("VideoHomeViewModel", "Pre-cache failed", e)
             }
         }
     }

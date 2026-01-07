@@ -61,7 +61,9 @@ import com.example.tareamov.ui.ShimmerFrameLayout
 import androidx.lifecycle.ViewModelProvider
 import com.example.tareamov.viewmodel.VideoHomeViewModel
 import com.example.tareamov.MainActivity
+import androidx.media3.common.util.UnstableApi
 
+@UnstableApi
 class VideoHomeFragment : Fragment() {
     private lateinit var viewModel: VideoHomeViewModel
     private lateinit var profileAvatars: CircleImageView
@@ -161,7 +163,7 @@ class VideoHomeFragment : Fragment() {
             chatMessageDao = database.chatMessageDao(),
             fileContextDao = database.fileContextDao(),
             progresoEstudianteDao = database.progresoEstudianteDao(),
-            videoLikeDao = database.videoLikeDao(),
+            likeDao = database.likeDao(),
             videoCommentDao = database.videoCommentDao()
         )
 
@@ -195,8 +197,31 @@ class VideoHomeFragment : Fragment() {
             isLoadingVideos = isLoading
             if (isLoading && videoList.isEmpty()) {
                 startSkeletonAnimation()
-            } else {
-                stopSkeletonAnimation()
+            } else if (!isLoading && viewModel.hasError.value != true) {
+                // Same logic as ExploreFragment: only show content when network available
+                // User requirement: "solo debe aparecer el skeleton" if no connection
+                if (videoList.isNotEmpty() && isNetworkAvailable()) {
+                    stopSkeletonAnimation()
+                } else {
+                     // Ensure skeleton is visible if list is empty OR no network
+                     startSkeletonAnimation()
+                }
+            }
+        }
+        
+        // Observe error state - show skeleton with tap to retry when there's an error
+        viewModel.hasError.observe(viewLifecycleOwner) { hasError ->
+            if (hasError && videoList.isEmpty()) {
+                // Show skeleton with animation for error/no connection state
+                startSkeletonAnimation()
+                
+                // Make skeleton tappable to retry
+                skeletonContainer.setOnClickListener {
+                    Toast.makeText(context, "Reintentando conexión...", Toast.LENGTH_SHORT).show()
+                    viewModel.loadVideos(isRefresh = true)
+                }
+            } else if (!hasError) {
+                skeletonContainer.setOnClickListener(null)
             }
         }
         
@@ -206,6 +231,16 @@ class VideoHomeFragment : Fragment() {
             videoList.addAll(videos)
             allVideosList.clear()
             allVideosList.addAll(videos)
+            
+            // Control visibility: skeleton vs ViewPager based on video list AND network
+            // Same logic as ExploreFragment: only show content when network is available
+            if (videoList.isNotEmpty() && isNetworkAvailable()) {
+                // We have videos AND network - hide skeleton and show ViewPager
+                stopSkeletonAnimation()
+            } else {
+                // No videos OR no network - show skeleton and hide ViewPager  
+                startSkeletonAnimation()
+            }
             
             if (::videoAdapter.isInitialized) {
                 videoAdapter.updateVideos(videoList)
@@ -243,6 +278,9 @@ class VideoHomeFragment : Fragment() {
         // Initialize views
         profileAvatars = view.findViewById(R.id.profileAvatars)
         skeletonContainer = view.findViewById(R.id.skeletonContainer)
+        
+        // Start skeleton animation immediately (skeleton is visible by default in XML)
+        skeletonContainer.startShimmer()
 
         // Ensure `profileAvatars` matches the visible size of the live/profile button.
         // Try `enVivoButton` first, then `profileButton`, otherwise fallback to 42dp.
@@ -892,25 +930,22 @@ class VideoHomeFragment : Fragment() {
             Log.d("VideoHomeFragment", "======== LIKE SYNC START ========")
             Log.d("VideoHomeFragment", "Current user ID: $userId")
             
-            // Sync user likes from Supabase to ensure persistence across devices/restarts
+            // Sync user likes from Supabase (polymorphic likes table) to ensure persistence
+            var likedVideoIds: List<Long> = emptyList()
             if (userId > 0) {
-                val syncSuccess = withContext(Dispatchers.IO) {
+                val syncResult = withContext(Dispatchers.IO) {
                     try {
-                        Log.d("VideoHomeFragment", "Fetching user likes from Supabase...")
-                        syncRepository.syncUserVideoLikesFromSupabase(userId)
-                        
-                        // Verify sync by checking local database
-                        val localLikes = syncRepository.videoLikeDao?.getLikedVideoIdsByUser(userId) ?: emptyList()
-                        Log.d("VideoHomeFragment", "Local database now has ${localLikes.size} likes: $localLikes")
-                        
-                        true
+                        Log.d("VideoHomeFragment", "Fetching user likes from Supabase (polymorphic)...")
+                        val likes = syncRepository.syncUserVideoLikesFromSupabase(userId)
+                        Log.d("VideoHomeFragment", "User $userId has liked ${likes.size} videos: $likes")
+                        likes
                     } catch (e: Exception) {
                         Log.e("VideoHomeFragment", "Error syncing user likes", e)
-                        false
+                        emptyList()
                     }
                 }
-                
-                Log.d("VideoHomeFragment", "Sync completed: success=$syncSuccess")
+                likedVideoIds = syncResult
+                Log.d("VideoHomeFragment", "Sync completed: ${likedVideoIds.size} liked videos")
             } else {
                 Log.w("VideoHomeFragment", "No valid user ID, skipping like sync")
             }
@@ -1079,9 +1114,18 @@ class VideoHomeFragment : Fragment() {
         // Configurar el ViewPager2
         val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
         viewPager.adapter = videoAdapter
+        
+        // CRITICAL: Keep ViewPager hidden until we have actual videos AND network
+        // Same logic as ExploreFragment - prevents showing content when offline
+        viewPager.visibility = if (videoList.isNotEmpty() && isNetworkAvailable()) View.VISIBLE else View.GONE
 
         // Configurar orientación vertical para deslizar como TikTok
         viewPager.orientation = androidx.viewpager2.widget.ViewPager2.ORIENTATION_VERTICAL
+        
+        // OPTIMIZATION: Pre-load MORE adjacent videos for INSTANT swipe transitions
+        // This keeps 2 pages before and 2 pages after the current one in memory
+        // Combined with video caching, this makes swipes feel instantaneous
+        viewPager.offscreenPageLimit = 2
 
         // Desactivar el overscroll effect (el efecto de rebote al final de la lista)
         viewPager.getChildAt(0).overScrollMode = View.OVER_SCROLL_NEVER        // Listener para cambios de página
@@ -1124,6 +1168,17 @@ class VideoHomeFragment : Fragment() {
                 // displayVideo(videoList[position]) - Removed as video info is handled by individual items
             }
         })
+
+        // Check for restore path here as well, in case observe happened before init
+        if (restorePath != null && restorePosition > 0) {
+             val index = videoList.indexOfFirst { it.videoUriString == restorePath || it.localFilePath == restorePath }
+             if (index != -1) {
+                 viewPager.setCurrentItem(index, false)
+                 videoAdapter.setPendingSeek(restorePath!!, restorePosition)
+                 restorePath = null
+                 restorePosition = 0
+             }
+        }
     }
 
     // Update these methods to work with ViewPager2
@@ -1188,6 +1243,19 @@ class VideoHomeFragment : Fragment() {
         skeletonContainer.visibility = View.VISIBLE
         skeletonContainer.alpha = 1f
         skeletonContainer.startShimmer()
+        
+        // HIDE ViewPager when showing skeleton to prevent empty item_video showing underneath
+        view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.visibility = View.GONE
+    }
+
+    /**
+     * Check if network is available - same logic as ExploreFragment
+     */
+    private fun isNetworkAvailable(): Boolean {
+        val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val activeNetwork = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     private fun stopSkeletonAnimation() {
@@ -1196,6 +1264,21 @@ class VideoHomeFragment : Fragment() {
             skeletonContainer.stopShimmer()
             return
         }
+
+        // CRITICAL: Same logic as ExploreFragment
+        // Only hide skeleton if there are actual videos AND network is available
+        // Per user requirement: "solo debe aparecer el skeleton" when no connection
+        val hasVideos = videoList.isNotEmpty()
+        val hasNetwork = isNetworkAvailable()
+        
+        // Must have both videos AND network to show content
+        if (!hasVideos || !hasNetwork) {
+            // Keep skeleton visible - either no videos or no network
+            return
+        }
+        
+        // We have videos AND network - show ViewPager and hide skeleton
+        view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.visibility = View.VISIBLE
 
         // Animate alpha to 0 while keeping shimmer running for smoothness
         skeletonContainer.animate()
@@ -1284,16 +1367,30 @@ class VideoHomeFragment : Fragment() {
                 override fun onAvailable(network: Network) {
                     super.onAvailable(network)
                     Log.d("VideoHomeFragment", "Network available detected")
-                    // If we have no videos or we are in a state where we want to retry
-                    if (videoList.isEmpty() && !isLoadingVideos) {
-                        lifecycleScope.launch(Dispatchers.Main) {
-                            // Add delay to ensure network is stable
-                            kotlinx.coroutines.delay(1500)
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        // Add delay to ensure network is stable
+                        kotlinx.coroutines.delay(1000)
+                        
+                        if (videoList.isEmpty() && !isLoadingVideos) {
+                            // No videos - load from network
                             Log.d("VideoHomeFragment", "Auto-reloading videos on network available")
                             if (::viewModel.isInitialized) {
-                                viewModel.loadVideos()
+                                viewModel.loadVideos(isRefresh = true)
                             }
+                        } else if (videoList.isNotEmpty()) {
+                            // We have cached videos - now network is available, show them
+                            Log.d("VideoHomeFragment", "Network restored - showing cached videos")
+                            stopSkeletonAnimation()
                         }
+                    }
+                }
+                
+                override fun onLost(network: Network) {
+                    super.onLost(network)
+                    Log.d("VideoHomeFragment", "Network lost - showing skeleton")
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        // Network lost - hide ViewPager and show skeleton
+                        startSkeletonAnimation()
                     }
                 }
             }

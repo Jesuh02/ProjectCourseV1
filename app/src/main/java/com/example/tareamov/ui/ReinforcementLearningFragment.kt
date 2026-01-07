@@ -42,7 +42,7 @@ class ReinforcementLearningFragment : Fragment() {
             chatMessageDao = db.chatMessageDao(),
             fileContextDao = db.fileContextDao(),
             progresoEstudianteDao = db.progresoEstudianteDao(),
-            videoLikeDao = db.videoLikeDao(),
+            likeDao = db.likeDao(),
             videoCommentDao = db.videoCommentDao()
         )
         // Init cache if needed
@@ -119,10 +119,17 @@ class ReinforcementLearningFragment : Fragment() {
                         findNavController().popBackStack()
                     },
                     onStartClick = {
-                        // Always load new questions when the button is clicked
-                        // The ViewModel will set state to Loading immediately to ensure UI updates
-                        android.util.Log.d("ReinforceFrag", "Generating new questions for course $courseId")
-                        viewModel.loadQuestions(courseId, courseName, topicId, taskId)
+                        // ALWAYS force regeneration to get NEW questions from the server
+                        // This ensures a fresh call to the backend every time
+                        android.util.Log.d("ReinforceFrag", "═══════════════════════════════════════════════════")
+                        android.util.Log.d("ReinforceFrag", "🚀 onStartClick TRIGGERED!")
+                        android.util.Log.d("ReinforceFrag", "   📚 courseId: $courseId")
+                        android.util.Log.d("ReinforceFrag", "   📖 courseName: $courseName")
+                        android.util.Log.d("ReinforceFrag", "   📑 topicId: $topicId")
+                        android.util.Log.d("ReinforceFrag", "   📝 taskId: $taskId")
+                        android.util.Log.d("ReinforceFrag", "   🔥 Calling viewModel.forceRegenerateQuestions()...")
+                        android.util.Log.d("ReinforceFrag", "═══════════════════════════════════════════════════")
+                        viewModel.forceRegenerateQuestions(courseId, courseName, topicId, taskId)
                     },
                     viewModel = viewModel
                 )

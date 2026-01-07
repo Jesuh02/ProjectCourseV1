@@ -151,7 +151,7 @@ class UserProfileViewFragment : Fragment() {
                 db.chatMessageDao(),
                 db.fileContextDao(),
                 db.progresoEstudianteDao(),
-                db.videoLikeDao(),
+                db.likeDao(),
                 db.videoCommentDao()
             )
             syncRepository.initWithContext(requireContext())
@@ -721,7 +721,7 @@ class UserProfileViewFragment : Fragment() {
             try {
                 val database = AppDatabase.getDatabase(requireContext())
 
-                // Use async to load user data and subscribers count in parallel
+                // Use async to load user data, avatar and subscribers count in parallel
                 val userDeferred = async(Dispatchers.IO) {
                     // Try Supabase first for fresh data (avatar, etc.)
                     var user: Usuario? = null
@@ -738,6 +738,16 @@ class UserProfileViewFragment : Fragment() {
                         user = database.usuarioDao().getUsuarioByUsername(username)
                     }
                     user
+                }
+                
+                // Fetch avatar URL directly from Supabase as a fallback
+                val avatarDeferred = async(Dispatchers.IO) {
+                    try {
+                        SupabaseClient.fetchUsuarioAvatarByUsername(username)
+                    } catch (e: Exception) {
+                        Log.e("UserProfileView", "Error fetching avatar from Supabase", e)
+                        null
+                    }
                 }
                 
                 val subscribersDeferred = async(Dispatchers.IO) {
@@ -758,10 +768,12 @@ class UserProfileViewFragment : Fragment() {
                 }
 
                 val user = userDeferred.await()
+                val avatarUrl = avatarDeferred.await()
                 val subscribersCount = subscribersDeferred.await()
                 
                 Log.d("UserProfileView", "Loaded data for username: $username")
-                Log.d("UserProfileView", "User found: ${user != null}")
+                Log.d("UserProfileView", "User found: ${user != null}, avatar from user: ${user?.avatar}")
+                Log.d("UserProfileView", "Avatar URL from Supabase: $avatarUrl")
                 Log.d("UserProfileView", "Subscribers count from Supabase: $subscribersCount")
 
                 // Actualizar UI con información del usuario
@@ -776,12 +788,21 @@ class UserProfileViewFragment : Fragment() {
                     subscribersCountTextView.text = subscribersCount.toString()
                     Log.d("UserProfileView", "UI updated - Displaying subscribers count: $subscribersCount")
 
-                    // Cargar avatar del usuario
-                    loadUserAvatar(user)
+                    // Cargar avatar del usuario - prefer direct avatar URL if user's avatar is empty
+                    val effectiveAvatarUrl = if (!user?.avatar.isNullOrEmpty()) user?.avatar else avatarUrl
+                    if (user != null && effectiveAvatarUrl != null) {
+                        loadUserAvatarFromUrl(effectiveAvatarUrl)
+                    } else if (user != null) {
+                        loadUserAvatar(user)
+                    } else if (avatarUrl != null) {
+                        loadUserAvatarFromUrl(avatarUrl)
+                    } else {
+                        userAvatarImageView.setImageResource(R.drawable.ic_profile)
+                    }
                 }
 
                 // Cargar contenido del usuario (this is already optimized with async internally)
-                loadUserContent(username)
+                loadUserContent(username, user?.id)
                 
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -793,6 +814,34 @@ class UserProfileViewFragment : Fragment() {
                     showEmptyState()
                 }
             }
+        }
+    }
+    
+    /**
+     * Load user avatar from a URL string
+     */
+    private fun loadUserAvatarFromUrl(avatarUrl: String) {
+        if (!isAdded || context == null) {
+            Log.w("UserProfileView", "Fragment not added or context null, skipping avatar load")
+            return
+        }
+        
+        if (!::userAvatarImageView.isInitialized) {
+            Log.w("UserProfileView", "userAvatarImageView not initialized, skipping avatar load")
+            return
+        }
+        
+        try {
+            Log.d("UserProfileView", "Loading avatar from URL: $avatarUrl")
+            Glide.with(this@UserProfileViewFragment)
+                .load(avatarUrl)
+                .placeholder(R.drawable.ic_profile)
+                .error(R.drawable.ic_profile)
+                .circleCrop()
+                .into(userAvatarImageView)
+        } catch (e: Exception) {
+            Log.e("UserProfileView", "Error loading avatar from URL", e)
+            userAvatarImageView.setImageResource(R.drawable.ic_profile)
         }
     }
 
@@ -849,7 +898,7 @@ class UserProfileViewFragment : Fragment() {
             Log.e("UserProfileView", "Error loading avatar", e)
             userAvatarImageView.setImageResource(R.drawable.ic_profile)
         }
-    }    private suspend fun loadUserContent(username: String) {
+    }    private suspend fun loadUserContent(username: String, userId: Long? = null) {
         try {
             // Prefer Supabase server-side filtered fetch for this specific user
             val act = activity as? com.example.tareamov.MainActivity
@@ -865,9 +914,11 @@ class UserProfileViewFragment : Fragment() {
                         }
                         
                         val videosDeferred = async {
-                            val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
-                            if (userId != null) {
-                                val videos = act.syncRepository.fetchVideosByCreatorUserIdFromSupabase(userId)
+                            // Use passed userId or fetch it
+                            val targetUserId = userId ?: com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+                            
+                            if (targetUserId != null) {
+                                val videos = act.syncRepository.fetchVideosByCreatorUserIdFromSupabase(targetUserId)
                                 if (videos.isNotEmpty()) videos else act.syncRepository.fetchVideosByUsernameFromSupabase(username)
                             } else {
                                 act.syncRepository.fetchVideosByUsernameFromSupabase(username)
@@ -892,12 +943,12 @@ class UserProfileViewFragment : Fragment() {
             // If Supabase didn't return results for one of the lists, fallback to local DB for that list
             if (userCoursesList.isEmpty()) {
                 val allVideosData = getAllContentLikeExploreFragment()
-                val (courses, _) = filterContentLikeExploreFragment(allVideosData, username)
+                val (courses, _) = filterContentLikeExploreFragment(allVideosData, username, userId)
                 userCoursesList = courses.map { course -> com.example.tareamov.repository.CourseRepository(requireContext()).convertVideoDataToCoursePublic(course) }
             }
             if (userVideosList.isEmpty()) {
                 val allVideosData = getAllContentLikeExploreFragment()
-                val (_, videos) = filterContentLikeExploreFragment(allVideosData, username)
+                val (_, videos) = filterContentLikeExploreFragment(allVideosData, username, userId)
                 userVideosList = videos
             }
 
@@ -1495,14 +1546,16 @@ class UserProfileViewFragment : Fragment() {
     // Método auxiliar para filtrar contenido como lo hace ExploreFragment
     private fun filterContentLikeExploreFragment(
         allContent: List<VideoData>, 
-        targetUsername: String
+        targetUsername: String,
+        targetUserId: Long? = null
     ): Pair<List<VideoData>, List<VideoData>> {
-        // Filtrar por el usuario específico
+        // Filtrar por el usuario específico (username OR remoteId)
         val userContent = allContent.filter { video ->
-            video.username.equals(targetUsername, ignoreCase = true)
+            video.username.equals(targetUsername, ignoreCase = true) || 
+            (targetUserId != null && video.remoteId != null && video.remoteId == targetUserId)
         }
         
-        Log.d("UserProfileView", "User content filtered for $targetUsername: ${userContent.size} items")
+        Log.d("UserProfileView", "User content filtered for $targetUsername (id=$targetUserId): ${userContent.size} items")
         
         // Log de miniaturas disponibles para debugging
         userContent.forEach { video ->
@@ -1520,12 +1573,12 @@ class UserProfileViewFragment : Fragment() {
         // En ExploreFragment, todos los elementos se consideran cursos para el RecyclerView principal
         val courses = userContent
         
-        // Los videos pueden ser un subconjunto de los cursos o tener lógica diferente
+        // Los videos son aquellos que tienen videoUriString (son videos reales, no solo cursos)
+        // Incluye videos con remote_id que coincide con el usuario
         val videos = userContent.filter { video ->
-            // Criterio para determinar qué es un video vs curso
-            // Ajusta esta lógica según las necesidades de tu aplicación
-            video.localFilePath?.isNotEmpty() == true &&
-            !video.description.contains("curso", ignoreCase = true)
+            // Un video real tiene video_uri_string poblado O localFilePath poblado
+            // Excluir items que claramente son cursos sin contenido de video
+            !video.videoUriString.isNullOrEmpty() || !video.localFilePath.isNullOrEmpty()
         }
         
         return Pair(courses, videos)

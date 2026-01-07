@@ -395,7 +395,7 @@ class VideoDetailsFragment : Fragment() {
      * Shows a dialog asking if the user wants to create a course with this video
      */
     private fun showCreateCourseDialog(title: String, description: String, currentUsername: String) {
-        val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_create_course, null)
+        val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_create_course_minimal, null)
         
         val dialog = android.app.AlertDialog.Builder(requireContext())
             .setView(dialogView)
@@ -844,6 +844,7 @@ class VideoDetailsFragment : Fragment() {
                         isPaid = isPaidCourse,
                         price = if (isPaidCourse) 9.99 else null,
                         courseId = courseRemoteId, // null if no course created, otherwise link to the course
+                        remoteId = userId, // Store creator ID in remote_id as requested
                         timestamp = System.currentTimeMillis()
                     )
                     

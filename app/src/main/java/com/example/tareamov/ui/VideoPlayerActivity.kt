@@ -49,6 +49,11 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var isScrubbing: Boolean = false
     private var hasError: Boolean = false
     
+    // Duration estimation for videos with corrupt PTS timestamps
+    private var maxPositionReached: Long = 0L
+    private var estimatedDuration: Long = 0L
+    private var isDurationKnown: Boolean = false
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityVideoPlayerBinding.inflate(layoutInflater)
@@ -257,9 +262,23 @@ class VideoPlayerActivity : AppCompatActivity() {
                                 binding.loadingSpinner.visibility = View.GONE
                                 
                                 // Setup duration and seek bar
-                                val duration = player.duration.toInt().coerceAtLeast(0)
-                                binding.totalTime.text = TimeUtils.formatTime(duration)
-                                binding.seekBar.max = duration
+                                val realDuration = player.duration
+                                val duration = if (realDuration == androidx.media3.common.C.TIME_UNSET || realDuration <= 0) 0 else realDuration.toInt()
+                                
+                                if (duration > 0) {
+                                    isDurationKnown = true
+                                    binding.totalTime.text = TimeUtils.formatTime(duration)
+                                    binding.seekBar.max = duration
+                                    binding.seekBar.isEnabled = true
+                                    Log.d("VideoPlayerActivity", "ExoPlayer: Duration available = $duration ms")
+                                } else {
+                                    // Duration unknown - poll for it and use estimation
+                                    isDurationKnown = false
+                                    binding.totalTime.text = "--:--"
+                                    binding.seekBar.isEnabled = true // Still allow seeking
+                                    Log.w("VideoPlayerActivity", "ExoPlayer: Duration unknown, starting poll and estimation")
+                                    pollForDuration(player)
+                                }
                                 
                                 // Restore saved position (only once)
                                 if (savedPosition > 0 && lastKnownPosition == 0L) {
@@ -282,7 +301,14 @@ class VideoPlayerActivity : AppCompatActivity() {
                             }
                             Player.STATE_ENDED -> {
                                 Log.d("VideoPlayerActivity", "ExoPlayer: STATE_ENDED")
-                                // Player is set to repeat, so this shouldn't happen
+                                // Player is set to repeat, so this shouldn't happen often
+                                // But when it does, capture the position as estimated duration
+                                if (!isDurationKnown && maxPositionReached > 0) {
+                                    estimatedDuration = maxPositionReached
+                                    binding.seekBar.max = estimatedDuration.toInt()
+                                    binding.totalTime.text = "~${TimeUtils.formatTime(estimatedDuration.toInt())}"
+                                    Log.d("VideoPlayerActivity", "STATE_ENDED: Estimated duration from max position = $estimatedDuration ms")
+                                }
                             }
                             Player.STATE_IDLE -> {
                                 Log.d("VideoPlayerActivity", "ExoPlayer: STATE_IDLE")
@@ -296,6 +322,20 @@ class VideoPlayerActivity : AppCompatActivity() {
                             lastKnownPosition = player.currentPosition
                         }
                         updatePlayPauseIcon()
+                    }
+
+                    override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+                        val realDuration = player.duration
+                        if (realDuration != androidx.media3.common.C.TIME_UNSET && realDuration > 0) {
+                            isDurationKnown = true
+                            val duration = realDuration.toInt()
+                            if (binding.seekBar.max == 0 || binding.seekBar.max < duration) {
+                                binding.totalTime.text = TimeUtils.formatTime(duration)
+                                binding.seekBar.max = duration
+                                binding.seekBar.isEnabled = true
+                                Log.d("VideoPlayerActivity", "onTimelineChanged: Duration updated to $duration ms")
+                            }
+                        }
                     }
                     
                     override fun onPlayerError(error: PlaybackException) {
@@ -566,6 +606,26 @@ class VideoPlayerActivity : AppCompatActivity() {
                 binding.totalTime.text = TimeUtils.formatTime(duration)
                 binding.seekBar.max = duration
 
+                // Fix for VideoView duration 0 issue: Poll for duration if it's 0
+                if (duration <= 0) {
+                    val durationCheckRunnable = object : Runnable {
+                        override fun run() {
+                            try {
+                                if (!mediaPlayerPrepared || hasError || isFinishing) return
+                                val currentD = mp.duration
+                                if (currentD > 0) {
+                                    binding.totalTime.text = TimeUtils.formatTime(currentD)
+                                    binding.seekBar.max = currentD
+                                    Log.d("VideoPlayerActivity", "VideoView duration updated: $currentD")
+                                } else {
+                                    uiHandler.postDelayed(this, 500)
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                    uiHandler.postDelayed(durationCheckRunnable, 500)
+                }
+
                 // Ocultar spinner cuando el video esté listo
                 binding.loadingSpinner.visibility = View.GONE
 
@@ -753,10 +813,19 @@ class VideoPlayerActivity : AppCompatActivity() {
                 if (isFinishing || !mediaPlayerPrepared) return
 
                 try {
-                    if (!isScrubbing && binding.videoView.isPlaying) {
-                        val pos = binding.videoView.currentPosition
-                        binding.seekBar.progress = pos
-                        binding.currentTime.text = TimeUtils.formatTime(pos)
+                    if (binding.videoView.isPlaying) {
+                        // Update duration if it changed or was 0
+                        val duration = binding.videoView.duration
+                        if (duration > 0 && binding.seekBar.max != duration) {
+                            binding.seekBar.max = duration
+                            binding.totalTime.text = TimeUtils.formatTime(duration)
+                        }
+
+                        if (!isScrubbing) {
+                            val pos = binding.videoView.currentPosition
+                            binding.seekBar.progress = pos
+                            binding.currentTime.text = TimeUtils.formatTime(pos)
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w("VideoPlayerActivity", "Error updating progress: ${e.message}")
@@ -770,6 +839,62 @@ class VideoPlayerActivity : AppCompatActivity() {
         uiHandler.post(progressRunnable!!)
     }
     
+    /**
+     * Poll for video duration when it's not immediately available (common with R2 videos)
+     * For VP8 videos with corrupt PTS timestamps, we estimate duration from playback position
+     */
+    private fun pollForDuration(player: ExoPlayer) {
+        var pollAttempts = 0
+        val maxPollAttempts = 20 // Poll for up to 10 seconds (20 * 500ms)
+        
+        val durationPoller = object : Runnable {
+            override fun run() {
+                if (isFinishing || !mediaPlayerPrepared) return
+                
+                pollAttempts++
+                val duration = player.duration
+                
+                if (duration != androidx.media3.common.C.TIME_UNSET && duration > 0) {
+                    // Duration finally available from metadata!
+                    isDurationKnown = true
+                    val durationInt = duration.toInt()
+                    binding.seekBar.max = durationInt
+                    binding.totalTime.text = TimeUtils.formatTime(durationInt)
+                    Log.d("VideoPlayerActivity", "Duration poll success after $pollAttempts attempts: $durationInt ms")
+                } else if (pollAttempts < maxPollAttempts) {
+                    // Keep polling, and track max position for estimation
+                    val currentPos = player.currentPosition
+                    if (currentPos > maxPositionReached) {
+                        maxPositionReached = currentPos
+                        // Update estimated duration (add buffer for remaining content)
+                        if (!isDurationKnown && maxPositionReached > 1000) {
+                            estimatedDuration = maxPositionReached + 30000 // Estimate: current + 30 seconds
+                            binding.seekBar.max = estimatedDuration.toInt()
+                            binding.totalTime.text = "~${TimeUtils.formatTime(maxPositionReached.toInt())}"
+                        }
+                    }
+                    uiHandler.postDelayed(this, 500)
+                } else {
+                    // Poll exhausted - use estimated duration if available
+                    Log.w("VideoPlayerActivity", "Duration poll exhausted after $pollAttempts attempts")
+                    if (maxPositionReached > 1000) {
+                        // Use max position reached as basis for estimate
+                        estimatedDuration = maxPositionReached + 30000
+                        binding.seekBar.max = estimatedDuration.toInt()
+                        binding.totalTime.text = "~${TimeUtils.formatTime(maxPositionReached.toInt())}"
+                        Log.d("VideoPlayerActivity", "Using estimated duration based on max position: $maxPositionReached ms")
+                    } else {
+                        // Fallback: allow seeking up to 10 minutes
+                        val fallbackDuration = 600000 // 10 minutes in ms
+                        binding.seekBar.max = fallbackDuration
+                        binding.totalTime.text = "??:??"
+                    }
+                }
+            }
+        }
+        uiHandler.postDelayed(durationPoller, 500)
+    }
+    
     private fun startExoPlayerProgressUpdater() {
         progressRunnable?.let { uiHandler.removeCallbacks(it) }
         progressRunnable = object : Runnable {
@@ -778,8 +903,47 @@ class VideoPlayerActivity : AppCompatActivity() {
 
                 try {
                     val player = exoPlayer ?: return
+                    val currentPos = player.currentPosition
+                    
+                    // Track max position for duration estimation (VP8 videos with corrupt PTS)
+                    if (currentPos > maxPositionReached) {
+                        maxPositionReached = currentPos
+                    }
+                    
+                    // Update duration if it became available or was 0
+                    val durationLong = player.duration
+                    if (durationLong != androidx.media3.common.C.TIME_UNSET && durationLong > 0) {
+                        isDurationKnown = true
+                        val duration = durationLong.toInt()
+                        if (binding.seekBar.max != duration && binding.seekBar.max < duration) {
+                            binding.seekBar.max = duration
+                            binding.totalTime.text = TimeUtils.formatTime(duration)
+                            Log.d("VideoPlayerActivity", "Progress updater: Duration updated to $duration ms")
+                        }
+                    } else if (!isDurationKnown) {
+                        // Duration still unknown - use estimation based on max position
+                        if (maxPositionReached > 1000) {
+                            // Detect when video loops (position suddenly drops significantly)
+                            val prevPos = (binding.seekBar.progress).toLong()
+                            if (prevPos > 5000 && currentPos < 1000 && prevPos > maxPositionReached - 2000) {
+                                // Video looped! Max position is likely the actual duration
+                                estimatedDuration = maxPositionReached
+                                binding.seekBar.max = estimatedDuration.toInt()
+                                binding.totalTime.text = "~${TimeUtils.formatTime(estimatedDuration.toInt())}"
+                                Log.d("VideoPlayerActivity", "Video loop detected! Estimated duration: $estimatedDuration ms")
+                            } else {
+                                // Still playing - update seekBar max to allow seeking ahead
+                                val newMax = maxPositionReached + 30000 // Allow seeking 30s ahead
+                                if (binding.seekBar.max < newMax) {
+                                    binding.seekBar.max = newMax.toInt()
+                                    binding.totalTime.text = "~${TimeUtils.formatTime(maxPositionReached.toInt())}"
+                                }
+                            }
+                        }
+                    }
+
                     if (!isScrubbing) {
-                        val pos = player.currentPosition.toInt()
+                        val pos = currentPos.toInt()
                         binding.seekBar.progress = pos
                         binding.currentTime.text = TimeUtils.formatTime(pos)
                     }
@@ -819,18 +983,53 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun seekBy(deltaMs: Int) {
-        if (!mediaPlayerPrepared) return
+        if (!mediaPlayerPrepared) {
+            Log.d("VideoPlayerActivity", "seekBy: Player not prepared, ignoring seek request")
+            return
+        }
         try {
             if (useExoPlayer) {
                 val player = exoPlayer ?: return
-                val duration = player.duration.toInt().coerceAtLeast(1)
-                val currentPos = player.currentPosition.toInt()
-                val newPos = (currentPos + deltaMs).coerceIn(0, duration)
-                player.seekTo(newPos.toLong())
-                binding.currentTime.text = TimeUtils.formatTime(newPos)
+                val duration = player.duration // Long
+                val currentPos = player.currentPosition // Long
+                
+                Log.d("VideoPlayerActivity", "seekBy: deltaMs=$deltaMs, currentPos=$currentPos, duration=$duration")
+                
+                var newPos = currentPos + deltaMs
+                if (newPos < 0) newPos = 0
+                
+                // Only clamp to duration if duration is known and valid
+                val isDurationKnown = duration != androidx.media3.common.C.TIME_UNSET && duration > 0
+                if (isDurationKnown && newPos > duration) {
+                    newPos = duration
+                }
+                
+                Log.d("VideoPlayerActivity", "seekBy: Seeking to newPos=$newPos")
+                
+                player.seekTo(newPos)
+                binding.currentTime.text = TimeUtils.formatTime(newPos.toInt())
+                binding.seekBar.progress = newPos.toInt()
+                
+                // Update seekBar max if needed
+                if (newPos.toInt() > binding.seekBar.max) {
+                    binding.seekBar.max = newPos.toInt() + 60000
+                }
+                
+                // Update seekBar if duration is known
+                if (isDurationKnown && binding.seekBar.max > 0) {
+                    binding.seekBar.progress = newPos.toInt()
+                }
             } else {
-                val duration = if (binding.videoView.duration > 0) binding.videoView.duration else binding.seekBar.max
-                val newPos = (binding.videoView.currentPosition + deltaMs).coerceIn(0, duration)
+                val duration = binding.videoView.duration // Can be -1 or 0
+                val currentPos = binding.videoView.currentPosition
+                
+                var newPos = currentPos + deltaMs
+                if (newPos < 0) newPos = 0
+                
+                if (duration > 0 && newPos > duration) {
+                    newPos = duration
+                }
+                
                 binding.videoView.seekTo(newPos)
                 binding.currentTime.text = TimeUtils.formatTime(newPos)
             }

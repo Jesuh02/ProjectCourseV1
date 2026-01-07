@@ -44,6 +44,11 @@ class CourseSelectionFragment : Fragment() {
                     onCourseSelected = { course ->
                         // Check if user is subscribed to the course creator before allowing access
                         checkSubscriptionAndNavigate(course)
+                    },
+                    onCreatorClick = { username ->
+                        // Navigate to user profile when clicking on creator
+                        val bundle = android.os.Bundle().apply { putString("username", username) }
+                        findNavController().navigate(R.id.action_courseSelectionFragment_to_userProfileViewFragment, bundle)
                     }
                 )
             }

@@ -1080,6 +1080,36 @@ class SupabaseRepository(
     }
 
     /**
+     * Delete all content items for a specific task from Supabase
+     */
+    suspend fun deleteContentItemsByTaskId(taskId: Long): Boolean {
+        return try {
+            val url = "$supabaseUrl/rest/v1/content_items?task_id=eq.$taskId"
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", supabaseKey)
+                .addHeader("Authorization", "Bearer $supabaseKey")
+                .addHeader("Prefer", "return=minimal")
+                .build()
+
+            val response = executeRequestWithRetries(request)
+            val success = response?.isSuccessful == true
+            response?.close()
+            
+            if (success) {
+                Log.d("SupabaseRepository", "Successfully deleted all content items for taskId=$taskId from Supabase")
+            } else {
+                Log.w("SupabaseRepository", "Failed to delete content items for taskId=$taskId: ${response?.code}")
+            }
+            success
+        } catch (e: Exception) {
+            Log.e("SupabaseRepository", "Error deleting content items for taskId=$taskId", e)
+            false
+        }
+    }
+
+    /**
      * Delete a content item from Supabase
      */
     suspend fun deleteContentItem(contentItemId: Long): Boolean {

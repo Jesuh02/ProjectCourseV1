@@ -35,7 +35,8 @@ data class VideoData(
     @SerializedName("is_paid") val isPaid: Boolean = false,
     @SerializedName("thumbnail_uri") val thumbnailUri: String? = null,
     @SerializedName("price") val price: Double? = null,
-    @SerializedName("course_id") val courseId: Long? = null // ID del curso asociado
+    @SerializedName("course_id") val courseId: Long? = null, // ID del curso asociado
+    @SerializedName("remote_id") val remoteId: Long? = null // ID del usuario creador (según requerimiento)
 ) {
     // Transient property that's not stored in the database
     @Ignore
@@ -49,7 +50,8 @@ data class VideoData(
         videoUri: Uri?,
         isPaid: Boolean = false,
         thumbnailUri: String? = null,
-        courseId: Long? = null
+        courseId: Long? = null,
+        remoteId: Long? = null
     ) : this(
         0,
         username,
@@ -61,7 +63,8 @@ data class VideoData(
         isPaid,
         thumbnailUri,
         null,
-        courseId
+        courseId,
+        remoteId
     )
 
     // Check if the video file exists

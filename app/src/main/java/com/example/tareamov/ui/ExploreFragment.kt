@@ -63,11 +63,19 @@ class ExploreFragment : Fragment() {
     private lateinit var coursesAdapter: CourseAdapter
     private val coursesList = mutableListOf<Course>()
     private var currentUsername: String? = null
-    private lateinit var searchEditText: EditText
+    // private lateinit var searchEditText: EditText // Removed in favor of Compose state
     private lateinit var courseRepository: com.example.tareamov.repository.CourseRepository
 
     private lateinit var skeletonContainer: View
     private var skeletonAnimator: ObjectAnimator? = null
+
+    // Compose State
+    private val _totalCourses = androidx.compose.runtime.mutableStateOf(0)
+    private val _popularCourses = androidx.compose.runtime.mutableStateOf(0)
+    private val _newCourses = androidx.compose.runtime.mutableStateOf(0)
+    private val _searchText = androidx.compose.runtime.mutableStateOf("")
+    private val _activeFilterName = androidx.compose.runtime.mutableStateOf<String?>(null)
+    private val _isHeaderCollapsed = androidx.compose.runtime.mutableStateOf(true)
 
     // Store all courses for filtering and search
     private var allCoursesList = mutableListOf<Course>()
@@ -170,11 +178,6 @@ class ExploreFragment : Fragment() {
         courseRepository = com.example.tareamov.repository.CourseRepository(requireContext())
         thumbnailExtractor = com.example.tareamov.util.VideoThumbnailExtractor(requireContext())
 
-        // Set up navigation back to VideoHomeFragment
-        view.findViewById<ImageButton>(R.id.backButton)?.setOnClickListener {
-            findNavController().navigate(R.id.action_exploreFragment_to_videoHomeFragment)
-        }
-
         // Get current username from shared preferences
         currentUsername = getCurrentUsername()
         Log.d("ExploreFragment", "Initialized with currentUsername: $currentUsername")
@@ -189,9 +192,6 @@ class ExploreFragment : Fragment() {
         // Configurar RecyclerViews para cursos
         setupRecyclerViews(view)
 
-        // Initialize searchEditText
-        searchEditText = view.findViewById(R.id.searchEditText)
-        
         // Initialize skeleton container
         skeletonContainer = view.findViewById(R.id.skeletonContainer)
 
@@ -210,49 +210,73 @@ class ExploreFragment : Fragment() {
         headerSection.outlineProvider = ViewOutlineProvider.BACKGROUND
         headerSection.clipToOutline = true
 
-        // Ensure all text inside the header gradient is white for contrast
-        // The gradient is a drawable background, not an id; take the first child of headerSection
-        val bgHeader = headerSection.getChildAt(0) as? ViewGroup
-        bgHeader?.let {
-            setAllChildTextColors(it, android.graphics.Color.WHITE)
-
-            // Prevent click-through: make the header container consume clicks/touches
-            // without changing visual appearance. This avoids accidental clicks
-            // on the course item underneath when tapping or scrolling over the header.
-            it.isClickable = true
-            it.isFocusable = true
-            // Removed explicit transparent background setting to allow bg_header_gradient to show
-            it.setOnClickListener {
-                // Intentionally empty - consumes the click
+        // Dynamic padding adjustment for RecyclerView based on Header height to animate content position
+        headerSection.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            val newHeight = v.height
+            val coursesRecyclerView = view.findViewById<RecyclerView>(R.id.coursesRecyclerView)
+            if (coursesRecyclerView.paddingTop != newHeight) {
+                coursesRecyclerView.setPadding(
+                    coursesRecyclerView.paddingLeft,
+                    newHeight,
+                    coursesRecyclerView.paddingRight,
+                    coursesRecyclerView.paddingBottom
+                )
             }
         }
 
-        // Also explicitly set the main counters to white in case they are outside the gradient container
-        view.findViewById<TextView>(R.id.totalCoursesCount)?.setTextColor(android.graphics.Color.WHITE)
-        view.findViewById<TextView>(R.id.popularCoursesCount)?.setTextColor(android.graphics.Color.WHITE)
-        view.findViewById<TextView>(R.id.newCoursesCount)?.setTextColor(android.graphics.Color.WHITE)
-
-        // Add TextWatcher to search bar
-        searchEditText.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                filterCourses(s?.toString() ?: "")
-            }
-            override fun afterTextChanged(s: Editable?) {}
-        })
-
-        // Setup filter button
-        view.findViewById<View>(R.id.filterButton)?.setOnClickListener {
-            showFilterOptions()
-        }
-        
-        // Setup clear filter button (both the container and the X icon)
-        view.findViewById<View>(R.id.clearFilterButton)?.setOnClickListener {
-            clearActiveFilter()
-        }
-        
-        view.findViewById<View>(R.id.activeFilterContainer)?.setOnClickListener {
-            clearActiveFilter()
+        // Setup Compose Header
+        val composeHeader = view.findViewById<androidx.compose.ui.platform.ComposeView>(R.id.composeHeader)
+        composeHeader.setContent {
+            com.example.tareamov.ui.components.ExploreHeader(
+                totalCourses = _totalCourses.value,
+                popularCourses = _popularCourses.value,
+                newCourses = _newCourses.value,
+                searchText = _searchText.value,
+                onSearchTextChanged = { text ->
+                    _searchText.value = text
+                    filterCourses(text)
+                },
+                activeFilterName = _activeFilterName.value,
+                onFilterClicked = { showFilterOptions() },
+                onClearFilter = { clearActiveFilter() },
+                onPopularCoursesClicked = {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        val topPopular = withContext(Dispatchers.IO) {
+                            try {
+                                com.example.tareamov.service.SupabaseClient.fetchTopPopularCourses(5)
+                            } catch (e: Exception) {
+                                emptyList<com.example.tareamov.data.entity.Course>()
+                            }
+                        }
+                        showPopularCourses(topPopular)
+                    }
+                },
+                onNewCoursesClicked = {
+                    // Logic from old newCoursesCount click listener
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        val currentTime = System.currentTimeMillis()
+                        val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
+                        
+                        val allAvailableCourses = try {
+                            withContext(Dispatchers.IO) {
+                                com.example.tareamov.service.SupabaseClient.fetchCourses()
+                            }
+                        } catch (e: Exception) {
+                            if (allCoursesList.isNotEmpty()) allCoursesList else coursesList
+                        }
+                        
+                        val newCoursesList = allAvailableCourses.filter { course ->
+                            val courseTime = course.timestamp
+                            val creationDate = course.creationDate?.let { parseDate(it) } ?: 0
+                            maxOf(courseTime, creationDate) > thirtyDaysAgo
+                        }
+                        
+                        showNewCourses(newCoursesList)
+                    }
+                },
+                isCollapsed = _isHeaderCollapsed.value,
+                onToggleCollapse = { _isHeaderCollapsed.value = !_isHeaderCollapsed.value }
+            )
         }
 
         // Setup course observation
@@ -266,12 +290,6 @@ class ExploreFragment : Fragment() {
 
     // Cargar los cursos (forzar fetch remoto al entrar en el fragment)
     loadCourses(forceRemote = true)
-
-        // Add debug functionality - remove this in production
-        view.findViewById<View>(R.id.welcomeTitle)?.setOnLongClickListener {
-            showDebugStatsInfo()
-            true
-        }
 
         // Panel de navegación inferior usando ComponentBottomNavigationBinding
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
@@ -1732,7 +1750,7 @@ class ExploreFragment : Fragment() {
 
         // If a filter/search is active, update the total count in the header to reflect the search results
         if (isFilterActive) {
-            view?.findViewById<TextView>(R.id.totalCoursesCount)?.text = sortedCourses.size.toString()
+            _totalCourses.value = sortedCourses.size
         }
         
         // Las estadísticas ya están calculadas correctamente en fetchAndDisplayCourseStats()
@@ -2151,18 +2169,33 @@ class ExploreFragment : Fragment() {
                     return@launch
                 }
 
+                // Fetch enrolled course IDs from progreso_estudiante table
                 val enrolledIds = com.example.tareamov.service.SupabaseClient.fetchEnrolledCourseIds(userId)
+                Log.d("ExploreFragment", "Usuario $userId tiene ${enrolledIds.size} inscripciones: $enrolledIds")
+                
+                if (enrolledIds.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        displayCourses(emptyList())
+                        showDarkToast("No tienes cursos inscritos")
+                        updateFilteredCourseStats(0, "enrolled")
+                        isFilterActive = true
+                        isLoadingCourses = false
+                    }
+                    return@launch
+                }
+                
+                // Fetch all enrolled courses directly from Supabase (not from local list)
+                val enrolledCourses = com.example.tareamov.service.SupabaseClient.fetchCoursesByIds(enrolledIds)
+                Log.d("ExploreFragment", "Se obtuvieron ${enrolledCourses.size} cursos inscritos de Supabase")
                 
                 withContext(Dispatchers.Main) {
-                    val filtered = allCoursesList.filter { course ->
-                        enrolledIds.contains(course.id)
-                    }
-                    displayCourses(filtered)
+                    displayCourses(enrolledCourses)
                     
-                    val count = filtered.size
+                    val count = enrolledCourses.size
                     showDarkToast("Mostrando $count cursos inscritos")
-                    // Update header counts to reflect enrolled filter
-                    fetchAndDisplayCourseStats()
+                    // Update header counts to reflect enrolled filter (use filtered count, not global)
+                    updateFilteredCourseStats(count, "enrolled")
+                    isFilterActive = true
                     isLoadingCourses = false
                 }
             } catch (e: Exception) {
@@ -2180,42 +2213,36 @@ class ExploreFragment : Fragment() {
      * Muestra el total real de cursos según el filtro, no solo los mostrados en pantalla
      */
     private fun updateFilteredCourseStats(totalCount: Int, filterType: String) {
-        view?.let { v ->
-            val totalCoursesCount = v.findViewById<TextView>(R.id.totalCoursesCount)
-            val popularCoursesCount = v.findViewById<TextView>(R.id.popularCoursesCount)
-            val newCoursesCount = v.findViewById<TextView>(R.id.newCoursesCount)
-            
-            // Mostrar el conteo total de cursos del filtro
-            totalCoursesCount?.text = totalCount.toString()
-            
-            // Calcular populares y nuevos dentro del conjunto filtrado
-            viewLifecycleOwner.lifecycleScope.launch {
-                try {
-                    val popular = withContext(Dispatchers.IO) {
-                        coursesList.count { course ->
-                            try {
-                                com.example.tareamov.service.SupabaseClient.countStudentsInCourse(course.id) >= 10
-                            } catch (e: Exception) {
-                                false
-                            }
+        // Mostrar el conteo total de cursos del filtro
+        _totalCourses.value = totalCount
+        
+        // Calcular populares y nuevos dentro del conjunto filtrado
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val popular = withContext(Dispatchers.IO) {
+                    coursesList.count { course ->
+                        try {
+                            com.example.tareamov.service.SupabaseClient.countStudentsInCourse(course.id) >= 10
+                        } catch (e: Exception) {
+                            false
                         }
                     }
-                    
-                    val currentTime = System.currentTimeMillis()
-                    val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
-                    val newCount = coursesList.count { course ->
-                        val courseTime = course.timestamp
-                        val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
-                        maxOf(courseTime, creationTime) > thirtyDaysAgo
-                    }
-                    
-                    popularCoursesCount?.text = popular.toString()
-                    newCoursesCount?.text = newCount.toString()
-                    
-                    Log.d("ExploreFragment", "Filtered stats ($filterType): Total=$totalCount, Popular=$popular, New=$newCount")
-                } catch (e: Exception) {
-                    Log.w("ExploreFragment", "Error calculating filtered stats", e)
                 }
+                
+                val currentTime = System.currentTimeMillis()
+                val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
+                val newCount = coursesList.count { course ->
+                    val courseTime = course.timestamp
+                    val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
+                    maxOf(courseTime, creationTime) > thirtyDaysAgo
+                }
+                
+                _popularCourses.value = popular
+                _newCourses.value = newCount
+                
+                Log.d("ExploreFragment", "Filtered stats ($filterType): Total=$totalCount, Popular=$popular, New=$newCount")
+            } catch (e: Exception) {
+                Log.w("ExploreFragment", "Error calculating filtered stats", e)
             }
         }
     }
@@ -2231,314 +2258,58 @@ class ExploreFragment : Fragment() {
 
     /**
      * Fetch aggregated stats (total, popular, new) and display them immediately.
-     * Uses server-side counts when network is available; otherwise falls back to local data.
+     * Always queries Supabase for counts - does NOT use local course data.
+     * Only fetches GLOBAL stats when no filter is active (currentFilterIndex == 0).
      */
     private fun fetchAndDisplayCourseStats() {
-        val v = view ?: return
-        val totalCoursesCount = v.findViewById<TextView>(R.id.totalCoursesCount)
-        val popularCoursesCount = v.findViewById<TextView>(R.id.popularCoursesCount)
-        val newCoursesCount = v.findViewById<TextView>(R.id.newCoursesCount)
-        // Optimistically show local counts while background fetch runs
-        totalCoursesCount?.text = if (totalCourses > 0) totalCourses.toString() else coursesList.size.toString()
-        
-        // Calcular cursos populares como TOP-5 por número de inscripciones (asíncrono)
-        // Busca entre TODOS los cursos en Supabase, no solo los cargados localmente
-        viewLifecycleOwner.lifecycleScope.launch {
-            val topPopular = withContext(Dispatchers.IO) {
-                try {
-                    // Fetch TOP 5 popular courses from ALL courses in Supabase database
-                    com.example.tareamov.service.SupabaseClient.fetchTopPopularCourses(5)
-                } catch (e: Exception) {
-                    Log.e("ExploreFragment", "Error fetching top popular courses", e)
-                    emptyList<com.example.tareamov.data.entity.Course>()
-                }
-            }
-
-            // Show the top-5 size (or 0) in the header
-            popularCoursesCount?.text = topPopular.size.toString()
-
-            // Make header counts tappable to activate corresponding filters
-            withContext(Dispatchers.Main) {
-                popularCoursesCount?.setOnClickListener {
-                    // Show the computed top popular courses as an active filter
-                    showPopularCourses(topPopular)
-                }
-            }
-        }
-
-        // Calculate new courses count and setup click listener
-        // Click listener will calculate fresh list to ensure all courses are included
-        newCoursesCount?.setOnClickListener {
-            // Calculate new courses on-demand when clicked to ensure we have all courses
-            viewLifecycleOwner.lifecycleScope.launch {
-                val currentTime = System.currentTimeMillis()
-                val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
-                
-                // Get all courses from server to ensure complete list
-                val allAvailableCourses = try {
-                    withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.fetchCourses()
-                    }
-                } catch (e: Exception) {
-                    Log.e("ExploreFragment", "Error fetching courses for new filter", e)
-                    // Fallback to local lists
-                    if (allCoursesList.isNotEmpty()) allCoursesList else coursesList
-                }
-                
-                val newCoursesList = allAvailableCourses.filter { course ->
-                    val courseTime = course.timestamp
-                    val creationDate = course.creationDate?.let { parseDate(it) } ?: 0
-                    maxOf(courseTime, creationDate) > thirtyDaysAgo
-                }
-                
-                showNewCourses(newCoursesList)
-            }
+        // If a filter is active, don't override with global stats
+        // Each filter function should call updateFilteredCourseStats() instead
+        if (isFilterActive && currentFilterIndex != 0) {
+            Log.d("ExploreFragment", "Filter active (index=$currentFilterIndex), skipping global stats fetch")
+            return
         }
         
-        // Display initial count (will be updated by background fetch below)
-        val currentTime = System.currentTimeMillis()
-        val thirtyDaysAgo = currentTime - (30L * 24 * 60 * 60 * 1000)
-        val initialNewCount = (if (allCoursesList.isNotEmpty()) allCoursesList else coursesList).filter { course ->
-            val courseTime = course.timestamp
-            val creationDate = course.creationDate?.let { parseDate(it) } ?: 0
-            maxOf(courseTime, creationDate) > thirtyDaysAgo
-        }
-        newCoursesCount?.text = initialNewCount.size.toString()
+        // Initialize with 0 - will be updated from Supabase
+        _totalCourses.value = 0
+        _popularCourses.value = 0
+        _newCourses.value = 0
 
-        // Quick server-side total count to show in header gradient when available
+        // Fetch all stats from Supabase in a single coroutine
         viewLifecycleOwner.lifecycleScope.launch {
-            if (!isNetworkAvailable()) return@launch
+            if (!isNetworkAvailable()) {
+                Log.w("ExploreFragment", "Network not available, cannot fetch stats")
+                return@launch
+            }
+            
             try {
+                // Fetch total courses count from Supabase
                 val serverTotal = withContext(Dispatchers.IO) {
-                    try {
-                        com.example.tareamov.service.SupabaseClient.fetchCoursesCount()
-                    } catch (t: Throwable) {
-                        0
-                    }
+                    try { com.example.tareamov.service.SupabaseClient.fetchCoursesCount() } catch (t: Throwable) { 0 }
                 }
                 if (serverTotal > 0) {
                     totalCourses = serverTotal
-                    totalCoursesCount?.text = serverTotal.toString()
-                    Log.d("ExploreFragment", "fetchAndDisplayCourseStats: server total=$serverTotal")
+                    _totalCourses.value = serverTotal
                 }
+                
+                // Fetch popular courses count (TOP-5 by enrollment)
+                val topPopular = withContext(Dispatchers.IO) {
+                    try {
+                        com.example.tareamov.service.SupabaseClient.fetchTopPopularCourses(5)
+                    } catch (e: Exception) {
+                        emptyList<com.example.tareamov.data.entity.Course>()
+                    }
+                }
+                _popularCourses.value = topPopular.size
+                
+                // Fetch new courses count (last 30 days) from Supabase
+                val newCount = withContext(Dispatchers.IO) {
+                    try { com.example.tareamov.service.SupabaseClient.countNewCourses(30) } catch (t: Throwable) { 0 }
+                }
+                _newCourses.value = newCount
+                
+                Log.d("ExploreFragment", "Global stats fetched from Supabase: total=$serverTotal, popular=${topPopular.size}, new=$newCount")
             } catch (e: Exception) {
-                Log.w("ExploreFragment", "Failed quick fetchCoursesCount", e)
-            }
-        }
-
-        // Fetch authoritative counts in background. Use server-side counts matching current filter.
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                if (!isNetworkAvailable()) {
-                    Log.d("ExploreFragment", "fetchAndDisplayCourseStats: offline, keeping optimistic values")
-                    return@launch
-                }
-
-                if (currentFilterIndex == 1) {
-                    // "My Courses" - fetch counts for current user from server
-                    val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-                    val userId = session.getUserId()
-                    if (userId <= 0L) {
-                        Log.w("ExploreFragment", "fetchAndDisplayCourseStats: no valid user id for 'my courses' filter")
-                        return@launch
-                    }
-
-                    val creatorCourses = withContext(Dispatchers.IO) {
-                        try {
-                            com.example.tareamov.service.SupabaseClient.fetchCoursesByCreatorUserId(userId)
-                        } catch (t: Throwable) {
-                            emptyList<com.example.tareamov.data.entity.Course>()
-                        }
-                    }
-
-                    val total = creatorCourses.size
-                    // TOP-5 cursos del creador con más estudiantes
-                    val popular = withContext(Dispatchers.IO) {
-                        try {
-                            val coursesWithCounts = creatorCourses.map { course ->
-                                course to com.example.tareamov.service.SupabaseClient.countStudentsInCourse(course.id)
-                            }
-                            coursesWithCounts.sortedByDescending { it.second }.take(5).size
-                        } catch (e: Exception) {
-                            0
-                        }
-                    }
-                    val recent = creatorCourses.count { course ->
-                        val courseTime = course.timestamp
-                        val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
-                        maxOf(courseTime, creationTime) > thirtyDaysAgo
-                    }
-
-                    withContext(Dispatchers.Main) {
-                        totalCoursesCount?.text = total.toString()
-                        popularCoursesCount?.text = popular.toString()
-                        newCoursesCount?.text = recent.toString()
-                        Log.d("ExploreFragment", "My courses counts - total:$total popular:$popular recent:$recent (server)")
-                    }
-                } else if (currentFilterIndex == 2) {
-                    // "Other Users' Courses" - fetch all server courses and exclude current session user
-                    val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-                    val userId = session.getUserId()
-
-                    // If no valid user id, treat as global (can't distinguish owner)
-                    if (userId <= 0L) {
-                        Log.w("ExploreFragment", "fetchAndDisplayCourseStats: no valid user id for 'other users' filter, falling back to global counts")
-                    } else {
-                        val serverCourses = withContext(Dispatchers.IO) {
-                            try {
-                                com.example.tareamov.service.SupabaseClient.fetchCourses()
-                            } catch (t: Throwable) {
-                                emptyList<com.example.tareamov.data.entity.Course>()
-                            }
-                        }
-
-                        val others = serverCourses.filter { it.creatorUserId != userId }
-                        val total = others.size
-                        // TOP-5 cursos de otros usuarios con más estudiantes
-                        val popular = withContext(Dispatchers.IO) {
-                            try {
-                                val coursesWithCounts = others.map { course ->
-                                    course to com.example.tareamov.service.SupabaseClient.countStudentsInCourse(course.id)
-                                }
-                                coursesWithCounts.sortedByDescending { it.second }.take(5).size
-                            } catch (e: Exception) {
-                                0
-                            }
-                        }
-                        val recent = others.count { course ->
-                            val courseTime = course.timestamp
-                            val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
-                            maxOf(courseTime, creationTime) > thirtyDaysAgo
-                        }
-
-                        withContext(Dispatchers.Main) {
-                            totalCoursesCount?.text = total.toString()
-                            popularCoursesCount?.text = popular.toString()
-                            newCoursesCount?.text = recent.toString()
-                            Log.d("ExploreFragment", "Other users' counts - total:$total popular:$popular recent:$recent (server)")
-                        }
-                        return@launch
-                    }
-
-                    // If we fell through (no valid session), continue to enrolled/global logic below
-                } else if (currentFilterIndex == 5) {
-                    // "Enrolled" filter - show counts for courses where the current user is enrolled
-                    val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-                    val userId = session.getUserId()
-                    if (userId <= 0L) {
-                        Log.w("ExploreFragment", "fetchAndDisplayCourseStats: no valid user id for 'enrolled' filter")
-                        return@launch
-                    }
-
-                    val enrolledIds = withContext(Dispatchers.IO) {
-                        try {
-                            com.example.tareamov.service.SupabaseClient.fetchEnrolledCourseIds(userId)
-                        } catch (t: Throwable) {
-                            emptyList<Long>()
-                        }
-                    }
-
-                    if (enrolledIds.isEmpty()) {
-                        withContext(Dispatchers.Main) {
-                            totalCoursesCount?.text = "0"
-                            popularCoursesCount?.text = "0"
-                            newCoursesCount?.text = "0"
-                            Log.d("ExploreFragment", "Enrolled courses counts: no enrolled courses (server)")
-                        }
-                    } else {
-                        // Fetch course objects from server and compute metrics
-                        val serverCourses = withContext(Dispatchers.IO) {
-                            try {
-                                com.example.tareamov.service.SupabaseClient.fetchCourses()
-                            } catch (t: Throwable) {
-                                emptyList<com.example.tareamov.data.entity.Course>()
-                            }
-                        }
-
-                        val enrolledCourses = serverCourses.filter { enrolledIds.contains(it.id) }
-                        val total = enrolledCourses.size
-                        // TOP-5 cursos inscritos con más estudiantes
-                        val popular = withContext(Dispatchers.IO) {
-                            try {
-                                val coursesWithCounts = enrolledCourses.map { course ->
-                                    course to com.example.tareamov.service.SupabaseClient.countStudentsInCourse(course.id)
-                                }
-                                coursesWithCounts.sortedByDescending { it.second }.take(5).size
-                            } catch (e: Exception) {
-                                0
-                            }
-                        }
-                        val recent = enrolledCourses.count { course ->
-                            val courseTime = course.timestamp
-                            val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
-                            maxOf(courseTime, creationTime) > thirtyDaysAgo
-                        }
-
-                        withContext(Dispatchers.Main) {
-                            totalCoursesCount?.text = total.toString()
-                            popularCoursesCount?.text = popular.toString()
-                            newCoursesCount?.text = recent.toString()
-                            Log.d("ExploreFragment", "Enrolled counts - total:$total popular:$popular recent:$recent (server)")
-                        }
-                    }
-                } else if (currentFilterIndex == 3 || currentFilterIndex == 4) {
-                    // Premium (3) or Free (4) filters: fetch server courses, exclude session user, then compute counts
-                    val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-                    val userId = session.getUserId()
-
-                    val serverCourses = withContext(Dispatchers.IO) {
-                        try {
-                            com.example.tareamov.service.SupabaseClient.fetchCourses()
-                        } catch (t: Throwable) {
-                            emptyList<com.example.tareamov.data.entity.Course>()
-                        }
-                    }
-
-                    val filtered = serverCourses.filter { course ->
-                        val matchesType = if (currentFilterIndex == 3) course.isPremium == true else course.isPremium != true
-                        val notOwner = userId <= 0L || course.creatorUserId != userId
-                        matchesType && notOwner
-                    }
-
-                    val total = filtered.size
-                    // TOP-5 cursos premium/free con más estudiantes
-                    val popular = withContext(Dispatchers.IO) {
-                        try {
-                            val coursesWithCounts = filtered.map { course ->
-                                course to com.example.tareamov.service.SupabaseClient.countStudentsInCourse(course.id)
-                            }
-                            coursesWithCounts.sortedByDescending { it.second }.take(5).size
-                        } catch (e: Exception) {
-                            0
-                        }
-                    }
-                    val recent = filtered.count { course ->
-                        val courseTime = course.timestamp
-                        val creationTime = course.creationDate?.let { parseDate(it) } ?: 0
-                        maxOf(courseTime, creationTime) > thirtyDaysAgo
-                    }
-
-                    withContext(Dispatchers.Main) {
-                        totalCoursesCount?.text = total.toString()
-                        popularCoursesCount?.text = popular.toString()
-                        newCoursesCount?.text = recent.toString()
-                        Log.d("ExploreFragment", "${if (currentFilterIndex==3) "Premium" else "Free"} counts - total:$total popular:$popular recent:$recent (server)")
-                    }
-                } else {
-                    // Global counts - No sobrescribir el contador de populares ya calculado con TOP-5
-                    val total = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.fetchCoursesCount() }
-                    // El contador de populares ya está establecido correctamente con topPopular.size (TOP-5)
-                    // No lo sobrescribimos aquí
-                    val recent = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.countNewCourses(30) }
-                    withContext(Dispatchers.Main) {
-                        totalCoursesCount?.text = total.toString()
-                        // popularCoursesCount ya está establecido con topPopular.size (5 cursos)
-                        newCoursesCount?.text = recent.toString()
-                        Log.d("ExploreFragment", "Global counts - total:$total, popular: mantiene TOP-5, recent:$recent (server)")
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w("ExploreFragment", "fetchAndDisplayCourseStats failed", e)
+                Log.w("ExploreFragment", "Failed to fetch stats from Supabase", e)
             }
         }
     }
@@ -2571,6 +2342,7 @@ class ExploreFragment : Fragment() {
             try {
                 // Filter index for "My Created" and refresh authoritative stats
                 currentFilterIndex = 1
+                isFilterActive = true
                 val myCoursesOnly = getUserOwnedCourses()
                 val sorted = myCoursesOnly.sortedByDescending { it.timestamp }
                 coursesList.clear()
@@ -2580,7 +2352,8 @@ class ExploreFragment : Fragment() {
                 } else {
                     Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
                 }
-                fetchAndDisplayCourseStats()
+                // Use filtered stats instead of global
+                updateFilteredCourseStats(sorted.size, "my_courses")
                 updateActiveFilterUI("Mis Cursos Creados")
                 Log.d("ExploreFragment", "Filtered to show only user's courses: ${sorted.size} courses")
             } catch (e: Exception) {
@@ -2596,6 +2369,7 @@ class ExploreFragment : Fragment() {
             try {
                 // Filter index for "Other Users'" and refresh authoritative stats
                 currentFilterIndex = 2
+                isFilterActive = true
                 val otherCourses = getOtherUsersCourses()
                 val sorted = otherCourses.sortedByDescending { it.timestamp }
                 coursesList.clear()
@@ -2605,7 +2379,8 @@ class ExploreFragment : Fragment() {
                 } else {
                     Log.w("ExploreFragment", "coursesAdapter not initialized yet; skipping updateCourses")
                 }
-                fetchAndDisplayCourseStats()
+                // Use filtered stats instead of global
+                updateFilteredCourseStats(sorted.size, "other_courses")
                 updateActiveFilterUI("Cursos de Otros")
                 Log.d("ExploreFragment", "Filtered to show only other users' courses: ${sorted.size} courses")
             } catch (e: Exception) {
@@ -2647,6 +2422,7 @@ class ExploreFragment : Fragment() {
         // Clear any active filter and reload all courses
         isFilterActive = false
         currentFilterIndex = 0
+        _searchText.value = "" // Clear search text
         showAllCourses()
         updateActiveFilterUI(null)
         // Refresh header counts to reflect unfiltered/global view
@@ -2665,15 +2441,7 @@ class ExploreFragment : Fragment() {
 
     private fun updateActiveFilterUI(filterName: String?) {
         // Update UI based on active filter
-        val activeFilterContainer = view?.findViewById<View>(R.id.activeFilterContainer)
-        val activeFilterText = view?.findViewById<TextView>(R.id.activeFilterText)
-        
-        if (filterName != null) {
-            activeFilterContainer?.visibility = View.VISIBLE
-            activeFilterText?.text = filterName
-        } else {
-            activeFilterContainer?.visibility = View.GONE
-        }
+        _activeFilterName.value = filterName
     }
 
     // Show the supplied courses as an active "popular" filter

@@ -210,8 +210,12 @@ object SupabaseClient {
         try {
             Log.d("SupabaseClient", "updateTask called: id=${task.id}, topicId=${task.topicId}, name='${task.name}', desc='${task.description}'")
             
+            // When updating an existing task, we should NOT update topic_id
+            // The task already has the correct topic_id in Supabase
+            // Only update title and description to avoid FK constraint violations
             val map = mutableMapOf<String, Any?>()
-            if (task.topicId != 0L) map["topic_id"] = task.topicId
+            // REMOVED: if (task.topicId != 0L) map["topic_id"] = task.topicId
+            // The topic_id should not be changed during an update - it's set at creation time
             map["title"] = task.name
             map["description"] = task.description
 
@@ -287,7 +291,8 @@ object SupabaseClient {
                 "timestamp" to video.timestamp,
                 "is_paid" to video.isPaid,
                 "thumbnail_uri" to video.thumbnailUri,
-                "price" to video.price
+                "price" to video.price,
+                "remote_id" to video.remoteId // Store creator ID
             )
             
             // Include course_id if provided
@@ -894,6 +899,138 @@ object SupabaseClient {
         }
     }
 
+    /**
+     * Delete a ContentItem by ID from the content_items table
+     * @param id The ID of the content item to delete
+     * @return true on success, false on failure
+     */
+    suspend fun deleteContentItem(id: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d("SupabaseClient", "🗑️ Deleting content item id=$id")
+            val url = "$baseUrl/rest/v1/content_items?id=eq.$id"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=representation")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val respBody = resp.body?.string()
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "❌ deleteContentItem failed: ${resp.code} ${resp.message} body=$respBody")
+                    return@withContext false
+                }
+                Log.d("SupabaseClient", "✅ ContentItem id=$id deleted successfully")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "❌ deleteContentItem exception for id=$id", e)
+            return@withContext false
+        }
+    }
+
+    /**
+     * Delete a Task by ID from the tasks table
+     * @param id The ID of the task to delete
+     * @return true on success, false on failure
+     */
+    suspend fun deleteTask(id: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d("SupabaseClient", "🗑️ Deleting task id=$id")
+            val url = "$baseUrl/rest/v1/tasks?id=eq.$id"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "❌ deleteTask failed: ${resp.code} ${resp.message}")
+                    return@withContext false
+                }
+                Log.d("SupabaseClient", "✅ Task id=$id deleted successfully")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "❌ deleteTask exception for id=$id", e)
+            return@withContext false
+        }
+    }
+
+    /**
+     * Delete a Topic by ID from the topics table
+     * @param id The ID of the topic to delete
+     * @return true on success, false on failure
+     */
+    suspend fun deleteTopic(id: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d("SupabaseClient", "🗑️ Deleting topic id=$id")
+            val url = "$baseUrl/rest/v1/topics?id=eq.$id"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "❌ deleteTopic failed: ${resp.code} ${resp.message}")
+                    return@withContext false
+                }
+                Log.d("SupabaseClient", "✅ Topic id=$id deleted successfully")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "❌ deleteTopic exception for id=$id", e)
+            return@withContext false
+        }
+    }
+
+    /**
+     * Delete all ContentItems for a specific Task
+     * @param taskId The ID of the parent task
+     * @return true on success
+     */
+    suspend fun deleteContentItemsByTaskId(taskId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d("SupabaseClient", "🗑️ Deleting content items for task_id=$taskId")
+            val url = "$baseUrl/rest/v1/content_items?task_id=eq.$taskId"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "❌ deleteContentItemsByTaskId failed: ${resp.code} ${resp.message}")
+                    return@withContext false
+                }
+                Log.d("SupabaseClient", "✅ Content items for task_id=$taskId deleted successfully")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "❌ deleteContentItemsByTaskId exception", e)
+            return@withContext false
+        }
+    }
+
     // Update an existing Persona by id. Returns true on success.
     suspend fun updatePersona(persona: Persona): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -1411,6 +1548,34 @@ object SupabaseClient {
             requestListener?.invoke(url)
         } catch (t: Throwable) {
             android.util.Log.w("SupabaseClient", "requestListener threw", t)
+        }
+
+        return builder.build()
+    }
+
+    /**
+     * Build a PATCH request for updating records
+     * @param path The relative path (e.g., "topics?id=eq.123")
+     * @param jsonBody The JSON body for the PATCH request
+     * @return Request configured with authentication headers
+     */
+    private fun buildPatchRequest(path: String, jsonBody: String): Request {
+        val url = "$baseUrl/rest/v1/$path"
+        val key = effectiveApiKey()
+        val body = jsonBody.toRequestBody(jsonMedia)
+        
+        val builder = Request.Builder()
+            .url(url)
+            .patch(body)
+            .addHeader("Accept", "application/json")
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Prefer", "return=representation")
+
+        if (key.isNotEmpty()) {
+            builder.addHeader("apikey", key)
+            builder.addHeader("Authorization", "Bearer $key")
+        } else {
+            android.util.Log.w("SupabaseClient", "buildPatchRequest: no Supabase API key available; request to $path will likely be rejected (401).")
         }
 
         return builder.build()
@@ -3025,6 +3190,22 @@ object SupabaseClient {
         }
     }
 
+    // Fetch courses by multiple course IDs (server-side filter using 'in')
+    suspend fun fetchCoursesByIds(courseIds: List<Long>): List<Course> = withContext(Dispatchers.IO) {
+        if (courseIds.isEmpty()) return@withContext emptyList()
+        try {
+            val idsStr = courseIds.joinToString(",")
+            val path = "courses?id=in.($idsStr)&order=timestamp.desc,created_at.desc.nullslast"
+            Log.d("SupabaseClient", "Fetching courses by IDs: $idsStr")
+            val result = fetchList(path, Array<Course>::class.java)
+            Log.d("SupabaseClient", "Found ${result.size} courses for ${courseIds.size} IDs")
+            result
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching courses by IDs", e)
+            emptyList()
+        }
+    }
+
     // Search users by username (partial match)
     suspend fun searchUsersByUsername(query: String): List<Usuario> = withContext(Dispatchers.IO) {
         try {
@@ -3046,6 +3227,21 @@ object SupabaseClient {
             fetchList(path, Array<VideoData>::class.java)
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error fetching videos by course IDs", e)
+            emptyList()
+        }
+    }
+    
+    // Fetch videos by remote_id (creator user ID stored directly in videos table)
+    suspend fun fetchVideosByRemoteId(userId: Long): List<VideoData> = withContext(Dispatchers.IO) {
+        try {
+            if (userId <= 0) return@withContext emptyList()
+            val path = "videos?remote_id=eq.$userId&order=timestamp.desc,created_at.desc.nullslast"
+            Log.d("SupabaseClient", "Fetching videos by remote_id=$userId, path=$path")
+            val videos = fetchList(path, Array<VideoData>::class.java)
+            Log.d("SupabaseClient", "Found ${videos.size} videos with remote_id=$userId")
+            videos
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching videos by remote_id=$userId", e)
             emptyList()
         }
     }
@@ -3211,6 +3407,37 @@ object SupabaseClient {
     }
 
     /**
+     * Update Topic in Supabase
+     */
+    suspend fun updateTopic(topic: Topic): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val path = "topics?id=eq.${topic.id}"
+            val jsonBody = """
+                {
+                    "name": "${topic.name.replace("\"", "\\\"")}",
+                    "description": "${topic.description.replace("\"", "\\\"").replace("\n", "\\n")}",
+                    "order_index": ${topic.orderIndex}
+                }
+            """.trimIndent()
+            
+            Log.d("SupabaseClient", "📝 Updating topic ${topic.id}: name='${topic.name}'")
+            
+            val req = buildPatchRequest(path, jsonBody)
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("SupabaseClient", "❌ updateTopic failed status=${resp.code}, body=${resp.body?.string()}")
+                    return@withContext false
+                }
+                Log.d("SupabaseClient", "✅ Topic ${topic.id} updated successfully")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error updating topic ${topic.id}", e)
+            return@withContext false
+        }
+    }
+
+    /**
      * Fetch Rol by ID
      */
     suspend fun fetchRolById(id: Long): Rol? = withContext(Dispatchers.IO) {
@@ -3228,6 +3455,49 @@ object SupabaseClient {
      * Fetch all Roles
      */
     suspend fun fetchRoles(): List<Rol> = fetchList("roles", Array<Rol>::class.java)
+
+    /**
+     * Fetch Usuario by email with Role in parallel for faster Google login.
+     * Returns Triple(Usuario?, Rol?, Persona?) for complete session setup.
+     */
+    suspend fun fetchUsuarioWithRoleByEmail(email: String): Triple<Usuario?, Rol?, com.example.tareamov.data.entity.Persona?> = withContext(Dispatchers.IO) {
+        try {
+            // First fetch user by email efficiently with server-side filter
+            val encodedEmail = java.net.URLEncoder.encode(email, "UTF-8")
+            val userPath = "usuarios?email=ilike.$encodedEmail&select=*"
+            val users = fetchList(userPath, Array<Usuario>::class.java)
+            val user = users.firstOrNull { it.email.equals(email, ignoreCase = true) }
+            
+            if (user == null) {
+                return@withContext Triple(null, null, null)
+            }
+            
+            // Fetch role and persona in parallel for speed
+            val rolDeferred = async { 
+                if (user.rol_id > 0) fetchRolById(user.rol_id) else null 
+            }
+            val personaDeferred = async { 
+                if (user.persona_id > 0) {
+                    try {
+                        val personaPath = "personas?id=eq.${user.persona_id}"
+                        fetchList(personaPath, Array<com.example.tareamov.data.entity.Persona>::class.java).firstOrNull()
+                    } catch (e: Exception) {
+                        Log.w("SupabaseClient", "Error fetching persona: ${e.message}")
+                        null
+                    }
+                } else null
+            }
+            
+            val rol = rolDeferred.await()
+            val persona = personaDeferred.await()
+            
+            Log.d("SupabaseClient", "fetchUsuarioWithRoleByEmail: user=${user.usuario}, rol=${rol?.nombre}, persona=${persona?.nombres}")
+            return@withContext Triple(user, rol, persona)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error in fetchUsuarioWithRoleByEmail: ${e.message}", e)
+            return@withContext Triple(null, null, null)
+        }
+    }
 
     /**
      * Fetch all Recursos
@@ -4688,37 +4958,11 @@ object SupabaseClient {
     // ========== VIDEO LIKES OPERATIONS ==========
     
     /**
-     * Get like count for a video from Supabase
+     * Get like count for a video from Supabase (using polymorphic likes table)
      */
     suspend fun getVideoLikeCount(videoId: Long): Int? = withContext(Dispatchers.IO) {
         try {
-            val url = "$baseUrl/rest/v1/video_likes?video_id=eq.$videoId&select=like_count"
-            val key = effectiveApiKey()
-            
-            val request = Request.Builder()
-                .url(url)
-                .get()
-                .addHeader("apikey", key)
-                .addHeader("Authorization", "Bearer $key")
-                .addHeader("Accept", "application/json")
-                .build()
-            
-            requestListener?.invoke(url)
-            
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e("SupabaseClient", "getVideoLikeCount failed: ${response.code}")
-                    return@withContext null
-                }
-                
-                val body = response.body?.string() ?: return@withContext null
-                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
-                
-                if (jsonArray.size() > 0) {
-                    return@withContext jsonArray[0].asJsonObject.get("like_count")?.asInt ?: 0
-                }
-                return@withContext null
-            }
+            return@withContext getLikeCount("video", videoId)
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error getting like count for video $videoId", e)
             null
@@ -4726,183 +4970,33 @@ object SupabaseClient {
     }
     
     /**
-     * Increment like count for a video (or create entry if not exists)
+     * Increment like count for a video (DEPRECATED - use addLike with entity_type='video')
+     * Kept for backward compatibility, now uses polymorphic likes table
      */
     suspend fun incrementVideoLike(videoId: Long): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val key = effectiveApiKey()
-            
-            // First try to update existing record
-            val updateUrl = "$baseUrl/rest/v1/rpc/increment_video_like"
-            val updateBody = gson.toJson(mapOf("p_video_id" to videoId)).toRequestBody(jsonMedia)
-            
-            val updateRequest = Request.Builder()
-                .url(updateUrl)
-                .post(updateBody)
-                .addHeader("apikey", key)
-                .addHeader("Authorization", "Bearer $key")
-                .addHeader("Content-Type", "application/json")
-                .build()
-            
-            client.newCall(updateRequest).execute().use { response ->
-                if (response.isSuccessful) {
-                    Log.d("SupabaseClient", "Incremented like for video $videoId via RPC")
-                    return@withContext true
-                }
-            }
-            
-            // Fallback: Check if record exists and upsert
-            val existingCount = getVideoLikeCount(videoId)
-            if (existingCount != null) {
-                // Update existing
-                val patchUrl = "$baseUrl/rest/v1/video_likes?video_id=eq.$videoId"
-                val patchBody = gson.toJson(mapOf("like_count" to (existingCount + 1))).toRequestBody(jsonMedia)
-                
-                val patchRequest = Request.Builder()
-                    .url(patchUrl)
-                    .patch(patchBody)
-                    .addHeader("apikey", key)
-                    .addHeader("Authorization", "Bearer $key")
-                    .addHeader("Content-Type", "application/json")
-                    .build()
-                
-                client.newCall(patchRequest).execute().use { resp ->
-                    return@withContext resp.isSuccessful
-                }
-            } else {
-                // Insert new
-                val insertUrl = "$baseUrl/rest/v1/video_likes"
-                val insertBody = gson.toJson(mapOf(
-                    "video_id" to videoId,
-                    "like_count" to 1
-                )).toRequestBody(jsonMedia)
-                
-                val insertRequest = Request.Builder()
-                    .url(insertUrl)
-                    .post(insertBody)
-                    .addHeader("apikey", key)
-                    .addHeader("Authorization", "Bearer $key")
-                    .addHeader("Content-Type", "application/json")
-                    .addHeader("Prefer", "return=minimal")
-                    .build()
-                
-                client.newCall(insertRequest).execute().use { resp ->
-                    return@withContext resp.isSuccessful
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error incrementing like for video $videoId", e)
-            false
-        }
+        // No-op: With polymorphic likes, the count is derived from COUNT(*)
+        // This method is kept for backward compatibility but does nothing
+        Log.d("SupabaseClient", "incrementVideoLike called - using polymorphic likes table (no separate counter needed)")
+        true
     }
     
     /**
-     * Decrement like count for a video
+     * Decrement like count for a video (DEPRECATED - use removeLike with entity_type='video')
+     * Kept for backward compatibility, now uses polymorphic likes table
      */
     suspend fun decrementVideoLike(videoId: Long): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val key = effectiveApiKey()
-            val existingCount = getVideoLikeCount(videoId) ?: return@withContext false
-            
-            if (existingCount <= 0) return@withContext true
-            
-            val patchUrl = "$baseUrl/rest/v1/video_likes?video_id=eq.$videoId"
-            val patchBody = gson.toJson(mapOf("like_count" to (existingCount - 1))).toRequestBody(jsonMedia)
-            
-            val request = Request.Builder()
-                .url(patchUrl)
-                .patch(patchBody)
-                .addHeader("apikey", key)
-                .addHeader("Authorization", "Bearer $key")
-                .addHeader("Content-Type", "application/json")
-                .build()
-            
-            client.newCall(request).execute().use { resp ->
-                return@withContext resp.isSuccessful
-            }
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error decrementing like for video $videoId", e)
-            false
-        }
-    }
-    
-    /**
-     * Check if a user has liked a video
-     */
-    suspend fun hasUserLikedVideo(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
-        try {
-            // Use select=video_id to minimize data transfer (id column might not exist on join table), and count=exact to get the total
-            // Fixed: Use usuario_id instead of user_id to match database schema
-            val url = "$baseUrl/rest/v1/user_video_likes?video_id=eq.$videoId&usuario_id=eq.$usuarioId&select=video_id"
-            val key = effectiveApiKey()
-            
-            Log.d("SupabaseClient", "Checking if user $usuarioId liked video $videoId")
-            
-            val request = Request.Builder()
-                .url(url)
-                .get()
-                .addHeader("apikey", key)
-                .addHeader("Authorization", "Bearer $key")
-                .addHeader("Range", "0-0")
-                .addHeader("Prefer", "count=exact")
-                .build()
-                
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val contentRange = response.header("Content-Range")
-                    if (contentRange != null) {
-                        // Content-Range format: "0-0/1" or "*/0"
-                        val totalStr = contentRange.substringAfter("/")
-                        val total = totalStr.toIntOrNull()
-                        return@withContext (total ?: 0) > 0
-                    }
-                    // Fallback to body check
-                    val body = response.body?.string()
-                    return@withContext body != null && body != "[]"
-                }
-                return@withContext false
-            }
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "Error checking if user $usuarioId liked video $videoId", e)
-            false
-        }
+        // No-op: With polymorphic likes, the count is derived from COUNT(*)
+        Log.d("SupabaseClient", "decrementVideoLike called - using polymorphic likes table (no separate counter needed)")
+        true
     }
 
     /**
-     * Add a user like to a video (Persistent)
+     * Add a user like to a video (using polymorphic likes table)
      */
     suspend fun addUserVideoLike(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
-            val url = "$baseUrl/rest/v1/user_video_likes"
-            val key = effectiveApiKey()
-            
             Log.d("SupabaseClient", "Adding like for video $videoId by user $usuarioId")
-            
-            // Fixed: Use usuario_id instead of user_id to match database schema
-            val body = gson.toJson(mapOf(
-                "video_id" to videoId,
-                "usuario_id" to usuarioId
-            )).toRequestBody(jsonMedia)
-            
-            val request = Request.Builder()
-                .url(url)
-                .post(body)
-                .addHeader("apikey", key)
-                .addHeader("Authorization", "Bearer $key")
-                .addHeader("Content-Type", "application/json")
-                .addHeader("Prefer", "return=minimal")
-                .build()
-                
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    // Also increment the counter
-                    incrementVideoLike(videoId)
-                    return@withContext true
-                } else {
-                    Log.e("SupabaseClient", "addUserVideoLike failed: ${response.code} ${response.message}")
-                    return@withContext false
-                }
-            }
+            return@withContext addLike(usuarioId, "video", videoId)
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error adding user like", e)
             false
@@ -4910,33 +5004,12 @@ object SupabaseClient {
     }
 
     /**
-     * Remove a user like from a video (Persistent)
+     * Remove a user like from a video (using polymorphic likes table)
      */
     suspend fun removeUserVideoLike(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
-            // Fixed: Use usuario_id instead of user_id to match database schema
-            val url = "$baseUrl/rest/v1/user_video_likes?video_id=eq.$videoId&usuario_id=eq.$usuarioId"
-            val key = effectiveApiKey()
-            
             Log.d("SupabaseClient", "Removing like for video $videoId by user $usuarioId")
-            
-            val request = Request.Builder()
-                .url(url)
-                .delete()
-                .addHeader("apikey", key)
-                .addHeader("Authorization", "Bearer $key")
-                .build()
-                
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    // Also decrement the counter
-                    decrementVideoLike(videoId)
-                    return@withContext true
-                } else {
-                    Log.e("SupabaseClient", "removeUserVideoLike failed: ${response.code}")
-                    return@withContext false
-                }
-            }
+            return@withContext removeLike(usuarioId, "video", videoId)
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error removing user like", e)
             false
@@ -4983,11 +5056,12 @@ object SupabaseClient {
 
 
     /**
-     * Fetch all video likes from Supabase
+     * Fetch all video likes from Supabase (using polymorphic likes table)
+     * Returns list of Like entities with entity_type='video'
      */
-    suspend fun fetchAllVideoLikes(): List<com.example.tareamov.data.entity.VideoLike> = withContext(Dispatchers.IO) {
+    suspend fun fetchAllVideoLikes(): List<com.example.tareamov.data.entity.Like> = withContext(Dispatchers.IO) {
         try {
-            val url = "$baseUrl/rest/v1/video_likes?select=*"
+            val url = "$baseUrl/rest/v1/likes?entity_type=eq.video&select=*"
             val key = effectiveApiKey()
             
             val request = Request.Builder()
@@ -5006,10 +5080,12 @@ object SupabaseClient {
                 
                 jsonArray.map { elem ->
                     val obj = elem.asJsonObject
-                    com.example.tareamov.data.entity.VideoLike(
-                        id = obj.get("id")?.asLong ?: 0,
-                        videoId = obj.get("video_id")?.asLong ?: 0,
-                        likeCount = obj.get("like_count")?.asInt ?: 0
+                    com.example.tareamov.data.entity.Like(
+                        usuarioId = obj.get("usuario_id")?.asLong ?: 0,
+                        entityType = obj.get("entity_type")?.asString ?: "video",
+                        entityId = obj.get("entity_id")?.asLong ?: 0,
+                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
+                            obj.get("created_at").asString else null
                     )
                 }
             }
@@ -5020,12 +5096,11 @@ object SupabaseClient {
     }
 
     /**
-     * Fetch all user video likes for a specific user
+     * Fetch all video likes for a specific user (using polymorphic likes table)
      */
-    suspend fun fetchUserVideoLikes(userId: Long): List<com.example.tareamov.data.entity.UserVideoLike> = withContext(Dispatchers.IO) {
+    suspend fun fetchUserVideoLikes(userId: Long): List<com.example.tareamov.data.entity.Like> = withContext(Dispatchers.IO) {
         try {
-            // Fixed: Use usuario_id instead of user_id to match database schema
-            val url = "$baseUrl/rest/v1/user_video_likes?usuario_id=eq.$userId&select=*"
+            val url = "$baseUrl/rest/v1/likes?usuario_id=eq.$userId&entity_type=eq.video&select=*"
             val key = effectiveApiKey()
             
             Log.d("SupabaseClient", "Fetching user video likes for userId=$userId")
@@ -5047,15 +5122,16 @@ object SupabaseClient {
                 val body = response.body?.string() ?: return@withContext emptyList()
                 val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
                 
-                Log.d("SupabaseClient", "Fetched ${jsonArray.size()} likes from Supabase")
+                Log.d("SupabaseClient", "Fetched ${jsonArray.size()} video likes from Supabase")
                 
                 jsonArray.map { elem ->
                     val obj = elem.asJsonObject
-                    com.example.tareamov.data.entity.UserVideoLike(
-                        id = if (obj.has("id") && !obj.get("id").isJsonNull) obj.get("id").asLong else 0L,
-                        videoId = obj.get("video_id").asLong,
-                        usuarioId = obj.get("usuario_id").asLong,
-                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) obj.get("created_at").asString else ""
+                    com.example.tareamov.data.entity.Like(
+                        usuarioId = obj.get("usuario_id")?.asLong ?: 0,
+                        entityType = obj.get("entity_type")?.asString ?: "video",
+                        entityId = obj.get("entity_id")?.asLong ?: 0,
+                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
+                            obj.get("created_at").asString else null
                     )
                 }
             }
@@ -5229,6 +5305,350 @@ object SupabaseClient {
             emptyList()
         }
     }
+    
+    // ========== POLYMORPHIC LIKES TABLE ==========
+    // Supports likes on any entity type: video, comment, course, task, etc.
+    
+    /**
+     * Add a like to any entity (polymorphic)
+     * Returns true if like was inserted, false if already exists or error
+     */
+    suspend fun addLike(usuarioId: Long, entityType: String, entityId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d("SupabaseClient", "Adding like: user=$usuarioId, type=$entityType, id=$entityId")
+            
+            val payload = mapOf(
+                "usuario_id" to usuarioId,
+                "entity_type" to entityType,
+                "entity_id" to entityId
+            )
+            val jsonBody = gson.toJson(payload)
+            
+            val url = "$baseUrl/rest/v1/likes"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .post(jsonBody.toRequestBody(jsonMedia))
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=minimal")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                val success = response.isSuccessful || response.code == 201
+                if (response.code == 409) {
+                    Log.d("SupabaseClient", "Like already exists")
+                    return@withContext false
+                }
+                Log.d("SupabaseClient", "Add like result: ${response.code}, success: $success")
+                return@withContext success
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error adding like", e)
+            false
+        }
+    }
+    
+    /**
+     * Remove a like from any entity
+     */
+    suspend fun removeLike(usuarioId: Long, entityType: String, entityId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d("SupabaseClient", "Removing like: user=$usuarioId, type=$entityType, id=$entityId")
+            
+            val url = "$baseUrl/rest/v1/likes?usuario_id=eq.$usuarioId&entity_type=eq.$entityType&entity_id=eq.$entityId"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                val success = response.isSuccessful || response.code == 204
+                Log.d("SupabaseClient", "Remove like result: ${response.code}, success: $success")
+                return@withContext success
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error removing like", e)
+            false
+        }
+    }
+    
+    /**
+     * Toggle like on any entity
+     * Returns Pair(isNowLiked, newLikeCount)
+     */
+    suspend fun toggleLike(usuarioId: Long, entityType: String, entityId: Long): Pair<Boolean, Int> = withContext(Dispatchers.IO) {
+        try {
+            val isCurrentlyLiked = hasUserLiked(usuarioId, entityType, entityId)
+            
+            val success = if (isCurrentlyLiked) {
+                removeLike(usuarioId, entityType, entityId)
+            } else {
+                addLike(usuarioId, entityType, entityId)
+            }
+            
+            if (success) {
+                val newCount = getLikeCount(entityType, entityId)
+                return@withContext Pair(!isCurrentlyLiked, newCount)
+            }
+            
+            val currentCount = getLikeCount(entityType, entityId)
+            return@withContext Pair(isCurrentlyLiked, currentCount)
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error toggling like", e)
+            Pair(false, 0)
+        }
+    }
+    
+    /**
+     * Check if user has liked an entity
+     */
+    suspend fun hasUserLiked(usuarioId: Long, entityType: String, entityId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/likes?usuario_id=eq.$usuarioId&entity_type=eq.$entityType&entity_id=eq.$entityId&select=usuario_id"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val body = response.body?.string() ?: return@withContext false
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                return@withContext jsonArray.size() > 0
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error checking like status", e)
+            false
+        }
+    }
+    
+    /**
+     * Get like count for an entity
+     */
+    suspend fun getLikeCount(entityType: String, entityId: Long): Int = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/likes?entity_type=eq.$entityType&entity_id=eq.$entityId&select=usuario_id"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .addHeader("Range", "0-0")
+                .addHeader("Prefer", "count=exact")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                val rangeHeader = response.header("Content-Range")
+                if (rangeHeader != null && rangeHeader.contains("/")) {
+                    return@withContext rangeHeader.substringAfter("/").toIntOrNull() ?: 0
+                }
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: return@withContext 0
+                    val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                    return@withContext jsonArray.size()
+                }
+                0
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error getting like count", e)
+            0
+        }
+    }
+    
+    /**
+     * Get all likes for an entity
+     */
+    suspend fun getLikesForEntity(entityType: String, entityId: Long): List<com.example.tareamov.data.entity.Like> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/likes?entity_type=eq.$entityType&entity_id=eq.$entityId&select=*"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                jsonArray.map { elem ->
+                    val obj = elem.asJsonObject
+                    com.example.tareamov.data.entity.Like(
+                        usuarioId = obj.get("usuario_id")?.asLong ?: 0,
+                        entityType = obj.get("entity_type")?.asString ?: "",
+                        entityId = obj.get("entity_id")?.asLong ?: 0,
+                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
+                            obj.get("created_at").asString else null
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching likes for entity", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * Fetch all likes (for syncing)
+     */
+    suspend fun fetchAllLikes(): List<com.example.tareamov.data.entity.Like> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/likes?select=*"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                jsonArray.map { elem ->
+                    val obj = elem.asJsonObject
+                    com.example.tareamov.data.entity.Like(
+                        usuarioId = obj.get("usuario_id")?.asLong ?: 0,
+                        entityType = obj.get("entity_type")?.asString ?: "",
+                        entityId = obj.get("entity_id")?.asLong ?: 0,
+                        createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
+                            obj.get("created_at").asString else null
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching all likes", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * Get like counts for multiple entities of the same type (batch)
+     */
+    suspend fun getLikeCounts(entityType: String, entityIds: List<Long>): Map<Long, Int> = withContext(Dispatchers.IO) {
+        if (entityIds.isEmpty()) return@withContext emptyMap()
+        
+        try {
+            val idsFilter = entityIds.joinToString(",")
+            val url = "$baseUrl/rest/v1/likes?entity_type=eq.$entityType&entity_id=in.($idsFilter)&select=entity_id"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext entityIds.associateWith { 0 }
+                val body = response.body?.string() ?: return@withContext entityIds.associateWith { 0 }
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                val likeCounts = mutableMapOf<Long, Int>()
+                jsonArray.forEach { elem ->
+                    val entityId = elem.asJsonObject.get("entity_id")?.asLong ?: return@forEach
+                    likeCounts[entityId] = (likeCounts[entityId] ?: 0) + 1
+                }
+                
+                return@withContext entityIds.associateWith { likeCounts[it] ?: 0 }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error getting batch like counts", e)
+            entityIds.associateWith { 0 }
+        }
+    }
+    
+    /**
+     * Get which entities the user has liked from a list
+     */
+    suspend fun getUserLikedEntityIds(usuarioId: Long, entityType: String, entityIds: List<Long>): Set<Long> = withContext(Dispatchers.IO) {
+        if (entityIds.isEmpty()) return@withContext emptySet()
+        
+        try {
+            val idsFilter = entityIds.joinToString(",")
+            val url = "$baseUrl/rest/v1/likes?usuario_id=eq.$usuarioId&entity_type=eq.$entityType&entity_id=in.($idsFilter)&select=entity_id"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptySet()
+                val body = response.body?.string() ?: return@withContext emptySet()
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                jsonArray.mapNotNull { elem ->
+                    elem.asJsonObject.get("entity_id")?.asLong
+                }.toSet()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error getting user's liked entities", e)
+            emptySet()
+        }
+    }
+    
+    // ========== CONVENIENCE METHODS FOR SPECIFIC ENTITY TYPES ==========
+    
+    // Video Comment Likes
+    suspend fun likeVideoComment(commentId: Long, usuarioId: Long) = addLike(usuarioId, "comment", commentId)
+    suspend fun unlikeVideoComment(commentId: Long, usuarioId: Long) = removeLike(usuarioId, "comment", commentId)
+    suspend fun toggleVideoCommentLike(commentId: Long, usuarioId: Long) = toggleLike(usuarioId, "comment", commentId)
+    suspend fun hasUserLikedVideoComment(commentId: Long, usuarioId: Long) = hasUserLiked(usuarioId, "comment", commentId)
+    suspend fun getVideoCommentLikeCount(commentId: Long) = getLikeCount("comment", commentId)
+    suspend fun getVideoCommentLikeCounts(commentIds: List<Long>) = getLikeCounts("comment", commentIds)
+    suspend fun getUserLikedComments(usuarioId: Long, commentIds: List<Long>) = getUserLikedEntityIds(usuarioId, "comment", commentIds)
+    
+    // Video Likes (polymorphic - can replace video_likes table)
+    suspend fun likeVideo(videoId: Long, usuarioId: Long) = addLike(usuarioId, "video", videoId)
+    suspend fun unlikeVideo(videoId: Long, usuarioId: Long) = removeLike(usuarioId, "video", videoId)
+    suspend fun toggleVideoLike(videoId: Long, usuarioId: Long) = toggleLike(usuarioId, "video", videoId)
+    suspend fun hasUserLikedVideo(videoId: Long, usuarioId: Long) = hasUserLiked(usuarioId, "video", videoId)
+    suspend fun getVideoLikeCountPolymorphic(videoId: Long) = getLikeCount("video", videoId)
+    
+    // Course Likes
+    suspend fun likeCourse(courseId: Long, usuarioId: Long) = addLike(usuarioId, "course", courseId)
+    suspend fun unlikeCourse(courseId: Long, usuarioId: Long) = removeLike(usuarioId, "course", courseId)
+    suspend fun toggleCourseLike(courseId: Long, usuarioId: Long) = toggleLike(usuarioId, "course", courseId)
+    suspend fun hasUserLikedCourse(courseId: Long, usuarioId: Long) = hasUserLiked(usuarioId, "course", courseId)
+    suspend fun getCourseLikeCount(courseId: Long) = getLikeCount("course", courseId)
+    
+    // Task Likes
+    suspend fun likeTask(taskId: Long, usuarioId: Long) = addLike(usuarioId, "task", taskId)
+    suspend fun unlikeTask(taskId: Long, usuarioId: Long) = removeLike(usuarioId, "task", taskId)
+    suspend fun toggleTaskLike(taskId: Long, usuarioId: Long) = toggleLike(usuarioId, "task", taskId)
+    suspend fun hasUserLikedTask(taskId: Long, usuarioId: Long) = hasUserLiked(usuarioId, "task", taskId)
+    suspend fun getTaskLikeCount(taskId: Long) = getLikeCount("task", taskId)
     
     // ========== DOCENTE ROLE OPERATIONS ==========
     

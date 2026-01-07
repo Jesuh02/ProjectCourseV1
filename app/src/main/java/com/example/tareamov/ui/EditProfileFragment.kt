@@ -252,7 +252,7 @@ class EditProfileFragment : Fragment() {
                     db.chatMessageDao(),
                     db.fileContextDao(),
                     db.progresoEstudianteDao(),
-                    db.videoLikeDao(),
+                    db.likeDao(),
                     db.videoCommentDao()
                 )
 

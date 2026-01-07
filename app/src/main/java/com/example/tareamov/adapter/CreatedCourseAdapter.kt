@@ -49,6 +49,9 @@ class CreatedCourseAdapter(
     // Cache for creator usernames by userId to reduce repeated network calls
     private val creatorUsernameCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
     
+    // Cache for creator avatar URLs by username to reduce repeated network calls
+    private val creatorAvatarCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    
     // Cache current user's id to avoid blocking lookups during bind
     private var currentUserIdCached: Long? = null
     
@@ -531,6 +534,15 @@ class CreatedCourseAdapter(
                          creatorId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username) ?: -1L
                     }
                     
+                    // Fetch creator avatar from cache or Supabase
+                    val creatorUsername = course.username
+                    val creatorAvatarUrl = if (!creatorUsername.isNullOrEmpty()) {
+                        creatorAvatarCache[creatorUsername]
+                            ?: com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(creatorUsername)?.also {
+                                creatorAvatarCache[creatorUsername] = it
+                            }
+                    } else null
+                    
                     if (creatorId != -1L) {
                         // Get subscriber count from Supabase (Priority)
                         val subscriberCount = try {
@@ -548,6 +560,19 @@ class CreatedCourseAdapter(
                         } else false
                         
                         withContext(Dispatchers.Main) {
+                            // Update creator avatar
+                            if (!creatorAvatarUrl.isNullOrEmpty()) {
+                                Glide.with(context)
+                                    .load(creatorAvatarUrl)
+                                    .placeholder(R.drawable.default_avatar)
+                                    .error(R.drawable.default_avatar)
+                                    .into(creatorAvatarImageView)
+                                Log.d("CreatedCourseAdapter", "Loaded avatar for $creatorUsername: $creatorAvatarUrl")
+                            } else {
+                                creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                                Log.d("CreatedCourseAdapter", "No avatar found for $creatorUsername, using default")
+                            }
+                            
                             // Update subscriber count
                             val countText = if (subscriberCount == 1L) "1 suscriptor" else "$subscriberCount suscriptores"
                             subscriberCountTextView.text = countText
@@ -568,6 +593,19 @@ class CreatedCourseAdapter(
                             
                             subscribeButton.isEnabled = true
                         }
+                    } else {
+                        // Even if creatorId is not found, still try to load avatar
+                        withContext(Dispatchers.Main) {
+                            if (!creatorAvatarUrl.isNullOrEmpty()) {
+                                Glide.with(context)
+                                    .load(creatorAvatarUrl)
+                                    .placeholder(R.drawable.default_avatar)
+                                    .error(R.drawable.default_avatar)
+                                    .into(creatorAvatarImageView)
+                            } else {
+                                creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error loading subscription data", e)
@@ -575,6 +613,7 @@ class CreatedCourseAdapter(
                         subscriberCountTextView.text = "0 suscriptores"
                         subscribeButton.text = "Suscribirse"
                         subscribeButton.isEnabled = true
+                        creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
                     }
                 }
             }

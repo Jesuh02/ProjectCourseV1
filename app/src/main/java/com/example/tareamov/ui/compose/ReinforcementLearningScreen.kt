@@ -353,9 +353,17 @@ fun ReinforcementLearningScreen(
                                 showExplanation = false
                                 selectedOptionIndex = -1
                             } else {
-                                // Finished
+                                // Finished - Quiz completed, show completion state
                                 isQuizActive = false
-                                // Could navigate to results summary here
+                                historySaved = false // Reset history flag to save new questions
+                                // Reset quiz state for next round
+                                currentQuestionIndex = 0
+                                showExplanation = false
+                                selectedOptionIndex = -1
+                                // Don't auto-generate here - let the user see the WelcomeView
+                                // which will show "GENERAR PREGUNTAS" button in Initial state
+                                // The forceRegenerateQuestions resets state to Initial
+                                viewModel?.resetToInitial()
                             }
                         }
                     )
@@ -367,13 +375,14 @@ fun ReinforcementLearningScreen(
                         onClick = { 
                             // Reset state to initial to trigger regeneration
                             isQuizActive = false
+                            historySaved = false // Reset history flag to save new questions
                             onStartClick() // This calls viewModel.loadQuestions which sets state to Loading -> fetches NEW questions
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF58CC02)),
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                         shape = RoundedCornerShape(16.dp)
                     ) { 
-                        Text("COMENZAR CUESTIONARIO NUEVO", fontSize = 18.sp, fontWeight = FontWeight.Bold) 
+                        Text("GENERAR PREGUNTAS", fontSize = 18.sp, fontWeight = FontWeight.Bold) 
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(onClick = { isQuizActive = false }) { Text("Volver") }

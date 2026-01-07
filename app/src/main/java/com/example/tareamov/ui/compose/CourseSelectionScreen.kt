@@ -30,13 +30,16 @@ import androidx.compose.ui.draw.clipToBounds
 fun CourseSelectionScreen(
     onBackClick: () -> Unit,
     onCourseSelected: (Course) -> Unit,
+    onCreatorClick: (String) -> Unit = {},
     viewModel: CourseSelectionViewModel
 ) {
     val searchQuery by viewModel.searchQuery.collectAsState()
     val enrolledCourses by viewModel.enrolledCourses.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val currentUsername by viewModel.currentUsername.collectAsState()
+    val currentUserId by viewModel.currentUserId.collectAsState()
     val subscriptionStatus by viewModel.subscriptionStatus.collectAsState()
+    val refreshTrigger by viewModel.refreshTrigger.collectAsState()
     
     val context = LocalContext.current
 
@@ -165,6 +168,7 @@ fun CourseSelectionScreen(
             }
         } else {
             // Use AndroidView to embed RecyclerView with CourseAdapter
+            // subscriptionStatus changes will trigger recomposition and update call
             AndroidView(
                 modifier = Modifier
                     .weight(1f)
@@ -241,22 +245,36 @@ fun CourseSelectionScreen(
                     }
                 },
                 update = { recyclerView ->
-                    if (recyclerView.adapter == null) {
-                        recyclerView.adapter = CourseAdapter(
+                    // Use refreshTrigger to force recomposition on subscription changes
+                    @Suppress("UNUSED_VARIABLE")
+                    val triggerRefresh = refreshTrigger
+                    
+                    // Check if adapter exists and update courses, or create new one
+                    val existingAdapter = recyclerView.adapter as? CourseAdapter
+                    if (existingAdapter != null) {
+                        // Update existing adapter with new data
+                        existingAdapter.updateCourses(enrolledCourses)
+                        // Set current user ID for subscription logic
+                        currentUserId?.let { existingAdapter.setCurrentUserId(it) }
+                        // Force refresh to update subscription data from Supabase
+                        existingAdapter.notifyDataSetChanged()
+                    } else {
+                        // Create new adapter
+                        val adapter = CourseAdapter(
                             context = context,
                             courses = enrolledCourses,
                             onCourseClickListener = { course -> onCourseSelected(course) },
                             currentUsername = currentUsername,
-                            onCreatorClickListener = { /* Optional: Handle creator click */ },
+                            onCreatorClickListener = { username -> onCreatorClick(username) },
                             onSubscriptionClickListener = { course, isCurrentlySubscribed ->
                                 // Handle subscription click
                                 viewModel.handleSubscriptionClick(course, isCurrentlySubscribed)
                             },
                             subscriptionStatus = subscriptionStatus
                         )
-                    } else {
-                        val adapter = recyclerView.adapter as CourseAdapter
-                        adapter.updateCourses(enrolledCourses)
+                        // Set current user ID for subscription logic
+                        currentUserId?.let { adapter.setCurrentUserId(it) }
+                        recyclerView.adapter = adapter
                     }
                 }
             )

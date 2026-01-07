@@ -539,31 +539,22 @@ class LoginFragment : Fragment() {
             // Verificar si el usuario ya existe en Supabase antes de redirigir al registro
             lifecycleScope.launch {
                 try {
-                    // Buscar usuario por email en Supabase (ahora el email está en usuarios)
-                    val existingUser = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.fetchUsuarios()
-                            .find { it.email.equals(email, ignoreCase = true) }
+                    // OPTIMIZADO: Obtener usuario, rol y persona en paralelo con una sola llamada
+                    val (existingUser, rol, persona) = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.SupabaseClient.fetchUsuarioWithRoleByEmail(email)
                     }
                     
                     if (existingUser != null) {
-                        // Usuario ya existe en Supabase - iniciar sesión directamente
-                        Log.d(TAG, "Usuario encontrado en Supabase: ${existingUser.usuario}")
-                        // Need to fetch persona to pass to loginExistingGoogleUser?
-                        // loginExistingGoogleUser signature: (user, persona, displayName, avatarUrl)
-                        // We need the persona.
-                        val persona = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.fetchPersonas()
-                                .find { it.id == existingUser.persona_id }
-                        }
+                        // Usuario ya existe en Supabase - iniciar sesión directamente con rol obtenido
+                        Log.d(TAG, "Usuario encontrado en Supabase: ${existingUser.usuario}, Rol: ${rol?.nombre}")
                         
                         if (persona != null) {
-                            loginExistingGoogleUser(existingUser, persona, displayName, profilePictureUri)
+                            // Login rápido con rol ya obtenido
+                            loginExistingGoogleUserFast(existingUser, persona, rol, displayName, profilePictureUri)
                         } else {
-                            Log.e(TAG, "Usuario encontrado pero sin persona asociada")
-                            // Fallback or error?
-                            // Maybe try to login just with user info if possible, but loginExistingGoogleUser needs persona.
-                            // Let's try to create a dummy persona or handle error.
-                            Toast.makeText(requireContext(), "Error: Usuario sin datos personales", Toast.LENGTH_LONG).show()
+                            Log.w(TAG, "Usuario encontrado pero sin persona asociada, usando login alternativo")
+                            // Fallback: login sin persona pero con rol
+                            loginExistingGoogleUserByEmailFast(existingUser, rol, displayName, profilePictureUri)
                         }
                     } else {
                         // Usuario no existe - redirigir al formulario de registro
@@ -814,8 +805,159 @@ class LoginFragment : Fragment() {
     }
     
     /**
+     * OPTIMIZADO: Login rápido para usuario de Google con rol ya obtenido.
+     * Evita llamadas adicionales a Supabase para obtener el rol.
+     */
+    private fun loginExistingGoogleUserFast(
+        user: Usuario, 
+        persona: com.example.tareamov.data.entity.Persona, 
+        rol: com.example.tareamov.data.entity.Rol?,
+        displayName: String, 
+        avatarUrl: String?
+    ) {
+        lifecycleScope.launch {
+            try {
+                val db = AppDatabase.getDatabase(requireContext())
+                val usuarioDao = db.usuarioDao()
+                val personaDao = db.personaDao()
+                val rolDao = db.rolDao()
+                
+                // Sincronización local en paralelo (background)
+                withContext(Dispatchers.IO) {
+                    // Asegurar rol existe localmente
+                    if (rol != null) {
+                        val localRol = rolDao.getRolById(rol.id)
+                        if (localRol == null) {
+                            try {
+                                rolDao.insertRol(rol)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Rol ya existe localmente: ${e.message}")
+                            }
+                        }
+                    }
+                    
+                    // Sincronizar usuario local si no existe
+                    var localUser = usuarioDao.getUsuarioByEmail(user.email ?: "")
+                    if (localUser == null) {
+                        // Crear persona local
+                        val newPersona = com.example.tareamov.data.entity.Persona(
+                            id = 0,
+                            identificacion = persona.identificacion,
+                            nombres = persona.nombres,
+                            apellidos = persona.apellidos,
+                            telefono = persona.telefono,
+                            direccion = persona.direccion,
+                            fechaNacimiento = persona.fechaNacimiento
+                        )
+                        val personaId = personaDao.insertPersona(newPersona)
+                        
+                        // Crear usuario local
+                        val newLocalUser = Usuario(
+                            id = 0,
+                            usuario = user.usuario,
+                            contrasena = "",
+                            persona_id = personaId,
+                            rol_id = rol?.id ?: 1L,
+                            email = user.email,
+                            avatar = avatarUrl ?: user.avatar
+                        )
+                        usuarioDao.insertUsuario(newLocalUser)
+                    } else if (avatarUrl != null && localUser.avatar != avatarUrl) {
+                        // Actualizar avatar si cambió
+                        usuarioDao.updateUsuario(localUser.copy(avatar = avatarUrl))
+                    }
+                    Unit // Explicit return for withContext
+                }
+                
+                // Crear sesión INMEDIATAMENTE con rol ya obtenido
+                val roleName = rol?.nombre ?: "user"
+                val roleId = rol?.id?.toInt() ?: 1
+                
+                sessionManager.createLoginSession(
+                    username = user.usuario,
+                    userId = user.id,
+                    personaId = user.persona_id,
+                    roleName = roleName,
+                    avatarUri = avatarUrl ?: user.avatar
+                )
+                
+                // Agregar rol a la sesión inmediatamente
+                sessionManager.addRole(roleId)
+                if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
+                    sessionManager.setAdminStatus(true)
+                }
+                
+                val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                sharedPrefs.edit().putLong("current_user_id", user.id).apply()
+                
+                Log.d(TAG, "Login rápido exitoso: ${user.usuario}, rol: $roleName (id: $roleId)")
+                Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
+                findNavController().navigate(R.id.videoHomeFragment)
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en login rápido: ${e.message}", e)
+                Toast.makeText(requireContext(), "Error al iniciar sesión: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    
+    /**
+     * OPTIMIZADO: Login rápido por email con rol ya obtenido (sin persona).
+     */
+    private fun loginExistingGoogleUserByEmailFast(
+        user: Usuario, 
+        rol: com.example.tareamov.data.entity.Rol?,
+        displayName: String, 
+        avatarUrl: String?
+    ) {
+        lifecycleScope.launch {
+            try {
+                // Crear sesión INMEDIATAMENTE con rol ya obtenido
+                val roleName = rol?.nombre ?: "user"
+                val roleId = rol?.id?.toInt() ?: 1
+                
+                sessionManager.createLoginSession(
+                    username = user.usuario,
+                    userId = user.id,
+                    personaId = user.persona_id,
+                    roleName = roleName,
+                    avatarUri = avatarUrl ?: user.avatar
+                )
+                
+                // Agregar rol a la sesión inmediatamente
+                sessionManager.addRole(roleId)
+                if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
+                    sessionManager.setAdminStatus(true)
+                }
+                
+                val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                sharedPrefs.edit().putLong("current_user_id", user.id).apply()
+                
+                // Sincronización local en background (no bloquea navegación)
+                withContext(Dispatchers.IO) {
+                    val db = AppDatabase.getDatabase(requireContext())
+                    val usuarioDao = db.usuarioDao()
+                    var localUser = usuarioDao.getUsuarioByEmail(user.email ?: "")
+                    if (localUser != null && avatarUrl != null && localUser.avatar != avatarUrl) {
+                        usuarioDao.updateUsuario(localUser.copy(avatar = avatarUrl))
+                    }
+                }
+                
+                Log.d(TAG, "Login rápido por email exitoso: ${user.usuario}, rol: $roleName")
+                Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
+                findNavController().navigate(R.id.videoHomeFragment)
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en login rápido por email: ${e.message}", e)
+                Toast.makeText(requireContext(), "Error al iniciar sesión: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    
+    /**
      * Inicia sesión para un usuario de Google que ya existe en la base de datos.
      * Usa la información de la Persona de Supabase para sincronizar.
+     * @deprecated Use loginExistingGoogleUserFast instead for faster role loading
      */
     private fun loginExistingGoogleUser(user: Usuario, persona: com.example.tareamov.data.entity.Persona, displayName: String, avatarUrl: String?) {
         lifecycleScope.launch {
