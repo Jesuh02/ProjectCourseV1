@@ -141,9 +141,22 @@ class VideoAdapter(
         private var exoPlayer: ExoPlayer? = null
         private val playerView: PlayerView? = itemView.findViewById(R.id.playerView)
         private var useExoPlayer: Boolean = false
+        
+        // Track current video URI to prevent re-binding same video
+        private var currentBoundVideoUri: String? = null
+        private var isVideoSetup: Boolean = false
 
         fun bind(videoData: VideoData) {
+            // Check if we're binding the same video - if so, skip re-setup
+            val newVideoUri = videoData.getBestVideoUri()?.toString()
+            if (currentBoundVideoUri == newVideoUri && isVideoSetup && currentVideoData?.id == videoData.id) {
+                Log.d("VideoAdapter", "Skipping re-bind for same video: ${videoData.title}")
+                return
+            }
+            
             currentVideoData = videoData
+            currentBoundVideoUri = newVideoUri
+            isVideoSetup = false
             descriptionText.text = videoData.description
             titleText.text = videoData.title
 
@@ -495,11 +508,15 @@ class VideoAdapter(
                     // CRITICAL: Enable seamless looping
                     player.repeatMode = Player.REPEAT_MODE_ONE
                     
-                    // Only auto-play if this is the active position
-                    player.playWhenReady = isActive
+                    // IMPORTANT: Do NOT auto-play here - let onViewAttachedToWindow control playback
+                    // This prevents double video start (bind + attach both trying to play)
+                    player.playWhenReady = false
                     
                     // Prepare player IMMEDIATELY for instant start
                     player.prepare()
+                    
+                    // Mark video as setup
+                    isVideoSetup = true
                     
                     // Track error recovery
                     var errorRecoveryAttempts = 0
@@ -529,6 +546,15 @@ class VideoAdapter(
                                         pendingSeeks.remove(uriString)
                                         if (pathString != null) pendingSeeks.remove(pathString)
                                         Log.d("VideoAdapter", "ExoPlayer: Restored position to $seekPos ms")
+                                    }
+                                    
+                                    // Start playback if this is the active position and not paused
+                                    // This handles the case where onViewAttachedToWindow was called before video was prepared
+                                    val currentPosition = bindingAdapterPosition
+                                    if (isActivePosition(currentPosition) && !isVideoPaused && !player.isPlaying) {
+                                        player.volume = if (isMuted) 0f else 1f
+                                        player.play()
+                                        Log.d("VideoAdapter", "ExoPlayer auto-started for active position $currentPosition")
                                     }
                                 }
                                 Player.STATE_BUFFERING -> {
@@ -760,16 +786,20 @@ class VideoAdapter(
                     }
                 }
                 
-                // Start playback only if this is the active position
-                if (isActive) {
-                    try {
-                        videoView.start()
-                        Log.d("VideoAdapter", "VideoView playback started for active position $position")
-                    } catch (e: Exception) {
-                        Log.e("VideoAdapter", "Error starting VideoView", e)
-                    }
-                } else {
-                    Log.d("VideoAdapter", "VideoView prepared but not started (not active position $position)")
+                // IMPORTANT: Do NOT auto-start here unconditionally - let onViewAttachedToWindow control playback
+                // However, if this is the active position and view is attached, start now
+                // This handles the case where onViewAttachedToWindow was called before video was prepared
+                Log.d("VideoAdapter", "VideoView prepared for position $position")
+                
+                // Mark video as setup
+                isVideoSetup = true
+                
+                // Start playback if this is the active position and not paused
+                if (isActivePosition(position) && !isVideoPaused) {
+                    val volume = if (isMuted) 0f else 1f
+                    mp.setVolume(volume, volume)
+                    videoView.start()
+                    Log.d("VideoAdapter", "VideoView auto-started for active position $position")
                 }
             }
 
@@ -897,6 +927,7 @@ class VideoAdapter(
         /**
          * Inicia la reproducción del video
          * Solo reproduce con audio si esta es la posición activa
+         * Idempotent - safe to call multiple times, won't restart if already playing
          */
         fun playVideo() {
             try {
@@ -906,18 +937,36 @@ class VideoAdapter(
                 
                 if (useExoPlayer) {
                     exoPlayer?.let { player ->
+                        // Check if already playing to avoid restarting
+                        if (player.isPlaying) {
+                            Log.d("VideoAdapter", "ExoPlayer already playing for position $position, skipping")
+                            // Just ensure volume is correct
+                            player.volume = if (isMuted) 0f else 1f
+                            return
+                        }
                         // Restore volume based on mute state
                         player.volume = if (isMuted) 0f else 1f
                         player.play()
                         Log.d("VideoAdapter", "ExoPlayer started for position $position")
                     }
                 } else {
+                    // Check if MediaPlayer is prepared
+                    if (!mediaPlayerPrepared) {
+                        Log.d("VideoAdapter", "VideoView not prepared yet for position $position, skipping playVideo")
+                        return
+                    }
+                    // Check if already playing to avoid restart
+                    if (videoView.isPlaying) {
+                        Log.d("VideoAdapter", "VideoView already playing for position $position, skipping")
+                        // Just ensure volume is correct
+                        val volume = if (isMuted) 0f else 1f
+                        mediaPlayer?.setVolume(volume, volume)
+                        return
+                    }
                     // Restore volume based on mute state
                     val volume = if (isMuted) 0f else 1f
                     mediaPlayer?.setVolume(volume, volume)
-                    if (!videoView.isPlaying) {
-                        videoView.start()
-                    }
+                    videoView.start()
                     Log.d("VideoAdapter", "VideoView started for position $position")
                 }
             } catch (e: Exception) {

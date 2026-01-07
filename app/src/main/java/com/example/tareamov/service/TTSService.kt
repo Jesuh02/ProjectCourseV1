@@ -283,6 +283,70 @@ class TTSService(private val context: Context) : TextToSpeech.OnInitListener {
     }
 
     /**
+     * Speak text IMMEDIATELY using native TTS (no network delay)
+     * This provides instant audio feedback to the user.
+     * Use this when immediate response is more important than voice quality.
+     * 
+     * @param text Text to speak
+     * @param onStart Called when playback starts
+     * @param onComplete Called when playback completes
+     * @param onError Called on error
+     */
+    suspend fun speakImmediate(
+        text: String,
+        onStart: (() -> Unit)? = null,
+        onComplete: (() -> Unit)? = null,
+        onError: ((String) -> Unit)? = null
+    ) = withContext(Dispatchers.Main) {
+        try {
+            val textToSpeak = sanitizeText(text)
+            stopPlayback()
+            currentPlayingText = textToSpeak
+            
+            Log.d(TAG, "🚀 speakImmediate: Starting native TTS immediately for ${textToSpeak.length} chars")
+            
+            if (isNativeTTSReady && textToSpeech != null) {
+                // Update current callbacks
+                currentOnStart = onStart
+                currentOnComplete = onComplete
+                currentOnError = onError
+                
+                val params = Bundle()
+                params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "tts_immediate")
+                
+                // Truncate if too long
+                val maxLen = 3900
+                val finalText = if (textToSpeak.length > maxLen) {
+                    textToSpeak.substring(0, maxLen) + "..."
+                } else {
+                    textToSpeak
+                }
+                
+                val result = textToSpeech?.speak(finalText, TextToSpeech.QUEUE_FLUSH, params, "tts_immediate")
+                
+                if (result == TextToSpeech.SUCCESS) {
+                    isPlaying = true
+                    Log.d(TAG, "✅ Native TTS started immediately")
+                } else {
+                    Log.e(TAG, "Native TTS speak returned error")
+                    onError?.invoke("Native TTS failed to start")
+                    onPlaybackErrorListener?.invoke("Native TTS failed to start")
+                }
+            } else {
+                Log.w(TAG, "Native TTS not ready, falling back to regular speak")
+                // Fall back to regular speak if native TTS not ready
+                withContext(Dispatchers.IO) {
+                    speak(text, Voice.NOVA, onStart, onComplete, onError)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "speakImmediate error: ${e.message}", e)
+            onError?.invoke(e.message ?: "TTS error")
+            onPlaybackErrorListener?.invoke(e.message ?: "TTS error")
+        }
+    }
+
+    /**
      * Play audio directly from stream URL
      */
     private fun playFromStream(

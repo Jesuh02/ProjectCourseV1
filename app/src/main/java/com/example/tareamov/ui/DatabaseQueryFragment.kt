@@ -2773,12 +2773,11 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
                     ).show()
                 }
                 
-                // Reproducir el mensaje con voz natural (usando voz NOVA por defecto)
-                ttsService.speak(
+                // Reproducir el mensaje INMEDIATAMENTE con TTS nativo (sin esperar red)
+                ttsService.speakImmediate(
                     text = message.text,
-                    voice = com.example.tareamov.service.TTSService.Voice.NOVA,
                     onStart = {
-                        Log.d("DatabaseQueryFragment", "TTS playback started")
+                        Log.d("DatabaseQueryFragment", "TTS playback started IMMEDIATELY")
                     },
                     onComplete = {
                         lifecycleScope.launch {

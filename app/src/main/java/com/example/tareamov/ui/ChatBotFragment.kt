@@ -2433,12 +2433,11 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     ).show()
                 }
                 
-                // Reproducir el mensaje con voz natural (usando voz NOVA por defecto)
-                ttsService.speak(
+                // Reproducir el mensaje INMEDIATAMENTE con TTS nativo (sin esperar red)
+                ttsService.speakImmediate(
                     text = message.message,
-                    voice = TTSService.Voice.NOVA,
                     onStart = {
-                        Log.d("ChatBotFragment", "TTS playback started")
+                        Log.d("ChatBotFragment", "TTS playback started IMMEDIATELY")
                     },
                     onComplete = {
                         lifecycleScope.launch {

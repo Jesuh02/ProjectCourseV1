@@ -4,9 +4,14 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.style.TextAlign // Fix Unresolved reference: TextAlign
 import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.rememberScrollState
@@ -31,6 +37,7 @@ import android.os.VibrationEffect
 import android.os.Build
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.TTSService
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -489,6 +496,29 @@ fun QuizView(
     onNextClick: () -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    
+    // TTS state
+    var isSpeaking by remember { mutableStateOf(false) }
+    val ttsService = remember { TTSService.getInstance(context) }
+    
+    // Build full text with question and options for TTS
+    fun buildQuestionWithOptions(): String {
+        val optionLetters = listOf("A", "B", "C", "D", "E", "F")
+        val optionsText = question.options.mapIndexed { index, option ->
+            val letter = optionLetters.getOrElse(index) { "${index + 1}" }
+            "Opción $letter: $option"
+        }.joinToString(". ")
+        
+        return "${question.question}. Las opciones son: $optionsText"
+    }
+    
+    // Stop TTS when leaving
+    DisposableEffect(Unit) {
+        onDispose {
+            ttsService.stopPlayback()
+        }
+    }
     
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -508,17 +538,85 @@ fun QuizView(
                         modifier = Modifier.size(100.dp).scale(scale * 0.8f).offset(y = dy.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        CuteRobot(isSpeaking = false)
+                        CuteRobot(isSpeaking = isSpeaking)
                     }
                     Spacer(modifier = Modifier.width(16.dp))
-                    Box(
-                        modifier = Modifier
-                            .background(Color(0xFF1F222B), RoundedCornerShape(16.dp))
-                            .border(2.dp, Color(0xFF2B303B), RoundedCornerShape(16.dp))
-                            .padding(16.dp)
-                            .weight(1f)
-                    ) {
-                        Text(text = question.question, color = Color.White, fontSize = 16.sp)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFF1F222B), RoundedCornerShape(16.dp))
+                                .border(2.dp, Color(0xFF2B303B), RoundedCornerShape(16.dp))
+                                .padding(16.dp)
+                        ) {
+                            Text(text = question.question, color = Color.White, fontSize = 16.sp)
+                        }
+                        
+                        // TTS Button Row - Reads question AND options when pressed
+                        Row(
+                            modifier = Modifier.padding(top = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Speaker Button - Immediate response with visual feedback
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(
+                                        if (isSpeaking) Color(0xFF58CC02) else Color(0xFF2B303B),
+                                        CircleShape
+                                    )
+                                    .clickable {
+                                        if (isSpeaking) {
+                                            // Stop immediately
+                                            ttsService.stopPlayback()
+                                            isSpeaking = false
+                                        } else {
+                                            // Set speaking state IMMEDIATELY for instant visual feedback
+                                            isSpeaking = true
+                                            val fullText = buildQuestionWithOptions()
+                                            
+                                            // Launch TTS on Main for IMMEDIATE native TTS playback
+                                            coroutineScope.launch {
+                                                try {
+                                                    ttsService.speakImmediate(
+                                                        text = fullText,
+                                                        onStart = { 
+                                                            // Already showing as speaking
+                                                            android.util.Log.d("TTS", "🔊 TTS started playing IMMEDIATELY")
+                                                        },
+                                                        onComplete = { 
+                                                            // Update state on main thread
+                                                            isSpeaking = false
+                                                        },
+                                                        onError = { error ->
+                                                            android.util.Log.e("TTS", "TTS error: $error")
+                                                            isSpeaking = false
+                                                        }
+                                                    )
+                                                } catch (e: Exception) {
+                                                    android.util.Log.e("TTS", "TTS exception: ${e.message}")
+                                                    isSpeaking = false
+                                                }
+                                            }
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (isSpeaking) Icons.Default.Stop else Icons.Default.VolumeUp,
+                                    contentDescription = if (isSpeaking) "Detener" else "Escuchar pregunta y opciones",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.width(8.dp))
+                            
+                            Text(
+                                text = if (isSpeaking) "Reproduciendo..." else "Escuchar pregunta",
+                                color = Color.Gray,
+                                fontSize = 12.sp
+                            )
+                        }
                     }
                 }
             }
@@ -609,6 +707,17 @@ fun QuizView(
             }
             
             if (showExplanation) {
+                // State for explanation TTS
+                var isExplanationSpeaking by remember { mutableStateOf(false) }
+                
+                // Stop question TTS when explanation appears
+                LaunchedEffect(showExplanation) {
+                    if (showExplanation) {
+                        ttsService.stopPlayback()
+                        isSpeaking = false
+                    }
+                }
+                
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 val isCorrectSelection = selectedOptionIndex == question.correctIndex
@@ -624,12 +733,72 @@ fun QuizView(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                 )
                 
-                Text(
-                    text = "Explicación: ${question.explanation}",
-                    color = Color(0xFFDDDDDD),
-                    fontSize = 14.sp,
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                )
+                // Explanation with TTS button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text(
+                        text = "Explicación: ${question.explanation}",
+                        color = Color(0xFFDDDDDD),
+                        fontSize = 14.sp,
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                        modifier = Modifier.weight(1f)
+                    )
+                    
+                    Spacer(modifier = Modifier.width(8.dp))
+                    
+                    // TTS Button for explanation - Immediate response when pressed
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(
+                                if (isExplanationSpeaking) Color(0xFF58CC02) else Color(0xFF2B303B),
+                                CircleShape
+                            )
+                            .clickable {
+                                if (isExplanationSpeaking) {
+                                    ttsService.stopPlayback()
+                                    isExplanationSpeaking = false
+                                } else {
+                                    val feedbackVoice = if (isCorrectSelection) "¡Correcto!" else "Incorrecto"
+                                    val fullExplanation = "$feedbackVoice. ${question.explanation}"
+                                    // Set speaking state IMMEDIATELY for instant visual feedback
+                                    isExplanationSpeaking = true
+                                    
+                                    // Launch TTS on Main for IMMEDIATE native TTS playback
+                                    coroutineScope.launch {
+                                        try {
+                                            ttsService.speakImmediate(
+                                                text = fullExplanation,
+                                                onStart = { 
+                                                    android.util.Log.d("TTS", "🔊 Explanation TTS started IMMEDIATELY")
+                                                },
+                                                onComplete = { 
+                                                    isExplanationSpeaking = false
+                                                },
+                                                onError = { error ->
+                                                    android.util.Log.e("TTS", "Explanation TTS error: $error")
+                                                    isExplanationSpeaking = false
+                                                }
+                                            )
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("TTS", "Explanation TTS exception: ${e.message}")
+                                            isExplanationSpeaking = false
+                                        }
+                                    }
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isExplanationSpeaking) Icons.Default.Stop else Icons.Default.VolumeUp,
+                            contentDescription = if (isExplanationSpeaking) "Detener" else "Escuchar explicación",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }

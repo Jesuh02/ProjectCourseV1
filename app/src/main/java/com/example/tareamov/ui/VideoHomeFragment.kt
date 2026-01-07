@@ -1371,16 +1371,14 @@ class VideoHomeFragment : Fragment() {
                         // Add delay to ensure network is stable
                         kotlinx.coroutines.delay(1000)
                         
-                        if (videoList.isEmpty() && !isLoadingVideos) {
-                            // No videos - load from network
-                            Log.d("VideoHomeFragment", "Auto-reloading videos on network available")
+                        // ALWAYS reload from network when connection returns
+                        // This ensures fresh data with complete usernames, etc.
+                        // Same logic as ExploreFragment
+                        if (!isLoadingVideos) {
+                            Log.d("VideoHomeFragment", "Network restored - forcing full reload from Supabase")
                             if (::viewModel.isInitialized) {
                                 viewModel.loadVideos(isRefresh = true)
                             }
-                        } else if (videoList.isNotEmpty()) {
-                            // We have cached videos - now network is available, show them
-                            Log.d("VideoHomeFragment", "Network restored - showing cached videos")
-                            stopSkeletonAnimation()
                         }
                     }
                 }

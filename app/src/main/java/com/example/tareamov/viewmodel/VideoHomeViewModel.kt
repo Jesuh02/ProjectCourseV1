@@ -88,20 +88,25 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
                 Log.d("VideoHomeViewModel", "Loading videos (refresh=$isRefresh, target=$targetVideoId)")
                 
                 // OPTIMIZATION: Load from local cache FIRST for instant display
-                // This happens in parallel with network fetch
-                val localCacheJob = viewModelScope.launch(Dispatchers.IO) {
-                    try {
-                        val database = AppDatabase.getDatabase(getApplication())
-                        val cachedVideos = database.videoDao().getAllVideos()
-                        if (cachedVideos.isNotEmpty() && _videoList.value.isNullOrEmpty()) {
-                            withContext(Dispatchers.Main) {
-                                _videoList.value = cachedVideos.take(pageSize)
-                                Log.d("VideoHomeViewModel", "Loaded ${cachedVideos.size} videos from local cache (instant)")
+                // BUT skip cache when refreshing to ensure fresh data from network
+                // This prevents showing stale data with missing usernames, etc.
+                if (!isRefresh) {
+                    val localCacheJob = viewModelScope.launch(Dispatchers.IO) {
+                        try {
+                            val database = AppDatabase.getDatabase(getApplication())
+                            val cachedVideos = database.videoDao().getAllVideos()
+                            if (cachedVideos.isNotEmpty() && _videoList.value.isNullOrEmpty()) {
+                                withContext(Dispatchers.Main) {
+                                    _videoList.value = cachedVideos.take(pageSize)
+                                    Log.d("VideoHomeViewModel", "Loaded ${cachedVideos.size} videos from local cache (instant)")
+                                }
                             }
+                        } catch (e: Exception) {
+                            Log.w("VideoHomeViewModel", "Local cache load failed", e)
                         }
-                    } catch (e: Exception) {
-                        Log.w("VideoHomeViewModel", "Local cache load failed", e)
                     }
+                } else {
+                    Log.d("VideoHomeViewModel", "Skipping local cache - forcing network refresh")
                 }
 
                 // If a specific video is requested, try to fetch it first
