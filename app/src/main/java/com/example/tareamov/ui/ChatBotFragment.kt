@@ -27,6 +27,7 @@ import com.example.tareamov.adapter.TaskOverlayAdapter
 import com.example.tareamov.adapter.TaskItem
 import com.example.tareamov.adapter.GradedTaskOverlayAdapter
 import com.example.tareamov.adapter.GradedTaskItem
+import com.example.tareamov.work.BackgroundTaskManager
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -50,6 +51,17 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 class ChatBotFragment : Fragment() {
+    
+    // Background task tracking
+    private var isProcessingLLM = false
+    private var pendingPrompt: String? = null
+    private var pendingTaskDescription: String? = null
+    private var pendingFileContent: String? = null
+    private var pendingJsonContent: String? = null
+    private var pendingMetadata: String? = null
+    private var pendingSubmissionId: Long? = null
+    private var pendingTaskId: Long? = null
+    
     private fun clearChat() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
@@ -452,6 +464,50 @@ class ChatBotFragment : Fragment() {
         sessionChangeListener?.let { com.example.tareamov.util.SessionManager.removeUserChangeListener(it) }
         // Detener reproducción TTS si está activa
         ttsService.stopPlayback()
+    }
+    
+    override fun onStop() {
+        super.onStop()
+        
+        // If there's an ongoing LLM request, schedule it as background task
+        if (isProcessingLLM && pendingPrompt != null) {
+            Log.d("ChatBotFragment", "🔄 App going to background - scheduling LLM task to continue")
+            
+            val userId = sessionManager.getUserId() ?: -1L
+            val username = sessionManager.getUsername() ?: "unknown"
+            
+            if (userId > 0) {
+                BackgroundTaskManager.scheduleChatMessage(
+                    context = requireContext(),
+                    prompt = pendingPrompt!!,
+                    userId = userId,
+                    username = username,
+                    sessionId = sessionId,
+                    taskDescription = pendingTaskDescription ?: "",
+                    fileContent = pendingFileContent ?: "",
+                    jsonContent = pendingJsonContent ?: "",
+                    metadata = pendingMetadata ?: "",
+                    submissionId = pendingSubmissionId,
+                    taskId = pendingTaskId
+                )
+                
+                Toast.makeText(context, "📋 La tarea continuará en segundo plano", Toast.LENGTH_SHORT).show()
+            }
+            
+            // Clear pending data
+            clearPendingTaskData()
+        }
+    }
+    
+    private fun clearPendingTaskData() {
+        isProcessingLLM = false
+        pendingPrompt = null
+        pendingTaskDescription = null
+        pendingFileContent = null
+        pendingJsonContent = null
+        pendingMetadata = null
+        pendingSubmissionId = null
+        pendingTaskId = null
     }
 
     private fun initializeViews(view: View) {
@@ -966,6 +1022,18 @@ class ChatBotFragment : Fragment() {
             val effectiveFileContent = currentFileContext?.fileContent ?: ""
             val effectiveJsonContent = currentFileContext?.jsonContent ?: ""
             val effectiveMetadata = currentFileContext?.metadata ?: ""
+            val currentSubmissionId = currentFileContext?.submissionId
+            val currentTaskIdForRequest = currentSubmissionId
+            
+            // Track pending task data for background processing if app goes to background
+            isProcessingLLM = true
+            pendingPrompt = messageText
+            pendingTaskDescription = effectiveTaskDescription
+            pendingFileContent = effectiveFileContent
+            pendingJsonContent = effectiveJsonContent
+            pendingMetadata = effectiveMetadata
+            pendingSubmissionId = currentSubmissionId
+            pendingTaskId = currentTaskIdForRequest
 
             // Data class local para capturar tanto el texto como la nota del backend
             data class LLMResponse(val text: String, val nota: Float?)
@@ -973,8 +1041,6 @@ class ChatBotFragment : Fragment() {
             try {
                 val llmResponse = withContext(Dispatchers.IO) {
                     try {
-                        val currentSubmissionId = currentFileContext?.submissionId
-                        val currentTaskIdForRequest = currentSubmissionId
                         val currentStudentId = sessionManager.getUserId()
                         
                         val body = com.example.tareamov.network.MicroservicioPromptRequest(
@@ -1008,6 +1074,9 @@ class ChatBotFragment : Fragment() {
                         LLMResponse("Error al procesar la solicitud: ${e.message}", null)
                     }
                 }
+                
+                // Clear pending data - task completed successfully
+                clearPendingTaskData()
                 
                 val response = llmResponse.text.replace("#", "").replace("**", "")
                 

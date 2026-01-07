@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.runtime.produceState
 import androidx.fragment.app.Fragment
@@ -18,6 +19,7 @@ import com.example.tareamov.ui.compose.ReinforcementLearningViewModelFactory
 class ReinforcementLearningFragment : Fragment() {
 
     private lateinit var viewModel: ReinforcementLearningViewModel
+    private var fragmentCourseId: Long = -1L
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -54,6 +56,7 @@ class ReinforcementLearningFragment : Fragment() {
 
         // Get navigation arguments
         val courseId = arguments?.getLong("courseId") ?: -1L
+        fragmentCourseId = courseId
         val topicId = arguments?.getLong("topicId") ?: -1L
         val taskId = arguments?.getLong("taskId") ?: -1L
         
@@ -133,6 +136,26 @@ class ReinforcementLearningFragment : Fragment() {
                     },
                     viewModel = viewModel
                 )
+            }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // If LLM is generating questions and user leaves, schedule background task
+        viewModel.scheduleBackgroundTaskIfNeeded()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Check if there are pending background results
+        if (fragmentCourseId != -1L) {
+            viewModel.checkForPendingBackgroundResults(fragmentCourseId)?.let { json ->
+                Toast.makeText(
+                    requireContext(), 
+                    "Preguntas generadas en segundo plano", 
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }

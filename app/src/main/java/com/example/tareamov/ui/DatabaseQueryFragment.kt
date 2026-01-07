@@ -28,6 +28,7 @@ import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import com.example.tareamov.ui.adapter.DatabaseChatAdapter
 import com.example.tareamov.util.SessionManager
+import com.example.tareamov.work.BackgroundTaskManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -63,9 +64,12 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     // TTS Service
     private lateinit var ttsService: com.example.tareamov.service.TTSService
     
+    // Background task tracking - also used for chat state
+    private var isProcessingQuery = false
+    private var pendingQuery: String? = null
+    
     // Enhanced chat state management per user
     private val chatHistory = mutableListOf<ChatMessage>()
-    private var isProcessingQuery = false
     private var currentConversationContext = mutableListOf<String>()
     private var totalMessageCount = 0
     private var isScrolledToBottom = true
@@ -1114,35 +1118,18 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     }
 
     private fun isExcelRequest(lowerQuery: String): Boolean {
-        // Palabras clave directas de Excel
-        val excelKeywords = listOf(
-            "excel", "hoja de cálculo", "hoja de calculo", "spreadsheet", "xls", "xlsx", "csv"
-        )
-        if (excelKeywords.any { lowerQuery.contains(it) }) return true
-
-        // Detección de intención de exportación/reporte (ej: "dame un reporte", "descargar datos")
-        // Esto evita que el LLM responda con texto cuando el usuario quiere un archivo
-        val exportActions = listOf("generar", "crear", "dame", "descargar", "exportar", "necesito", "quiero")
-        val exportObjects = listOf("reporte", "informe", "listado", "tabla", "archivo", "documento")
-        
-        val hasAction = exportActions.any { lowerQuery.contains(it) }
-        val hasObject = exportObjects.any { lowerQuery.contains(it) }
-        
-        // Si hay acción + objeto (ej: "generar reporte"), asumimos que quiere un Excel
-        // especialmente si pide "datos"
-        if (hasAction && hasObject) return true
-        
-        // Caso específico: "necesito los datos de..."
-        if (lowerQuery.contains("datos de") && (lowerQuery.contains("necesito") || lowerQuery.contains("dame"))) {
-            return true
-        }
-
-        return false
+        // SOLO activar cuando se mencione EXPLÍCITAMENTE "excel"
+        // Esto evita que reportes/listados normales se conviertan en Excel automáticamente
+        return lowerQuery.contains("excel")
     }
 
     private fun processQuery(query: String, skipUserMessage: Boolean = false) {
         Log.d("DatabaseQueryFragment", "=== MAIN QUERY PROCESSING ===")
         Log.d("DatabaseQueryFragment", "User Query: $query")
+        
+        // Track pending query for background processing if app goes to background
+        isProcessingQuery = true
+        pendingQuery = query
         
         // Add user message to chat first (only if not skipped)
         val attachedFile = if (attachedFiles.isNotEmpty()) attachedFiles[0] else null
@@ -1184,6 +1171,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                         }.toString()
                         
                         val result = mcpHttpClient.processPromptWithAttachments(query, jsonContent)
+                        
+                        // Clear pending data - task completed
+                        isProcessingQuery = false
+                        pendingQuery = null
                         
                         // Hide spinner
                         binding.loadingSpinner.visibility = View.GONE
@@ -1317,7 +1308,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 val errorMessage = "❌ Error procesando la consulta: ${e.message}"
                 addMessageToChat(errorMessage, false)
             } finally {
+                // Clear pending data - task completed
                 isProcessingQuery = false
+                pendingQuery = null
                 // Save updated chat history
                 saveChatHistory()
             }
@@ -2706,6 +2699,33 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
         _binding = null
     }
     
+    override fun onStop() {
+        super.onStop()
+        
+        // If there's an ongoing query, schedule it as background task
+        if (isProcessingQuery && pendingQuery != null) {
+            Log.d(TAG, "🔄 App going to background - scheduling database query to continue")
+            
+            val userId = sessionManager.getUserId() ?: -1L
+            val username = sessionManager.getUsername() ?: "unknown"
+            
+            if (userId > 0) {
+                BackgroundTaskManager.scheduleDatabaseQuery(
+                    context = requireContext(),
+                    query = pendingQuery!!,
+                    userId = userId,
+                    username = username
+                )
+                
+                Toast.makeText(context, "📋 La consulta continuará en segundo plano", Toast.LENGTH_SHORT).show()
+            }
+            
+            // Clear pending data
+            isProcessingQuery = false
+            pendingQuery = null
+        }
+    }
+    
     override fun onPause() {
         super.onPause()
         // Save chat when app goes to background to preserve user messages
@@ -2714,6 +2734,18 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
     
     override fun onResume() {
         super.onResume()
+        
+        // Check for pending background results
+        val userId = sessionManager.getUserId() ?: -1L
+        if (userId > 0) {
+            val pendingResult = BackgroundTaskManager.getPendingDatabaseQueryResult(requireContext(), userId)
+            if (pendingResult != null) {
+                Log.d(TAG, "📬 Found pending background result, displaying...")
+                addMessageToChat(pendingResult, false)
+                BackgroundTaskManager.clearDatabaseQueryResult(requireContext(), userId)
+            }
+        }
+        
         // Check if user changed while app was in background
         val newUser = sessionManager.getUsername()
         if (currentUser != newUser) {

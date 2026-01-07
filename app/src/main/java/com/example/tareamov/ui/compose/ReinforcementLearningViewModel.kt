@@ -8,6 +8,7 @@ import com.example.tareamov.data.sync.SyncRepository
 import com.example.tareamov.network.MicroservicioApi
 import com.example.tareamov.network.MicroservicioPromptRequest
 import com.example.tareamov.service.ServerEndpointResolver
+import com.example.tareamov.work.BackgroundTaskManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,6 +58,13 @@ class ReinforcementLearningViewModel(
 
     private val _currentScore = MutableStateFlow(0)
     val currentScore: StateFlow<Int> = _currentScore.asStateFlow()
+    
+    // Background task tracking
+    private var isGeneratingQuestions = false
+    private var pendingCourseId: Long = -1L
+    private var pendingCourseName: String = ""
+    private var pendingTopicId: Long = -1L
+    private var pendingTaskId: Long = -1L
 
     private val _selectedTopicName = MutableStateFlow<String?>(null)
     val selectedTopicName: StateFlow<String?> = _selectedTopicName.asStateFlow()
@@ -114,6 +122,13 @@ class ReinforcementLearningViewModel(
 
         // Set Loading state immediately to avoid race conditions in UI
         _uiState.value = ReinforcementState.Loading
+        
+        // Track pending data for background processing
+        isGeneratingQuestions = true
+        pendingCourseId = courseId
+        pendingCourseName = courseName
+        pendingTopicId = topicId
+        pendingTaskId = taskId
 
         viewModelScope.launch {
             try {
@@ -407,10 +422,14 @@ class ReinforcementLearningViewModel(
                         syncRepository.saveReinforcementHistory(userId, courseId, topicId, taskId, finalQuestions)
                     }
                 }
+                
+                // Clear pending data - task completed successfully
+                clearPendingTaskData()
 
             } catch (e: Exception) {
                 Log.e("ReinforcementVM", "Error loading questions", e)
                 _uiState.value = ReinforcementState.Error("Error: ${e.message}")
+                clearPendingTaskData()
             }
         }
     }
@@ -541,5 +560,66 @@ class ReinforcementLearningViewModel(
                 Log.e("ReinforcementVM", "Error loading context info", e)
             }
         }
+    }
+    
+    /**
+     * Clear pending task data after completion
+     */
+    private fun clearPendingTaskData() {
+        isGeneratingQuestions = false
+        pendingCourseId = -1L
+        pendingCourseName = ""
+        pendingTopicId = -1L
+        pendingTaskId = -1L
+    }
+    
+    /**
+     * Schedule task to continue in background if app is being stopped
+     * Call this from Fragment's onStop()
+     */
+    fun scheduleBackgroundTaskIfNeeded() {
+        if (isGeneratingQuestions && pendingCourseId > 0) {
+            Log.d("ReinforcementVM", "🔄 Scheduling reinforcement task to continue in background")
+            
+            val sessionManager = com.example.tareamov.util.SessionManager.getInstance(getApplication())
+            val userId = sessionManager.getUserId() ?: -1L
+            val username = sessionManager.getUsername() ?: "unknown"
+            
+            if (userId > 0) {
+                BackgroundTaskManager.scheduleReinforcementQuestions(
+                    context = getApplication(),
+                    courseId = pendingCourseId,
+                    courseName = pendingCourseName,
+                    topicId = pendingTopicId,
+                    taskId = pendingTaskId,
+                    userId = userId,
+                    username = username
+                )
+            }
+            
+            clearPendingTaskData()
+        }
+    }
+    
+    /**
+     * Check for pending background results when app resumes
+     * @return true if results were loaded from background
+     */
+    fun checkForPendingBackgroundResults(courseId: Long): Boolean {
+        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(getApplication())
+        val userId = sessionManager.getUserId() ?: return false
+        
+        val pendingJson = BackgroundTaskManager.getPendingReinforcementQuestions(
+            getApplication(), userId, courseId
+        )
+        
+        if (pendingJson != null) {
+            Log.d("ReinforcementVM", "📬 Found pending background questions, loading...")
+            loadPreloadedQuestions(pendingJson)
+            BackgroundTaskManager.clearReinforcementQuestions(getApplication(), userId, courseId)
+            return true
+        }
+        
+        return false
     }
 }
