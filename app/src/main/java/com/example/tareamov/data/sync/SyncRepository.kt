@@ -800,6 +800,44 @@ class SyncRepository(
         }
     }
 
+    /**
+     * Initiate payment transaction on the backend and get the Wompi Checkout URL.
+     */
+    suspend fun initiatePayment(userId: Long, courseId: Long, amount: Double): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val jsonBody = org.json.JSONObject().apply {
+                    put("userId", userId)
+                    put("courseId", courseId)
+                    put("amount", amount)
+                }
+                
+                val body = jsonBody.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+                val request = Request.Builder()
+                    .url("https://mcp-backenddeploy-production.up.railway.app/api/payment/initiate")
+                    .post(body)
+                    .build()
+                
+                val client = okhttp3.OkHttpClient()
+                client.newCall(request).execute().use { response ->
+                    val responseString = response.body?.string()
+                    if (response.isSuccessful && responseString != null) {
+                        val responseJson = org.json.JSONObject(responseString)
+                        if (responseJson.optBoolean("success")) {
+                            return@withContext responseJson.optString("payment_url")
+                        }
+                    }
+                    Log.e("SyncRepo", "Payment Init Failed: $responseString")
+                    null
+                }
+            } catch (e: Exception) {
+                Log.e("SyncRepo", "Error initiating payment", e)
+                null
+            }
+        }
+    }
+
+
     // Verify transaction status (wrapper for SupabaseRepository)
     suspend fun verifyTransactionStatus(transactionId: String): Map<String, Any> {
          return supabaseRepo.verifyTransactionStatus(transactionId)

@@ -370,6 +370,7 @@ class CourseCreationFragment : Fragment() {
                         
                         // Notify subscribers about the new course
                         val createdCourse = courseData.copy(id = remoteId)
+                        // Trigger async remote notification
                         activity.syncRepository.notifySubscribersOfNewCourseAsync(createdCourse)
                         
                         val bundle = Bundle().apply {

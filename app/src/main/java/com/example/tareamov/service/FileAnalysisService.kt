@@ -24,6 +24,18 @@ class FileAnalysisService(private val context: Context) {
                 return@withContext handleGitHubUrl(uriString, fileName)
             }
             
+            // Detectar si es una URL web genérica (R2, S3, etc.)
+            // Esto permite que el backend maneje la descarga del archivo en lugar de intentar descarga local
+            if (uriString.startsWith("http://") || uriString.startsWith("https://")) {
+                Log.d("FileAnalysisService", "Detectado URL remota: $uriString")
+                 return@withContext FileAnalysisResult(
+                    success = true,
+                    content = uriString,
+                    fileType = getFileType(fileName),
+                    metadata = "type: remote_url, url: $uriString"
+                )
+            }
+            
             // Extracción SIEMPRE dinámica, usando el archivo seleccionado por el usuario
             val contentResolver = context.contentResolver
             val isGoogleDriveUri = uri.authority?.contains("google") == true || 

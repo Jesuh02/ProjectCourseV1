@@ -1639,8 +1639,10 @@ class TaskSubmissionsFragment : Fragment() {
                     submissionId = submission.id,
                     fileName = submission.fileName,
                     fileType = fileType.name,
-                    fileContent = analysisResult.content,
-                    extractedText = analysisResult.content,
+
+                    // [MODIFICADO] NO enviar URI como contenido. Dejar vacío para que backend lo busque por ID.
+                    fileContent = if (analysisResult.content.isNotBlank() && !analysisResult.content.startsWith("http")) analysisResult.content else "",
+                    extractedText = if (analysisResult.content.isNotBlank() && !analysisResult.content.startsWith("http")) analysisResult.content else "",
                     metadata = analysisResult.metadata,
                     contentSummary = finalTaskDescription
                 )

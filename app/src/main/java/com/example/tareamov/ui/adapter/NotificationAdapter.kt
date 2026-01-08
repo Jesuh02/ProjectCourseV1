@@ -58,8 +58,8 @@ class NotificationAdapter(
             onClick: (Notification) -> Unit,
             thumbnailCache: java.util.concurrent.ConcurrentHashMap<Long, String?>
         ) {
-            // Set "Para ti" as the category label
-            titleText.text = "Para ti"
+            // Use the actual notification title or fallback to "Notificación"
+            titleText.text = notification.title.ifEmpty { "Notificación" }
             
             // Set the notification message
             messageText.text = notification.message

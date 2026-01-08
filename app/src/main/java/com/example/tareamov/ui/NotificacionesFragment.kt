@@ -58,7 +58,13 @@ class NotificacionesFragment : Fragment() {
         setupAdminButton()
         setupNavigation()
         
+        // loadNotifications() - Moved to onResume for better freshness
+    }
+
+    override fun onResume() {
+        super.onResume()
         loadNotifications()
+        updateBottomNavSelection("activity")
     }
 
     private fun setupRecyclerView() {
@@ -137,9 +143,17 @@ class NotificacionesFragment : Fragment() {
             Notification.TYPE_NEW_COURSE -> {
                 Log.d("Notificaciones", "Course notification clicked: ${notification.relatedId}")
                 notification.relatedId?.let { courseId ->
-                    // Navigate to course detail
+                    // Navigate to course detail with courseName if available in message
+                    // Message format: "User ha publicado un nuevo curso: Course Name"
+                    val courseName = if (notification.message.contains(":")) {
+                        notification.message.substringAfter(":").trim()
+                    } else {
+                        ""
+                    }
+                    
                     val bundle = Bundle().apply {
                         putLong("courseId", courseId)
+                        putString("courseName", courseName)
                     }
                     try {
                         findNavController().navigate(R.id.action_notificacionesFragment_to_courseDetailFragment, bundle)

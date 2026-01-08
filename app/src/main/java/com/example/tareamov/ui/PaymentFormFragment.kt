@@ -147,6 +147,7 @@ class PaymentFormFragment : Fragment() {
         return inflater.inflate(R.layout.fragment_payment_form, container, false)
     }
 
+    @Suppress("DEPRECATION")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
@@ -161,6 +162,7 @@ class PaymentFormFragment : Fragment() {
         startEntryAnimations()
     }
     
+    @Suppress("DEPRECATION")
     override fun onDestroyView() {
         super.onDestroyView()
         // Restore the original soft input mode when leaving
@@ -345,7 +347,7 @@ class PaymentFormFragment : Fragment() {
         setLoadingState(true)
         
         // Execute payment
-        initiatePSEPayment(bankCode, docType, docNumber, phone)
+        initiatePSEPayment(bankCode, docType, docNumber)
     }
     
     private fun setLoadingState(loading: Boolean) {
@@ -364,7 +366,7 @@ class PaymentFormFragment : Fragment() {
         }
     }
     
-    private fun initiatePSEPayment(bankCode: String, docType: String, docNumber: String, phone: String) {
+    private fun initiatePSEPayment(bankCode: String, docType: String, docNumber: String) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 // Get user data
@@ -401,38 +403,20 @@ class PaymentFormFragment : Fragment() {
                     
                     if (response.isSuccessful && response.body() != null) {
                         val body = response.body()!!
-                        
-                        // Check if it's already approved (e.g. Sandbox mode) 
-                        if (body.success && body.status == "APPROVED") {
-                            // Immediately show success
-                            Toast.makeText(context, "¡Pago exitoso y aprobado de inmediato!", Toast.LENGTH_LONG).show()
-                            
-                            // Check if a URL was provided anyway (some flows might)
-                            if (!body.urlBankPayment.isNullOrBlank()) {
-                                // Optional: Ask user if they want to view receipt, but generally we are done
-                                // Or open it if it's a receipt URL
-                            }
-                            
-                            view?.postDelayed({
-                                if (isAdded) {
-                                    findNavController().navigateUp()
-                                }
-                            }, 1500)
-                            
-                        } else if (body.success && !body.urlBankPayment.isNullOrBlank()) {
-                            // PENDING with URL -> Open bank
+                        if (body.success && !body.urlBankPayment.isNullOrBlank()) {
+                            // Open bank URL
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(body.urlBankPayment))
                             startActivity(intent)
                             Toast.makeText(context, "Redirigiendo a tu banco...", Toast.LENGTH_LONG).show()
                             
-                            // Navigate back
+                            // Navigate back after a delay
                             view?.postDelayed({
                                 if (isAdded) {
                                     findNavController().navigateUp()
                                 }
                             }, 1500)
                         } else {
-                            val errorMsg = body.message ?: "Error desconocido al iniciar pago"
+                            val errorMsg = body.message ?: "Error desconocido"
                             Toast.makeText(context, "Error: $errorMsg", Toast.LENGTH_LONG).show()
                         }
                     } else {

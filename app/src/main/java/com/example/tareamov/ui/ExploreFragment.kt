@@ -80,6 +80,9 @@ class ExploreFragment : Fragment() {
     // Store all courses for filtering and search
     private var allCoursesList = mutableListOf<Course>()
     
+    // Variable to track pending payment for redirection
+    private var pendingPaymentCourseId: Long? = null
+    
     // Paginación
     private var currentPage = 0
     private val pageSize = 10
@@ -167,6 +170,7 @@ class ExploreFragment : Fragment() {
         return inflater.inflate(R.layout.fragment_explore, container, false)
     }
 
+    @Suppress("DEPRECATION")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
@@ -431,11 +435,83 @@ class ExploreFragment : Fragment() {
         }
     }
 
+    private fun checkPendingPayment(courseId: Long) {
+        if (currentUsername == null) return
+        
+        showFloatingMessage("Verificando pago...", 2000)
+        
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Determine user ID
+                val userId = withContext(Dispatchers.IO) {
+                     com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                } ?: return@launch
+
+                // Poll for status - Backend hopefully updated via Webhook
+                var isPaid = false
+                // Try 2 times
+                repeat(2) { i ->
+                    if (isPaid) return@repeat
+                    if (i > 0) kotlinx.coroutines.delay(1500)
+                    
+                    isPaid = withContext(Dispatchers.IO) {
+                        try {
+                             if (isNetworkAvailable()) {
+                                 val repo = getSyncRepository() 
+                                 val result = repo.executeRawQuery("select id from progreso_estudiante where usuario_estudiante = $userId and curso_id = $courseId")
+                                 result.isNotEmpty()
+                             } else false
+                        } catch (e: Exception) { false }
+                    }
+                }
+                
+                if (isPaid) {
+                    pendingPaymentCourseId = null
+                    val course = coursesList.find { it.id == courseId } ?: allCoursesList.find { it.id == courseId }
+                    
+                    if (course != null) {
+                         showDarkToast("✅ ¡Pago confirmado! Entrando al curso...")
+                         navigateToCourseDetail(course)
+                    } else {
+                        // Reload and try to find
+                        loadCourses(forceRemote = true)
+                        // Note: we can't easily navigate if we don't have the object. 
+                        // But loadCourses will refresh the UI at least.
+                        showDarkToast("✅ ¡Pago confirmado! Selecciona el curso nuevamente.")
+                    }
+                } else {
+                    // Don't clear immediately if we want to allow manual refresh, 
+                    // but to avoid loops, let's clear it and ask user to check manually
+                    pendingPaymentCourseId = null
+                    showDailyMsg("El pago aún no se refleja. Si ya pagaste, espera unos segundos y recarga.")
+                }
+                
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error verifying payment", e)
+                pendingPaymentCourseId = null
+            }
+        }
+    }
+    
+    // Helper to show msg if toast is annoying
+    private fun showDailyMsg(msg: String) {
+        showDarkToast(msg)
+    }
+
     override fun onResume() {
         super.onResume()
+        
         // Re-register network callback if it was unregistered or null
         if (networkCallback == null) {
             setupNetworkMonitoring()
+        }
+        
+        // Check for pending payment redirection
+        if (pendingPaymentCourseId != null) {
+            // Delay slightly to allow network to init
+            Handler(Looper.getMainLooper()).postDelayed({
+                checkPendingPayment(pendingPaymentCourseId!!)
+            }, 500)
         }
         
         // If list is empty, ensure skeleton is visible immediately and try to load
@@ -539,7 +615,7 @@ class ExploreFragment : Fragment() {
         val dialog = Dialog(requireContext())
         val view = layoutInflater.inflate(R.layout.dialog_floating_message, null)
         val messageTv = view.findViewById<TextView>(R.id.floatingMessageTextView)
-        val iconIv = view.findViewById<ImageView>(R.id.floatingIconImageView)
+        // val iconIv = view.findViewById<ImageView>(R.id.floatingIconImageView) // Unused
         messageTv.text = message
 
         dialog.setContentView(view)
@@ -686,16 +762,8 @@ class ExploreFragment : Fragment() {
                     showDarkToast("No puedes inscribirte en tu propio curso")
                     return@launch
                 }
-        
-        // Block enrollment for paid courses (price > 0)
-        if (course.price > 0) {
-            showDarkToast("❌ Este es un curso de pago. Debes realizar el pago para acceder.", Toast.LENGTH_LONG)
-            return@launch
-        }
-        
-                val db = AppDatabase.getDatabase(requireContext())
-                
-                // Get user ID from username
+
+                // Get user ID from username early, as it is needed for payment check
                 val userId = withContext(Dispatchers.IO) {
                     com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
                 }
@@ -705,6 +773,62 @@ class ExploreFragment : Fragment() {
                     Log.e("ExploreFragment", "Failed to get user ID for username: $currentUsername")
                     return@launch
                 }
+        
+        // Handle paid courses (price > 0)
+        if (course.price > 0) {
+            // Check if already paid/approved
+            val isPaid = withContext(Dispatchers.IO) {
+                try {
+                    // Check remote enrollment first (source of truth for payments)
+                    if (isNetworkAvailable()) {
+                         val repo = getSyncRepository()
+                         // Use Supabase Select via raw query or client wrapper
+                         // Note: Security/Injection warning - usually we use parameterized queries. 
+                         // But for now using the available executeRawQuery helper.
+                         // Ensure userId and courseId are safe numbers.
+                         val result = repo.executeRawQuery("select id from progreso_estudiante where usuario_estudiante = $userId and curso_id = ${course.id}")
+                         if (result.isNotEmpty()) return@withContext true
+                    }
+                    
+                    // Fallback to local check
+                    val db = AppDatabase.getDatabase(requireContext())
+                    db.progresoEstudianteDao().getProgreso(userId, course.id) != null
+                } catch (e: Exception) {
+                     Log.e("ExploreFragment", "Error checking paid status", e)
+                     false
+                }
+            }
+
+            if (!isPaid) {
+                try {
+                    showDarkToast("Iniciando proceso de pago...", Toast.LENGTH_SHORT)
+                    val paymentUrl = withContext(Dispatchers.IO) {
+                        getSyncRepository().initiatePayment(userId, course.id, course.price)
+                    }
+                    
+                    if (!paymentUrl.isNullOrEmpty()) {
+                        Log.d("ExploreFragment", "Redirecting to payment URL: $paymentUrl")
+                        // Set pending payment flag to check on return
+                        pendingPaymentCourseId = course.id
+                        
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(paymentUrl))
+                        startActivity(intent)
+                        showDarkToast("Por favor completa el pago en Wompi", Toast.LENGTH_LONG)
+                        return@launch
+                    } else {
+                         showDarkToast("Error al obtener enlace de pago. Intenta nuevamente.")
+                         Log.e("ExploreFragment", "Payment URL was null")
+                         return@launch
+                    }
+                } catch (e: Exception) {
+                    showDarkToast("Error iniciando pago: ${e.message}")
+                    Log.e("ExploreFragment", "Error initiating payment", e)
+                    return@launch
+                }
+            }
+        }
+        
+                val db = AppDatabase.getDatabase(requireContext())
                 
                 // Check if already enrolled
                 val existingProgreso = withContext(Dispatchers.IO) {
@@ -771,7 +895,7 @@ class ExploreFragment : Fragment() {
                     
                     // Update course enrollment count in local Course table
                     withContext(Dispatchers.IO) {
-                        val db = AppDatabase.getDatabase(requireContext())
+                        // val db = AppDatabase.getDatabase(requireContext()) // Shadowed, use outer db
                         val updatedCourse = course.copy(enrollmentCount = course.enrollmentCount + 1)
                         db.courseDao().updateCourse(updatedCourse)
                     }
@@ -1883,6 +2007,7 @@ class ExploreFragment : Fragment() {
     }
 
     // Show filter options dialog with modern BottomSheet
+    @Suppress("DEPRECATION")
     private fun showFilterOptions() {
         val bottomSheetDialog = BottomSheetDialog(requireContext(), R.style.DarkBottomSheetDialogTheme)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_filter_courses, null)

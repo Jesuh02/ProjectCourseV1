@@ -176,16 +176,36 @@ fun Fragment.handlePaidCourseAccess(
             // Update payment description with price
             paymentDescriptionTextView?.text = "Para acceder al contenido completo de este curso, es necesario realizar un pago de $${coursePrice}."
 
-            // Show payment interface
-            paymentButtonContainer.visibility = View.VISIBLE
-            topicsContainer?.visibility = View.GONE
-            noTopicsTextView?.visibility = View.GONE
-            noTasksTextView?.visibility = View.GONE
-            onContentAccess(false)
+            // Check if user has access (is enrolled/pain)
+            val userId = withContext(Dispatchers.IO) {
+                com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+            }
 
-            paymentButton.setOnClickListener {
-                showPaymentOptions(courseId, courseName, coursePrice, username) { result -> 
-                       // Handle result if needed
+            val hasAccess = if (userId != null) {
+                val localAccess = db.progresoEstudianteDao().getProgreso(userId, courseId) != null
+                localAccess // Ideally we would check remote too, but local is cache
+            } else false
+
+            if (hasAccess) {
+                paymentButtonContainer.visibility = View.GONE
+                topicsContainer?.visibility = View.VISIBLE
+                noTopicsTextView?.visibility = View.GONE
+                noTasksTextView?.visibility = View.GONE
+                onContentAccess(true)
+            } else {
+                paymentButtonContainer.visibility = View.VISIBLE
+                topicsContainer?.visibility = View.GONE
+                // Hide content
+                onContentAccess(false)
+                
+                paymentButton.setOnClickListener {
+                    showPaymentOptions(courseId, courseName, coursePrice, username) { success ->
+                        if (success) {
+                            // Optimistically hide payment? Or wait for sync?
+                            // Ideally show message to wait for validation
+                            Toast.makeText(requireContext(), "Verificando pago...", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }
             }
 
@@ -217,13 +237,6 @@ fun Fragment.showPaymentOptions(
 
     // Navigate to the Payment Form Fragment with arguments
     try {
-        /*
-        // Redirección directa a Wompi (Omitiendo formulario)
-        val wompiUrl = "https://checkout.wompi.co/l/VPOS_kN1kEQ"
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(wompiUrl))
-        startActivity(intent)
-        */
-        
         val bundle = Bundle().apply {
             putLong("courseId", courseId)
             putString("courseName", courseName)

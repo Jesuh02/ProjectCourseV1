@@ -6961,7 +6961,7 @@ object SupabaseClient {
     }
 
     /**
-     * Combined method: Notify subscribers with both in-app notifications AND push notifications
+     * Combined method: Notify subscribers using the Backend Endpoint (Email + In-App + Push)
      */
     suspend fun notifySubscribersOfNewCourseWithPush(
         creatorUserId: Long,
@@ -6971,27 +6971,40 @@ object SupabaseClient {
         courseTitle: String,
         courseThumbnailUrl: String?
     ): Pair<Int, Int> = withContext(Dispatchers.IO) {
-        // Send in-app notifications
-        val inAppCount = notifySubscribersOfNewCourse(
-            creatorUserId = creatorUserId,
-            creatorUsername = creatorUsername,
-            creatorAvatarUrl = creatorAvatarUrl,
-            courseId = courseId,
-            courseTitle = courseTitle,
-            courseThumbnailUrl = courseThumbnailUrl
-        )
+        try {
+            val jsonBody = com.google.gson.JsonObject().apply {
+                addProperty("creatorUserId", creatorUserId)
+                addProperty("creatorUsername", creatorUsername)
+                addProperty("courseId", courseId)
+                addProperty("courseTitle", courseTitle)
+                addProperty("courseThumbnailUrl", courseThumbnailUrl)
+            }
 
-        // Send push notifications
-        val pushCount = sendPushNotificationsToSubscribers(
-            creatorUserId = creatorUserId,
-            creatorUsername = creatorUsername,
-            courseId = courseId,
-            courseTitle = courseTitle,
-            courseThumbnailUrl = courseThumbnailUrl
-        )
+            // Use the Backend URL for notifications (PaymentApi.BASE_URL points to the backend)
+            val backendUrl = "${com.example.tareamov.network.PaymentApi.BASE_URL}notify-course-creation"
+            
+            Log.d("SupabaseClient", "Sending notification request to: $backendUrl")
 
-        Log.d("SupabaseClient", "✅ Total notifications: $inAppCount in-app, $pushCount push")
-        return@withContext Pair(inAppCount, pushCount)
+            val request = Request.Builder()
+                .url(backendUrl) 
+                .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    Log.d("SupabaseClient", "✅ Backend notification successful")
+                    // Backend returns success count, but for client compatibility we return dummy positive values
+                    // or parse response if needed.
+                    return@withContext Pair(1, 1) 
+                } else {
+                    Log.e("SupabaseClient", "❌ Backend notification failed: ${response.code} ${response.message}")
+                    return@withContext Pair(0, 0)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error calling notify-course-creation backend", e)
+            Pair(0, 0)
+        }
     }
 
     suspend fun fetchAverageGradeForCreator(creatorId: Long): Float = withContext(Dispatchers.IO) {

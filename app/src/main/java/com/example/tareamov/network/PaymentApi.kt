@@ -31,8 +31,7 @@ data class PaymentInitiationResponse(
     @SerializedName("success") val success: Boolean,
     @SerializedName("urlBankPayment") val urlBankPayment: String?,
     @SerializedName("transactionId") val transactionId: String?,
-    @SerializedName("message") val message: String?,
-    @SerializedName("status") val status: String? = null
+    @SerializedName("message") val message: String?
 )
 
 interface PaymentApi {
@@ -46,6 +45,8 @@ interface PaymentApi {
     ): Response<PaymentInitiationResponse>
 
     companion object {
+        const val BASE_URL = "https://mcp-backenddeploy-production.up.railway.app/"
+
         fun create(baseUrl: String): PaymentApi {
             // Security: Use Level.NONE for production to avoid logging PII
             // Use Level.BODY only during development/debugging
