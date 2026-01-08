@@ -31,7 +31,8 @@ data class PaymentInitiationResponse(
     @SerializedName("success") val success: Boolean,
     @SerializedName("urlBankPayment") val urlBankPayment: String?,
     @SerializedName("transactionId") val transactionId: String?,
-    @SerializedName("message") val message: String?
+    @SerializedName("message") val message: String?,
+    @SerializedName("status") val status: String? = null
 )
 
 interface PaymentApi {

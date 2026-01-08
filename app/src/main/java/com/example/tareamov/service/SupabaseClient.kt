@@ -312,6 +312,11 @@ object SupabaseClient {
         }
     }
 
+    /**
+     * Check if a user with the given username already exists in Supabase.
+     */
+
+
     suspend fun insertUsuario(usuario: Usuario): Long? {
         Log.d("SupabaseClient", "insertUsuario called for username: ${usuario.usuario}, email: ${usuario.email}, persona_id: ${usuario.persona_id}")
         // Only include fields that exist in the Supabase usuarios table

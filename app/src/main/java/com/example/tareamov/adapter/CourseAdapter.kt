@@ -685,15 +685,50 @@ class CourseAdapter(
                     } else {
                         // Not enrolled yet - Check if it's a paid course
                         if (course.price > 0) {
-                            // Paid course - Block enrollment
+                            // Paid course - Check for any partial payments to show remaining amount
+                            val syncRepo = createSyncRepository(db)
+                            val sql = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = ${course.id} AND status = 'APPROVED'"
+                            val txResult = syncRepo.executeRawQuery(sql)
+                            
+                            var paidAmount = 0.0
+                            try {
+                                if (txResult.isNotEmpty()) {
+                                    val row = txResult[0]
+                                    // Handle different number types (Int, Long, Double) coming from JSON
+                                    val paidObj = row["paid"]
+                                    if (paidObj != null) {
+                                        paidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
+                                    }
+                                }
+                            } catch(e: Exception) {
+                                Log.e("CourseAdapter", "Error parsing paid amount", e)
+                            }
+                            
+                            val remaining = kotlin.math.max(0.0, course.price - paidAmount)
+                            
                             holder.enrolledStatusContainer?.visibility = View.GONE
                             holder.enrollButtonContainer?.visibility = View.VISIBLE
                             holder.enrollButton?.visibility = View.VISIBLE
-                            holder.enrollButton?.text = "Curso de pago - Requiere compra"
-                            holder.enrollButton?.isEnabled = false
-                            holder.enrollButton?.alpha = 0.5f
+                            
+                            val localeCO = java.util.Locale("es", "CO")
+                            val currencyFormat = java.text.NumberFormat.getCurrencyInstance(localeCO)
+                            
+                            if (paidAmount > 0 && remaining > 0) {
+                                holder.enrollButton?.text = "Falta: ${currencyFormat.format(remaining)}"
+                            } else {
+                                holder.enrollButton?.text = "Comprar ${currencyFormat.format(course.price)}"
+                            }
+                            
+                            holder.enrollButton?.isEnabled = true // Always allow clicking to pay/complete payment
+                            holder.enrollButton?.alpha = 1.0f
                             holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
-                            Log.d("CourseAdapter", "Course ${course.id} is paid, enrollment blocked")
+                            
+                            // Enable click to go to details/payment
+                            holder.enrollButton?.setOnClickListener {
+                                onCourseClickListener(course) // Navigate to detail which handles payment
+                            }
+                            
+                            Log.d("CourseAdapter", "Course ${course.id} is paid. Paid: $paidAmount, Remaining: $remaining")
                         } else {
                             // Free course - Show enrollment section
                             holder.enrolledStatusContainer?.visibility = View.GONE

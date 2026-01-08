@@ -35,6 +35,7 @@ class SelectTopicFragment : Fragment() {
     private var courseId: Long = -1
     private var courseName: String = ""
     private var autoOpenTasks: Boolean = false
+    private var isCreatingTask: Boolean = false
     private var autoOpenedTasks: Boolean = false
     private lateinit var topicsRecyclerView: RecyclerView
     private lateinit var topicSelectionAdapter: TopicSelectionAdapter
@@ -47,7 +48,8 @@ class SelectTopicFragment : Fragment() {
             courseId = it.getLong("courseId", -1)
             courseName = it.getString("courseName", "")
             autoOpenTasks = it.getBoolean("autoOpenTasks", false)
-            Log.d("SelectTopicFragment", "Received courseId: $courseId, courseName: $courseName")
+            isCreatingTask = it.getBoolean("isCreatingTask", false)
+            Log.d("SelectTopicFragment", "Received courseId: $courseId, courseName: $courseName, isCreatingTask: $isCreatingTask")
         }
         if (courseId == -1L) {
             Log.e("SelectTopicFragment", "Invalid courseId received.")
@@ -191,9 +193,16 @@ class SelectTopicFragment : Fragment() {
                 putString("courseName", courseName)
                 putLong("topicId", selectedTopic.id)
                 putLong("taskId", -1L)
+                putBoolean("isCreatingTask", isCreatingTask) // Pass flag if needed downstream, though destinationId handles the main logic
             }
-            // Navegar al fragmento de selección de tarea recién creado
-            findNavController().navigate(R.id.action_selectTopicFragment_to_selectTaskFragment, bundle)
+            
+            // Navegar al fragmento de selección de tarea o creación de tarea
+            val destinationId = if (isCreatingTask) {
+                R.id.action_selectTopicFragment_to_courseTaskFragment
+            } else {
+                R.id.action_selectTopicFragment_to_selectTaskFragment
+            }
+            findNavController().navigate(destinationId, bundle)
         }
 
         topicsRecyclerView.apply {
@@ -205,7 +214,7 @@ class SelectTopicFragment : Fragment() {
         }
     }
 
-    // ============ ANIMATION FUNCTIONS - Apple Style ============
+    // ============ ANIMATION FUNCTIONS -   Style ============
 
     private fun applyEntranceAnimations(vararg views: View?) {
         views.forEachIndexed { index, view ->

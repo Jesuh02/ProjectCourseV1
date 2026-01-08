@@ -217,6 +217,13 @@ fun Fragment.showPaymentOptions(
 
     // Navigate to the Payment Form Fragment with arguments
     try {
+        /*
+        // Redirección directa a Wompi (Omitiendo formulario)
+        val wompiUrl = "https://checkout.wompi.co/l/VPOS_kN1kEQ"
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(wompiUrl))
+        startActivity(intent)
+        */
+        
         val bundle = Bundle().apply {
             putLong("courseId", courseId)
             putString("courseName", courseName)

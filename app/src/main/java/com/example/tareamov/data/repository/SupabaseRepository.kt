@@ -654,6 +654,96 @@ class SupabaseRepository(
     }
     
     /**
+     * Check transaction status via Backend API and update database if approved.
+     * Returns a map with details including 'status', 'isComplete', 'remaining', etc.
+     */
+    suspend fun verifyTransactionStatus(transactionId: String): Map<String, Any> {
+        // Backend URL
+        val backendUrl = "https://mcp-backenddeploy-production.up.railway.app"
+        val url = "$backendUrl/payment/status/$transactionId"
+        
+        Log.d("SupabaseRepo", "Verifying transaction: $url")
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .build()
+
+        return try {
+            val response = client.newCall(request).execute()
+            val body = response.body?.string()
+            Log.d("SupabaseRepo", "Verification Response: $body")
+            
+            val result = mutableMapOf<String, Any>()
+            result["success"] = false
+            
+            if (response.isSuccessful && body != null) {
+                // Use JsonParser to handle nested objects safely
+                val jsonObject = com.google.gson.JsonParser.parseString(body).asJsonObject
+                val status = if (jsonObject.has("status")) jsonObject.get("status").asString else "UNKNOWN"
+                
+                result["success"] = true
+                result["status"] = status
+                result["isApproved"] = (status == "APPROVED")
+                
+                if (jsonObject.has("paymentDetails")) {
+                    val details = jsonObject.getAsJsonObject("paymentDetails")
+                    result["isComplete"] = if (details.has("isComplete")) details.get("isComplete").asBoolean else false
+                    result["remaining"] = if (details.has("remaining")) details.get("remaining").asDouble else 0.0
+                    result["paid"] = if (details.has("paid")) details.get("paid").asDouble else 0.0
+                }
+            }
+            result
+        } catch (e: Exception) {
+            Log.e("SupabaseRepo", "Error verifying transaction", e)
+            mapOf("success" to false, "error" to e.message.toString())
+        }
+    }
+
+    /**
+     * Get the latest PENDING transaction ID for a user and course
+     */
+    suspend fun getPendingTransactionId(userId: Long, courseId: Long): String? {
+        // Query transactions table
+        // We select the most recent pending transaction
+        val url = "$supabaseUrl/rest/v1/transactions?user_id=eq.$userId&course_id=eq.$courseId&status=eq.PENDING&order=created_at.desc&limit=1"
+        
+        val request = Request.Builder()
+            .url(url)
+            .header("apikey", supabaseKey)
+            .header("Authorization", "Bearer $supabaseKey")
+            .get()
+            .build()
+
+        return try {
+            val response = client.newCall(request).execute()
+            val body = response.body?.string()
+            
+            if (response.isSuccessful && body != null && body != "[]") {
+                val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                if (jsonArray.size() > 0) {
+                    val tx = jsonArray.get(0).asJsonObject
+                    // Check for external_reference or reference
+                    if (tx.has("external_reference") && !tx.get("external_reference").isJsonNull) {
+                        tx.get("external_reference").asString
+                    } else if (tx.has("reference") && !tx.get("reference").isJsonNull) {
+                         tx.get("reference").asString
+                    } else {
+                        null
+                    }
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseRepo", "Error fetching pending transaction", e)
+            null
+        }
+    }
+    
+    /**
      * Search videos by title, username, or category
      */
     fun searchVideos(

@@ -77,6 +77,11 @@ class SyncRepository(
     private val supabaseRepo = SupabaseRepository()
     private val supabaseClient = com.example.tareamov.service.SupabaseClient
 
+    // Expose helper to run raw queries (wrapper around SupabaseRepository)
+    suspend fun executeRawQuery(sql: String): List<Map<String, Any?>> {
+        return supabaseRepo.executeRawQuery(sql)
+    }
+
     // Fetch usuario plus role info from Supabase for a given username
     suspend fun fetchUsuarioWithRoleFromSupabase(username: String): com.example.tareamov.data.dao.UsuarioWithRole? {
         return try {
@@ -793,6 +798,16 @@ class SyncRepository(
             Log.w("SyncRepository", "fetchCreatorNameByCourseTitle failed for title=$title", e)
             null
         }
+    }
+
+    // Verify transaction status (wrapper for SupabaseRepository)
+    suspend fun verifyTransactionStatus(transactionId: String): Map<String, Any> {
+         return supabaseRepo.verifyTransactionStatus(transactionId)
+    }
+
+    // Get pending transaction id (wrapper for SupabaseRepository)
+    suspend fun getPendingTransactionId(userId: Long, courseId: Long): String? {
+        return supabaseRepo.getPendingTransactionId(userId, courseId)
     }
 
     // Public wrapper: fetch a single Course by exact title from Supabase (case-insensitive exact match).

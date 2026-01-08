@@ -526,6 +526,10 @@
             android:name="courseName"
             app:argType="string"
             android:defaultValue="" />
+        <argument
+            android:name="isCreatingTask"
+            app:argType="boolean"
+            android:defaultValue="false" />
         <!-- Action to navigate to CourseTaskFragment -->
         <action
             android:id="@+id/action_selectTopicFragment_to_courseTaskFragment"

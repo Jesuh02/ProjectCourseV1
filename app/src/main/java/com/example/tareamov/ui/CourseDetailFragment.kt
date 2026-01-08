@@ -129,8 +129,47 @@ class CourseDetailFragment : Fragment() {
         super.onResume()
         if (courseId != -1L) {
             Log.d("CourseDetailFragment", "🔄 onResume: Reloading course details for courseId: $courseId")
-            // Only call loadCourseDetails - it already loads topics at the end
-            // Calling both loadCourseDetails() AND refreshTopicsFromSupabase() causes duplication
+            
+            // Check for pending transactions to auto-unlock course
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val userId = sessionManager.getUserId()
+                    if (userId != -1L) {
+                        val repo = com.example.tareamov.data.repository.SupabaseRepository()
+                        val pendingTxId = repo.getPendingTransactionId(userId, courseId)
+                        
+                        if (pendingTxId != null) {
+                            Log.d("CourseDetailFragment", "Found pending transaction: $pendingTxId. Verifying...")
+                            val result = repo.verifyTransactionStatus(pendingTxId)
+                            val isApproved = result["isApproved"] as? Boolean ?: false
+                            val isComplete = result["isComplete"] as? Boolean ?: false
+                            val remaining = result["remaining"] as? Double ?: 0.0
+                            
+                            withContext(Dispatchers.Main) {
+                                if (isApproved && isComplete) {
+                                    Toast.makeText(context, "¡Pago completo verificado! Curso desbloqueado.", Toast.LENGTH_LONG).show()
+                                    loadCourseDetails() // Reload to update UI
+                                } else if (isApproved && !isComplete) {
+                                    val formattedRemaining = try {
+                                        java.text.NumberFormat.getCurrencyInstance(java.util.Locale("es", "CO")).format(remaining)
+                                    } catch (e: Exception) { "$remaining COP" }
+                                    
+                                    val formattedPaid = try {
+                                         java.text.NumberFormat.getCurrencyInstance(java.util.Locale("es", "CO")).format(result["paid"] as? Double ?: 0.0)
+                                    } catch (e: Exception) { "" }
+
+                                    Toast.makeText(context, "Pago parcial recibido ($formattedPaid). Falta: $formattedRemaining", Toast.LENGTH_LONG).show()
+                                    loadCourseDetails()
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("CourseDetailFragment", "Error checking transaction status", e)
+                }
+            }
+
+            // Also reload standard details
             loadCourseDetails()
         }
     }
@@ -221,7 +260,7 @@ class CourseDetailFragment : Fragment() {
                     Toast.makeText(context, "Nombre del curso no cargado aún. Intenta de nuevo.", Toast.LENGTH_SHORT).show()
                 } else {
                     // Course name is available, proceed with navigation
-                    navigateToSelectTopic(currentCourseName) // Pass the confirmed name
+                    navigateToSelectTopic(currentCourseName, isCreatingTask = true) // Pass the confirmed name and creation flag
                 }
             } else {
                 Log.e("CourseDetailFragment", "Invalid courseId (-1) when trying to add task.")
@@ -763,13 +802,14 @@ class CourseDetailFragment : Fragment() {
     }
 
 
-    private fun navigateToSelectTopic(nameOfCourse: String) { // Accept course name as parameter
+    private fun navigateToSelectTopic(nameOfCourse: String, isCreatingTask: Boolean = false) { // Accept course name and creating flag
         // Prefer resolvedCourseId (may have been remapped to Supabase id); fallback to original courseId
         val sendCourseId = if (resolvedCourseId > 0) resolvedCourseId else courseId
-        Log.d("CourseDetailFragment", "Navigating to SelectTopicFragment for courseId: $sendCourseId, courseName: $nameOfCourse")
+        Log.d("CourseDetailFragment", "Navigating to SelectTopicFragment for courseId: $sendCourseId, courseName: $nameOfCourse, isCreatingTask: $isCreatingTask")
         val bundle = Bundle().apply {
             putLong("courseId", sendCourseId)
             putString("courseName", nameOfCourse) // Pass the confirmed course name
+            putBoolean("isCreatingTask", isCreatingTask)
         }
         // Ensure the action ID matches the one defined in nav_graph.xml
         // Make sure R.id.action_courseDetailFragment_to_selectTopicFragment exists in your nav_graph
