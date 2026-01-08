@@ -108,6 +108,9 @@ class VideoHomeFragment : Fragment() {
     private val allVideosList = mutableListOf<VideoData>()
 
     private var searchJob: kotlinx.coroutines.Job? = null
+    
+    // Flag to open comments automatically (e.g. from notification)
+    private var shouldOpenComments = false
 
     // Restore state variables
     private var restorePosition = 0
@@ -181,6 +184,7 @@ class VideoHomeFragment : Fragment() {
         val videoId = arguments?.getLong("videoId", -1L) ?: -1L
         val videoTitle = arguments?.getString("videoTitle")
         val videoUsername = arguments?.getString("videoUsername")
+        shouldOpenComments = arguments?.getBoolean("openComments", false) ?: false
 
         if (videoId != -1L) {
             Log.d("VideoHomeFragment", "📹 Video specific navigation requested:")
@@ -263,6 +267,25 @@ class VideoHomeFragment : Fragment() {
                 
                 val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
                 
+                // Handle auto-opening comments if requested (e.g. from notification)
+                if (shouldOpenComments && videoList.isNotEmpty()) {
+                    // content is loaded, try to find the video
+                    val reqVideoId = arguments?.getLong("videoId", -1L) ?: -1L
+                    val targetIndex = if (reqVideoId != -1L) videoList.indexOfFirst { it.id == reqVideoId } else 0
+                    
+                    if (targetIndex != -1) {
+                         // Post to message queue to ensure view is ready
+                         viewPager?.post {
+                             if (viewPager.currentItem != targetIndex) {
+                                 viewPager.setCurrentItem(targetIndex, false)
+                             }
+                             showCommentsDialog(videoList[targetIndex])
+                             shouldOpenComments = false // Reset flag
+                         }
+                    }
+                }
+
+                // 
                 // Check for restore path first
                 if (restorePath != null && restorePosition > 0) {
                     val index = videos.indexOfFirst { it.videoUriString == restorePath || it.localFilePath == restorePath }
