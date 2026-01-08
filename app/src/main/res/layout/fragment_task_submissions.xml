@@ -50,6 +50,97 @@
         android:layout_height="1dp"
         android:background="#333333"/>
 
+    <!-- Upload Section for Students -->
+    <LinearLayout
+        android:id="@+id/uploadSection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:background="#1A1A2E"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/uploadStatusTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Sube tu entrega"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/selectedFileTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Ningún archivo seleccionado"
+            android:textColor="#AAAAAA"
+            android:textSize="14sp"
+            android:layout_marginBottom="12dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/selectFileButton"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:text="Seleccionar Archivo"
+                android:textSize="12sp"
+                android:backgroundTint="#3F51B5"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/submitButton"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:text="Entregar"
+                android:textSize="12sp"
+                android:backgroundTint="#4CAF50"
+                android:enabled="false" />
+        </LinearLayout>
+
+        <!-- GitHub URL Input -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/githubUrlLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:hint="O ingresa URL de repositorio GitHub"
+            app:boxBackgroundColor="#2A2A3E"
+            app:hintTextColor="#AAAAAA">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/githubUrlEditText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:inputType="textUri" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <Button
+            android:id="@+id/submitGitHubButton"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:text="Entregar Repositorio"
+            android:textSize="12sp"
+            android:backgroundTint="#6E40C9" />
+    </LinearLayout>
+
+    <!-- Divider after upload section -->
+    <View
+        android:id="@+id/uploadDivider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#333333"
+        android:visibility="gone"/>
+
     <!-- Content -->
     <FrameLayout
         android:layout_width="match_parent"
@@ -61,6 +152,19 @@
             android:layout_height="match_parent"
             android:padding="16dp"
             android:clipToPadding="false" />
+
+        <!-- Empty State -->
+        <TextView
+            android:id="@+id/emptyStateTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:text="No hay entregas todavía.\nSube tu archivo para entregar la tarea."
+            android:textColor="#888888"
+            android:textSize="16sp"
+            android:padding="32dp"
+            android:visibility="gone" />
 
     </FrameLayout>
 </LinearLayout>

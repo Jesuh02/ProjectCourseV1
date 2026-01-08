@@ -80,7 +80,9 @@ class TaskSubmissionsFragment : Fragment() {
             selectedFileUri = uri
             // Usar getFileName() para mostrar el nombre real del archivo
             val displayFileName = getFileName(uri) ?: uri.lastPathSegment ?: "Archivo seleccionado"
-            findViewByName<TextView>("selectedFileNameTextView")?.text = displayFileName
+            view?.findViewById<TextView>(R.id.selectedFileTextView)?.text = displayFileName
+            // Enable submit button
+            view?.findViewById<Button>(R.id.submitButton)?.isEnabled = true
             Log.d("TaskSubmissionsFragment", "📎 Archivo seleccionado: $displayFileName")
             Log.d("TaskSubmissionsFragment", "📎 URI: $uri")
             Log.d("TaskSubmissionsFragment", "📎 URI scheme: ${uri.scheme}, authority: ${uri.authority}")
@@ -165,20 +167,56 @@ class TaskSubmissionsFragment : Fragment() {
         if (isCourseCreator) {
             // Course creator sees progress of all students
             findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
-            findViewByName<LinearLayout>("uploadSection")?.visibility = View.GONE
+            view.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
+            view.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
             loadTaskProgress()
         } else {
-            // Regular student: upload UI removed from layout
-            findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
+            // Regular student: show upload section
+            findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+            view.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.VISIBLE
+            view.findViewById<View>(R.id.uploadDivider)?.visibility = View.VISIBLE
+            
+            // Setup upload buttons
+            setupUploadSection(view)
 
-            // Check if user has already submitted this task (no status TextView available)
-            checkUserSubmission(null)
+            // Check if user has already submitted this task
+            val statusTextView = view.findViewById<TextView>(R.id.uploadStatusTextView)
+            checkUserSubmission(statusTextView)
         }
 
         loadSubmissions()
         checkAndApplyPendingCalifications()
         loadTaskWithCourseInfo()
         return view
+    }
+    
+    /**
+     * Configura los botones y listeners de la sección de subida de archivos
+     */
+    private fun setupUploadSection(view: View) {
+        val selectFileButton = view.findViewById<Button>(R.id.selectFileButton)
+        val submitButton = view.findViewById<Button>(R.id.submitButton)
+        val selectedFileTextView = view.findViewById<TextView>(R.id.selectedFileTextView)
+        val githubUrlEditText = view.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.githubUrlEditText)
+        val submitGitHubButton = view.findViewById<Button>(R.id.submitGitHubButton)
+        
+        selectFileButton?.setOnClickListener {
+            openFilePicker()
+        }
+        
+        submitButton?.setOnClickListener {
+            if (selectedFileUri != null && !isSubmitting) {
+                submitTaskFile()
+            } else {
+                Toast.makeText(context, "Por favor selecciona un archivo primero", Toast.LENGTH_SHORT).show()
+            }
+        }
+        
+        submitGitHubButton?.setOnClickListener {
+            if (githubUrlEditText != null) {
+                submitGitHubRepository(githubUrlEditText)
+            }
+        }
     }
 
     /**
@@ -451,23 +489,24 @@ class TaskSubmissionsFragment : Fragment() {
                     else
                         "Tarea entregada, pendiente de calificación"
 
-                    // If the submission is already graded, hide the upload and progress sections
+                    // If the submission is already graded, hide the upload section
                     if (submission.grade != null) {
-                        findViewByName<LinearLayout>("uploadSection")?.visibility = View.GONE
+                        view?.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
+                        view?.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
                         findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
                     } else {
-                        // Not graded yet: disable duplicate actions if upload controls exist
-                        findViewByName<Button>("submitFileButton")?.isEnabled = false
-                        findViewByName<Button>("submitFileButton")?.text = "Ya enviado"
-                        findViewByName<Button>("submitGitHubButton")?.isEnabled = false
-                        findViewByName<Button>("submitGitHubButton")?.text = "Ya enviado"
-                        findViewByName<Button>("selectFileButton")?.isEnabled = false
+                        // Not graded yet: disable duplicate actions
+                        view?.findViewById<Button>(R.id.submitButton)?.isEnabled = false
+                        view?.findViewById<Button>(R.id.submitButton)?.text = "Ya enviado"
+                        view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = false
+                        view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Ya enviado"
+                        view?.findViewById<Button>(R.id.selectFileButton)?.isEnabled = false
                     }
                 } else {
                     // User hasn't submitted yet
                     hasUserSubmitted = false
-                    statusTextView?.text = "No has enviado ninguna tarea aún"
-                    statusTextView?.setTextColor(resources.getColor(android.R.color.darker_gray, null))
+                    statusTextView?.text = "Sube tu entrega"
+                    statusTextView?.setTextColor(resources.getColor(android.R.color.white, null))
 
                     // Update progress for student (views may be absent)
                     findViewByName<ProgressBar>("taskProgressBar")?.let {
@@ -542,8 +581,14 @@ class TaskSubmissionsFragment : Fragment() {
                 }
 
                 if (submissions.isEmpty()) {
-                    // Show empty state
-                    view?.findViewById<TextView>(R.id.emptyStateTextView)?.visibility = View.VISIBLE
+                    // Show empty state with appropriate message
+                    val emptyTextView = view?.findViewById<TextView>(R.id.emptyStateTextView)
+                    if (isCourseCreator) {
+                        emptyTextView?.text = "Aún no hay entregas de estudiantes para esta tarea."
+                    } else {
+                        emptyTextView?.text = "Aún no has entregado esta tarea.\nUsa la sección superior para subir tu archivo."
+                    }
+                    emptyTextView?.visibility = View.VISIBLE
                     recyclerView.visibility = View.GONE
                 } else {
                     // Show submissions
