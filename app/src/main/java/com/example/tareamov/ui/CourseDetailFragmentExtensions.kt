@@ -176,12 +176,18 @@ fun Fragment.handlePaidCourseAccess(
             // Update payment description with price
             paymentDescriptionTextView?.text = "Para acceder al contenido completo de este curso, es necesario realizar un pago de $${coursePrice}."
 
-            // Since purchase functionality is disabled, show content directly
-            paymentButtonContainer.visibility = View.GONE
-            topicsContainer?.visibility = View.VISIBLE
+            // Show payment interface
+            paymentButtonContainer.visibility = View.VISIBLE
+            topicsContainer?.visibility = View.GONE
             noTopicsTextView?.visibility = View.GONE
             noTasksTextView?.visibility = View.GONE
-            onContentAccess(true)
+            onContentAccess(false)
+
+            paymentButton.setOnClickListener {
+                showPaymentOptions(courseId, courseName, coursePrice, username) { result -> 
+                       // Handle result if needed
+                }
+            }
 
         } catch (e: Exception) {
             Log.e("CourseDetail", "Error checking payment status: ${e.message}")
