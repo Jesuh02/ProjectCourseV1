@@ -865,6 +865,22 @@ class RegisterFragment : Fragment() {
                         return@launch
                     }
 
+                    // Verificar si el email ya existe en Supabase
+                    val remoteUserByEmail = withContext(Dispatchers.IO) {
+                        try {
+                            SupabaseClient.fetchUsuarioByEmail(email)
+                        } catch (e: Exception) {
+                            Log.w("RegisterFragment", "Error checking email in Supabase: ${e.message}")
+                            null
+                        }
+                    }
+                    if (remoteUserByEmail != null) {
+                        withContext(Dispatchers.Main) {
+                            emailLayout.error = "Este correo electrónico ya está registrado"
+                            Toast.makeText(requireContext(), "El correo electrónico ya está en uso. Por favor usa otro.", Toast.LENGTH_LONG).show()
+                        }
+                        return@launch
+                    }
                 }
 
                 // Crear entidad Persona con el avatar
@@ -889,11 +905,27 @@ class RegisterFragment : Fragment() {
                 
                 if (SupabaseClient.isConfigured()) {
                     try {
-                        // Insert persona to Supabase first
-                        remotePersonaId = withContext(Dispatchers.IO) { 
-                            SupabaseClient.insertPersona(persona) 
+                        // Check if a persona with this identificacion already exists
+                        val existingPersona = withContext(Dispatchers.IO) {
+                            try {
+                                SupabaseClient.fetchPersonaByIdentificacion(username)
+                            } catch (e: Exception) {
+                                Log.w("RegisterFragment", "Error checking existing persona: ${e.message}")
+                                null
+                            }
                         }
-                        Log.d("RegisterFragment", "Persona insertada en Supabase con id: $remotePersonaId")
+                        
+                        if (existingPersona != null) {
+                            // Persona already exists, use the existing ID
+                            remotePersonaId = existingPersona.id
+                            Log.d("RegisterFragment", "Persona ya existe en Supabase con id: $remotePersonaId, reutilizando...")
+                        } else {
+                            // Insert persona to Supabase
+                            remotePersonaId = withContext(Dispatchers.IO) { 
+                                SupabaseClient.insertPersona(persona) 
+                            }
+                            Log.d("RegisterFragment", "Persona insertada en Supabase con id: $remotePersonaId")
+                        }
 
                         if (remotePersonaId != null) {
                             // Create usuario with the remote persona_id

@@ -262,18 +262,68 @@ object SupabaseClient {
         return insertRecord("personas", payload)
     }
 
+    /**
+     * Fetch a Persona by its identificacion field (unique constraint).
+     * Returns null if not found.
+     */
+    suspend fun fetchPersonaByIdentificacion(identificacion: String): Persona? = withContext(Dispatchers.IO) {
+        try {
+            val encodedId = java.net.URLEncoder.encode(identificacion, "UTF-8")
+            val path = "personas?identificacion=eq.$encodedId&limit=1"
+            val request = buildGetRequest(path)
+            val response = client.newCall(request).execute()
+            val body = response.body?.string()
+            
+            if (response.isSuccessful && !body.isNullOrEmpty()) {
+                val array = gson.fromJson(body, Array<Persona>::class.java)
+                if (array.isNotEmpty()) {
+                    return@withContext array[0]
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching persona by identificacion: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Check if a user with the given email already exists in Supabase.
+     * Returns the Usuario if found, null otherwise.
+     */
+    suspend fun fetchUsuarioByEmail(email: String): Usuario? = withContext(Dispatchers.IO) {
+        try {
+            val encodedEmail = java.net.URLEncoder.encode(email, "UTF-8")
+            val path = "usuarios?email=eq.$encodedEmail&limit=1"
+            val request = buildGetRequest(path)
+            val response = client.newCall(request).execute()
+            val body = response.body?.string()
+            
+            if (response.isSuccessful && !body.isNullOrEmpty()) {
+                val array = underscoredGson.fromJson(body, Array<Usuario>::class.java)
+                if (array.isNotEmpty()) {
+                    return@withContext array[0]
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching usuario by email: ${e.message}", e)
+            null
+        }
+    }
+
     suspend fun insertUsuario(usuario: Usuario): Long? {
-        Log.d("SupabaseClient", "insertUsuario called for username: ${usuario.usuario}, email: ${usuario.email}, persona_id: ${usuario.persona_id}, rol_id: ${usuario.rol_id}")
+        Log.d("SupabaseClient", "insertUsuario called for username: ${usuario.usuario}, email: ${usuario.email}, persona_id: ${usuario.persona_id}")
         // Only include fields that exist in the Supabase usuarios table
+        // Note: rol_id is NOT in the remote usuarios table - roles are managed separately
         val payload = mapOf(
             "username" to usuario.usuario,
             "contrasena" to usuario.contrasena,
             "persona_id" to usuario.persona_id,
-            "rol_id" to usuario.rol_id,
             "email" to usuario.email,
             "avatar" to usuario.avatar,
             "is_active" to usuario.isActive
-            // Note: email_verified, last_login, created_at are managed by Supabase or don't exist in remote table
+            // Note: email_verified, last_login, created_at, rol_id are managed by Supabase or don't exist in remote table
         )
         val result = insertRecord("usuarios", payload)
         Log.d("SupabaseClient", "insertUsuario result for ${usuario.usuario}: $result")
