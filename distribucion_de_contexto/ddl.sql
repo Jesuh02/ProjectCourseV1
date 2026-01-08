@@ -200,6 +200,26 @@ CREATE TABLE public.topics (
   CONSTRAINT topics_pkey PRIMARY KEY (id),
   CONSTRAINT topics_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id)
 );
+CREATE TABLE public.transactions (
+  id bigint NOT NULL DEFAULT nextval('transactions_id_seq_custom'::regclass),
+  user_id bigint NOT NULL,
+  course_id bigint NOT NULL,
+  amount numeric NOT NULL,
+  currency text DEFAULT 'COP'::text,
+  status text NOT NULL DEFAULT 'PENDING'::text,
+  payment_method text DEFAULT 'PSE'::text,
+  external_reference text,
+  transaction_date timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  encrypted_metadata text,
+  client_ip text,
+  user_agent text,
+  provider_response jsonb,
+  audit_log jsonb DEFAULT '[]'::jsonb,
+  CONSTRAINT transactions_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_transactions_user FOREIGN KEY (user_id) REFERENCES public.usuarios(id),
+  CONSTRAINT fk_transactions_course FOREIGN KEY (course_id) REFERENCES public.courses(id)
+);
 CREATE TABLE public.user_fcm_tokens (
   user_id bigint NOT NULL,
   token text NOT NULL,
