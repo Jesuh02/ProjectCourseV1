@@ -333,9 +333,22 @@ class CourseDetailFragment : Fragment() {
                 editCourseButton = view.findViewById(R.id.editCourseButton)
                 // Decide edit button visibility using Supabase when possible
                 val localUsername = sessionManager.getUsername()
+                val sessionUserId = sessionManager.getUserId()
                 Log.d("CourseDetailFragment", "🔍 Local username: $localUsername, courseId: $courseId, creatorUserId: ${it.creatorUserId}")
-                editCourseButton.visibility = View.GONE
-                if (localUsername != null) {
+                val fastOwnerById = sessionUserId > 0 && it.creatorUserId == sessionUserId
+                if (fastOwnerById) {
+                    Log.d("CourseDetailFragment", "✅ Owner detected by id match: sessionUserId=$sessionUserId creatorUserId=${it.creatorUserId}")
+                    editCourseButton.visibility = View.VISIBLE
+                    togglePriceButton.visibility = View.VISIBLE
+                    isCurrentUserCreator = true
+                } else {
+                    editCourseButton.visibility = View.GONE
+                    togglePriceButton.visibility = View.GONE
+                    isCurrentUserCreator = false
+                }
+
+                // If not confirmed owner by id, fall back to username/remote checks
+                if (!fastOwnerById && !localUsername.isNullOrBlank()) {
                     lifecycleScope.launch {
                         var showEdit = false
                         try {

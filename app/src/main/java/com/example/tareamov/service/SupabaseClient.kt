@@ -1915,6 +1915,9 @@ object SupabaseClient {
                     val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
                     val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
                     val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                        ?: obj.get("courseId")?.takeIf { !it.isJsonNull }?.asLong
+                    val remoteId = obj.get("remote_id")?.takeIf { !it.isJsonNull }?.asLong
+                        ?: obj.get("remoteId")?.takeIf { !it.isJsonNull }?.asLong
                     val videoUriString = when {
                         obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
                         obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
@@ -1947,7 +1950,8 @@ object SupabaseClient {
                             isPaid = isPaid,
                             thumbnailUri = thumbnailUri,
                             price = price,
-                            courseId = courseId
+                            courseId = courseId,
+                            remoteId = remoteId
                         )
                     )
                 } catch (t: Exception) {
@@ -1998,6 +2002,9 @@ object SupabaseClient {
                 val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
                 val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
                 val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                    ?: obj.get("courseId")?.takeIf { !it.isJsonNull }?.asLong
+                val remoteId = obj.get("remote_id")?.takeIf { !it.isJsonNull }?.asLong
+                    ?: obj.get("remoteId")?.takeIf { !it.isJsonNull }?.asLong
                 val videoUriString = when {
                     obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
                     obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
@@ -2029,7 +2036,8 @@ object SupabaseClient {
                     isPaid = isPaid,
                     thumbnailUri = thumbnailUri,
                     price = price,
-                    courseId = courseId
+                    courseId = courseId,
+                    remoteId = remoteId
                 )
             }
         } catch (e: Exception) {
@@ -2065,6 +2073,9 @@ object SupabaseClient {
                             val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
                             val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
                             val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                                ?: obj.get("courseId")?.takeIf { !it.isJsonNull }?.asLong
+                            val remoteId = obj.get("remote_id")?.takeIf { !it.isJsonNull }?.asLong
+                                ?: obj.get("remoteId")?.takeIf { !it.isJsonNull }?.asLong
                             val videoUriString = when {
                                 obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
                                 obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
@@ -2097,7 +2108,8 @@ object SupabaseClient {
                                     isPaid = isPaid,
                                     thumbnailUri = thumbnailUri,
                                     price = price,
-                                    courseId = courseId
+                                    courseId = courseId,
+                                    remoteId = remoteId
                                 )
                             )
                         } catch (t: Exception) {
@@ -3696,6 +3708,9 @@ object SupabaseClient {
                                                 val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
                                                 val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
                                                 val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                                                    ?: obj.get("courseId")?.takeIf { !it.isJsonNull }?.asLong
+                                                val remoteId = obj.get("remote_id")?.takeIf { !it.isJsonNull }?.asLong
+                                                    ?: obj.get("remoteId")?.takeIf { !it.isJsonNull }?.asLong
                                                 
                                                 val videoUriString = when {
                                                     obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
@@ -3731,7 +3746,8 @@ object SupabaseClient {
                                                     isPaid = isPaid,
                                                     thumbnailUri = thumbnailUri,
                                                     price = price,
-                                                    courseId = courseId
+                                                    courseId = courseId,
+                                                    remoteId = remoteId
                                                 )
                                                 results.add(video)
                                             } catch (e: Exception) {
@@ -3780,6 +3796,9 @@ object SupabaseClient {
                         val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
                         val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
                         val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                            ?: obj.get("courseId")?.takeIf { !it.isJsonNull }?.asLong
+                        val remoteId = obj.get("remote_id")?.takeIf { !it.isJsonNull }?.asLong
+                            ?: obj.get("remoteId")?.takeIf { !it.isJsonNull }?.asLong
                         
                         val videoUriString = when {
                             obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
@@ -3816,7 +3835,8 @@ object SupabaseClient {
                             isPaid = isPaid,
                             thumbnailUri = thumbnailUri,
                             price = price,
-                            courseId = courseId
+                            courseId = courseId,
+                            remoteId = remoteId
                         )
                         results.add(video)
                     } catch (e: Exception) {
@@ -3832,8 +3852,104 @@ object SupabaseClient {
     }
 
     suspend fun fetchVideosPaginatedOrThrow(offset: Int, limit: Int): Pair<List<VideoData>, Int> = withContext(Dispatchers.IO) {
-        val path = "videos?offset=$offset&limit=$limit&order=timestamp.desc"
+        val path = "videos?select=*&offset=$offset&limit=$limit&order=timestamp.desc"
         var videos = fetchListOrThrow(path, Array<VideoData>::class.java).toList()
+
+        // Debug (requested): verify remote_id is present for a known record
+        try {
+            val debug = videos.firstOrNull { it.id == 98L }
+            if (debug != null) {
+                Log.d(
+                    "SupabaseClient",
+                    "fetchVideosPaginatedOrThrow typed: id=98 courseId=${debug.courseId} remoteId=${debug.remoteId} username='${debug.username}'"
+                )
+            }
+        } catch (_: Exception) {
+            // ignore
+        }
+
+        // If remoteId is missing for no-course videos, fall back to raw JSON parsing.
+        // This avoids issues when the backend returns different key casing or Gson unsafe allocation drops fields.
+        val missingRemoteIdForNoCourse = videos.any { it.courseId == null && (it.remoteId == null || it.remoteId == 0L) }
+        if (missingRemoteIdForNoCourse) {
+            Log.w("SupabaseClient", "fetchVideosPaginatedOrThrow: remoteId missing in typed mapping; trying raw JSON parse")
+            try {
+                val req = buildGetRequest(path)
+                client.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string()
+                    if (resp.isSuccessful && !body.isNullOrEmpty()) {
+                        val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
+                        val repaired = mutableListOf<VideoData>()
+                        for (elem in arr) {
+                            try {
+                                val obj = elem.asJsonObject
+                                val id = obj.get("id")?.takeIf { !it.isJsonNull }?.asLong ?: 0L
+                                val username = when {
+                                    obj.has("username") && !obj.get("username").isJsonNull -> obj.get("username").asString
+                                    obj.has("creator_username") && !obj.get("creator_username").isJsonNull -> obj.get("creator_username").asString
+                                    obj.has("user") && !obj.get("user").isJsonNull -> obj.get("user").asString
+                                    else -> "unknown"
+                                }
+                                val description = obj.get("description")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                val title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                val courseId = obj.get("course_id")?.takeIf { !it.isJsonNull }?.asLong
+                                    ?: obj.get("courseId")?.takeIf { !it.isJsonNull }?.asLong
+                                val remoteId = obj.get("remote_id")?.takeIf { !it.isJsonNull }?.asLong
+                                    ?: obj.get("remoteId")?.takeIf { !it.isJsonNull }?.asLong
+
+                                if (id == 98L) {
+                                    Log.d(
+                                        "SupabaseClient",
+                                        "fetchVideosPaginatedOrThrow raw: id=98 has_remote_id=${obj.has("remote_id")} has_remoteId=${obj.has("remoteId")} remoteId=$remoteId courseId=$courseId"
+                                    )
+                                }
+                                val videoUriString = when {
+                                    obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
+                                    obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
+                                    obj.has("video_url") && !obj.get("video_url").isJsonNull -> obj.get("video_url").asString
+                                    else -> null
+                                }
+                                val localFilePath = obj.get("local_file_path")?.takeIf { !it.isJsonNull }?.asString
+                                val thumbnailUri = when {
+                                    obj.has("thumbnail_uri") && !obj.get("thumbnail_uri").isJsonNull -> obj.get("thumbnail_uri").asString
+                                    obj.has("thumbnail") && !obj.get("thumbnail").isJsonNull -> obj.get("thumbnail").asString
+                                    else -> null
+                                }
+                                val timestamp = try {
+                                    obj.get("timestamp")?.takeIf { !it.isJsonNull }?.asLong
+                                        ?: obj.get("created_at")?.takeIf { !it.isJsonNull }?.asString?.let { java.time.Instant.parse(it).toEpochMilli() }
+                                        ?: System.currentTimeMillis()
+                                } catch (_: Exception) { System.currentTimeMillis() }
+                                val isPaid = obj.get("is_paid")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                                val price = try { obj.get("price")?.takeIf { !it.isJsonNull }?.asDouble } catch (_: Exception) { null }
+
+                                repaired.add(
+                                    VideoData(
+                                        id = id,
+                                        username = username,
+                                        description = description,
+                                        title = title,
+                                        videoUriString = videoUriString,
+                                        localFilePath = localFilePath,
+                                        timestamp = timestamp,
+                                        isPaid = isPaid,
+                                        thumbnailUri = thumbnailUri,
+                                        price = price,
+                                        courseId = courseId,
+                                        remoteId = remoteId
+                                    )
+                                )
+                            } catch (t: Exception) {
+                                Log.w("SupabaseClient", "fetchVideosPaginatedOrThrow: failed to parse element", t)
+                            }
+                        }
+                        if (repaired.isNotEmpty()) videos = repaired
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("SupabaseClient", "fetchVideosPaginatedOrThrow: raw JSON fallback failed", e)
+            }
+        }
         
         // Get total count
         val countPath = "videos?select=count"
@@ -3862,7 +3978,7 @@ object SupabaseClient {
      */
     suspend fun fetchVideosPaginated(offset: Int, limit: Int): Pair<List<VideoData>, Int> = withContext(Dispatchers.IO) {
         try {
-            val path = "videos?offset=$offset&limit=$limit&order=timestamp.desc"
+            val path = "videos?select=*&offset=$offset&limit=$limit&order=timestamp.desc"
             var videos = fetchList(path, Array<VideoData>::class.java).toList()
             
             // Get total count

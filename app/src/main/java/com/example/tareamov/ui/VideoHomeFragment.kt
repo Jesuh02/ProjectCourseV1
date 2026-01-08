@@ -231,6 +231,22 @@ class VideoHomeFragment : Fragment() {
             videoList.addAll(videos)
             allVideosList.clear()
             allVideosList.addAll(videos)
+
+            // Logs requested: show remote_id for videos with course_id = null
+            try {
+                val noCourse = videos.filter { it.courseId == null || it.courseId <= 0 }
+                if (noCourse.isNotEmpty()) {
+                    Log.d("VideoHomeFragment", "Videos sin curso detectados: ${noCourse.size}")
+                    noCourse.take(25).forEach { v ->
+                        Log.d(
+                            "VideoHomeFragment",
+                            "video_id=${v.id} course_id=${v.courseId} remote_id=${v.remoteId} username='${v.username}'"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("VideoHomeFragment", "Failed to log remote_id for no-course videos", e)
+            }
             
             // Control visibility: skeleton vs ViewPager based on video list AND network
             // Same logic as ExploreFragment: only show content when network is available

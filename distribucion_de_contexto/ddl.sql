@@ -66,6 +66,14 @@ CREATE TABLE public.file_contexts (
   CONSTRAINT file_contexts_pkey PRIMARY KEY (id),
   CONSTRAINT file_contexts_submission_id_fkey FOREIGN KEY (submission_id) REFERENCES public.task_submissions(id)
 );
+CREATE TABLE public.likes (
+  usuario_id bigint NOT NULL,
+  entity_type text NOT NULL,
+  entity_id bigint NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT likes_pkey PRIMARY KEY (usuario_id, entity_type, entity_id),
+  CONSTRAINT fk_likes_user FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id)
+);
 CREATE TABLE public.notifications (
   id bigint NOT NULL DEFAULT nextval('notifications_id_seq'::regclass),
   user_id bigint NOT NULL,
@@ -233,22 +241,6 @@ CREATE TABLE public.video_comments (
   CONSTRAINT fk_video_comments_user FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id),
   CONSTRAINT fk_video_comments_video FOREIGN KEY (video_id) REFERENCES public.videos(id)
 );
--- Tabla polimórfica de likes (normalizada y escalable)
--- Soporta likes en: videos, comentarios, cursos, tareas, etc.
-CREATE TABLE public.likes (
-  usuario_id bigint NOT NULL,
-  entity_type text NOT NULL,  -- 'video', 'comment', 'course', 'task', etc.
-  entity_id bigint NOT NULL,
-  created_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT likes_pkey PRIMARY KEY (usuario_id, entity_type, entity_id),
-  CONSTRAINT fk_likes_user FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id) ON DELETE CASCADE
-);
--- Índices para consultas eficientes
-CREATE INDEX idx_likes_entity ON public.likes(entity_type, entity_id);
-CREATE INDEX idx_likes_user ON public.likes(usuario_id);
--- DEPRECATED: video_comment_likes (reemplazada por tabla 'likes' polimórfica)
--- DEPRECATED: user_video_likes (reemplazada por tabla 'likes' polimórfica)
--- DEPRECATED: video_likes (contador denormalizado - usar COUNT en tabla 'likes')
 CREATE TABLE public.videos (
   id bigint NOT NULL DEFAULT nextval('videos_id_seq'::regclass),
   description text,
@@ -263,5 +255,6 @@ CREATE TABLE public.videos (
   remote_id bigint,
   course_id bigint,
   CONSTRAINT videos_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_videos_creator_user FOREIGN KEY (remote_id) REFERENCES public.usuarios(id),
   CONSTRAINT videos_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id)
 );

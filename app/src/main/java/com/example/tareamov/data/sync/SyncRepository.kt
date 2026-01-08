@@ -505,7 +505,16 @@ class SyncRepository(
                         val description = if (obj.has("description") && !obj.get("description").isJsonNull) obj.get("description").asString else ""
                         val title = if (obj.has("title") && !obj.get("title").isJsonNull) obj.get("title").asString else ""
                         // Prefer server `course_id` so UI can resolve creator username via Supabase
-                        val courseId = if (obj.has("course_id") && !obj.get("course_id").isJsonNull) obj.get("course_id").asLong else null
+                        val courseId = when {
+                            obj.has("course_id") && !obj.get("course_id").isJsonNull -> obj.get("course_id").asLong
+                            obj.has("courseId") && !obj.get("courseId").isJsonNull -> obj.get("courseId").asLong
+                            else -> null
+                        }
+                        val remoteId = when {
+                            obj.has("remote_id") && !obj.get("remote_id").isJsonNull -> obj.get("remote_id").asLong
+                            obj.has("remoteId") && !obj.get("remoteId").isJsonNull -> obj.get("remoteId").asLong
+                            else -> null
+                        }
                         val videoUriString = when {
                             obj.has("video_uri_string") && !obj.get("video_uri_string").isJsonNull -> obj.get("video_uri_string").asString
                             obj.has("video_uri") && !obj.get("video_uri").isJsonNull -> obj.get("video_uri").asString
@@ -529,7 +538,8 @@ class SyncRepository(
                             isPaid = isPaid,
                             thumbnailUri = thumbnailUri,
                             price = price,
-                            courseId = courseId
+                            courseId = courseId,
+                            remoteId = remoteId
                         )
                         repaired.add(v)
                     } catch (t: Exception) {
@@ -539,8 +549,29 @@ class SyncRepository(
                 if (repaired.isNotEmpty()) list = repaired
             }
         }
+        // Normalize: if course_id is null, resolve creator username using remote_id from Supabase
+        val normalized = try {
+            list.map { v ->
+                val noCourse = v.courseId == null || v.courseId <= 0
+                val rid = v.remoteId ?: 0L
+                if (noCourse && rid > 0) {
+                    val resolved = supabaseClient.getUsernameFromUserId(rid)
+                    if (!resolved.isNullOrBlank() && !resolved.equals(v.username, ignoreCase = true)) {
+                        v.copy(username = resolved)
+                    } else {
+                        v
+                    }
+                } else {
+                    v
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "Failed to normalize video usernames from remote_id", e)
+            list
+        }
+
         // Sort by timestamp string descending where possible; fallback to id desc
-        val sorted = list.sortedWith(compareByDescending<com.example.tareamov.data.entity.VideoData> { v ->
+        val sorted = normalized.sortedWith(compareByDescending<com.example.tareamov.data.entity.VideoData> { v ->
             // timestamp is a Long in our model; use it directly
             v.timestamp
         }.thenByDescending { v -> v.id })
@@ -629,7 +660,69 @@ class SyncRepository(
             return Pair(emptyList(), 0)
         }
         return withContext(Dispatchers.IO) {
-            supabaseClient.fetchVideosPaginatedOrThrow(offset = offset, limit = limit)
+            val (videosRaw, total) = supabaseClient.fetchVideosPaginatedOrThrow(offset = offset, limit = limit)
+
+            // Requirement: when we have remote_id, don't surface the numeric id as the username.
+            // Instead, resolve the username from Supabase using that remote_id.
+            val remoteIdsToResolve = videosRaw
+                .asSequence()
+                .filter { (it.courseId == null || it.courseId <= 0L) && (it.remoteId ?: 0L) > 0L }
+                .filter { it.username.isBlank() || it.username.equals("unknown", ignoreCase = true) }
+                .map { it.remoteId!! }
+                .distinct()
+                .toList()
+
+            val idToUsername: Map<Long, String> = try {
+                if (remoteIdsToResolve.isEmpty()) {
+                    emptyMap()
+                } else {
+                    // Resolve sequentially (page size is small) to keep it simple and stable.
+                    val map = mutableMapOf<Long, String>()
+                    for (rid in remoteIdsToResolve) {
+                        val uname = supabaseClient.getUsernameFromUserId(rid)?.trim().orEmpty()
+                        if (uname.isNotBlank()) {
+                            map[rid] = uname
+                        }
+                    }
+                    map
+                }
+            } catch (e: Exception) {
+                Log.w("SyncRepository", "fetchVideosPaginated: failed to resolve usernames from remote_id", e)
+                emptyMap()
+            }
+
+            val videos = if (idToUsername.isEmpty()) {
+                videosRaw
+            } else {
+                videosRaw.map { v ->
+                    val noCourse = v.courseId == null || v.courseId <= 0L
+                    val rid = v.remoteId ?: 0L
+                    if (noCourse && rid > 0L) {
+                        val uname = idToUsername[rid]
+                        if (!uname.isNullOrBlank() && !uname.equals(v.username, ignoreCase = true)) {
+                            v.copy(username = uname)
+                        } else {
+                            v
+                        }
+                    } else {
+                        v
+                    }
+                }
+            }
+
+            try {
+                val debug = videos.firstOrNull { it.id == 98L }
+                if (debug != null) {
+                    Log.d(
+                        "SyncRepository",
+                        "fetchVideosPaginated(SUPABASE normalized): id=98 courseId=${debug.courseId} remoteId=${debug.remoteId} username='${debug.username}'"
+                    )
+                }
+            } catch (_: Exception) {
+                // ignore
+            }
+
+            Pair(videos, total)
         }
     }
 

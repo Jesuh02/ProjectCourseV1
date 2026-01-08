@@ -283,16 +283,12 @@ class VideoAdapter(
                             com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
                         }
                     } else if (videoData.remoteId != null && videoData.remoteId!! > 0) {
-                        // Fetch username from remote_id (which stores creator ID)
+                        // Requirement: remote_id is a userId; show/return the USERNAME associated to that id (from Supabase).
                         withContext(Dispatchers.IO) {
                             try {
-                                val user = com.example.tareamov.service.SupabaseClient.fetchUsuarioById(videoData.remoteId!!)
-                                if (user != null) {
-                                    currentCreatorId = user.id
-                                    user.usuario
-                                } else {
-                                    videoData.username
-                                }
+                                currentCreatorId = videoData.remoteId!!
+                                com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(videoData.remoteId!!)
+                                    ?: videoData.username
                             } catch (e: Exception) {
                                 videoData.username
                             }
@@ -319,8 +315,8 @@ class VideoAdapter(
                         updateSubscribeButton()
                     }
 
-                    // Actualizar UI con el username obtenido - format like username
-                    usernameText.text = "${username ?: "usuario"}"
+                    // Show resolved username (not numeric remote_id)
+                    usernameText.text = (username ?: "usuario")
                     
                     // Update audio text with username
                     audioText?.text = "Original Audio - ${username ?: "usuario"}"

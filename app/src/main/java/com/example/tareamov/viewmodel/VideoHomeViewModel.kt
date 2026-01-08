@@ -86,28 +86,10 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             try {
                 Log.d("VideoHomeViewModel", "Loading videos (refresh=$isRefresh, target=$targetVideoId)")
-                
-                // OPTIMIZATION: Load from local cache FIRST for instant display
-                // BUT skip cache when refreshing to ensure fresh data from network
-                // This prevents showing stale data with missing usernames, etc.
-                if (!isRefresh) {
-                    val localCacheJob = viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            val database = AppDatabase.getDatabase(getApplication())
-                            val cachedVideos = database.videoDao().getAllVideos()
-                            if (cachedVideos.isNotEmpty() && _videoList.value.isNullOrEmpty()) {
-                                withContext(Dispatchers.Main) {
-                                    _videoList.value = cachedVideos.take(pageSize)
-                                    Log.d("VideoHomeViewModel", "Loaded ${cachedVideos.size} videos from local cache (instant)")
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.w("VideoHomeViewModel", "Local cache load failed", e)
-                        }
-                    }
-                } else {
-                    Log.d("VideoHomeViewModel", "Skipping local cache - forcing network refresh")
-                }
+
+                // IMPORTANT: Always load from Supabase for VideoHome feed.
+                // This prevents stale Room rows (e.g., remoteId=null) from being shown/logged.
+                Log.d("VideoHomeViewModel", "Skipping local cache - forcing network for VideoHome")
 
                 // If a specific video is requested, try to fetch it first
                 var targetVideo: VideoData? = null

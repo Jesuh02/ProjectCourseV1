@@ -26,17 +26,17 @@ import java.io.File
 @Entity(tableName = "videos")
 data class VideoData(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    @SerializedName("username") val username: String, // This is the creator's username
-    val description: String,
-    val title: String,
+    @SerializedName(value = "username", alternate = ["creator_username", "user"]) val username: String = "", // This is the creator's username (may be resolved from remote_id)
+    val description: String = "",
+    val title: String = "",
     @SerializedName("video_uri_string") val videoUriString: String? = null,
     @SerializedName("local_file_path") val localFilePath: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     @SerializedName("is_paid") val isPaid: Boolean = false,
     @SerializedName("thumbnail_uri") val thumbnailUri: String? = null,
     @SerializedName("price") val price: Double? = null,
-    @SerializedName("course_id") val courseId: Long? = null, // ID del curso asociado
-    @SerializedName("remote_id") val remoteId: Long? = null // ID del usuario creador (según requerimiento)
+    @SerializedName(value = "course_id", alternate = ["courseId"]) val courseId: Long? = null, // ID del curso asociado
+    @SerializedName(value = "remote_id", alternate = ["remoteId"]) val remoteId: Long? = null // ID del usuario creador (según requerimiento)
 ) {
     // Transient property that's not stored in the database
     @Ignore
