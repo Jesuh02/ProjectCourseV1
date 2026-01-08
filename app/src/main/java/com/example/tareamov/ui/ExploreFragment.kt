@@ -936,6 +936,10 @@ class ExploreFragment : Fragment() {
             onCreatorClickListener = { username ->
                 val bundle = Bundle().apply { putString("username", username) }
                 findNavController().navigate(R.id.action_exploreFragment_to_userProfileViewFragment, bundle)
+            },
+            onPaymentClickListener = { course ->
+                // Show payment options dialog
+                handlePaymentFlow(course)
             }
         )
         coursesRecyclerView.adapter = coursesAdapter
@@ -2581,6 +2585,41 @@ class ExploreFragment : Fragment() {
                 
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error en proceso de generación de miniaturas", e)
+            }
+        }
+    }
+    
+    /**
+     * Handle payment flow - redirect to payment gateway
+     */
+    private fun handlePaymentFlow(course: Course) {
+        lifecycleScope.launch {
+            try {
+                val currentUser = currentUsername
+                if (currentUser == null) {
+                    showDarkToast("Debes iniciar sesión para realizar el pago")
+                    return@launch
+                }
+                
+                // Show PSE payment options (using extension function from CourseDetailFragmentExtensions)
+                showPaymentOptions(
+                    courseId = course.id,
+                    courseName = course.title,
+                    coursePrice = course.price,
+                    username = currentUser,
+                    onPaymentResult = { success ->
+                        if (success) {
+                            showFloatingMessage("Pago procesado exitosamente")
+                            // Navigate to course detail after successful payment
+                            navigateToCourseDetail(course)
+                        } else {
+                            showDarkToast("Pago cancelado o fallido")
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error initiating payment", e)
+                showDarkToast("Error al iniciar el proceso de pago")
             }
         }
     }

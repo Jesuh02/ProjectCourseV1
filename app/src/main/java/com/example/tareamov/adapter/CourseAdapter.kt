@@ -32,6 +32,7 @@ class CourseAdapter(
     private val onDeleteClickListener: ((Course) -> Unit)? = null, // Delete callback
     private val onEnrollClickListener: ((Course) -> Unit)? = null, // Enrollment callback
     private val onCreatorClickListener: ((String) -> Unit)? = null, // Creator profile callback
+    private val onPaymentClickListener: ((Course) -> Unit)? = null, // Payment callback
     private val subscriptionStatus: Map<Long, Boolean> = emptyMap() // Subscription status map
 ) : RecyclerView.Adapter<CourseAdapter.CourseViewHolder>() {
 
@@ -330,9 +331,9 @@ class CourseAdapter(
             // CRITICAL: Check if user is the creator - creators don't need enrollment and have full access
             val isCreator = canUserModifyCourse(course)
             
-            // Block access to paid courses (price > 0) for non-creators
+            // Show payment confirmation dialog for paid courses (non-creators)
             if (course.price > 0 && !isCreator) {
-                android.widget.Toast.makeText(context, "❌ Este es un curso de pago. Debes realizar el pago para acceder.", android.widget.Toast.LENGTH_LONG).show()
+                showPaymentConfirmationDialog(course)
                 return@setOnClickListener
             }
             
@@ -796,5 +797,46 @@ class CourseAdapter(
     private fun dpToPx(dp: Int): Int {
         val density = context.resources.displayMetrics.density
         return (dp * density).toInt()
+    }
+    
+    /**
+     * Show payment confirmation dialog with liquid glass design
+     */
+    private fun showPaymentConfirmationDialog(course: Course) {
+        val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_confirm_payment, null)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(context)
+            .setView(dialogView)
+            .create()
+        
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        
+        val title = dialogView.findViewById<TextView>(R.id.confirmPaymentTitle)
+        val message = dialogView.findViewById<TextView>(R.id.confirmPaymentMessage)
+        val priceText = dialogView.findViewById<TextView>(R.id.paymentPriceText)
+        val confirmButton = dialogView.findViewById<TextView>(R.id.confirmPaymentButton)
+        val cancelButton = dialogView.findViewById<TextView>(R.id.cancelPaymentButton)
+        
+        title.text = course.title
+        message.text = "Este curso requiere un pago para acceder. ¿Deseas continuar con el proceso de pago?"
+        
+        // Format price
+        val formattedPrice = if (course.price > 0) {
+            String.format("$%,.0f COP", course.price)
+        } else {
+            "Precio no disponible"
+        }
+        priceText.text = formattedPrice
+        
+        confirmButton.setOnClickListener {
+            dialog.dismiss()
+            // Call payment callback
+            onPaymentClickListener?.invoke(course)
+        }
+        
+        cancelButton.setOnClickListener {
+            dialog.dismiss()
+        }
+        
+        dialog.show()
     }
 }

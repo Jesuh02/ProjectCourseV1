@@ -1,0 +1,425 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/dark_background"
+    android:fillViewport="true"
+    tools:context=".ui.PaymentFormFragment">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="16dp">
+
+        <!-- Floating particles -->
+        <View
+            android:id="@+id/particle1"
+            android:layout_width="6dp"
+            android:layout_height="6dp"
+            android:background="@drawable/floating_particle"
+            android:alpha="0.6"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            android:layout_marginTop="60dp"
+            android:layout_marginEnd="30dp" />
+
+        <View
+            android:id="@+id/particle2"
+            android:layout_width="4dp"
+            android:layout_height="4dp"
+            android:background="@drawable/floating_particle"
+            android:alpha="0.4"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            android:layout_marginTop="100dp"
+            android:layout_marginStart="50dp" />
+
+        <View
+            android:id="@+id/particle3"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="@drawable/floating_particle"
+            android:alpha="0.3"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/headerBackground"
+            android:layout_marginEnd="60dp"
+            android:layout_marginTop="20dp" />
+
+        <!-- Header Background -->
+        <View
+            android:id="@+id/headerBackground"
+            android:layout_width="0dp"
+            android:layout_height="120dp"
+            android:background="@drawable/gradient_header"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- Back Button -->
+        <ImageButton
+            android:id="@+id/btnBack"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_arrow_back"
+            android:contentDescription="Volver"
+            android:layout_marginTop="8dp"
+            android:layout_marginStart="4dp"
+            app:tint="@android:color/white"
+            app:layout_constraintStart_toStartOf="@id/headerBackground"
+            app:layout_constraintTop_toTopOf="@id/headerBackground" />
+
+        <!-- Payment Icon -->
+        <ImageView
+            android:id="@+id/paymentIcon"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@drawable/ic_payment"
+            app:tint="@color/course_accent"
+            android:layout_marginTop="12dp"
+            android:alpha="1"
+            app:layout_constraintEnd_toEndOf="@id/headerBackground"
+            app:layout_constraintStart_toStartOf="@id/headerBackground"
+            app:layout_constraintTop_toTopOf="@id/headerBackground" />
+
+        <TextView
+            android:id="@+id/titleText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Pago PSE"
+            android:textColor="#FFFFFF"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:alpha="1"
+            android:fontFamily="sans-serif-medium"
+            android:shadowColor="#40000000"
+            android:shadowDx="0"
+            android:shadowDy="2"
+            android:shadowRadius="4"
+            app:layout_constraintEnd_toEndOf="@id/headerBackground"
+            app:layout_constraintStart_toStartOf="@id/headerBackground"
+            app:layout_constraintTop_toBottomOf="@id/paymentIcon" />
+
+        <TextView
+            android:id="@+id/subtitleText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Pago seguro con tu banco"
+            android:textColor="#E0FFFFFF"
+            android:textSize="14sp"
+            android:alpha="1"
+            android:fontFamily="sans-serif-light"
+            android:shadowColor="#40000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="2"
+            app:layout_constraintEnd_toEndOf="@id/headerBackground"
+            app:layout_constraintStart_toStartOf="@id/headerBackground"
+            app:layout_constraintTop_toBottomOf="@id/titleText" />
+
+        <!-- Main Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/paymentCard"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="50dp"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:layout_marginBottom="20dp"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="16dp"
+            app:cardBackgroundColor="@color/dark_surface"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="@id/headerBackground"
+            app:strokeColor="@color/primary_color"
+            app:strokeWidth="1dp"
+            android:alpha="0"
+            android:translationY="40dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <!-- Course Summary Section -->
+                <LinearLayout
+                    android:id="@+id/courseSummaryContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/course_summary_background"
+                    android:padding="16dp"
+                    android:layout_marginBottom="20dp"
+                    android:alpha="0"
+                    android:translationY="20dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Resumen del Curso"
+                        android:textColor="@color/text_hint_dark"
+                        android:textSize="12sp"
+                        android:textAllCaps="true"
+                        android:letterSpacing="0.1" />
+
+                    <TextView
+                        android:id="@+id/tvCourseName"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Nombre del curso"
+                        android:textColor="@color/text_primary_dark"
+                        android:textSize="18sp"
+                        android:textStyle="bold"
+                        android:layout_marginTop="4dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="8dp"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Total a pagar:"
+                            android:textColor="@color/text_hint_dark"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:id="@+id/tvCoursePrice"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="$0"
+                            android:textColor="@color/course_accent"
+                            android:textSize="22sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Bank Selection Section -->
+                <TextView
+                    android:id="@+id/bankSectionTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Selecciona tu banco"
+                    android:textColor="@color/accent_purple"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="12dp"
+                    android:alpha="0"
+                    android:translationX="-20dp" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/bankInputLayout"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="16dp"
+                    android:hint="Buscar banco..."
+                    app:startIconDrawable="@drawable/ic_account_balance"
+                    app:startIconTint="@color/primary_color"
+                    app:boxStrokeColor="@color/primary_color"
+                    app:hintTextColor="@color/primary_color"
+                    app:boxBackgroundColor="@color/dark_input_background"
+                    app:boxCornerRadiusTopStart="16dp"
+                    app:boxCornerRadiusTopEnd="16dp"
+                    app:boxCornerRadiusBottomStart="16dp"
+                    app:boxCornerRadiusBottomEnd="16dp"
+                    app:endIconMode="dropdown_menu"
+                    android:alpha="0"
+                    android:translationX="-30dp">
+
+                    <AutoCompleteTextView
+                        android:id="@+id/inputBank"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="text"
+                        android:textColor="@color/text_primary_dark"
+                        android:textColorHint="@color/text_hint_dark"
+                        android:completionThreshold="1"
+                        android:dropDownHeight="250dp" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <!-- Document Section -->
+                <TextView
+                    android:id="@+id/docSectionTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Datos del pagador"
+                    android:textColor="@color/accent_purple"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="12dp"
+                    android:alpha="0"
+                    android:translationX="-20dp" />
+
+                <LinearLayout
+                    android:id="@+id/documentContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="16dp"
+                    android:alpha="0"
+                    android:translationX="-30dp">
+
+                    <!-- Document Type -->
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/docTypeLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="0.35"
+                        android:layout_marginEnd="8dp"
+                        android:hint="Tipo"
+                        app:boxStrokeColor="@color/primary_color"
+                        app:hintTextColor="@color/primary_color"
+                        app:boxBackgroundColor="@color/dark_input_background"
+                        app:boxCornerRadiusTopStart="16dp"
+                        app:boxCornerRadiusTopEnd="16dp"
+                        app:boxCornerRadiusBottomStart="16dp"
+                        app:boxCornerRadiusBottomEnd="16dp">
+
+                        <AutoCompleteTextView
+                            android:id="@+id/inputDocType"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none"
+                            android:textColor="@color/text_primary_dark"
+                            android:textColorHint="@color/text_hint_dark" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- Document Number -->
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/docNumberLayout"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="0.65"
+                        android:hint="Número de documento"
+                        app:startIconDrawable="@drawable/ic_badge"
+                        app:startIconTint="@color/primary_color"
+                        app:boxStrokeColor="@color/primary_color"
+                        app:hintTextColor="@color/primary_color"
+                        app:boxBackgroundColor="@color/dark_input_background"
+                        app:boxCornerRadiusTopStart="16dp"
+                        app:boxCornerRadiusTopEnd="16dp"
+                        app:boxCornerRadiusBottomStart="16dp"
+                        app:boxCornerRadiusBottomEnd="16dp">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/inputDocNumber"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:textColor="@color/text_primary_dark"
+                            android:textColorHint="@color/text_hint_dark" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <!-- Phone Field -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/phoneLayout"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="24dp"
+                    android:hint="Teléfono (opcional)"
+                    app:startIconDrawable="@drawable/ic_phone"
+                    app:startIconTint="@color/primary_color"
+                    app:boxStrokeColor="@color/primary_color"
+                    app:hintTextColor="@color/primary_color"
+                    app:boxBackgroundColor="@color/dark_input_background"
+                    app:boxCornerRadiusTopStart="16dp"
+                    app:boxCornerRadiusTopEnd="16dp"
+                    app:boxCornerRadiusBottomStart="16dp"
+                    app:boxCornerRadiusBottomEnd="16dp"
+                    android:alpha="0"
+                    android:translationX="30dp">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/inputPhone"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="phone"
+                        android:textColor="@color/text_primary_dark"
+                        android:textColorHint="@color/text_hint_dark" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <!-- Security Notice -->
+                <LinearLayout
+                    android:id="@+id/securityNotice"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="20dp"
+                    android:alpha="0">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_lock"
+                        app:tint="@color/success_green"
+                        android:layout_marginEnd="8dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Pago seguro procesado por Wompi"
+                        android:textColor="@color/text_hint_dark"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <!-- Pay Button -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPay"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="Pagar ahora"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textAllCaps="false"
+                    app:backgroundTint="@color/primary_color"
+                    app:cornerRadius="16dp"
+                    app:icon="@drawable/ic_payment"
+                    app:iconGravity="textStart"
+                    app:iconPadding="8dp"
+                    android:alpha="0"
+                    android:translationY="20dp" />
+
+                <!-- Loading Indicator -->
+                <ProgressBar
+                    android:id="@+id/progressBar"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:layout_marginTop="16dp"
+                    android:visibility="gone"
+                    android:indeterminateTint="@color/primary_color" />
+
+                <!-- Cancel Link -->
+                <TextView
+                    android:id="@+id/btnCancel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Cancelar"
+                    android:textColor="@color/text_hint_dark"
+                    android:textSize="14sp"
+                    android:gravity="center"
+                    android:padding="16dp"
+                    android:alpha="0" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</ScrollView>

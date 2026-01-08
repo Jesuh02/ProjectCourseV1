@@ -1,15 +1,8 @@
 package com.example.tareamov.ui
-// ... existing imports ...
 import kotlinx.coroutines.CoroutineExceptionHandler
-import com.example.tareamov.network.PaymentApi
-import com.example.tareamov.network.PseTransactionRequest
-import com.example.tareamov.network.Payer
-import com.example.tareamov.network.Payment
-import com.example.tareamov.network.Amount
 import android.util.Log
 import android.view.View
 import android.widget.Button
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -21,28 +14,40 @@ import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.util.CertificateGenerator
 import com.example.tareamov.util.AnimatedCertificateGenerator
 import com.example.tareamov.util.CourseProgressManager
-import com.example.tareamov.util.SessionManager
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.create
-import com.google.gson.Gson
-import java.io.IOException
 import androidx.appcompat.app.AlertDialog
+import org.json.JSONObject
+import android.content.Intent
+import android.net.Uri
+import com.example.tareamov.service.SupabaseClient
+import android.view.LayoutInflater
+import com.example.tareamov.network.PSEBank
+import android.widget.ArrayAdapter
+import android.widget.AutoCompleteTextView
+import com.example.tareamov.network.PaymentApi
+import com.example.tareamov.network.PaymentInitiationRequest
+import com.google.android.material.textfield.TextInputEditText
+import androidx.navigation.fragment.findNavController
+import android.os.Bundle
 
-// Add Retrofit service instance at the top level of the file
+// Instance of PaymentApi pointing to Backend
+// CHANGE THIS TO TRUE IF RUNNING LOCALLY (Emulator), FALSE FOR PRODUCTION
+private const val USE_LOCAL_ENV = false
+
 private val paymentApi by lazy {
-  // Replace with your actual PayU Latam Sandbox/Production credentials
-  val baseUrl = "https://sandbox.api.payulatam.com/" // Use production URL for production
-  val apiKey = "TU_API_KEY_PSE" // Replace with your PayU API Key
-  val apiLogin = "TU_API_LOGIN_PSE" // Replace with your PayU API Login
-  val merchantId = "TU_MERCHANT_ID" // Replace with your PayU Merchant ID
-  PaymentApi.create(baseUrl, apiKey, apiLogin, merchantId)
+    // If running in Emulator, use http://10.0.2.2:3001/
+    // If running on Device, use production URL.
+    val baseUrl = if (USE_LOCAL_ENV) {
+        "http://10.0.2.2:3001/"
+    } else {
+        "https://mcp-backenddeploy-production.up.railway.app/" 
+    }
+    android.util.Log.d("PaymentSetup", "Payment API initialized with URL: $baseUrl")
+    PaymentApi.create(baseUrl)
 }
 
 /**
@@ -188,387 +193,48 @@ fun Fragment.handlePaidCourseAccess(
 }
 
 /**
- * Muestra un diálogo con opciones de pago (PSE o Nequi)
+ * Navigate to Payment Form Fragment - PSE payment interface
+ * This replaces the old dialog-based payment flow with a full-screen fragment
  */
-// Change visibility from private to public
 fun Fragment.showPaymentOptions(
     courseId: Long,
     courseName: String,
+    coursePrice: Double,
     username: String?,
     onPaymentResult: (Boolean) -> Unit
 ) {
     if (username == null) {
-        Toast.makeText(requireContext(), "Debes iniciar sesión para pagar.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(requireContext(), "Debes iniciar sesión para pagar", Toast.LENGTH_SHORT).show()
         onPaymentResult(false)
         return
     }
 
-    val options = arrayOf("Pagar con NEQUI", "Pagar con PSE")
-
-    androidx.appcompat.app.AlertDialog.Builder(requireContext())
-        .setTitle("Selecciona un método de pago")
-        .setItems(options) { dialog, which ->
-            when (which) {
-                0 -> initiateNequiPayment(courseId, courseName, username, onPaymentResult) // Correct call to initiateNequiPayment
-                1 -> initiatePSEPayment(courseId, courseName, username, onPaymentResult) // Correct call to initiatePSEPayment
-            }
-            dialog.dismiss()
+    // Navigate to the Payment Form Fragment with arguments
+    try {
+        val bundle = Bundle().apply {
+            putLong("courseId", courseId)
+            putString("courseName", courseName)
+            putFloat("coursePrice", coursePrice.toFloat())
+            putString("username", username)
         }
-        .setNegativeButton("Cancelar") { dialog, _ ->
-            dialog.dismiss()
-            onPaymentResult(false)
+        
+        // Determine the correct action based on current destination
+        val currentDestinationId = findNavController().currentDestination?.id
+        val actionId = when (currentDestinationId) {
+            R.id.exploreFragment -> R.id.action_exploreFragment_to_paymentFormFragment
+            R.id.courseDetailFragment -> R.id.action_courseDetailFragment_to_paymentFormFragment
+            else -> R.id.action_courseDetailFragment_to_paymentFormFragment // fallback
         }
-        .show()
-}
-
-// NEQUI payment integration (simplified for demo) - Keep this as is if it's working
-private fun Fragment.initiateNequiPayment(
-    courseId: Long,
-    courseName: String,
-    username: String,
-    onPaymentResult: (Boolean) -> Unit
-) {
-    val context = requireContext()
-    val phoneNumber = "3053048316" // Example phone number
-    val amount = "5000" // Example amount
-    val clientId = "TU_CLIENT_ID" // Replace with your NEQUI Client ID
-    val clientSecret = "TU_CLIENT_SECRET" // Replace with your NEQUI Client Secret
-    val subscriptionKey = "TU_SUBSCRIPTION_KEY" // Replace with your NEQUI Subscription Key
-    val transactionId = "TXN${System.currentTimeMillis()}"
-
-    val client = OkHttpClient()
-    val requestBody = """
-        {
-          "phoneNumber": "$phoneNumber",
-          "value": "$amount",
-          "message": "Pago desde la app móvil",
-          "transactionId": "$transactionId"
-        }
-    """.trimIndent()
-
-    val mediaType = "application/json".toMediaType()
-    val request = Request.Builder()
-        .url("https://api.nequi.com.co/payment/transaction") // Replace with actual NEQUI API URL
-        .addHeader("Content-Type", "application/json")
-        .addHeader("Authorization", "Bearer TU_TOKEN_DE_AUTENTICACION") // Replace with actual token
-        .addHeader("x-api-key", subscriptionKey)
-        .post(create(mediaType, requestBody))
-        .build()
-
-    // Show loading dialog
-    val loadingDialog = androidx.appcompat.app.AlertDialog.Builder(context)
-        .setTitle("Procesando pago")
-        .setMessage("Conectando con NEQUI...")
-        .setCancelable(false)
-        .create()
-    loadingDialog.show()
-
-    client.newCall(request).enqueue(object : Callback {
-        override fun onFailure(call: Call, e: IOException) {
-            loadingDialog.dismiss()
-            requireActivity().runOnUiThread {
-                Toast.makeText(context, "Error en la solicitud NEQUI: ${e.message}", Toast.LENGTH_LONG).show()
-                onPaymentResult(false)
-            }
-        }
-
-        override fun onResponse(call: Call, response: Response) {
-            loadingDialog.dismiss()
-            if (response.isSuccessful) {
-                // Assuming NEQUI response indicates success and provides necessary info
-                // You would parse the response body here to confirm success
-                // For demo, we'll assume success and record purchase
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        // Purchase functionality removed - just show success
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "¡Pago NEQUI exitoso! Ahora tienes acceso completo al curso.", Toast.LENGTH_LONG).show()
-                            onPaymentResult(true)
-                        }
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "Error al procesar el pago NEQUI: ${e.message}", Toast.LENGTH_LONG).show()
-                            onPaymentResult(false)
-                        }
-                    }
-                }
-            } else {
-                requireActivity().runOnUiThread {
-                    // Parse error body for more details if available
-                    val errorBody = response.body?.string() ?: response.message
-                    Toast.makeText(context, "Error en la respuesta NEQUI: ${response.code} - $errorBody", Toast.LENGTH_LONG).show()
-                    onPaymentResult(false)
-                }
-            }
-        }
-    })
-}
-
-
-/**
- * PSE payment integration (This is the correct one called by showPaymentOptions)
- */
-fun Fragment.initiatePSEPayment( // Keep this public
-    courseId: Long,
-    courseName: String,
-    username: String,
-    onPaymentResult: (Boolean) -> Unit
-) {
-    val context = requireContext()
-    val amount = "5000" // Use actual course price if available
-    // Credentials are now handled by the paymentApi lazy delegate
-
-    val transactionId = "PSE${System.currentTimeMillis()}"
-
-    // Mostrar diálogo para recopilar información bancaria
-    val bankOptions = arrayOf(
-        "Bancolombia", "Banco de Bogotá", "Davivienda",
-        "BBVA", "Banco de Occidente", "Banco Popular"
-        // Add more banks as needed
-    )
-
-    val documentTypeOptions = arrayOf(
-        "Cédula de Ciudadanía", "Cédula de Extranjería",
-        "Pasaporte", "NIT"
-    )
-
-    // Primero seleccionar el banco
-    androidx.appcompat.app.AlertDialog.Builder(context)
-        .setTitle("Selecciona tu banco")
-        .setItems(bankOptions) { _, bankIndex ->
-            // Luego seleccionar el tipo de documento
-            androidx.appcompat.app.AlertDialog.Builder(context)
-                .setTitle("Tipo de documento")
-                .setItems(documentTypeOptions) { _, docTypeIndex ->
-                    // Mostrar formulario para datos adicionales
-                    showPSEDataForm(
-                        context,
-                        bankOptions[bankIndex],
-                        documentTypeOptions[docTypeIndex],
-                        courseId,
-                        courseName,
-                        username,
-                        amount,
-                        transactionId,
-                        onPaymentResult
-                    )
-                }
-                .setNegativeButton("Cancelar") { dialog, _ ->
-                    dialog.dismiss()
-                    onPaymentResult(false)
-                }
-                .show()
-        }
-        .setNegativeButton("Cancelar") { dialog, _ ->
-            dialog.dismiss()
-            onPaymentResult(false)
-        }
-        .show()
-}
-
-/**
- * Muestra un formulario para recopilar datos adicionales para el pago PSE
- */
-private fun Fragment.showPSEDataForm(
-    context: android.content.Context,
-    bankName: String,
-    documentType: String,
-    courseId: Long,
-    courseName: String,
-    username: String,
-    amount: String,
-    transactionId: String,
-    onPaymentResult: (Boolean) -> Unit
-) {
-    // Crear un formulario dinámico para los datos del usuario
-    val layout = LinearLayout(context)
-    layout.orientation = LinearLayout.VERTICAL
-    layout.setPadding(50, 30, 50, 30)
-
-    // Campo para el número de documento
-    val documentNumberInput = EditText(context)
-    documentNumberInput.hint = "Número de documento"
-    documentNumberInput.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-    layout.addView(documentNumberInput)
-
-    // Campo para el correo electrónico
-    val emailInput = EditText(context)
-    emailInput.hint = "Correo electrónico"
-    emailInput.inputType = android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
-    layout.addView(emailInput)
-
-    // Mostrar el formulario
-    androidx.appcompat.app.AlertDialog.Builder(context)
-        .setTitle("Datos para pago PSE")
-        .setView(layout)
-        .setPositiveButton("Continuar") { _, _ ->
-            val documentNumber = documentNumberInput.text.toString()
-            val email = emailInput.text.toString()
-
-            if (documentNumber.isBlank() || email.isBlank()) {
-                Toast.makeText(context, "Por favor completa todos los campos", Toast.LENGTH_SHORT).show()
-                onPaymentResult(false)
-                return@setPositiveButton
-            }
-
-            // Procesar el pago PSE con los datos recopilados
-            processPSEPayment(
-                context,
-                bankName,
-                documentType,
-                documentNumber,
-                email,
-                courseId,
-                courseName,
-                username,
-                amount,
-                transactionId,
-                onPaymentResult
-            )
-        }
-        .setNegativeButton("Cancelar") { dialog, _ ->
-            dialog.dismiss()
-            onPaymentResult(false)
-        }
-        .show()
-}
-
-/**
- * Procesa el pago PSE con los datos recopilados usando Retrofit
- */
-private fun Fragment.processPSEPayment(
-    context: android.content.Context,
-    bankName: String,
-    documentType: String,
-    documentNumber: String,
-    email: String,
-    courseId: Long,
-    courseName: String,
-    username: String,
-    amount: String,
-    transactionId: String,
-    onPaymentResult: (Boolean) -> Unit
-) {
-    val loading = androidx.appcompat.app.AlertDialog.Builder(context)
-        .setTitle("Procesando pago PSE")
-        .setMessage("Por favor espera…")
-        .setCancelable(false)
-        .create().also { it.show() }
-
-    val handler = CoroutineExceptionHandler { _, throwable ->
-        loading.dismiss()
-        Log.e("PSEPayment", "Coroutine Error", throwable)
-        Toast.makeText(context, "Error en el proceso de pago: ${throwable.localizedMessage}", Toast.LENGTH_LONG).show()
+        
+        findNavController().navigate(actionId, bundle)
+        // Note: onPaymentResult will be handled via navigation back stack or saved state
+    } catch (e: Exception) {
+        Log.e("PaymentNav", "Error navigating to payment form", e)
+        Toast.makeText(requireContext(), "Error al abrir formulario de pago", Toast.LENGTH_SHORT).show()
         onPaymentResult(false)
     }
-
-    CoroutineScope(Dispatchers.IO).launch(handler) {
-        try {
-            val req = PseTransactionRequest(
-                bankCode = bankCodeMapping(bankName),
-                returnURL = "https://tudominio.com/pse/return", // Replace with your actual return URL
-                reference = "curso_$courseId",
-                description = "Acceso al curso $courseName",
-                payer = Payer(
-                    documentType = mapDocType(documentType),
-                    document = documentNumber,
-                    name = username, // Assuming username is the payer's name
-                    surname = "", // You might need to collect surname
-                    emailAddress = email
-                ),
-                payment = Payment(
-                    reference = "curso_$courseId",
-                    description = "Acceso al curso $courseName",
-                    amount = Amount(total = amount.toDoubleOrNull() ?: 0.0) // Convert amount to Double
-                ),
-                ipAddress = "127.0.0.1", // Replace with real IP if possible
-                userAgent = "AndroidApp"
-            )
-
-            // Replace with your actual Authorization token and Merchant ID
-            val authorizationToken = "Bearer TU_TOKEN_DE_AUTENTICACION_PSE" // Replace with your actual token
-            val merchantId = "TU_MERCHANT_ID" // Replace with your actual Merchant ID
-
-            val response = paymentApi.createPseTransaction(
-                authorization = authorizationToken,
-                merchantId = merchantId,
-                request = req
-            )
-
-            withContext(Dispatchers.Main) {
-                loading.dismiss()
-                if (response.isSuccessful) {
-                    val url = response.body()?.transactionResponse?.urlBankPayment
-                    if (!url.isNullOrBlank()) {
-                        // Open the bank payment URL in a browser or WebView
-                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                        context.startActivity(intent)
-
-                        // Purchase functionality removed - just show success after redirect
-                         CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                withContext(Dispatchers.Main) {
-                                     Toast.makeText(context, "Redirigiendo a tu banco para completar el pago. La compra se registrará si el pago es exitoso.", Toast.LENGTH_LONG).show()
-                                    onPaymentResult(true) // Indicate success for UI update (like hiding payment button)
-                                }
-                            } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "Error al procesar el pago PSE: ${e.message}", Toast.LENGTH_LONG).show()
-                                    // Still indicate success for UI update, but log the error
-                                    Log.e("PSEPayment", "Error processing payment", e)
-                                    onPaymentResult(true)
-                                }
-                            }
-                        }
-
-                    } else {
-                        Toast.makeText(context, "No se pudo obtener la URL de pago de PSE.", Toast.LENGTH_LONG).show()
-                        onPaymentResult(false)
-                    }
-                } else {
-                    // Handle API errors (e.g., invalid credentials, invalid request)
-                    val errorBody = response.errorBody()?.string() ?: response.message()
-                    Log.e("PSEPayment", "API Error: ${response.code()} - $errorBody")
-                    Toast.makeText(context, "Error en la respuesta de PSE: ${response.code()} - $errorBody", Toast.LENGTH_LONG).show()
-                    onPaymentResult(false)
-                }
-            }
-        } catch (e: Exception) {
-            // Handle network errors or other exceptions during the process
-            withContext(Dispatchers.Main) {
-                loading.dismiss()
-                Log.e("PSEPayment", "Processing Error", e)
-                Toast.makeText(context, "Error al procesar el pago PSE: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                onPaymentResult(false)
-            }
-        }
-    }
 }
 
-// Helper functions for mapping
-private fun bankCodeMapping(bankName: String): String {
-    return when (bankName) {
-        "Bancolombia" -> "1022"
-        "Banco de Bogotá" -> "1001"
-        "Davivienda" -> "1051"
-        "BBVA" -> "1013"
-        "Banco de Occidente" -> "1007"
-        "Banco Popular" -> "1006"
-        // Add more bank mappings based on PayU documentation
-        else -> "1022" // Default or error code
-    }
-}
-
-private fun mapDocType(docType: String): String {
-    return when (docType) {
-        "Cédula de Ciudadanía" -> "CC"
-        "Cédula de Extranjería" -> "CE"
-        "Pasaporte" -> "PP"
-        "NIT" -> "NIT"
-        // Add more document type mappings
-        else -> "CC" // Default or error code
-    }
-}
 
 /**
  * Muestra un diálogo para seleccionar el tipo de certificado

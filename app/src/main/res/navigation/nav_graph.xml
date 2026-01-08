@@ -119,6 +119,9 @@
         <action
             android:id="@+id/action_exploreFragment_to_courseCreationFragment"
             app:destination="@id/courseCreationFragment" />
+        <action
+            android:id="@+id/action_exploreFragment_to_paymentFormFragment"
+            app:destination="@id/paymentFormFragment" />
     </fragment>
 
     <!-- Single notificacionesFragment definition -->
@@ -444,8 +447,38 @@
         <action
             android:id="@+id/action_courseDetailFragment_to_courseCreationFragment"
             app:destination="@id/courseCreationFragment" />
-        <!-- Removed the duplicate action to videoHomeFragment if it existed -->
-        <!-- Add other necessary actions if they were in the duplicate block -->
+        <!-- Action to navigate to PaymentFormFragment -->
+        <action
+            android:id="@+id/action_courseDetailFragment_to_paymentFormFragment"
+            app:destination="@id/paymentFormFragment"
+            app:enterAnim="@anim/slide_fade_in"
+            app:exitAnim="@android:anim/fade_out"
+            app:popEnterAnim="@android:anim/fade_in"
+            app:popExitAnim="@anim/slide_down" />
+    </fragment>
+
+    <!-- Payment Form Fragment -->
+    <fragment
+        android:id="@+id/paymentFormFragment"
+        android:name="com.example.tareamov.ui.PaymentFormFragment"
+        android:label="Pago PSE"
+        tools:layout="@layout/fragment_payment_form">
+        <!-- Arguments -->
+        <argument
+            android:name="courseId"
+            app:argType="long" />
+        <argument
+            android:name="courseName"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="coursePrice"
+            app:argType="float"
+            android:defaultValue="0" />
+        <argument
+            android:name="username"
+            app:argType="string"
+            android:defaultValue="" />
     </fragment>
 
     <!-- Add TaskSubmissionFragment definition -->

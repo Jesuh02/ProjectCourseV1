@@ -335,7 +335,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="PRECIO (USD)"
+                    android:text="PRECIO (COP)"
                     android:textColor="#8E8E93"
                     android:textSize="12sp"
                     android:fontFamily="sans-serif-medium"
@@ -347,13 +347,13 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:background="@drawable/bg_input_field_dark"
-                    android:hint="0.00"
+                    android:hint="50000"
                     android:textColorHint="#58585E"
                     android:textColor="#FFFFFF"
                     android:paddingVertical="16dp"
                     android:paddingHorizontal="16dp"
                     android:textSize="17sp"
-                    android:inputType="numberDecimal"/>
+                    android:inputType="number"/>
             </LinearLayout>
 
             <!-- Hidden sections -->

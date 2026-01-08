@@ -66,6 +66,20 @@ class ProfileFragment : Fragment() {
         avatarContainer = view.findViewById(R.id.avatarContainer)
         skeletonLayout = view.findViewById(R.id.skeletonLayout)
 
+        // Show immediate connection state while data is loading
+        try {
+            val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+            if (sess.isLoggedIn()) {
+                statusTextView.text = getString(R.string.status_connected)
+                statusTextView.setTextColor(android.graphics.Color.parseColor("#2ECC71"))
+            } else {
+                statusTextView.text = getString(R.string.status_disconnected)
+                statusTextView.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+
         // Enable clicking on avatar to change it
         profileImage.setOnClickListener {
             pickImageLauncher.launch("image/*")
@@ -415,8 +429,19 @@ class ProfileFragment : Fragment() {
         // Use usuario?.usuario for username if that's the correct field
         usernameTextView.text = usuario?.usuario ?: getString(R.string.default_username)
 
-        // Update status
-        statusTextView.text = getString(R.string.status_offline)
+        // Update status based on session state
+        try {
+            val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+            if (sess.isLoggedIn()) {
+                statusTextView.text = getString(R.string.status_connected)
+                statusTextView.setTextColor(android.graphics.Color.parseColor("#2ECC71")) // green
+            } else {
+                statusTextView.text = getString(R.string.status_disconnected)
+                statusTextView.setTextColor(android.graphics.Color.parseColor("#AAAAAA")) // gray
+            }
+        } catch (e: Exception) {
+            statusTextView.text = getString(R.string.status_disconnected)
+        }
 
         // Update subscribers count
         // Use string resource with placeholder if available, otherwise manual concatenation

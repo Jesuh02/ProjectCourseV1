@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:card_view="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:padding="8dp">
+
+    <androidx.cardview.widget.CardView
+        android:id="@+id/paymentLoadingCard"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        card_view:cardCornerRadius="16dp"
+        card_view:cardUseCompatPadding="false"
+        card_view:cardBackgroundColor="@android:color/transparent"
+        android:padding="0dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/bg_liquid_glass_dark"
+            android:padding="32dp"
+            android:minWidth="280dp">
+
+            <!-- Loading Spinner -->
+            <ProgressBar
+                android:id="@+id/paymentLoadingSpinner"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:indeterminateTint="@android:color/white" />
+
+            <!-- Loading Title -->
+            <TextView
+                android:id="@+id/paymentLoadingTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Preparando pago seguro"
+                android:textColor="@android:color/white"
+                android:textStyle="bold"
+                android:textSize="18sp"
+                android:gravity="center" />
+
+            <!-- Loading Message -->
+            <TextView
+                android:id="@+id/paymentLoadingMessage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Por favor espera un momento..."
+                android:textColor="@android:color/white"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:alpha="0.8" />
+
+        </LinearLayout>
+
+    </androidx.cardview.widget.CardView>
+
+</FrameLayout>

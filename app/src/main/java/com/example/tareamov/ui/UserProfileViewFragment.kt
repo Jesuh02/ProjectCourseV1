@@ -914,13 +914,29 @@ class UserProfileViewFragment : Fragment() {
                         }
                         
                         val videosDeferred = async {
-                            // Use passed userId or fetch it
+                            // Two ways: by remote_id (userId) AND by username. Merge results and dedupe.
                             val targetUserId = userId ?: com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
-                            
-                            if (targetUserId != null) {
-                                val videos = act.syncRepository.fetchVideosByCreatorUserIdFromSupabase(targetUserId)
-                                if (videos.isNotEmpty()) videos else act.syncRepository.fetchVideosByUsernameFromSupabase(username)
-                            } else {
+
+                            try {
+                                if (targetUserId != null) {
+                                    val byIdDeferred = async { act.syncRepository.fetchVideosByCreatorUserIdFromSupabase(targetUserId) }
+                                    val byUsernameDeferred = async { act.syncRepository.fetchVideosByUsernameFromSupabase(username) }
+
+                                    val byId = byIdDeferred.await()
+                                    val byUsername = byUsernameDeferred.await()
+
+                                    // Merge, deduplicate by id and prefer the provided username for display
+                                    val merged = (byId + byUsername)
+                                        .distinctBy { it.id }
+                                        .map { it.copy(username = username) }
+                                        .sortedByDescending { it.timestamp }
+
+                                    merged
+                                } else {
+                                    act.syncRepository.fetchVideosByUsernameFromSupabase(username)
+                                }
+                            } catch (e: Exception) {
+                                Log.w("UserProfileView", "Error fetching videos by both remote_id and username, falling back to username-only", e)
                                 act.syncRepository.fetchVideosByUsernameFromSupabase(username)
                             }
                         }

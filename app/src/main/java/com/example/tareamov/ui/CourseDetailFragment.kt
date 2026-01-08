@@ -1,5 +1,4 @@
 package com.example.tareamov.ui
-import com.example.tareamov.ui.initiatePSEPayment
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -161,6 +160,14 @@ class CourseDetailFragment : Fragment() {
         val paymentButtonContainer = view.findViewById<FrameLayout>(R.id.paymentButtonContainer)
         val paymentButton = view.findViewById<Button>(R.id.paymentButton)
         val paymentPSEButton = view.findViewById<Button>(R.id.paymentPSEButton) // Find the new PSE button
+
+        // Configure payment buttons to navigate to PaymentFormFragment
+        paymentButton?.setOnClickListener {
+            navigateToPaymentForm()
+        }
+        paymentPSEButton?.setOnClickListener {
+            navigateToPaymentForm()
+        }
 
         // Initialize tab views
         tabDocumentos = view.findViewById(R.id.tabDocumentos)
@@ -710,6 +717,49 @@ class CourseDetailFragment : Fragment() {
         // Keep the original navigation for adding a topic if needed elsewhere
         // !! IMPORTANT: Ensure 'action_courseDetailFragment_to_courseTopicFragment' exists in your nav_graph.xml !!
         findNavController().navigate(R.id.action_courseDetailFragment_to_courseTopicFragment, bundle)
+    }
+
+    /**
+     * Navigate to the Payment Form Fragment for PSE payment
+     */
+    private fun navigateToPaymentForm() {
+        if (currentUsername == null) {
+            Toast.makeText(requireContext(), "Debes iniciar sesión para pagar", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // Get current course price from ViewModel or cached data
+        lifecycleScope.launch {
+            try {
+                val course = courseViewModel.course.value 
+                    ?: withContext(Dispatchers.IO) { 
+                        AppDatabase.getDatabase(requireContext()).courseDao().getCourseById(courseId) 
+                    }
+                
+                val price = course?.price ?: 0.0
+                
+                if (price <= 0) {
+                    Toast.makeText(requireContext(), "Este curso es gratuito", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                
+                // Navigate to PaymentFormFragment using the extension function
+                showPaymentOptions(
+                    courseId = courseId,
+                    courseName = courseName,
+                    coursePrice = price,
+                    username = currentUsername
+                ) { success ->
+                    // Callback can be used for result handling if needed
+                    if (success) {
+                        Log.d("CourseDetail", "Payment initiated successfully")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseDetail", "Error navigating to payment", e)
+                Toast.makeText(requireContext(), "Error al abrir pago: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
 
