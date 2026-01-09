@@ -3786,4 +3786,70 @@ class SyncRepository(
         }
     }
 
+    // ========== PURCHASED COURSES (SUCCESSFUL TRANSACTIONS) OPERATIONS ==========
+    
+    /**
+     * Fetch count of courses with successful transactions
+     */
+    suspend fun fetchPurchasedCoursesCount(): Long = withContext(Dispatchers.IO) {
+        try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "SupabaseClient not configured for purchased courses count")
+                return@withContext 0L
+            }
+            supabaseClient.fetchPurchasedCoursesCount()
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error fetching purchased courses count", e)
+            0L
+        }
+    }
+    
+    /**
+     * Fetch all courses that have successful transactions (purchased courses)
+     */
+    suspend fun fetchPurchasedCoursesFromSupabase(): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "SupabaseClient not configured for purchased courses")
+                return@withContext emptyList()
+            }
+            supabaseClient.fetchPurchasedCourses()
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error fetching purchased courses from Supabase", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * Check if a specific user has purchased a course
+     */
+    suspend fun hasUserPurchasedCourse(userId: Long, courseId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "SupabaseClient not configured for user purchase check")
+                return@withContext false
+            }
+            supabaseClient.hasUserPurchasedCourse(userId, courseId)
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error checking user purchase", e)
+            false
+        }
+    }
+    
+    /**
+     * Fetch courses purchased by a specific user
+     */
+    suspend fun fetchCoursesPurchasedByUser(userId: Long): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            if (!supabaseClient.isConfigured()) {
+                Log.w("SyncRepository", "SupabaseClient not configured for user purchased courses")
+                return@withContext emptyList()
+            }
+            supabaseClient.fetchCoursesPurchasedByUser(userId)
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error fetching courses purchased by user", e)
+            emptyList()
+        }
+    }
+
 }

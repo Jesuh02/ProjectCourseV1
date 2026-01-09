@@ -1107,8 +1107,21 @@ class CourseDetailFragment : Fragment() {
 
                     // Show payment container if course is premium and viewer is not the creator
                     if (remoteCourse.isPremium == true && !isCurrentUserCreator) {
-                        paymentContainer?.visibility = View.VISIBLE
-                        animateViewIfVisible(paymentContainer, 180)
+                        // Check if course has been purchased with successful transaction
+                        val hasPurchased = withContext(Dispatchers.IO) {
+                            checkIfCoursePurchased(effectiveCourseId)
+                        }
+                        
+                        if (hasPurchased) {
+                            // Course already purchased - hide payment UI
+                            paymentContainer?.visibility = View.GONE
+                            Log.d("CourseDetailFragment", "Course $effectiveCourseId already purchased - hiding payment UI")
+                        } else {
+                            // Course not purchased - show payment UI
+                            paymentContainer?.visibility = View.VISIBLE
+                            animateViewIfVisible(paymentContainer, 180)
+                            Log.d("CourseDetailFragment", "Course $effectiveCourseId not purchased - showing payment UI")
+                        }
                     } else {
                         paymentContainer?.alpha = 0f
                         paymentContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
@@ -1194,8 +1207,21 @@ class CourseDetailFragment : Fragment() {
                     }
 
                     if (course?.isPremium == true && !isCurrentUserCreator) {
-                        paymentContainer?.visibility = View.VISIBLE
-                        animateViewIfVisible(paymentContainer, 180)
+                        // Check if course has been purchased with successful transaction
+                        val hasPurchased = withContext(Dispatchers.IO) {
+                            checkIfCoursePurchased(courseId)
+                        }
+                        
+                        if (hasPurchased) {
+                            // Course already purchased - hide payment UI
+                            paymentContainer?.visibility = View.GONE
+                            Log.d("CourseDetailFragment", "Course $courseId already purchased (local course) - hiding payment UI")
+                        } else {
+                            // Course not purchased - show payment UI
+                            paymentContainer?.visibility = View.VISIBLE
+                            animateViewIfVisible(paymentContainer, 180)
+                            Log.d("CourseDetailFragment", "Course $courseId not purchased (local course) - showing payment UI")
+                        }
                     } else {
                         paymentContainer?.alpha = 0f
                         paymentContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
@@ -3495,6 +3521,52 @@ class CourseDetailFragment : Fragment() {
                     Toast.makeText(requireContext(), "Error al eliminar el contenido: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
+        }
+    }
+    
+    /**
+     * Check if course is fully purchased with successful transactions
+     */
+    private suspend fun checkIfCoursePurchased(courseId: Long): Boolean {
+        return try {
+            val userId = sessionManager.getUserId()
+            if (userId <= 0) return false
+            
+            val repo = syncRepository
+            val sql = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = $courseId AND status = 'successful'"
+            val txResult = repo.executeRawQuery(sql)
+            
+            var successfulPaidAmount = 0.0
+            if (txResult.isNotEmpty()) {
+                val row = txResult[0]
+                val paidObj = row["paid"]
+                if (paidObj != null) {
+                    successfulPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
+                }
+            }
+            
+            // Get course price to compare - try both local and remote
+            var coursePrice = 0.0
+            
+            // Try remote first
+            val remoteCourse = withContext(Dispatchers.IO) { 
+                syncRepository.fetchCourseById(courseId) 
+            }
+            if (remoteCourse != null) {
+                coursePrice = remoteCourse.price
+            } else {
+                // Fallback to local
+                val localCourse = AppDatabase.getDatabase(requireContext()).courseDao().getCourseById(courseId)
+                coursePrice = localCourse?.price ?: 0.0
+            }
+            
+            val hasPurchased = successfulPaidAmount >= coursePrice
+            Log.d("CourseDetailFragment", "Course $courseId purchase check: paid=$successfulPaidAmount, price=$coursePrice, purchased=$hasPurchased")
+            
+            hasPurchased
+        } catch (e: Exception) {
+            Log.e("CourseDetailFragment", "Error checking course purchase status", e)
+            false
         }
     }
 }

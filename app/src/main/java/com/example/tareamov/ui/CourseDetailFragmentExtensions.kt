@@ -199,11 +199,17 @@ fun Fragment.handlePaidCourseAccess(
                 onContentAccess(false)
                 
                 paymentButton.setOnClickListener {
-                    showPaymentOptions(courseId, courseName, coursePrice, username) { success ->
+                    // Pass userId if available, else standard fallback
+                    showPaymentOptions(courseId, courseName, coursePrice, username, userId ?: -1L) { success ->
                         if (success) {
-                            // Optimistically hide payment? Or wait for sync?
-                            // Ideally show message to wait for validation
-                            Toast.makeText(requireContext(), "Verificando pago...", Toast.LENGTH_SHORT).show()
+                            // On success, hide payment button and show content immediately
+                            paymentButtonContainer.visibility = View.GONE
+                            topicsContainer?.visibility = View.VISIBLE
+                            noTopicsTextView?.visibility = View.GONE // Reset this
+                            onContentAccess(true)
+                            
+                            // Also refresh activity/fragment state using Supabase check if possible
+                            // For now, UI update is enough (optimistic)
                         }
                     }
                 }
@@ -219,14 +225,15 @@ fun Fragment.handlePaidCourseAccess(
 }
 
 /**
- * Navigate to Payment Form Fragment - PSE payment interface
- * This replaces the old dialog-based payment flow with a full-screen fragment
+ * Navigate to Wompi Payment URL and poll for status
+ * This replaces the old dialog/fragment flow with a direct URL + Polling approach
  */
 fun Fragment.showPaymentOptions(
     courseId: Long,
     courseName: String,
     coursePrice: Double,
     username: String?,
+    userId: Long = -1L,
     onPaymentResult: (Boolean) -> Unit
 ) {
     if (username == null) {
@@ -235,29 +242,139 @@ fun Fragment.showPaymentOptions(
         return
     }
 
-    // Navigate to the Payment Form Fragment with arguments
-    try {
-        val bundle = Bundle().apply {
-            putLong("courseId", courseId)
-            putString("courseName", courseName)
-            putFloat("coursePrice", coursePrice.toFloat())
-            putString("username", username)
+    val context = requireContext()
+    
+    // Launch within lifecycle scope
+    viewLifecycleOwner.lifecycleScope.launch {
+        
+        // 1. Resolve User ID if not provided
+        val actualUserId = if (userId != -1L) userId else withContext(Dispatchers.IO) {
+            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+        }
+
+        if (actualUserId == null || actualUserId == -1L) {
+             Toast.makeText(context, "Error: No se pudo identificar al usuario", Toast.LENGTH_SHORT).show()
+             onPaymentResult(false)
+             return@launch
         }
         
-        // Determine the correct action based on current destination
-        val currentDestinationId = findNavController().currentDestination?.id
-        val actionId = when (currentDestinationId) {
-            R.id.exploreFragment -> R.id.action_exploreFragment_to_paymentFormFragment
-            R.id.courseDetailFragment -> R.id.action_courseDetailFragment_to_paymentFormFragment
-            else -> R.id.action_courseDetailFragment_to_paymentFormFragment // fallback
+        // Show loading dialog
+        val progressDialog = AlertDialog.Builder(context)
+            .setTitle("Iniciando pago")
+            .setMessage("Conectando con Wompi...")
+            .setCancelable(false)
+            .create()
+        progressDialog.show()
+
+        try {
+            // 2. Initiate Payment on Backend
+            // We use dummy values for personal info as Wompi Web Checkout collects them
+            val request = PaymentInitiationRequest(
+                courseId = courseId,
+                userId = actualUserId,
+                amount = coursePrice,
+                bankCode = "0", 
+                payerEmail = "user@example.com", // Wompi will ask for this
+                payerName = username,
+                payerDocType = "CC",
+                payerDocNumber = "0",
+                ipAddress = "127.0.0.1", // Backend handles real IP
+                userAgent = "AndroidApp"
+            )
+            
+            val response = withContext(Dispatchers.IO) {
+                paymentApi.initiatePayment(request)
+            }
+
+            if (response.isSuccessful && response.body()?.success == true) {
+                val body = response.body()!!
+                val url = body.urlBankPayment
+                val reference = body.transactionId // This is the transaction reference
+
+                if (url.isNullOrEmpty() || reference.isNullOrEmpty()) {
+                     progressDialog.dismiss()
+                     Toast.makeText(context, "Error: El servidor no devolvió la URL de pago", Toast.LENGTH_SHORT).show()
+                     onPaymentResult(false)
+                     return@launch
+                }
+                
+                // 3. Open Wompi in Browser
+                progressDialog.setMessage("Abriendo navegador...\nPor favor completa el pago y regresa aquí.")
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    progressDialog.dismiss()
+                    Toast.makeText(context, "No se pudo abrir el navegador: ${e.message}", Toast.LENGTH_LONG).show()
+                    onPaymentResult(false)
+                    return@launch
+                }
+                
+                // 4. Polling Loop
+                progressDialog.setMessage("Esperando confirmación del pago...\nNo cierres esta ventana.")
+                progressDialog.setButton(AlertDialog.BUTTON_NEGATIVE, "Cancelar") { d, _ -> 
+                    d.dismiss()
+                    onPaymentResult(false) // User cancelled waiting
+                }
+                // Update dialog to show cancellation option
+                progressDialog.show() 
+                
+                var isApproved = false
+                var attempts = 0
+                val maxAttempts = 60 // 5 minutes approx (5s interval)
+                
+                while (attempts < maxAttempts && progressDialog.isShowing) {
+                    kotlinx.coroutines.delay(5000) // Wait 5 seconds
+                    
+                    val statusCheck = withContext(Dispatchers.IO) {
+                        try {
+                            paymentApi.getTransactionStatus(reference)
+                        } catch(e: Exception) { null }
+                    }
+                    
+                    if (statusCheck?.isSuccessful == true) {
+                        val status = statusCheck.body()?.status?.lowercase()
+                        Log.d("PaymentPoll", "Reference: $reference, Status: $status")
+                        
+                        if (status == "successful" || status == "approved") {
+                            isApproved = true
+                            break
+                        } else if (status == "failed" || status == "rejected" || status == "declined" || status == "voided") {
+                             withContext(Dispatchers.Main) {
+                                 Toast.makeText(context, "El pago fue rechazado. Intenta nuevamente.", Toast.LENGTH_LONG).show()
+                             }
+                             break
+                        }
+                        // If 'pending', continue loop
+                    }
+                    attempts++
+                }
+                
+                progressDialog.dismiss()
+                
+                if (isApproved) {
+                     // Payment Success!
+                     // Ideally, refresh permissions or database here if not handled by webhook latency
+                     Toast.makeText(context, "¡Pago exitoso! Acceso desbloqueado.", Toast.LENGTH_LONG).show()
+                     onPaymentResult(true)
+                } else if (attempts >= maxAttempts) {
+                     Toast.makeText(context, "No se detectó el pago a tiempo. Si pagaste, contacta soporte.", Toast.LENGTH_LONG).show()
+                     onPaymentResult(false)
+                }
+                
+            } else {
+                 progressDialog.dismiss()
+                 val msg = response.body()?.message ?: "Error desconocido del servidor"
+                 Toast.makeText(context, "Error al iniciar pago: $msg", Toast.LENGTH_SHORT).show()
+                 onPaymentResult(false)
+            }
+
+        } catch (e: Exception) {
+            progressDialog.dismiss()
+            Log.e("PaymentFlow", "Exception", e)
+            Toast.makeText(context, "Error de conexión: ${e.message}", Toast.LENGTH_SHORT).show()
+            onPaymentResult(false)
         }
-        
-        findNavController().navigate(actionId, bundle)
-        // Note: onPaymentResult will be handled via navigation back stack or saved state
-    } catch (e: Exception) {
-        Log.e("PaymentNav", "Error navigating to payment form", e)
-        Toast.makeText(requireContext(), "Error al abrir formulario de pago", Toast.LENGTH_SHORT).show()
-        onPaymentResult(false)
     }
 }
 

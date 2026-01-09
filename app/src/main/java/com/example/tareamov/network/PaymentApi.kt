@@ -34,6 +34,12 @@ data class PaymentInitiationResponse(
     @SerializedName("message") val message: String?
 )
 
+data class PaymentStatusResponse(
+    @SerializedName("success") val success: Boolean,
+    @SerializedName("status") val status: String?, // successful, pending, failed
+    @SerializedName("reference") val reference: String?
+)
+
 interface PaymentApi {
     
     @GET("api/payment/banks")
@@ -43,6 +49,11 @@ interface PaymentApi {
     suspend fun initiatePayment(
         @Body request: PaymentInitiationRequest
     ): Response<PaymentInitiationResponse>
+    
+    @GET("api/payment/status/{reference}")
+    suspend fun getTransactionStatus(
+        @retrofit2.http.Path("reference") reference: String
+    ): Response<PaymentStatusResponse>
 
     companion object {
         const val BASE_URL = "https://mcp-backenddeploy-production.up.railway.app/"

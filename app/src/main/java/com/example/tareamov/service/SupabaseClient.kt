@@ -7458,4 +7458,163 @@ object SupabaseClient {
             0
         }
     }
+
+    /**
+     * Fetch total count of courses with successful transactions
+     */
+    suspend fun fetchPurchasedCoursesCount(): Long = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext 0L
+            
+            val request = buildGetRequest("transactions?status=eq.successful&select=course_id")
+            val response = client.newCall(request).execute()
+            
+            if (response.isSuccessful) {
+                val responseBody = response.body?.string()
+                if (!responseBody.isNullOrEmpty()) {
+                    val jsonArray = gson.fromJson(responseBody, com.google.gson.JsonArray::class.java)
+                    
+                    // Get unique course IDs from successful transactions
+                    val uniqueCourseIds = mutableSetOf<Long>()
+                    jsonArray.forEach { element ->
+                        val jsonObject = element.asJsonObject
+                        val courseId = jsonObject.get("course_id")?.asLong
+                        if (courseId != null) {
+                            uniqueCourseIds.add(courseId)
+                        }
+                    }
+                    
+                    Log.d("SupabaseClient", "Found ${uniqueCourseIds.size} courses with successful transactions")
+                    return@withContext uniqueCourseIds.size.toLong()
+                }
+            } else {
+                Log.e("SupabaseClient", "HTTP error fetching purchased courses count: ${response.code}")
+            }
+            
+            0L
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching purchased courses count", e)
+            0L
+        }
+    }
+    
+    /**
+     * Fetch courses that have successful transactions (purchased courses)
+     */
+    suspend fun fetchPurchasedCourses(): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+            
+            // First, get unique course IDs from successful transactions
+            val request = buildGetRequest("transactions?status=eq.successful&select=course_id")
+            val response = client.newCall(request).execute()
+            
+            if (!response.isSuccessful) {
+                Log.e("SupabaseClient", "HTTP error fetching transaction course IDs: ${response.code}")
+                return@withContext emptyList()
+            }
+            
+            val responseBody = response.body?.string()
+            if (responseBody.isNullOrEmpty()) {
+                return@withContext emptyList()
+            }
+            
+            val jsonArray = gson.fromJson(responseBody, com.google.gson.JsonArray::class.java)
+            val uniqueCourseIds = mutableSetOf<Long>()
+            
+            jsonArray.forEach { element ->
+                val jsonObject = element.asJsonObject
+                val courseId = jsonObject.get("course_id")?.asLong
+                if (courseId != null) {
+                    uniqueCourseIds.add(courseId)
+                }
+            }
+            
+            if (uniqueCourseIds.isEmpty()) {
+                return@withContext emptyList()
+            }
+            
+            // Now fetch the actual courses using the IDs
+            val courseIds = uniqueCourseIds.toList()
+            return@withContext fetchCoursesByIds(courseIds)
+            
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching purchased courses", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * Check if a specific user has purchased a course (has successful transaction)
+     */
+    suspend fun hasUserPurchasedCourse(userId: Long, courseId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext false
+            
+            val request = buildGetRequest("transactions?user_id=eq.$userId&course_id=eq.$courseId&status=eq.successful&select=id")
+            val response = client.newCall(request).execute()
+            
+            if (response.isSuccessful) {
+                val responseBody = response.body?.string()
+                if (!responseBody.isNullOrEmpty()) {
+                    val jsonArray = gson.fromJson(responseBody, com.google.gson.JsonArray::class.java)
+                    val hasPurchased = jsonArray.size() > 0
+                    Log.d("SupabaseClient", "User $userId purchased course $courseId: $hasPurchased")
+                    return@withContext hasPurchased
+                }
+            } else {
+                Log.e("SupabaseClient", "HTTP error checking user purchase: ${response.code}")
+            }
+            
+            false
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error checking user purchase", e)
+            false
+        }
+    }
+    
+    /**
+     * Fetch courses purchased by a specific user
+     */
+    suspend fun fetchCoursesPurchasedByUser(userId: Long): List<Course> = withContext(Dispatchers.IO) {
+        try {
+            if (!isConfigured()) return@withContext emptyList()
+            
+            // Get course IDs from successful transactions for this user
+            val request = buildGetRequest("transactions?user_id=eq.$userId&status=eq.successful&select=course_id")
+            val response = client.newCall(request).execute()
+            
+            if (!response.isSuccessful) {
+                Log.e("SupabaseClient", "HTTP error fetching user transactions: ${response.code}")
+                return@withContext emptyList()
+            }
+            
+            val responseBody = response.body?.string()
+            if (responseBody.isNullOrEmpty()) {
+                return@withContext emptyList()
+            }
+            
+            val jsonArray = gson.fromJson(responseBody, com.google.gson.JsonArray::class.java)
+            val courseIds = mutableSetOf<Long>()
+            
+            jsonArray.forEach { element ->
+                val jsonObject = element.asJsonObject
+                val courseId = jsonObject.get("course_id")?.asLong
+                if (courseId != null) {
+                    courseIds.add(courseId)
+                }
+            }
+            
+            if (courseIds.isEmpty()) {
+                return@withContext emptyList()
+            }
+            
+            // Fetch the actual courses
+            return@withContext fetchCoursesByIds(courseIds.toList())
+            
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching courses purchased by user", e)
+            emptyList()
+        }
+    }
 }

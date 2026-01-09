@@ -331,9 +331,22 @@ class CourseAdapter(
             // CRITICAL: Check if user is the creator - creators don't need enrollment and have full access
             val isCreator = canUserModifyCourse(course)
             
-            // Show payment confirmation dialog for paid courses (non-creators)
-            if (course.price > 0 && !isCreator) {
-                showPaymentConfirmationDialog(course)
+            if (!isCreator && course.price > 0) {
+                // Check if course is already purchased with successful transaction
+                CoroutineScope(Dispatchers.Main).launch {
+                    val hasPurchased = withContext(Dispatchers.IO) {
+                        checkIfCoursePurchased(course.id, currentUserIdCached ?: 0L)
+                    }
+                    
+                    if (hasPurchased) {
+                        // Course already purchased - allow direct access
+                        onCourseClickListener(course)
+                        backgroundEnroll(course)
+                    } else {
+                        // Course not purchased - show payment dialog
+                        showPaymentConfirmationDialog(course)
+                    }
+                }
                 return@setOnClickListener
             }
             
@@ -685,50 +698,78 @@ class CourseAdapter(
                     } else {
                         // Not enrolled yet - Check if it's a paid course
                         if (course.price > 0) {
-                            // Paid course - Check for any partial payments to show remaining amount
+                            // Paid course - Check for successful payments first
                             val syncRepo = createSyncRepository(db)
-                            val sql = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = ${course.id} AND status = 'APPROVED'"
-                            val txResult = syncRepo.executeRawQuery(sql)
+                            val sqlSuccessful = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = ${course.id} AND status = 'successful'"
+                            val txSuccessfulResult = syncRepo.executeRawQuery(sqlSuccessful)
                             
-                            var paidAmount = 0.0
+                            var successfulPaidAmount = 0.0
                             try {
-                                if (txResult.isNotEmpty()) {
-                                    val row = txResult[0]
+                                if (txSuccessfulResult.isNotEmpty()) {
+                                    val row = txSuccessfulResult[0]
                                     // Handle different number types (Int, Long, Double) coming from JSON
                                     val paidObj = row["paid"]
                                     if (paidObj != null) {
-                                        paidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
+                                        successfulPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
                                     }
                                 }
                             } catch(e: Exception) {
-                                Log.e("CourseAdapter", "Error parsing paid amount", e)
+                                Log.e("CourseAdapter", "Error parsing successful paid amount", e)
                             }
                             
-                            val remaining = kotlin.math.max(0.0, course.price - paidAmount)
-                            
-                            holder.enrolledStatusContainer?.visibility = View.GONE
-                            holder.enrollButtonContainer?.visibility = View.VISIBLE
-                            holder.enrollButton?.visibility = View.VISIBLE
-                            
-                            val localeCO = java.util.Locale("es", "CO")
-                            val currencyFormat = java.text.NumberFormat.getCurrencyInstance(localeCO)
-                            
-                            if (paidAmount > 0 && remaining > 0) {
-                                holder.enrollButton?.text = "Falta: ${currencyFormat.format(remaining)}"
+                            // Check if course is fully purchased with successful transactions
+                            if (successfulPaidAmount >= course.price) {
+                                // Course fully purchased - show purchased status
+                                holder.enrolledStatusContainer?.visibility = View.VISIBLE
+                                holder.enrollButtonContainer?.visibility = View.GONE
+                                holder.enrollButton?.visibility = View.GONE
+                                
+                                Log.d("CourseAdapter", "Course ${course.id} fully purchased with successful payment. Amount: $successfulPaidAmount")
                             } else {
-                                holder.enrollButton?.text = "Comprar ${currencyFormat.format(course.price)}"
+                                // Still need payment - Check legacy APPROVED payments too
+                                val sqlApproved = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = ${course.id} AND status = 'APPROVED'"
+                                val txApprovedResult = syncRepo.executeRawQuery(sqlApproved)
+                                
+                                var approvedPaidAmount = 0.0
+                                try {
+                                    if (txApprovedResult.isNotEmpty()) {
+                                        val row = txApprovedResult[0]
+                                        val paidObj = row["paid"]
+                                        if (paidObj != null) {
+                                            approvedPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
+                                        }
+                                    }
+                                } catch(e: Exception) {
+                                    Log.e("CourseAdapter", "Error parsing approved paid amount", e)
+                                }
+                                
+                                val totalPaidAmount = successfulPaidAmount + approvedPaidAmount
+                                val remaining = kotlin.math.max(0.0, course.price - totalPaidAmount)
+                                
+                                holder.enrolledStatusContainer?.visibility = View.GONE
+                                holder.enrollButtonContainer?.visibility = View.VISIBLE
+                                holder.enrollButton?.visibility = View.VISIBLE
+                                
+                                val localeCO = java.util.Locale("es", "CO")
+                                val currencyFormat = java.text.NumberFormat.getCurrencyInstance(localeCO)
+                                
+                                if (totalPaidAmount > 0 && remaining > 0) {
+                                    holder.enrollButton?.text = "Falta: ${currencyFormat.format(remaining)}"
+                                } else {
+                                    holder.enrollButton?.text = "Comprar ${currencyFormat.format(course.price)}"
+                                }
+                                
+                                holder.enrollButton?.isEnabled = true
+                                holder.enrollButton?.alpha = 1.0f
+                                holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
+                                
+                                // Enable click to go to details/payment
+                                holder.enrollButton?.setOnClickListener {
+                                    onCourseClickListener(course) // Navigate to detail which handles payment
+                                }
+                                
+                                Log.d("CourseAdapter", "Course ${course.id} payment status: successful=$successfulPaidAmount, approved=$approvedPaidAmount, remaining=$remaining")
                             }
-                            
-                            holder.enrollButton?.isEnabled = true // Always allow clicking to pay/complete payment
-                            holder.enrollButton?.alpha = 1.0f
-                            holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
-                            
-                            // Enable click to go to details/payment
-                            holder.enrollButton?.setOnClickListener {
-                                onCourseClickListener(course) // Navigate to detail which handles payment
-                            }
-                            
-                            Log.d("CourseAdapter", "Course ${course.id} is paid. Paid: $paidAmount, Remaining: $remaining")
                         } else {
                             // Free course - Show enrollment section
                             holder.enrolledStatusContainer?.visibility = View.GONE
@@ -823,6 +864,41 @@ class CourseAdapter(
                 .load(thumbnailUri)
                 .apply(requestOptions)
                 .into(holder.thumbnailImageView)
+        }
+    }
+    
+    /**
+     * Check if course is fully purchased with successful transactions
+     */
+    private suspend fun checkIfCoursePurchased(courseId: Long, userId: Long): Boolean {
+        return try {
+            if (userId <= 0) return false
+            
+            val db = AppDatabase.getDatabase(context)
+            val syncRepo = createSyncRepository(db)
+            val sql = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = $courseId AND status = 'successful'"
+            val txResult = syncRepo.executeRawQuery(sql)
+            
+            var successfulPaidAmount = 0.0
+            if (txResult.isNotEmpty()) {
+                val row = txResult[0]
+                val paidObj = row["paid"]
+                if (paidObj != null) {
+                    successfulPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
+                }
+            }
+            
+            // Get course price to compare
+            val course = courses.find { it.id == courseId }
+            val coursePrice = course?.price ?: 0.0
+            
+            val hasPurchased = successfulPaidAmount >= coursePrice
+            Log.d("CourseAdapter", "Course $courseId purchase check: paid=$successfulPaidAmount, price=$coursePrice, purchased=$hasPurchased")
+            
+            hasPurchased
+        } catch (e: Exception) {
+            Log.e("CourseAdapter", "Error checking course purchase status", e)
+            false
         }
     }
     

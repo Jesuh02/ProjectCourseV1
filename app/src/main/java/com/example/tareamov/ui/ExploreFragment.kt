@@ -73,6 +73,7 @@ class ExploreFragment : Fragment() {
     private val _totalCourses = androidx.compose.runtime.mutableStateOf(0)
     private val _popularCourses = androidx.compose.runtime.mutableStateOf(0)
     private val _newCourses = androidx.compose.runtime.mutableStateOf(0)
+    private val _purchasedCourses = androidx.compose.runtime.mutableStateOf(0)
     private val _searchText = androidx.compose.runtime.mutableStateOf("")
     private val _activeFilterName = androidx.compose.runtime.mutableStateOf<String?>(null)
     private val _isHeaderCollapsed = androidx.compose.runtime.mutableStateOf(true)
@@ -235,6 +236,7 @@ class ExploreFragment : Fragment() {
                 totalCourses = _totalCourses.value,
                 popularCourses = _popularCourses.value,
                 newCourses = _newCourses.value,
+                purchasedCourses = _purchasedCourses.value,
                 searchText = _searchText.value,
                 onSearchTextChanged = { text ->
                     _searchText.value = text
@@ -277,6 +279,10 @@ class ExploreFragment : Fragment() {
                         
                         showNewCourses(newCoursesList)
                     }
+                },
+                onPurchasedCoursesClicked = {
+                    // New click handler for purchased courses filter
+                    filterPurchasedCourses()
                 },
                 isCollapsed = _isHeaderCollapsed.value,
                 onToggleCollapse = { _isHeaderCollapsed.value = !_isHeaderCollapsed.value }
@@ -776,54 +782,77 @@ class ExploreFragment : Fragment() {
         
         // Handle paid courses (price > 0)
         if (course.price > 0) {
-            // Check if already paid/approved
-            val isPaid = withContext(Dispatchers.IO) {
+            // First check if course has been successfully purchased
+            val isPurchased = withContext(Dispatchers.IO) {
                 try {
-                    // Check remote enrollment first (source of truth for payments)
-                    if (isNetworkAvailable()) {
-                         val repo = getSyncRepository()
-                         // Use Supabase Select via raw query or client wrapper
-                         // Note: Security/Injection warning - usually we use parameterized queries. 
-                         // But for now using the available executeRawQuery helper.
-                         // Ensure userId and courseId are safe numbers.
-                         val result = repo.executeRawQuery("select id from progreso_estudiante where usuario_estudiante = $userId and curso_id = ${course.id}")
-                         if (result.isNotEmpty()) return@withContext true
+                    val repo = getSyncRepository()
+                    val result = repo.executeRawQuery("SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = ${course.id} AND status = 'successful'")
+                    
+                    var successfulPaidAmount = 0.0
+                    if (result.isNotEmpty()) {
+                        val row = result[0]
+                        val paidObj = row["paid"]
+                        if (paidObj != null) {
+                            successfulPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
+                        }
                     }
                     
-                    // Fallback to local check
-                    val db = AppDatabase.getDatabase(requireContext())
-                    db.progresoEstudianteDao().getProgreso(userId, course.id) != null
+                    successfulPaidAmount >= course.price
                 } catch (e: Exception) {
-                     Log.e("ExploreFragment", "Error checking paid status", e)
-                     false
+                    Log.e("ExploreFragment", "Error checking purchase status", e)
+                    false
                 }
             }
-
-            if (!isPaid) {
-                try {
-                    showDarkToast("Iniciando proceso de pago...", Toast.LENGTH_SHORT)
-                    val paymentUrl = withContext(Dispatchers.IO) {
-                        getSyncRepository().initiatePayment(userId, course.id, course.price)
-                    }
-                    
-                    if (!paymentUrl.isNullOrEmpty()) {
-                        Log.d("ExploreFragment", "Redirecting to payment URL: $paymentUrl")
-                        // Set pending payment flag to check on return
-                        pendingPaymentCourseId = course.id
+            
+            if (isPurchased) {
+                // Course already purchased - proceed with enrollment
+                showDarkToast("✅ Curso ya comprado, inscribiendo...")
+            } else {
+                // Check legacy enrollment (old system)
+                val isPaid = withContext(Dispatchers.IO) {
+                    try {
+                        // Check remote enrollment first (source of truth for payments)
+                        if (isNetworkAvailable()) {
+                             val repo = getSyncRepository()
+                             val result = repo.executeRawQuery("select id from progreso_estudiante where usuario_estudiante = $userId and curso_id = ${course.id}")
+                             if (result.isNotEmpty()) return@withContext true
+                        }
                         
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(paymentUrl))
-                        startActivity(intent)
-                        showDarkToast("Por favor completa el pago en Wompi", Toast.LENGTH_LONG)
-                        return@launch
-                    } else {
-                         showDarkToast("Error al obtener enlace de pago. Intenta nuevamente.")
-                         Log.e("ExploreFragment", "Payment URL was null")
-                         return@launch
+                        // Fallback to local check
+                        val db = AppDatabase.getDatabase(requireContext())
+                        db.progresoEstudianteDao().getProgreso(userId, course.id) != null
+                    } catch (e: Exception) {
+                         Log.e("ExploreFragment", "Error checking paid status", e)
+                         false
                     }
-                } catch (e: Exception) {
-                    showDarkToast("Error iniciando pago: ${e.message}")
-                    Log.e("ExploreFragment", "Error initiating payment", e)
-                    return@launch
+                }
+
+                if (!isPaid) {
+                    try {
+                        showDarkToast("Iniciando proceso de pago...", Toast.LENGTH_SHORT)
+                        val paymentUrl = withContext(Dispatchers.IO) {
+                            getSyncRepository().initiatePayment(userId, course.id, course.price)
+                        }
+                        
+                        if (!paymentUrl.isNullOrEmpty()) {
+                            Log.d("ExploreFragment", "Redirecting to payment URL: $paymentUrl")
+                            // Set pending payment flag to check on return
+                            pendingPaymentCourseId = course.id
+                            
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(paymentUrl))
+                            startActivity(intent)
+                            showDarkToast("Por favor completa el pago en Wompi", Toast.LENGTH_LONG)
+                            return@launch
+                        } else {
+                             showDarkToast("Error al obtener enlace de pago. Intenta nuevamente.")
+                             Log.e("ExploreFragment", "Payment URL was null")
+                             return@launch
+                        }
+                    } catch (e: Exception) {
+                        showDarkToast("Error iniciando pago: ${e.message}")
+                        Log.e("ExploreFragment", "Error initiating payment", e)
+                        return@launch
+                    }
                 }
             }
         }
@@ -2047,7 +2076,10 @@ class ExploreFragment : Fragment() {
                 filterEnrolledCourses()
                 updateActiveFilterUI("Mis Inscripciones")
             },
-            FilterOption("👤", "Mis cursos (Creados)", 1) { 
+            FilterOption("�", "Cursos comprados", 6) { 
+                filterPurchasedCourses()
+            },
+            FilterOption("�👤", "Mis cursos (Creados)", 1) { 
                 filterMyCoursesOnly()
             },
             FilterOption("🌟", "Cursos de otros", 2) { 
@@ -2376,6 +2408,39 @@ class ExploreFragment : Fragment() {
         }
     }
 
+    // Filter purchased courses (courses with successful transactions)
+    private fun filterPurchasedCourses() {
+        isLoadingCourses = true
+        
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val purchasedCourses = withContext(Dispatchers.IO) {
+                    getSyncRepository().fetchPurchasedCoursesFromSupabase()
+                }
+                
+                Log.d("ExploreFragment", "Se obtuvieron ${purchasedCourses.size} cursos comprados de Supabase")
+                
+                withContext(Dispatchers.Main) {
+                    displayCourses(purchasedCourses)
+                    
+                    val count = purchasedCourses.size
+                    showDarkToast("Mostrando $count cursos comprados")
+                    // Update header counts to reflect purchased filter
+                    updateFilteredCourseStats(count, "purchased")
+                    updateActiveFilterUI("Cursos Comprados")
+                    isFilterActive = true
+                    isLoadingCourses = false
+                }
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error filtering purchased courses", e)
+                withContext(Dispatchers.Main) {
+                    showDarkToast("Error al cargar cursos comprados")
+                    isLoadingCourses = false
+                }
+            }
+        }
+    }
+
     // Update course statistics in header based on currently displayed courses
     // DEPRECATED: Este método ya no se usa. Se reemplazó por fetchAndDisplayCourseStats() que usa TOP-5
     @Deprecated("Usar fetchAndDisplayCourseStats() en su lugar que calcula TOP-5 correctamente")
@@ -2436,7 +2501,15 @@ class ExploreFragment : Fragment() {
                 }
                 _newCourses.value = newCount
                 
-                Log.d("ExploreFragment", "Global stats fetched from Supabase: total=$serverTotal, popular=${topPopular.size}, new=$newCount")
+                // Fetch purchased courses count from Supabase
+                val purchasedCount = withContext(Dispatchers.IO) {
+                    try { 
+                        getSyncRepository().fetchPurchasedCoursesCount().toInt()
+                    } catch (t: Throwable) { 0 }
+                }
+                _purchasedCourses.value = purchasedCount
+                
+                Log.d("ExploreFragment", "Global stats fetched from Supabase: total=$serverTotal, popular=${topPopular.size}, new=$newCount, purchased=$purchasedCount")
             } catch (e: Exception) {
                 Log.w("ExploreFragment", "Failed to fetch stats from Supabase", e)
             }
@@ -2615,6 +2688,27 @@ class ExploreFragment : Fragment() {
 
         updateActiveFilterUI("Nuevos")
         updateFilteredCourseStats(newList.size, "new")
+    }
+
+    // Show the supplied courses as an active "purchased" filter
+    private fun showPurchasedCourses(purchasedList: List<Course>) {
+        if (purchasedList.isEmpty()) {
+            showDarkToast("No hay cursos comprados disponibles")
+            return
+        }
+
+        isFilterActive = true
+        currentFilterIndex = 6
+
+        // Replace displayed list with the purchased subset
+        coursesList.clear()
+        coursesList.addAll(purchasedList)
+        if (::coursesAdapter.isInitialized) {
+            coursesAdapter.updateCourses(purchasedList)
+        }
+
+        updateActiveFilterUI("Cursos Comprados")
+        updateFilteredCourseStats(purchasedList.size, "purchased")
     }
     
     /**
