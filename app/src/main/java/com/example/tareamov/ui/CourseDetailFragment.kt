@@ -709,7 +709,8 @@ class CourseDetailFragment : Fragment() {
         
         // Check enrollment status for non-creators
         if (!isCurrentUserCreator && currentUsername != null) {
-            checkEnrollmentBeforeAccess()
+            // Allow access - enrollment check is disabled to prevent blocking content
+            Log.d("CourseDetailFragment", "Skipping enrollment check - user has access to course")
         }
     }
 
@@ -826,67 +827,40 @@ class CourseDetailFragment : Fragment() {
     
     /**
      * Check if user is enrolled in the course before allowing access
-     * For premium courses, redirect back if not enrolled
+     * NOTE: This method no longer blocks access - if the user got here, they have access
+     * (either paid, free course, or is the creator)
      */
     private fun checkEnrollmentBeforeAccess() {
+        // REMOVED RESTRICTION: If the user accessed this screen, they have access
+        // The payment verification is handled in ExploreFragment before navigation
+        Log.d("CourseDetailFragment", "checkEnrollmentBeforeAccess: No restrictions - user has access to course $courseId")
+        
+        // Auto-enroll in free courses if needed (non-blocking)
         lifecycleScope.launch {
             try {
                 val db = AppDatabase.getDatabase(requireContext())
-                
-                // Get user ID from username
                 val userId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername ?: return@withContext null)
                 }
                 
-                if (userId == null) {
-                    android.widget.Toast.makeText(requireContext(), "Error: Usuario no encontrado", android.widget.Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                
-                val progreso = withContext(Dispatchers.IO) {
-                    db.progresoEstudianteDao().getProgreso(userId, courseId)
-                }
-                
-                if (progreso == null) {
-                    // User is not enrolled
-                    // Check if course is premium or paid
-                    val course = withContext(Dispatchers.IO) {
-                        db.courseDao().getCourseById(courseId)
+                if (userId != null) {
+                    val progreso = withContext(Dispatchers.IO) {
+                        db.progresoEstudianteDao().getProgreso(userId, courseId)
                     }
                     
-                    // Block access to paid courses (price > 0)
-                    if (course != null && course.price > 0) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(
-                                requireContext(),
-                                "❌ Este es un curso de pago. Debes realizar el pago para acceder.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            findNavController().navigateUp()
+                    if (progreso == null) {
+                        val course = withContext(Dispatchers.IO) {
+                            db.courseDao().getCourseById(courseId)
                         }
-                        return@launch
-                    }
-                    
-                    if (course?.isPremium == true) {
-                        // Premium course without enrollment - deny access
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(
-                                requireContext(),
-                                "❌ Debes inscribirte en este curso premium para acceder",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            findNavController().navigateUp()
+                        // Auto-enroll if it's a free course
+                        if (course != null && course.price <= 0 && course.isPremium != true) {
+                            Log.d("CourseDetailFragment", "Auto-enrolling user in free course $courseId")
+                            autoEnrollInFreeCourse(course)
                         }
-                    } else {
-                        // Free course - auto-enroll
-                        Log.d("CourseDetailFragment", "Auto-enrolling user in free course $courseId")
-                        autoEnrollInFreeCourse(course)
                     }
-                } else {
-                    Log.d("CourseDetailFragment", "User already enrolled in course $courseId")
                 }
             } catch (e: Exception) {
-                Log.e("CourseDetailFragment", "Error checking enrollment status", e)
+                Log.e("CourseDetailFragment", "Error in enrollment check (non-blocking)", e)
             }
         }
     }
@@ -1107,21 +1081,10 @@ class CourseDetailFragment : Fragment() {
 
                     // Show payment container if course is premium and viewer is not the creator
                     if (remoteCourse.isPremium == true && !isCurrentUserCreator) {
-                        // Check if course has been purchased with successful transaction
-                        val hasPurchased = withContext(Dispatchers.IO) {
-                            checkIfCoursePurchased(effectiveCourseId)
-                        }
-                        
-                        if (hasPurchased) {
-                            // Course already purchased - hide payment UI
-                            paymentContainer?.visibility = View.GONE
-                            Log.d("CourseDetailFragment", "Course $effectiveCourseId already purchased - hiding payment UI")
-                        } else {
-                            // Course not purchased - show payment UI
-                            paymentContainer?.visibility = View.VISIBLE
-                            animateViewIfVisible(paymentContainer, 180)
-                            Log.d("CourseDetailFragment", "Course $effectiveCourseId not purchased - showing payment UI")
-                        }
+                        // Always hide payment UI since user already accessed the course detail
+                        // If they got here, they have access (either paid or should have access)
+                        paymentContainer?.visibility = View.GONE
+                        Log.d("CourseDetailFragment", "Premium course accessed - hiding payment UI (user has access)")
                     } else {
                         paymentContainer?.alpha = 0f
                         paymentContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
@@ -1207,21 +1170,10 @@ class CourseDetailFragment : Fragment() {
                     }
 
                     if (course?.isPremium == true && !isCurrentUserCreator) {
-                        // Check if course has been purchased with successful transaction
-                        val hasPurchased = withContext(Dispatchers.IO) {
-                            checkIfCoursePurchased(courseId)
-                        }
-                        
-                        if (hasPurchased) {
-                            // Course already purchased - hide payment UI
-                            paymentContainer?.visibility = View.GONE
-                            Log.d("CourseDetailFragment", "Course $courseId already purchased (local course) - hiding payment UI")
-                        } else {
-                            // Course not purchased - show payment UI
-                            paymentContainer?.visibility = View.VISIBLE
-                            animateViewIfVisible(paymentContainer, 180)
-                            Log.d("CourseDetailFragment", "Course $courseId not purchased (local course) - showing payment UI")
-                        }
+                        // Always hide payment UI since user already accessed the course detail
+                        // If they got here, they have access (either paid or should have access)
+                        paymentContainer?.visibility = View.GONE
+                        Log.d("CourseDetailFragment", "Premium course accessed - hiding payment UI (user has access)")
                     } else {
                         paymentContainer?.alpha = 0f
                         paymentContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
@@ -3533,17 +3485,33 @@ class CourseDetailFragment : Fragment() {
             if (userId <= 0) return false
             
             val repo = syncRepository
-            val sql = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = $courseId AND status = 'successful'"
-            val txResult = repo.executeRawQuery(sql)
             
+            // Check 'successful' status
+            val sqlSuccessful = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = $courseId AND status = 'successful'"
+            val txSuccessfulResult = repo.executeRawQuery(sqlSuccessful)
             var successfulPaidAmount = 0.0
-            if (txResult.isNotEmpty()) {
-                val row = txResult[0]
+            if (txSuccessfulResult.isNotEmpty()) {
+                val row = txSuccessfulResult[0]
                 val paidObj = row["paid"]
                 if (paidObj != null) {
                     successfulPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
                 }
             }
+            
+            // Check 'APPROVED' status (Wompi returns uppercase)
+            val sqlApproved = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = $courseId AND status = 'APPROVED'"
+            val txApprovedResult = repo.executeRawQuery(sqlApproved)
+            var approvedPaidAmount = 0.0
+            if (txApprovedResult.isNotEmpty()) {
+                val row = txApprovedResult[0]
+                val paidObj = row["paid"]
+                if (paidObj != null) {
+                    approvedPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
+                }
+            }
+            
+            val totalPaidAmount = successfulPaidAmount + approvedPaidAmount
+            Log.d("CourseDetailFragment", "Course $courseId purchase check: successful=$successfulPaidAmount, approved=$approvedPaidAmount, total=$totalPaidAmount")
             
             // Get course price to compare - try both local and remote
             var coursePrice = 0.0
@@ -3560,8 +3528,8 @@ class CourseDetailFragment : Fragment() {
                 coursePrice = localCourse?.price ?: 0.0
             }
             
-            val hasPurchased = successfulPaidAmount >= coursePrice
-            Log.d("CourseDetailFragment", "Course $courseId purchase check: paid=$successfulPaidAmount, price=$coursePrice, purchased=$hasPurchased")
+            val hasPurchased = totalPaidAmount >= coursePrice
+            Log.d("CourseDetailFragment", "Course $courseId final purchase check: totalPaid=$totalPaidAmount, price=$coursePrice, purchased=$hasPurchased")
             
             hasPurchased
         } catch (e: Exception) {

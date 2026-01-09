@@ -1,4 +1,4 @@
-package com.example.tareamov.ui
+﻿package com.example.tareamov.ui
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import eightbitlab.com.blurview.BlurView
 import eightbitlab.com.blurview.RenderScriptBlur
@@ -83,6 +83,9 @@ class ExploreFragment : Fragment() {
     
     // Variable to track pending payment for redirection
     private var pendingPaymentCourseId: Long? = null
+    
+    // Dialog for payment initiation
+    private var paymentInitiationDialog: AlertDialog? = null
     
     // Paginación
     private var currentPage = 0
@@ -544,6 +547,10 @@ class ExploreFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        // Dismiss payment dialog if it's showing
+        paymentInitiationDialog?.dismiss()
+        paymentInitiationDialog = null
+        
         // Ensure callback is unregistered
         networkCallback?.let {
             val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -782,22 +789,35 @@ class ExploreFragment : Fragment() {
         
         // Handle paid courses (price > 0)
         if (course.price > 0) {
-            // First check if course has been successfully purchased
+            // First check if course has been successfully purchased (check both 'successful' and 'APPROVED' statuses)
             val isPurchased = withContext(Dispatchers.IO) {
                 try {
                     val repo = getSyncRepository()
-                    val result = repo.executeRawQuery("SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = ${course.id} AND status = 'successful'")
-                    
+                    // Check 'successful' status
+                    val resultSuccessful = repo.executeRawQuery("SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = ${course.id} AND status = 'successful'")
                     var successfulPaidAmount = 0.0
-                    if (result.isNotEmpty()) {
-                        val row = result[0]
+                    if (resultSuccessful.isNotEmpty()) {
+                        val row = resultSuccessful[0]
                         val paidObj = row["paid"]
                         if (paidObj != null) {
                             successfulPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
                         }
                     }
                     
-                    successfulPaidAmount >= course.price
+                    // Check 'APPROVED' status (Wompi returns uppercase)
+                    val resultApproved = repo.executeRawQuery("SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = ${course.id} AND status = 'APPROVED'")
+                    var approvedPaidAmount = 0.0
+                    if (resultApproved.isNotEmpty()) {
+                        val row = resultApproved[0]
+                        val paidObj = row["paid"]
+                        if (paidObj != null) {
+                            approvedPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
+                        }
+                    }
+                    
+                    val totalPaidAmount = successfulPaidAmount + approvedPaidAmount
+                    Log.d("ExploreFragment", "Course ${course.id} payment check: successful=$successfulPaidAmount, approved=$approvedPaidAmount, total=$totalPaidAmount, price=${course.price}")
+                    totalPaidAmount >= course.price
                 } catch (e: Exception) {
                     Log.e("ExploreFragment", "Error checking purchase status", e)
                     false
@@ -829,12 +849,16 @@ class ExploreFragment : Fragment() {
 
                 if (!isPaid) {
                     try {
-                        showDarkToast("Iniciando proceso de pago...", Toast.LENGTH_SHORT)
+                        showPaymentInitiationDialog(course) {
+                            // Cancel payment - user canceled the dialog
+                            Log.d("ExploreFragment", "Payment initiation canceled by user")
+                        }
                         val paymentUrl = withContext(Dispatchers.IO) {
-                            getSyncRepository().initiatePayment(userId, course.id, course.price)
+                            getSyncRepository().initiatePayment(userId, course.id)
                         }
                         
                         if (!paymentUrl.isNullOrEmpty()) {
+                            dismissPaymentInitiationDialog()
                             Log.d("ExploreFragment", "Redirecting to payment URL: $paymentUrl")
                             // Set pending payment flag to check on return
                             pendingPaymentCourseId = course.id
@@ -844,11 +868,13 @@ class ExploreFragment : Fragment() {
                             showDarkToast("Por favor completa el pago en Wompi", Toast.LENGTH_LONG)
                             return@launch
                         } else {
+                             dismissPaymentInitiationDialog()
                              showDarkToast("Error al obtener enlace de pago. Intenta nuevamente.")
                              Log.e("ExploreFragment", "Payment URL was null")
                              return@launch
                         }
                     } catch (e: Exception) {
+                        dismissPaymentInitiationDialog()
                         showDarkToast("Error iniciando pago: ${e.message}")
                         Log.e("ExploreFragment", "Error initiating payment", e)
                         return@launch
@@ -2076,10 +2102,10 @@ class ExploreFragment : Fragment() {
                 filterEnrolledCourses()
                 updateActiveFilterUI("Mis Inscripciones")
             },
-            FilterOption("�", "Cursos comprados", 6) { 
+            FilterOption("", "Cursos comprados", 6) { 
                 filterPurchasedCourses()
             },
-            FilterOption("�👤", "Mis cursos (Creados)", 1) { 
+            FilterOption("", "Mis cursos (Creados)", 1) { 
                 filterMyCoursesOnly()
             },
             FilterOption("🌟", "Cursos de otros", 2) { 
@@ -2841,5 +2867,53 @@ class ExploreFragment : Fragment() {
                 showDarkToast("Error al iniciar el proceso de pago")
             }
         }
+    }
+    
+    /**
+     * Show a styled payment initiation dialog with cancel option
+     */
+    private fun showPaymentInitiationDialog(course: Course, onCancel: () -> Unit) {
+        // Dismiss any existing dialog
+        paymentInitiationDialog?.dismiss()
+        
+        val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_initiating_payment, null)
+        val dialog = AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .setCancelable(false)
+            .create()
+        
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        
+        // Set course information
+        val courseNameText = dialogView.findViewById<TextView>(R.id.courseNameText)
+        val coursePriceText = dialogView.findViewById<TextView>(R.id.coursePriceText)
+        val cancelButton = dialogView.findViewById<TextView>(R.id.cancelPaymentButton)
+        
+        courseNameText.text = course.title
+        
+        // Format price
+        val formattedPrice = if (course.price > 0) {
+            String.format("$%,.0f COP", course.price)
+        } else {
+            "Precio no disponible"
+        }
+        coursePriceText.text = formattedPrice
+        
+        // Set cancel button listener
+        cancelButton.setOnClickListener {
+            dialog.dismiss()
+            onCancel()
+        }
+        
+        paymentInitiationDialog = dialog
+        dialog.show()
+    }
+    
+    /**
+     * Dismiss payment initiation dialog
+     */
+    private fun dismissPaymentInitiationDialog() {
+        paymentInitiationDialog?.dismiss()
+        paymentInitiationDialog = null
     }
 }

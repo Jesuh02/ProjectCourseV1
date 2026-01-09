@@ -876,24 +876,39 @@ class CourseAdapter(
             
             val db = AppDatabase.getDatabase(context)
             val syncRepo = createSyncRepository(db)
-            val sql = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = $courseId AND status = 'successful'"
-            val txResult = syncRepo.executeRawQuery(sql)
             
+            // Check 'successful' status
+            val sqlSuccessful = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = $courseId AND status = 'successful'"
+            val txSuccessfulResult = syncRepo.executeRawQuery(sqlSuccessful)
             var successfulPaidAmount = 0.0
-            if (txResult.isNotEmpty()) {
-                val row = txResult[0]
+            if (txSuccessfulResult.isNotEmpty()) {
+                val row = txSuccessfulResult[0]
                 val paidObj = row["paid"]
                 if (paidObj != null) {
                     successfulPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
                 }
             }
             
+            // Check 'APPROVED' status (Wompi returns uppercase)
+            val sqlApproved = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = $courseId AND status = 'APPROVED'"
+            val txApprovedResult = syncRepo.executeRawQuery(sqlApproved)
+            var approvedPaidAmount = 0.0
+            if (txApprovedResult.isNotEmpty()) {
+                val row = txApprovedResult[0]
+                val paidObj = row["paid"]
+                if (paidObj != null) {
+                    approvedPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
+                }
+            }
+            
+            val totalPaidAmount = successfulPaidAmount + approvedPaidAmount
+            
             // Get course price to compare
             val course = courses.find { it.id == courseId }
             val coursePrice = course?.price ?: 0.0
             
-            val hasPurchased = successfulPaidAmount >= coursePrice
-            Log.d("CourseAdapter", "Course $courseId purchase check: paid=$successfulPaidAmount, price=$coursePrice, purchased=$hasPurchased")
+            val hasPurchased = totalPaidAmount >= coursePrice
+            Log.d("CourseAdapter", "Course $courseId purchase check: successful=$successfulPaidAmount, approved=$approvedPaidAmount, total=$totalPaidAmount, price=$coursePrice, purchased=$hasPurchased")
             
             hasPurchased
         } catch (e: Exception) {

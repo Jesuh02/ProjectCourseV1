@@ -802,14 +802,14 @@ class SyncRepository(
 
     /**
      * Initiate payment transaction on the backend and get the Wompi Checkout URL.
+     * Amount will be fetched from courses table on backend for security.
      */
-    suspend fun initiatePayment(userId: Long, courseId: Long, amount: Double): String? {
+    suspend fun initiatePayment(userId: Long, courseId: Long): String? {
         return withContext(Dispatchers.IO) {
             try {
                 val jsonBody = org.json.JSONObject().apply {
                     put("userId", userId)
                     put("courseId", courseId)
-                    put("amount", amount)
                 }
                 
                 val body = jsonBody.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
