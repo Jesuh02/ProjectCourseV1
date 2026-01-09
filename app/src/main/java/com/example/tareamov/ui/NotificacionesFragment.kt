@@ -222,6 +222,21 @@ class NotificacionesFragment : Fragment() {
                     }
                 }
             }
+            Notification.TYPE_COMMENT, Notification.TYPE_LIKE -> {
+                Log.d("Notificaciones", "Activity notification clicked: ${notification.relatedId}")
+                notification.relatedId?.let { videoId ->
+                    // Navigate to video home to play the video and open comments
+                    val bundle = Bundle().apply {
+                        putLong("videoId", videoId)
+                        putBoolean("openComments", true)
+                    }
+                    try {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment, bundle)
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to video home from activity", e)
+                    }
+                }
+            }
         }
     }
 
