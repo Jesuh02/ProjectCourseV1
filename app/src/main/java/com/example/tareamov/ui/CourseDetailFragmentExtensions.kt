@@ -310,6 +310,9 @@ fun Fragment.showPaymentOptions(
 
 /**
  * Separate function to handle payment polling with custom dialog
+ * SECURITY: This function only READS the transaction status from backend.
+ * The status is only updated to 'successful' by the Wompi webhook after actual payment.
+ * This prevents premature approval when user just opens the payment link.
  */
 private fun Fragment.startPaymentPolling(
     reference: String,
@@ -331,6 +334,7 @@ private fun Fragment.startPaymentPolling(
                 return@launch
             }
             
+            // Query transaction status (read-only, doesn't modify anything)
             val statusCheck = withContext(Dispatchers.IO) {
                 try {
                     paymentApi.getTransactionStatus(reference)
