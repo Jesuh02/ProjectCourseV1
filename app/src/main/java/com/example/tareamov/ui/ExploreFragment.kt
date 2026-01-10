@@ -2440,17 +2440,40 @@ class ExploreFragment : Fragment() {
         
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val purchasedCourses = withContext(Dispatchers.IO) {
-                    getSyncRepository().fetchPurchasedCoursesFromSupabase()
+                // Get current user ID from active session
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                val currentUserId = sessionManager.getUserId()
+                
+                if (currentUserId == -1L) {
+                    withContext(Dispatchers.Main) {
+                        showDarkToast("Debes iniciar sesión para ver tus cursos comprados")
+                        displayCourses(emptyList())
+                        updateFilteredCourseStats(0, "purchased")
+                        updateActiveFilterUI("Cursos Comprados")
+                        isFilterActive = true
+                        isLoadingCourses = false
+                    }
+                    return@launch
                 }
                 
-                Log.d("ExploreFragment", "Se obtuvieron ${purchasedCourses.size} cursos comprados de Supabase")
+                Log.d("ExploreFragment", "Fetching purchased courses for user ID: $currentUserId")
+                
+                // Fetch courses purchased by the current user (APPROVED or successful transactions)
+                val purchasedCourses = withContext(Dispatchers.IO) {
+                    getSyncRepository().fetchCoursesPurchasedByUser(currentUserId)
+                }
+                
+                Log.d("ExploreFragment", "Se obtuvieron ${purchasedCourses.size} cursos comprados de Supabase para user $currentUserId")
                 
                 withContext(Dispatchers.Main) {
                     displayCourses(purchasedCourses)
                     
                     val count = purchasedCourses.size
-                    showDarkToast("Mostrando $count cursos comprados")
+                    if (count == 0) {
+                        showDarkToast("No has comprado ningún curso aún")
+                    } else {
+                        showDarkToast("Mostrando $count cursos comprados")
+                    }
                     // Update header counts to reflect purchased filter
                     updateFilteredCourseStats(count, "purchased")
                     updateActiveFilterUI("Cursos Comprados")
@@ -2460,7 +2483,7 @@ class ExploreFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error filtering purchased courses", e)
                 withContext(Dispatchers.Main) {
-                    showDarkToast("Error al cargar cursos comprados")
+                    showDarkToast("Error al cargar cursos comprados: ${e.message}")
                     isLoadingCourses = false
                 }
             }
