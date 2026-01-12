@@ -66,7 +66,7 @@ Empleamos agentes especializados para diferentes dominios dentro de la aplicaci�
 ### Arquitectura Frontend (Aplicación Móvil Android)
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'background': '#ffffff', 'primaryColor': '#9dc3e6', 'primaryTextColor': '#000', 'primaryBorderColor': '#6c8ebf', 'lineColor': '#6c8ebf', 'secondaryColor': '#f4b183', 'tertiaryColor': '#a9d18e', 'fontSize': '13px'}}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': { 'background': '#fafafa', 'mainBkg': '#ffffff', 'primaryColor': '#9dc3e6', 'primaryTextColor': '#000', 'primaryBorderColor': '#6c8ebf', 'lineColor': '#6c8ebf', 'secondaryColor': '#f4b183', 'tertiaryColor': '#a9d18e', 'fontSize': '13px', 'darkMode': false}}}%%
 flowchart LR
     %% Estilos tipo HY-Motion DiT con fondo claro
     classDef blue fill:#9dc3e6,stroke:#6c8ebf,color:#000,stroke-width:2.5px,rx:5,ry:5
@@ -144,7 +144,7 @@ flowchart LR
 ### Arquitectura Backend (Servidor MCP Node.js)
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'background': '#ffffff', 'primaryColor': '#9dc3e6', 'primaryTextColor': '#000', 'primaryBorderColor': '#6c8ebf', 'lineColor': '#6c8ebf', 'secondaryColor': '#f4b183', 'tertiaryColor': '#a9d18e', 'fontSize': '13px'}}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': { 'background': '#fafafa', 'mainBkg': '#ffffff', 'primaryColor': '#9dc3e6', 'primaryTextColor': '#000', 'primaryBorderColor': '#6c8ebf', 'lineColor': '#6c8ebf', 'secondaryColor': '#f4b183', 'tertiaryColor': '#a9d18e', 'fontSize': '13px', 'darkMode': false}}}%%
 flowchart LR
     %% Estilos con fondo claro
     classDef blue fill:#9dc3e6,stroke:#6c8ebf,color:#000,stroke-width:2.5px,rx:5,ry:5
