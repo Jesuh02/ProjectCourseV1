@@ -66,12 +66,12 @@ Empleamos agentes especializados para diferentes dominios dentro de la aplicaci�
 ### Arquitectura Frontend (Aplicación Móvil Android)
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': { 'background': '#ffffff', 'primaryColor': '#9dc3e6', 'primaryTextColor': '#000', 'primaryBorderColor': '#6c8ebf', 'lineColor': '#6c8ebf', 'secondaryColor': '#f4b183', 'tertiaryColor': '#a9d18e', 'fontSize': '13px'}}}%%
 flowchart LR
-    %% Estilos tipo HY-Motion DiT
-    classDef blue fill:#9dc3e6,stroke:#6c8ebf,color:#000,stroke-width:2px
-    classDef orange fill:#f4b183,stroke:#c65911,color:#000,stroke-width:2px
-    classDef green fill:#a9d18e,stroke:#548235,color:#000,stroke-width:2px
+    %% Estilos tipo HY-Motion DiT con fondo claro
+    classDef blue fill:#9dc3e6,stroke:#6c8ebf,color:#000,stroke-width:2.5px,rx:5,ry:5
+    classDef orange fill:#f4b183,stroke:#c65911,color:#000,stroke-width:2.5px,rx:5,ry:5
+    classDef green fill:#a9d18e,stroke:#548235,color:#000,stroke-width:2.5px,rx:5,ry:5
 
     %% ENTRADA
     Input1[Entrada Táctil]:::blue
@@ -86,33 +86,33 @@ flowchart LR
     %% STREAM 1: AGENTE TUTOR
     subgraph Stream1 [" Stream Agente Tutor "]
         direction TB
-        S1_1[LayerNorm]:::blue
-        S1_2[Scale & Shift]:::orange
+        S1_1[NormalizaciónCapa]:::blue
+        S1_2[Escalar y Desplazar]:::orange
         S1_3[Generación<br/>Única]:::blue
         S1_4[Verificación<br/>Hash]:::orange
-        S1_5[Gate]:::orange
+        S1_5[Compuerta]:::orange
         S1_1 --> S1_2 --> S1_3 --> S1_4 --> S1_5
     end
 
     %% STREAM 2: AGENTE ANALISTA
     subgraph Stream2 [" Stream Agente Analista "]
         direction TB
-        S2_1[LayerNorm]:::blue
-        S2_2[Scale & Shift]:::orange
+        S2_1[NormalizaciónCapa]:::blue
+        S2_2[Escalar y Desplazar]:::orange
         S2_3[Texto a SQL]:::blue
         S2_4[Auto-Corrección]:::orange
-        S2_5[Gate]:::orange
+        S2_5[Compuerta]:::orange
         S2_1 --> S2_2 --> S2_3 --> S2_4 --> S2_5
     end
 
     %% STREAM 3: AGENTE EVALUADOR
     subgraph Stream3 [" Stream Agente Evaluador "]
         direction TB
-        S3_1[LayerNorm]:::blue
-        S3_2[Scale & Shift]:::orange
+        S3_1[NormalizaciónCapa]:::blue
+        S3_2[Escalar y Desplazar]:::orange
         S3_3[Búsqueda RAG]:::blue
         S3_4[Calificación]:::orange
-        S3_5[Gate]:::orange
+        S3_5[Compuerta]:::orange
         S3_1 --> S3_2 --> S3_3 --> S3_4 --> S3_5
     end
 
@@ -136,7 +136,7 @@ flowchart LR
 ```
 
 <div align="center">
-<sub><b>CourseV Frontend DiT</b> — Arquitectura basada en 3 Streams Paralelos con Gates de Control</sub>
+<sub><b>CourseV Frontend DiT</b> — Arquitectura basada en 3 Flujos Paralelos con Compuertas de Control</sub>
 </div>
 
 ---
@@ -144,61 +144,61 @@ flowchart LR
 ### Arquitectura Backend (Servidor MCP Node.js)
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': { 'background': '#ffffff', 'primaryColor': '#9dc3e6', 'primaryTextColor': '#000', 'primaryBorderColor': '#6c8ebf', 'lineColor': '#6c8ebf', 'secondaryColor': '#f4b183', 'tertiaryColor': '#a9d18e', 'fontSize': '13px'}}}%%
 flowchart LR
-    %% Estilos
-    classDef blue fill:#9dc3e6,stroke:#6c8ebf,color:#000,stroke-width:2px
-    classDef orange fill:#f4b183,stroke:#c65911,color:#000,stroke-width:2px
-    classDef green fill:#a9d18e,stroke:#548235,color:#000,stroke-width:2px
-    classDef purple fill:#d5a6e6,stroke:#8e44ad,color:#000,stroke-width:2px
+    %% Estilos con fondo claro
+    classDef blue fill:#9dc3e6,stroke:#6c8ebf,color:#000,stroke-width:2.5px,rx:5,ry:5
+    classDef orange fill:#f4b183,stroke:#c65911,color:#000,stroke-width:2.5px,rx:5,ry:5
+    classDef green fill:#a9d18e,stroke:#548235,color:#000,stroke-width:2.5px,rx:5,ry:5
+    classDef purple fill:#d5a6e6,stroke:#8e44ad,color:#000,stroke-width:2.5px,rx:5,ry:5
 
     %% ENTRADA DEL CLIENTE
     Client[📱 Cliente<br/>Android]:::purple
     
     %% CAPA DE ENTRADA
-    Router[Router<br/>Express]:::blue
+    Router[Enrutador<br/>Express]:::blue
     Middleware[Middleware<br/>Seguridad]:::orange
 
     %% STREAM DOBLE: MCP + RAG
-    subgraph DoubleStream [" Stream Doble: MCP & RAG "]
+    subgraph DoubleStream [" Flujo Doble: MCP y RAG "]
         direction TB
         
         subgraph MCPPath [Ruta MCP]
             direction TB
             MCP1[Validación]:::blue
-            MCP2[MCPService]:::orange
+            MCP2[Servicio MCP]:::orange
             MCP3[Prompt<br/>Optimizado]:::blue
-            MCP4[LLM Service]:::orange
-            MCP5[Gate]:::orange
+            MCP4[Servicio LLM]:::orange
+            MCP5[Compuerta]:::orange
             MCP1 --> MCP2 --> MCP3 --> MCP4 --> MCP5
         end
 
         subgraph RAGPath [Ruta RAG]
             direction TB
-            RAG1[Doc Processor]:::blue
-            RAG2[Embedding<br/>Service]:::orange
-            RAG3[Vector Store]:::blue
-            RAG4[RAG Service]:::orange
-            RAG5[Gate]:::orange
+            RAG1[Procesador Doc]:::blue
+            RAG2[Servicio<br/>Embeddings]:::orange
+            RAG3[Almacén Vectorial]:::blue
+            RAG4[Servicio RAG]:::orange
+            RAG5[Compuerta]:::orange
             RAG1 --> RAG2 --> RAG3 --> RAG4 --> RAG5
         end
     end
 
     %% STREAM SIMPLE: BI/SQL
-    subgraph SingleStream [" Stream Simple: Analista SQL "]
+    subgraph SingleStream [" Flujo Simple: Analista SQL "]
         direction TB
-        SQL1[Parser SQL]:::blue
-        SQL2[Validator]:::orange
-        SQL3[Supabase<br/>Query]:::blue
-        SQL4[Auto-Fix]:::orange
-        SQL5[Gate]:::orange
+        SQL1[Analizador SQL]:::blue
+        SQL2[Validador]:::orange
+        SQL3[Consulta<br/>Supabase]:::blue
+        SQL4[Auto-Corrección]:::orange
+        SQL5[Compuerta]:::orange
         SQL1 --> SQL2 --> SQL3 --> SQL4 --> SQL5
     end
 
     %% CAPA DE SALIDA
     Deep[DeepSeek V3.2<br/>☁️ API]:::green
     Supa[Supabase<br/>PostgreSQL]:::green
-    Cache[Redis Cache]:::orange
+    Cache[Caché Redis]:::orange
 
     %% CONEXIONES
     Client ==> Router
@@ -216,7 +216,7 @@ flowchart LR
 ```
 
 <div align="center">
-<sub><b>CourseV Backend MCP</b> — Motor de IA con Double Stream (MCP+RAG) y Single Stream (SQL)</sub>
+<sub><b>CourseV Backend MCP</b> — Motor de IA con Flujo Doble (MCP+RAG) y Flujo Simple (SQL)</sub>
 </div>
 
 ---
