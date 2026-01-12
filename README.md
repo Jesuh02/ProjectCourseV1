@@ -1,121 +1,110 @@
 ﻿<div align="center">
 
-# ProjectCourseV1 AI
+# CourseV AI
 
 [![Android](https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://developer.android.com/)
 [![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![DeepSeek](https://img.shields.io/badge/AI-DeepSeek_V3.2-blue?style=for-the-badge)](https://deepseek.com)
-[![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-orange?style=for-the-badge)](https://ollama.com)
-[![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+[![Cloud](https://img.shields.io/badge/Backend-Cloud_Native-blueviolet?style=for-the-badge)](https://railway.app)
 
-[Get Started](#-get-started)  [Features](#-key-features)  [Architecture](#-architecture-overview)  [Docs](#-documentation)
+[Get Started](#-get-started-with-coursev)  [Agent Zoo](#-agent-zoo)  [Architecture](#-architecture)  [Documentation](#-documentation)
 
-<img src="https://via.placeholder.com/800x400.png?text=ProjectCourseV1+AI+Dashboard" alt="Project Banner" width="100%" />
+<img src="https://via.placeholder.com/1200x400.png?text=CourseV+AI+Platform+Preview" alt="CourseV Banner" width="100%" />
 
 </div>
 
-##  Recent Updates (v1.2) - 2026/01/12
+##  News
 
-- **DeepSeek-V3.2 Integration**: Now powering the backend for superior reasoning.
-- **Text-to-Speech (TTS)**: Added to 5 core screens for accessibility.
-- **Self-Correcting BI**: The \DatabaseQueryFragment\ now auto-corrects SQL errors.
-- **MCP Protocol**: Full VS Code integration for database context.
+- **[2026-01-12]**: **DeepSeek-V3.2 Integration**: We have upgraded our core reasoning engine to DeepSeek-V3.2, enabling high-precision SQL generation and logic.
+- **[2026-01-10]**: **Unique Question Generation**: The Reinforcement Learning module now guarantees 100% unique questions by tracking user history hashes.
+- **[2026-01-05]**: **Self-Correcting SQL**: The BI Agent can now detect SQL errors and fix them autonomously without user intervention.
 
-##  Introduction
+## Introduction
 
-**ProjectCourseV1** is a next-generation educational platform that leverages **Local AI (Ollama)** and **Cloud AI (DeepSeek-V3)** to provide real-time feedback, adaptive learning, and business intelligence.
+**CourseV AI** is a state-of-the-art educational platform that bridges the gap between **Local AI** (privacy-first) and **Cloud AI** (high-reasoning). Unlike traditional LMS apps, CourseV runs on a fully **Agentic Architecture**.
 
-Unlike traditional LMS platforms, ProjectCourseV1 uses an **Agentic Architecture**:
-- **Educator Agent**: Grades tasks automatically using RAG (\ChatBotFragment\).
-- **Analyst Agent**: Converts natural language to SQL for instant reports (\DatabaseQueryFragment\).
-- **Tutor Agent**: Generates unique reinforcement questions based on user history (\ReinforcementLearningFragment\).
+The application connects to a cloud-based **Node.js MCP Backend** (index.js) which orchestrates interactions between the Supabase database and the **DeepSeek-V3.2** Large Language Model.
 
-##  Key Features
+### Key Features
 
-###  Adaptive Reinforcement Learning
-*Powered by \ReinforcementLearningFragment.kt\ & \MCPService.js\*
+*   ** Adaptive Reinforcement Learning**: 
+    Implemented in \ReinforcementLearningFragment.kt\, this feature analyzes the specific course topic and task context.
+    *   **Logic**: It generates **10 Assessment Questions** tailored to the content.
+    *   **Zero Duplication**: The backend (\index.js\) maintains a hash history of every question asked. If the LLM generates a similar question, it is rejected and regenerated. The next 10 questions are guaranteed to be completely different from the previous 10.
 
-The system analyzes your course progress, topic, and current task to generate **10 unique questions** tailored to your gaps.
-- **Zero Repetition Guarantee**: The backend tracks every question ever asked to a user (\index.js\ history tracking).
-- **Context-Aware**: Uses the specific metadata of the course content.
-- **Dynamic Difficulty**: Adjusts based on previous answers.
+*   ** Cloud-Based Grading Agent**:
+    Located in \ChatBotFragment.kt\, this agent acts as a personal teaching assistant.
+    *   **Capability**: Users upload files (PDF/TXT), and the agent uses **RAG (Retrieval-Augmented Generation)** to grade the assignment against the rubric.
+    *   **Intelligence**: It provides feedback, points out errors, and suggests improvements, all powered by the Cloud Backend.
 
-###  Intelligent Task Grading (RAG)
-*Powered by \ChatBotFragment.kt\*
+*   ** Natural Language to SQL (Business Intelligence)**:
+    Access real-time database insights via \DatabaseQueryFragment.kt\.
+    *   **Text-to-SQL**: Convert questions like *"How many students failed the Java course?"* into executable SQL.
+    *   **Self-Correction**: Uses DeepSeek-V3.2 to analyze SQL errors (e.g., missing columns) and rewrite the query automatically until it succeeds.
 
-Submit your homework (PDF/TXT) and get instant feedback.
-- **Vector Search**: Uses RAG to compare your submission against the rubric.
-- **File Analysis**: Automatically detects file types and extracts text.
-- **Actionable Feedback**: "Not just a grade, but a guide."
+##  Agent Zoo
 
-###  Business Intelligence (Text-to-SQL)
-*Powered by \DatabaseQueryFragment.kt\*
+We employ specialized agents for different domains within the app:
 
-Ask questions like *"Which course has the lowest completion rate?"* and get real charts.
-- **Natural Language Processing**: Converts English/Spanish to complex SQL.
-- **Self-Correction**: If the SQL fails, the Agent analyzes the error and retries automatically.
-- **Visualization**: Android native charts powered by real-time Supabase data.
+| Agent Name | Primary Model | Source File | Function |
+|:----------:|:-------------:|:-----------:|:---------|
+| **Tutor** | DeepSeek-V3.2 | \ReinforcementLearningFragment.kt\ | Generates unique, non-repeating quizzes. |
+| **Grader** | DeepSeek/Gemma | \ChatBotFragment.kt\ | Grades submissions with detailed feedback. |
+| **Analyst** | DeepSeek-V3.2 | \DatabaseQueryFragment.kt\ | Converts English to SQL & visualizes data. |
 
-##  Architecture Overview
+##  Architecture
 
-| Component | Tech Stack | Responsibility |
-|-----------|------------|----------------|
-| **Mobile App** | Android, Kotlin, Jetpack Compose | UI, Local Inference, TTS |
-| **Backend Core** | Node.js, Express, MCP | Orchestration, History Tracking |
-| **Database** | Supabase (PostgreSQL) | User Data, Vector Store (pgvector) |
-| **AI Engine** | DeepSeek-V3.2 (Cloud), Gemma3n (Local) | Reasoning, SQL Generation |
+<div align="center">
+<img src="https://via.placeholder.com/800x400.png?text=Architecture+Diagram:+App+->+MCP+Backend+->+DeepSeek" alt="Architecture" width="80%" />
+</div>
 
-\\\mermaid
-graph TD
-    A[Mobile App] -->|HTTP/REST| B[MCP Backend]
-    A -->|Ollama| C[Local LLM (Gemma3n)]
-    B -->|SQL| D[Supabase DB]
-    B -->|API| E[DeepSeek-V3.2]
-    B -->|Vector Search| D
+The system follows a strict separation of concerns:
+1.  **Frontend (Android)**: Handles UI, TTS (Text-to-Speech), and context gathering.
+2.  **MCP Backend (Cloud)**: Located in \distribucion_de_contexto/\. Handles high-load AI processing.
+3.  **Database (Supabase)**: Stores User History, Vector Embeddings, and Course Data.
+
+##  Get Started with CourseV
+
+### 1. Installation
+
+Clone the repository and open it in Android Studio.
+
+\\\ash
+git clone https://github.com/Tencent-Hunyuan/HY-Motion-1.0.git # Example used for style comparison
+git clone https://github.com/YourRepo/CourseV.git
+cd CourseV
 \\\
 
-##  Get Started
+### 2. Backend Configuration
 
-### Prerequisites
-- Android Studio Hedgehog or newer.
-- JDK 17.
-- Ollama running locally (for offline features).
+The backend is critical for the AI agents.
 
-### Installation
+\\\ash
+cd distribucion_de_contexto/MCP-backendDeploy
+npm install
+npm start
+\\\
 
-1. **Clone the repository**
-   \\\ash
-   git clone https://github.com/YourUser/ProjectCourseV1.git
-   \\\
+### 3. Build Android App
 
-2. **Configure Ollama**
-   \\\ash
-   ollama serve
-   ollama pull gemma3n:latest
-   \\\
+\\\ash
+./gradlew assembleDebug
+\\\
 
-3. **Build Android App**
-   Open in Android Studio and run:
-   \\\ash
-   ./gradlew assembleDebug
-   \\\
+##  DeepSeek Configuration
 
-##  Project Structure
+CourseV utilizes **DeepSeek-V3.2** for its superior reasoning capabilities. Ensure your backend \.env\ file is configured:
 
-| File/Folder | Description |
-|-------------|-------------|
-| \ReinforcementLearningFragment.kt\ | Logic for adaptive question generation. |
-| \DatabaseQueryFragment.kt\ | UI for the BI Text-to-SQL agent. |
-| \ChatBotFragment.kt\ | RAG-based Chat interface. |
-| \distribucion_de_contexto/\ | Node.js MCP Backend source code. |
+\\\env
+DEEPSEEK_API_KEY=sk-xxxxxxxxxxxx
+MODEL_VERSION=deepseek-chat-v3.2
+\\\
 
-##  Related Links
+## Acknowledgements
 
-- [Backend Documentation](distribucion_de_contexto/MCP-backendDeploy/README.md)
-- [DeepSeek AI](https://deepseek.com)
-- [Supabase](https://supabase.com)
+Special thanks to the open-source community and the teams behind **DeepSeek**, **Ollama**, and **Supabase**.
 
 ---
 <div align="center">
-  <sub>Built with  using Generative AI</sub>
+  <sub>Designed with precision. Powered by CourseV AI.</sub>
 </div>
