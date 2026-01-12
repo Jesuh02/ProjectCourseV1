@@ -63,8 +63,106 @@ Empleamos agentes especializados para diferentes dominios dentro de la aplicaci�
 
 ## 🏗 Arquitectura
 
+### Arquitectura Frontend (App Móvil)
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#9dc3e6', 'primaryTextColor': '#000', 'primaryBorderColor': '#6c8ebf', 'lineColor': '#333', 'secondaryColor': '#f4b183', 'tertiaryColor': '#a9d18e'}}}%%
+flowchart TB
+    %% Estilos tipo HY-Motion DiT
+    classDef blue fill:#9dc3e6,stroke:#6c8ebf,color:#000,stroke-width:2px,rx:8,ry:8
+    classDef orange fill:#f4b183,stroke:#c65911,color:#000,stroke-width:2px,rx:8,ry:8
+    classDef green fill:#a9d18e,stroke:#548235,color:#000,stroke-width:2px,rx:8,ry:8
+    classDef yellow fill:#ffd966,stroke:#bf9000,color:#000,stroke-width:2px,rx:8,ry:8
+
+    %% ═══════════════════════════════════════════════════
+    %% CAPA DE ENTRADA (Input Layer)
+    %% ═══════════════════════════════════════════════════
+    subgraph InputLayer [" "]
+        direction LR
+        Touch[Táctil]:::blue
+        Voice[STT / Voz]:::blue
+        Files[Archivos]:::blue
+    end
+
+    %% ═══════════════════════════════════════════════════
+    %% CAPA DE PROCESAMIENTO (Processing Layer)  
+    %% ═══════════════════════════════════════════════════
+    subgraph ProcessLayer [" "]
+        direction LR
+        QueryOpt[Query Optimizer]:::orange
+        CtxBuild[Context Builder]:::orange
+        HashTrack[Hash Tracker]:::orange
+    end
+
+    %% ═══════════════════════════════════════════════════
+    %% BLOQUES AGENTIVOS (Agent Blocks)
+    %% ═══════════════════════════════════════════════════
+    subgraph AgentBlocks [" "]
+        direction LR
+        
+        subgraph RL_Stream [Agente Tutor]
+            direction TB
+            RL1[ViewNorm]:::blue
+            RL2[Scale & Shift]:::orange
+            RL3[Unique Gen]:::blue
+            RL4[Hash Check]:::orange
+            RL5[Gate]:::orange
+            RL1 --> RL2 --> RL3 --> RL4 --> RL5
+        end
+
+        subgraph BI_Stream [Agente Analista]
+            direction TB
+            BI1[ViewNorm]:::blue
+            BI2[Scale & Shift]:::orange
+            BI3[Text-to-SQL]:::blue
+            BI4[Auto-Correct]:::orange
+            BI5[Gate]:::orange
+            BI1 --> BI2 --> BI3 --> BI4 --> BI5
+        end
+
+        subgraph RAG_Stream [Agente Evaluador]
+            direction TB
+            RAG1[ViewNorm]:::blue
+            RAG2[Scale & Shift]:::orange
+            RAG3[RAG Search]:::blue
+            RAG4[Scoring]:::orange
+            RAG5[Gate]:::orange
+            RAG1 --> RAG2 --> RAG3 --> RAG4 --> RAG5
+        end
+    end
+
+    %% ═══════════════════════════════════════════════════
+    %% CAPA DE SALIDA (Output Layer)
+    %% ═══════════════════════════════════════════════════
+    subgraph OutputLayer [" "]
+        direction LR
+        MCP[MCP Protocol]:::green
+        Supabase[Supabase Conn]:::green
+    end
+
+    %% ═══════════════════════════════════════════════════
+    %% CONEXIONES PRINCIPALES
+    %% ═══════════════════════════════════════════════════
+    Touch --> QueryOpt
+    Voice --> CtxBuild
+    Files --> HashTrack
+
+    QueryOpt --> RL1
+    CtxBuild --> BI1
+    HashTrack --> RAG1
+
+    RL5 --> MCP
+    BI5 --> MCP
+    BI5 -.-> Supabase
+    RAG5 --> MCP
+
+    %% Salida Final
+    MCP ==> Backend[☁️ DeepSeek V3.2]:::yellow
+    Supabase ==> DB[(PostgreSQL)]:::yellow
+```
+
 <div align="center">
-<img src="https://via.placeholder.com/800x400.png?text=Diagrama+Arquitectura:+App+->+MCP+Backend+->+DeepSeek" alt="Arquitectura" width="80%" />
+<sub><b>CourseV Frontend DiT</b> — Arquitectura basada en Streams con Gates de Control</sub>
 </div>
 
 El sistema sigue una estricta separación de responsabilidades:
