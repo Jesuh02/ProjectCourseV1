@@ -9,7 +9,7 @@
 
 [Comenzar](#-comenzar) • [Zoológico de Agentes](#-zoológico-de-agentes) • [Arquitectura](#-arquitectura) • [Documentación](#-documentación)
 
-<img src="https://via.placeholder.com/1200x400.png?text=Vista+Previa+Plataforma+CourseV+AI" alt="Banner CourseV" width="100%" />
+<img src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/descarga.png" alt="Banner CourseV" width="100%" />
 
 </div>
 
