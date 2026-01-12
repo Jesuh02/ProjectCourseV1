@@ -85,23 +85,8 @@ data class VideoData(
 
     // Get the best available URI for playback
     fun getBestVideoUri(): Uri? {
-        // First try to get R2 streaming URL if available
-        try {
-            val r2Service = com.example.tareamov.service.CloudflareR2Service
-            
-            // Check if videoUriString is already an R2 URL
-            if (r2Service.isR2Url(videoUriString)) {
-                return Uri.parse(videoUriString)
-            }
-            
-            // Try to get streaming URL from R2
-            val r2Url = r2Service.getVideoStreamUrl(videoUriString)
-            if (r2Url != null) {
-                return Uri.parse(r2Url)
-            }
-        } catch (e: Exception) {
-            // Fall through to local file check
-        }
+        // Optimization: Avoid blocking network calls here.
+        // The VideoPlayerActivity will handle fetching the streaming URL asynchronously.
         
         // Then try the local file path (for locally created videos)
         if (localFilePath != null) {
@@ -130,10 +115,11 @@ data class VideoData(
                             return uri
                         }
                     }
-                    // File doesn't exist locally, try R2 fallback with filename (WITHOUT extension)
+                    // File doesn't exist locally, try R2 fallback with filename
                     val fileName = videoUriString?.substringAfterLast("/")
                     if (!fileName.isNullOrEmpty()) {
-                        // R2 files are stored WITHOUT extension
+                        // R2 fallback (uses public bucket)
+                        // Note: New videos should have extension (.mp4), old ones might not
                         val r2FallbackUrl = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/$fileName"
                         return Uri.parse(r2FallbackUrl)
                     }

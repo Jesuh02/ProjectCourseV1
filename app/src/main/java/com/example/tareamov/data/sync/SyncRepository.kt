@@ -28,6 +28,7 @@ import com.example.tareamov.data.entity.Rol
 import com.example.tareamov.data.entity.Course
 import com.example.tareamov.data.entity.Recurso
 import com.example.tareamov.data.entity.RolRecurso
+import okhttp3.MediaType.Companion.toMediaType
 import com.example.tareamov.data.entity.VideoComment
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Notification
@@ -39,7 +40,6 @@ import kotlinx.coroutines.flow.first
 import com.example.tareamov.data.repository.SupabaseRepository
 import kotlinx.coroutines.withContext
 import okhttp3.Request
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 
 class SyncRepository(
@@ -1960,59 +1960,92 @@ class SyncRepository(
         }
     }
 
-    // Public helper to upload a single VideoData to Supabase (non-blocking)
+    // Public helper to upload a single VideoData to Supabase via Backend API (non-blocking)
     fun uploadVideoToSupabase(video: com.example.tareamov.data.entity.VideoData) {
         syncScope.launch {
             try {
-                if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                    Log.w("SyncRepository", "SupabaseClient not configured. Skipping uploadVideoToSupabase.")
-                    return@launch
-                }
-                val supabaseClient = com.example.tareamov.service.SupabaseClient
-                val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertVideo(video) }
-                if (remoteId != null) {
-                    Log.i("SyncRepository", "Video uploaded to Supabase (remote id=$remoteId) username=${video.username} title=${video.title}")
+                val success = uploadVideoViaBackendApi(video)
+                if (success) {
+                    Log.i("SyncRepository", "Video uploaded via backend API title=${video.title}")
                 } else {
-                    Log.w("SyncRepository", "Video upload returned null id for video id=${video.id}")
+                    Log.w("SyncRepository", "Video upload via backend failed for video id=${video.id}")
                 }
             } catch (e: Exception) {
-                Log.e("SyncRepository", "Exception uploading video to Supabase", e)
+                Log.e("SyncRepository", "Exception uploading video via backend", e)
             }
         }
     }
 
-    // Suspend version that returns success/failure; callers can await and act accordingly
+    // Suspend version that returns success/failure via Backend API
     suspend fun uploadVideoToSupabaseSuspend(video: com.example.tareamov.data.entity.VideoData): Boolean {
         return try {
-            if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                Log.w("SyncRepository", "SupabaseClient not configured. Skipping uploadVideoToSupabaseSuspend.")
-                return false
-            }
-            val supabaseClient = com.example.tareamov.service.SupabaseClient
-            
-            // Try to update first (if video has an ID, it likely already exists in Supabase)
-            if (video.id > 0L) {
-                val updated = withContext(Dispatchers.IO) { supabaseClient.updateVideo(video) }
-                if (updated) {
-                    Log.i("SyncRepository", "uploadVideoToSupabaseSuspend: Successfully updated video id=${video.id}")
-                    return true
-                }
-                // If update failed, it might not exist yet, so try insert
-                Log.d("SyncRepository", "Update failed for video id=${video.id}, attempting insert")
-            }
-            
-            // Try insert (for new videos or if update failed)
-            val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertVideo(video) }
-            if (remoteId != null) {
-                Log.i("SyncRepository", "uploadVideoToSupabaseSuspend success remoteId=$remoteId for video id=${video.id}")
-                true
-            } else {
-                Log.w("SyncRepository", "uploadVideoToSupabaseSuspend returned null id for video id=${video.id}")
-                false
-            }
+            uploadVideoViaBackendApi(video)
         } catch (e: Exception) {
             Log.e("SyncRepository", "Exception in uploadVideoToSupabaseSuspend", e)
             false
+        }
+    }
+    
+    /**
+     * Upload video to Supabase via backend API endpoint
+     * This centralizes database operations on the backend
+     */
+    private suspend fun uploadVideoViaBackendApi(video: com.example.tareamov.data.entity.VideoData): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            
+            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_API_URL
+            val url = "$baseUrl/video/insert"
+            
+            // Build JSON payload
+            val jsonPayload = org.json.JSONObject().apply {
+                put("title", video.title)
+                put("description", video.description)
+                put("videoUriString", video.videoUriString)
+                put("localFilePath", video.localFilePath)
+                put("timestamp", video.timestamp)
+                put("isPaid", video.isPaid)
+                put("thumbnailUri", video.thumbnailUri)
+                put("price", video.price)
+                put("remoteId", video.remoteId)
+                if (video.courseId != null) {
+                    put("courseId", video.courseId)
+                }
+            }
+            
+            Log.d("SyncRepository", "📤 Sending video insert to backend: $url")
+            
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val requestBody = okhttp3.RequestBody.Companion.create(mediaType, jsonPayload.toString())
+            
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .addHeader("Content-Type", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string()
+                Log.d("SyncRepository", "📥 Backend response: code=${response.code}, body=$responseBody")
+                
+                if (response.isSuccessful && responseBody != null) {
+                    val json = org.json.JSONObject(responseBody)
+                    if (json.optBoolean("success", false)) {
+                        val videoId = json.optLong("videoId", -1L)
+                        Log.d("SyncRepository", "✅ Video inserted via backend: ID=$videoId")
+                        return@withContext true
+                    }
+                }
+                Log.e("SyncRepository", "❌ Backend video insert failed: ${response.code}")
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "❌ Error uploading video via backend", e)
+            return@withContext false
         }
     }
 
@@ -3052,8 +3085,10 @@ class SyncRepository(
                         senderUsername = localUser?.usuario,
                         senderAvatarUrl = localUser?.avatar,
                         thumbnailUrl = localVideo?.thumbnailUri ?: localVideo?.videoUriString,
-                        relatedId = videoId
+                        relatedId = videoId,
+                        metadata = "{\"comment_id\": $commentId}" // Include comment_id for navigation
                     )
+                    Log.d("SyncRepository", "📬 Creating toggle-like notification with comment_id=$commentId")
                     supabaseClient.insertNotification(notification)
                 } catch (e: Exception) {
                     Log.e("SyncRepository", "Error sending like notification", e)
@@ -3083,8 +3118,10 @@ class SyncRepository(
                         senderUsername = localUser?.usuario,
                         senderAvatarUrl = localUser?.avatar,
                         thumbnailUrl = localVideo?.thumbnailUri ?: localVideo?.videoUriString,
-                        relatedId = videoId
+                        relatedId = videoId,
+                        metadata = "{\"comment_id\": $commentId}" // Include comment_id for navigation
                     )
+                    Log.d("SyncRepository", "📬 Creating like notification with comment_id=$commentId")
                     supabaseClient.insertNotification(notification)
                 } catch (e: Exception) {
                     Log.e("SyncRepository", "Error sending like notification", e)
@@ -3308,25 +3345,109 @@ class SyncRepository(
 
                 // --- NOTIFICATION LOGIC ---
                 try {
-                    // 1. Notify Video Owner
-                    if (localVideo != null && localVideo.username != null) {
-                        val ownerUsername = localVideo.username
-                        // Try local then remote
-                        val owner = usuarioDao.getUsuarioByUsername(ownerUsername) 
-                            ?: supabaseClient.fetchUsuarioByUsername(ownerUsername)
+                    // 1. Notify Video Owner (for ALL comments - top-level and replies)
+                    Log.d("SyncRepository", "🔔 Comment notification check: parentId=$parentId, localVideo=${localVideo != null}, username=${localVideo?.username}, remoteId=${localVideo?.remoteId}, courseId=${localVideo?.courseId}")
+                    
+                    if (localVideo != null) {
+                        // Strategy to find video owner:
+                        // 1. Try remoteId from video (creator's user ID)
+                        // 2. Try courseId -> course -> creator_user_id  
+                        // 3. Fallback to username lookup
+                        
+                        var ownerId: Long? = localVideo.remoteId
+                        var owner: Usuario? = null
+                        
+                        // Strategy 1: Use remoteId directly (creator's user ID stored in video)
+                        if (ownerId != null && ownerId > 0) {
+                            owner = usuarioDao.getUsuarioById(ownerId) ?: supabaseClient.fetchUsuarioById(ownerId)
+                            Log.d("SyncRepository", "🔍 Strategy 1 - Found owner by video.remoteId: ${owner?.usuario}, id=$ownerId")
+                        }
+                        
+                        // Strategy 2: Get owner from course's creator_user_id
+                        val courseId = localVideo.courseId
+                        if (owner == null && courseId != null && courseId > 0) {
+                            Log.d("SyncRepository", "🔍 Strategy 2 - Looking for course $courseId to get creator_user_id")
+                            try {
+                                // Fetch course from Supabase to get creator_user_id
+                                val course = supabaseClient.fetchCourseById(courseId)
+                                if (course != null) {
+                                    val creatorUserId = course.creatorUserId
+                                    Log.d("SyncRepository", "📚 Course found: creator_user_id=$creatorUserId")
+                                    if (creatorUserId > 0) {
+                                        ownerId = creatorUserId
+                                        owner = usuarioDao.getUsuarioById(creatorUserId) ?: supabaseClient.fetchUsuarioById(creatorUserId)
+                                        Log.d("SyncRepository", "🔍 Strategy 2 - Found owner by course.creator_user_id: ${owner?.usuario}, id=$ownerId")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w("SyncRepository", "⚠️ Strategy 2 failed: ${e.message}")
+                            }
+                        }
+                        
+                        // Strategy 3: Fallback to username lookup
+                        if (owner == null && !localVideo.username.isNullOrEmpty() && localVideo.username != "Unknown" && localVideo.username != "unknown") {
+                            val ownerUsername = localVideo.username
+                            Log.d("SyncRepository", "🔍 Strategy 3 - Looking for video owner by username: $ownerUsername")
+                            owner = usuarioDao.getUsuarioByUsername(ownerUsername) 
+                                ?: supabaseClient.fetchUsuarioByUsername(ownerUsername)
+                            ownerId = owner?.id
+                            Log.d("SyncRepository", "🔍 Strategy 3 - Found owner by username: ${owner?.usuario}, id=$ownerId")
+                        }
+                        
+                        Log.d("SyncRepository", "👤 Final owner result: found=${owner != null}, ownerId=$ownerId, commenterId=$usuarioId, sameUser=${ownerId == usuarioId}")
                             
-                        if (owner != null && owner.id != usuarioId) {
+                        if (owner != null && ownerId != null && ownerId != usuarioId) {
+                            // Determine message based on whether it's a reply or top-level comment
+                            val notificationMessage = if (parentId != null) {
+                                "${localUser?.usuario ?: "Alguien"} respondió un comentario en tu video"
+                            } else {
+                                "${localUser?.usuario ?: "Alguien"} comentó tu video"
+                            }
+                            
                             val notification = Notification(
-                                userId = owner.id,
+                                userId = ownerId,
                                 type = Notification.TYPE_COMMENT,
                                 title = "Nuevo comentario",
-                                message = "${localUser?.usuario ?: "Alguien"} comentó tu video",
+                                message = notificationMessage,
                                 senderUsername = localUser?.usuario,
                                 senderAvatarUrl = localUser?.avatar,
-                                thumbnailUrl = localVideo.thumbnailUri ?: localVideo.videoUriString, // Use thumbnail or video URI for frame
-                                relatedId = videoId
+                                thumbnailUrl = localVideo.thumbnailUri ?: localVideo.videoUriString,
+                                relatedId = videoId,
+                                metadata = "{\"comment_id\": $remoteId}"
                             )
-                            supabaseClient.insertNotification(notification)
+                            Log.d("SyncRepository", "📬 Creating notification for video owner $ownerId with comment_id=$remoteId (parentId=$parentId)")
+                            val insertResult = supabaseClient.insertNotification(notification)
+                            Log.d("SyncRepository", "📬 Notification insert result: $insertResult")
+                        } else {
+                            Log.d("SyncRepository", "⚠️ NOT notifying video owner: owner=${owner != null}, ownerId=$ownerId, sameUser=${ownerId == usuarioId}")
+                        }
+                        
+                        // 2. Notify parent comment author if this is a reply
+                        if (parentId != null && parentId > 0) {
+                            Log.d("SyncRepository", "📝 This is a reply to comment $parentId, notifying parent author")
+                            val parentComment = videoCommentDao?.getCommentById(parentId) 
+                                ?: supabaseClient.getVideoCommentById(parentId)
+                            
+                            if (parentComment != null && parentComment.usuarioId != usuarioId && parentComment.usuarioId != ownerId) {
+                                val parentAuthor = usuarioDao.getUsuarioById(parentComment.usuarioId)
+                                    ?: supabaseClient.fetchUsuarioById(parentComment.usuarioId)
+                                
+                                if (parentAuthor != null) {
+                                    val replyNotification = Notification(
+                                        userId = parentComment.usuarioId,
+                                        type = Notification.TYPE_COMMENT,
+                                        title = "Respuesta a tu comentario",
+                                        message = "${localUser?.usuario ?: "Alguien"} respondió a tu comentario",
+                                        senderUsername = localUser?.usuario,
+                                        senderAvatarUrl = localUser?.avatar,
+                                        thumbnailUrl = localVideo.thumbnailUri ?: localVideo.videoUriString,
+                                        relatedId = videoId,
+                                        metadata = "{\"comment_id\": $remoteId}"
+                                    )
+                                    Log.d("SyncRepository", "📬 Creating reply notification for comment author ${parentComment.usuarioId}")
+                                    supabaseClient.insertNotification(replyNotification)
+                                }
+                            }
                         }
                     }
 
@@ -3346,8 +3467,10 @@ class SyncRepository(
                                      senderUsername = localUser?.usuario,
                                      senderAvatarUrl = localUser?.avatar,
                                      thumbnailUrl = localVideo?.thumbnailUri ?: localVideo?.videoUriString,
-                                     relatedId = videoId
+                                     relatedId = videoId,
+                                     metadata = "{\"comment_id\": $remoteId}" // Include comment_id for navigation
                                  )
+                                 Log.d("SyncRepository", "📬 Creating mention notification with comment_id=$remoteId for @$username")
                                  supabaseClient.insertNotification(notification)
                             }
                         }

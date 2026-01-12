@@ -414,6 +414,9 @@ fun WelcomeView(
     var displayedText by remember { mutableStateOf("") }
     var isSpeaking by remember { mutableStateOf(false) }
     val fullText = "¡Bienvenido! Estoy listo para ayudarte con \"$courseName\"."
+    val context = LocalContext.current
+    val ttsService = remember { TTSService.getInstance(context) }
+    val coroutineScope = rememberCoroutineScope()
     
     // State handling text
     val robotText = when (uiState) {
@@ -440,8 +443,34 @@ fun WelcomeView(
         Spacer(modifier = Modifier.weight(1f))
         
         // Speech Bubble
-        Box(modifier = Modifier.padding(bottom = 24.dp).offset(y = dy.dp)) {
-            SpeechBubble(text = displayedText)
+        Row(
+            modifier = Modifier
+                .padding(bottom = 24.dp)
+                .offset(y = dy.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(modifier = Modifier.weight(1f, fill = false)) {
+                SpeechBubble(text = displayedText)
+            }
+            
+            Spacer(modifier = Modifier.width(8.dp))
+            
+            IconButton(
+                onClick = { 
+                    coroutineScope.launch {
+                        ttsService.speak(robotText) 
+                    }
+                },
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(Color(0xFF40C4FF).copy(alpha = 0.2f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.VolumeUp,
+                    contentDescription = "Leer mensaje",
+                    tint = Color(0xFF40C4FF)
+                )
+            }
         }
 
         // Robot

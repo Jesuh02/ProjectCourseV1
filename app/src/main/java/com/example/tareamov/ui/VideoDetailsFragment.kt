@@ -28,6 +28,7 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import kotlinx.coroutines.withContext
 
 class VideoDetailsFragment : Fragment() {
@@ -834,7 +835,7 @@ class VideoDetailsFragment : Fragment() {
                     }
 
                     // Now create video with the specific ID and optional courseId reference
-                    updateLoadingProgress(95, "Guardando video...", false)
+                    updateLoadingProgress(95, "Guardando video en servidor...", false)
                     val videoData = VideoData(
                         id = nextVideoId,
                         username = currentUsername, // Keep username for standalone videos
@@ -845,13 +846,15 @@ class VideoDetailsFragment : Fragment() {
                         price = if (isPaidCourse) 9.99 else null,
                         courseId = courseRemoteId, // null if no course created, otherwise link to the course
                         remoteId = userId, // Store creator ID in remote_id as requested
-                        timestamp = System.currentTimeMillis()
+                        timestamp = System.currentTimeMillis(),
+                        thumbnailUri = thumbnailUrl // Include thumbnail URL
                     )
                     
-                    Log.d("VideoDetailsFragment", "Attempting to insert video with ID: $nextVideoId, courseId: ${courseRemoteId ?: "null (standalone video)"}")
+                    Log.d("VideoDetailsFragment", "Attempting to insert video via backend with courseId: ${courseRemoteId ?: "null (standalone video)"}")
                     
+                    // Use backend endpoint to insert video (better reliability and centralized logic)
                     val remoteId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.insertVideo(videoData)
+                        insertVideoViaBackend(videoData)
                     }
                     
                     if (remoteId != null && remoteId > 0) {
@@ -892,6 +895,82 @@ class VideoDetailsFragment : Fragment() {
             }
         }
     }
+    
+    /**
+     * Insert video via backend API endpoint (centralized database operations)
+     * This is more reliable than direct Supabase calls from mobile
+     */
+    private suspend fun insertVideoViaBackend(videoData: VideoData): Long? = withContext(Dispatchers.IO) {
+        try {
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            
+            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_API_URL
+            val url = "$baseUrl/video/insert"
+            
+            // Build JSON payload
+            val jsonPayload = org.json.JSONObject().apply {
+                put("title", videoData.title)
+                put("description", videoData.description)
+                put("videoUriString", videoData.videoUriString)
+                put("localFilePath", videoData.localFilePath)
+                put("timestamp", videoData.timestamp)
+                put("isPaid", videoData.isPaid)
+                put("thumbnailUri", videoData.thumbnailUri)
+                put("price", videoData.price)
+                put("remoteId", videoData.remoteId)
+                if (videoData.courseId != null) {
+                    put("courseId", videoData.courseId)
+                }
+            }
+            
+            Log.d("VideoDetailsFragment", "📤 Sending video insert to backend: $url")
+            Log.d("VideoDetailsFragment", "   Payload: $jsonPayload")
+            
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val requestBody = jsonPayload.toString().toRequestBody(mediaType)
+            
+            val request = okhttp3.Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .addHeader("Content-Type", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string()
+                Log.d("VideoDetailsFragment", "📥 Backend response: code=${response.code}, body=$responseBody")
+                
+                if (response.isSuccessful && responseBody != null) {
+                    val json = org.json.JSONObject(responseBody)
+                    if (json.optBoolean("success", false)) {
+                        val videoId = json.optLong("videoId", -1L)
+                        if (videoId > 0) {
+                            Log.d("VideoDetailsFragment", "✅ Video inserted via backend: ID=$videoId")
+                            return@withContext videoId
+                        }
+                    }
+                    Log.e("VideoDetailsFragment", "❌ Backend returned success=false or missing videoId")
+                } else {
+                    Log.e("VideoDetailsFragment", "❌ Backend request failed: ${response.code} - $responseBody")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("VideoDetailsFragment", "❌ Error inserting video via backend", e)
+        }
+        
+        // Backend failed - log error and return null (no fallback to direct Supabase)
+        Log.e("VideoDetailsFragment", "❌ Backend video insert failed - no fallback available")
+        return@withContext null
+    }
+    
+    // OkHttp extension helpers using modern API
+    private fun String.toMediaType(): okhttp3.MediaType = 
+        this.toMediaTypeOrNull() ?: throw IllegalArgumentException("Invalid media type")
+    private fun String.toRequestBody(mediaType: okhttp3.MediaType): okhttp3.RequestBody = 
+        okhttp3.RequestBody.Companion.create(mediaType, this)
     
     override fun onDestroyView() {
         super.onDestroyView()

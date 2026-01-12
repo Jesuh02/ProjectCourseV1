@@ -101,18 +101,37 @@ object VideoCacheManager {
     }
     
     /**
-     * Create a MediaSource factory that uses the cache.
+     * Create a MediaSource factory that uses the cache with tolerant extractors.
+     * Configured to handle videos with problematic metadata or keyframes.
      */
     fun createMediaSourceFactory(context: Context): MediaSource.Factory {
-        return DefaultMediaSourceFactory(getCacheDataSourceFactory(context))
+        // Create tolerant extractors for problematic videos (VP8, VP9, etc.)
+        val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true) // Enable seeking in CBR streams
+            .setConstantBitrateSeekingAlwaysEnabled(true) // Always enable CBR seeking
+            .setMp4ExtractorFlags(androidx.media3.extractor.mp4.Mp4Extractor.FLAG_WORKAROUND_IGNORE_EDIT_LISTS) // Robust MP4 parsing
+
+        return DefaultMediaSourceFactory(getCacheDataSourceFactory(context), extractorsFactory)
     }
     
     /**
      * Create a cached MediaSource for a video URL.
      */
     fun createCachedMediaSource(context: Context, url: String): MediaSource {
-        val mediaItem = MediaItem.fromUri(url)
-        return createMediaSourceFactory(context).createMediaSource(mediaItem)
+        val mediaItemBuilder = MediaItem.Builder().setUri(url)
+
+        // FIX FOR R2 VIDEOS WITHOUT EXTENSION
+        // Forces ExoPlayer to use MP4 extractor even if extension is missing/unknown
+        val isR2Url = url.contains("r2.dev") || url.contains("r2.cloudflarestorage.com")
+        val lowerUrl = url.lowercase()
+        val hasVideoExtension = lowerUrl.endsWith(".mp4") || lowerUrl.endsWith(".mkv") || lowerUrl.endsWith(".webm") || lowerUrl.endsWith(".mov")
+        
+        if (isR2Url && !hasVideoExtension) {
+            Log.w(TAG, "Forcing VIDEO_MP4 mime type for extensionless R2 URL: $url")
+            mediaItemBuilder.setMimeType(androidx.media3.common.MimeTypes.VIDEO_MP4)
+        }
+
+        return createMediaSourceFactory(context).createMediaSource(mediaItemBuilder.build())
     }
     
     /**

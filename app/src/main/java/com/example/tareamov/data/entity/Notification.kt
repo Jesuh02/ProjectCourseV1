@@ -1,5 +1,6 @@
 package com.example.tareamov.data.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.google.gson.annotations.SerializedName
@@ -9,6 +10,7 @@ data class Notification(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     
+    @ColumnInfo(name = "user_id")
     @SerializedName("user_id")
     val userId: Long,
     
@@ -16,24 +18,36 @@ data class Notification(
     val title: String,
     val message: String,
     
+    @ColumnInfo(name = "sender_username")
     @SerializedName("sender_username")
     val senderUsername: String? = null,
     
+    @ColumnInfo(name = "sender_avatar_url")
     @SerializedName("sender_avatar_url")
     val senderAvatarUrl: String? = null,
     
+    @ColumnInfo(name = "thumbnail_url")
     @SerializedName("thumbnail_url")
     val thumbnailUrl: String? = null,
     
+    @ColumnInfo(name = "related_id")
     @SerializedName("related_id")
     val relatedId: Long? = null,
     
+    // Metadata JSON para datos adicionales (ej: comment_id, reply_id, etc.)
+    @ColumnInfo(name = "metadata")
+    @SerializedName("metadata")
+    val metadata: String? = null,
+    
+    @ColumnInfo(name = "is_read")
     @SerializedName("is_read")
     val isRead: Boolean = false,
     
+    @ColumnInfo(name = "created_at")
     @SerializedName("created_at")
     val createdAt: String? = null,
     
+    @ColumnInfo(name = "updated_at")
     @SerializedName("updated_at")
     val updatedAt: String? = null
 ) {

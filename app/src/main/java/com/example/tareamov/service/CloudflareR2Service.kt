@@ -314,11 +314,25 @@ object CloudflareR2Service {
             val extension = originalName.substringAfterLast(".", "").lowercase()
             val sanitizedName = customFileName?.replace(Regex("[^a-zA-Z0-9._-]"), "_")
                 ?: UUID.randomUUID().toString()
-            val finalFileName = if (extension.isNotEmpty()) "$sanitizedName.$extension" else sanitizedName
+            
+            // Avoid double extensions
+            val finalFileName = if (extension.isNotEmpty() && !sanitizedName.endsWith(".$extension", ignoreCase = true)) 
+                "$sanitizedName.$extension" 
+            else 
+                sanitizedName
+                
             val objectKey = "$folder/$finalFileName"
             
-            // Detectar tipo MIME
-            val mimeType = context.contentResolver.getType(fileUri) ?: getMimeType(extension)
+            // Detectar tipo MIME: Prefer resolved -> custom -> original extension
+            var mimeType = context.contentResolver.getType(fileUri)
+            if (mimeType == null) {
+                val customExt = customFileName?.substringAfterLast(".", "")?.lowercase()
+                if (!customExt.isNullOrEmpty()) {
+                    mimeType = getMimeType(customExt)
+                } else {
+                    mimeType = getMimeType(extension)
+                }
+            }
             
             Log.d(TAG, "📝 Uploading as: $objectKey (MIME: $mimeType)")
             onProgress?.invoke(25)
@@ -459,11 +473,25 @@ object CloudflareR2Service {
             val extension = originalName.substringAfterLast(".", "").lowercase()
             val sanitizedName = customFileName?.replace(Regex("[^a-zA-Z0-9._-]"), "_")
                 ?: UUID.randomUUID().toString()
-            val finalFileName = if (extension.isNotEmpty()) "$sanitizedName.$extension" else sanitizedName
+                
+            // Avoid double extensions
+            val finalFileName = if (extension.isNotEmpty() && !sanitizedName.endsWith(".$extension", ignoreCase = true)) 
+                "$sanitizedName.$extension" 
+            else 
+                sanitizedName
+                
             val objectKey = "$folder/$finalFileName"
             
-            // Detectar tipo MIME
-            val mimeType = context.contentResolver.getType(fileUri) ?: getMimeType(extension)
+            // Detectar tipo MIME: Prefer resolved -> custom -> original extension
+            var mimeType = context.contentResolver.getType(fileUri)
+            if (mimeType == null) {
+                val customExt = customFileName?.substringAfterLast(".", "")?.lowercase()
+                if (!customExt.isNullOrEmpty()) {
+                    mimeType = getMimeType(customExt)
+                } else {
+                    mimeType = getMimeType(extension)
+                }
+            }
             
             Log.d(TAG, "📝 Uploading as: $objectKey (MIME: $mimeType)")
             onProgress?.invoke(25)

@@ -182,7 +182,46 @@ class SelectTopicFragment : Fragment() {
             }
         }
 
-        return view // Return the inflated view
+        // --- TTS Button Injection ---
+        val context = requireContext()
+        val ttsService = com.example.tareamov.service.TTSService.getInstance(context)
+        val wrapper = android.widget.FrameLayout(context)
+        wrapper.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        
+        // Remove view from its parent if necessary (though usually null from inflate)
+        (view.parent as? ViewGroup)?.removeView(view)
+        
+        // Add original view to wrapper
+        wrapper.addView(view, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        
+        // Create and add FAB
+        val fab = com.google.android.material.floatingactionbutton.FloatingActionButton(context)
+        fab.setImageDrawable(androidx.core.content.ContextCompat.getDrawable(context, android.R.drawable.ic_lock_silent_mode_off))
+        fab.backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#40C4FF"))
+        fab.imageTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
+        fab.compatElevation = 10f
+        
+        val params = android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, 
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        params.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+        val margin = (16 * resources.displayMetrics.density).toInt()
+        params.setMargins(margin, margin, margin, margin)
+        
+        fab.setOnClickListener {
+             lifecycleScope.launch {
+                 val topics = topicSelectionAdapter.currentList
+                 val textToRead = "Lista de temas: " + 
+                    if (topics.isEmpty()) "No hay temas disponibles." 
+                    else topics.joinToString(", ") { it.name }
+                 ttsService.speak(textToRead)
+             }
+        }
+        
+        wrapper.addView(fab, params)
+
+        return wrapper // Return the wrapper containing both the layout and the FAB
     }
 
     private fun setupRecyclerView() {

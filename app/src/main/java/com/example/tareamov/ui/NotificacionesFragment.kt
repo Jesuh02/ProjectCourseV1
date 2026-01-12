@@ -17,6 +17,8 @@ import com.example.tareamov.service.SupabaseClient
 import com.example.tareamov.ui.adapter.NotificationAdapter
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 
 class NotificacionesFragment : Fragment() {
 
@@ -223,17 +225,86 @@ class NotificacionesFragment : Fragment() {
                 }
             }
             Notification.TYPE_COMMENT, Notification.TYPE_LIKE -> {
-                Log.d("Notificaciones", "Activity notification clicked: ${notification.relatedId}")
+                Log.d("Notificaciones", "💬 Activity notification clicked: ${notification.relatedId}")
+                Log.d("Notificaciones", "📄 Notification type: ${notification.type}, message: ${notification.message}")
                 notification.relatedId?.let { videoId ->
-                    // Navigate to video home to play the video and open comments
-                    val bundle = Bundle().apply {
-                        putLong("videoId", videoId)
-                        putBoolean("openComments", true)
-                    }
-                    try {
-                        findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment, bundle)
-                    } catch (e: Exception) {
-                        Log.e("NotificacionesFragment", "Error navigating to video home from activity", e)
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        try {
+                            // Navigate to video home to play the video and open comments
+                            // Parse metadata to extract comment_id if available
+                            var commentId: Long? = null
+                            
+                            if (notification.metadata != null) {
+                                // Metadata exists - parse it
+                                val metadataStr = notification.metadata
+                                try {
+                                    Log.d("NotificacionesFragment", "🔍 Parsing metadata: $metadataStr")
+                                    // metadata format: "comment_id:123" or JSON-like
+                                    if (metadataStr.contains("comment_id:")) {
+                                        commentId = metadataStr.substringAfter("comment_id:").substringBefore(",").trim().toLongOrNull()
+                                    } else if (metadataStr.contains("\"comment_id\"")) {
+                                        // JSON format: {"comment_id":123}
+                                        val regex = "\"comment_id\"\\s*:\\s*(\\d+)".toRegex()
+                                        regex.find(metadataStr)?.groupValues?.get(1)?.toLongOrNull()?.let { id: Long ->
+                                            commentId = id
+                                        }
+                                    }
+                                    Log.d("NotificacionesFragment", "✅ Extracted commentId: $commentId from metadata")
+                                } catch (e: Exception) {
+                                    Log.e("NotificacionesFragment", "❌ Error parsing metadata for comment_id", e)
+                                }
+                            } else {
+                                // Metadata is NULL - query Supabase for comment_id
+                                Log.w("NotificacionesFragment", "⚠️ Metadata is NULL, querying Supabase for comment_id")
+                                
+                                // Extract sender username from notification
+                                val senderUsername = notification.senderUsername
+                                if (senderUsername != null) {
+                                    Log.d("NotificacionesFragment", "🔎 Searching comment by sender: $senderUsername on video: $videoId")
+                                    
+                                    // Query Supabase for the most recent comment by this user on this video
+                                    commentId = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        SupabaseClient.findCommentIdByVideoAndUsername(videoId, senderUsername)
+                                    }
+                                    
+                                    if (commentId != null) {
+                                        Log.d("NotificacionesFragment", "✅ Found commentId via Supabase query: $commentId")
+                                    } else {
+                                        Log.w("NotificacionesFragment", "⚠️ Could not find comment_id via Supabase query")
+                                    }
+                                } else {
+                                    Log.w("NotificacionesFragment", "⚠️ senderUsername is null, cannot query for comment_id")
+                                }
+                            }
+                            
+                            val bundle = Bundle().apply {
+                                putLong("videoId", videoId)
+                                putBoolean("openComments", true)
+                                commentId?.let { 
+                                    putLong("targetCommentId", it)
+                                    Log.d("NotificacionesFragment", "📦 Bundle prepared with targetCommentId: $it")
+                                }
+                            }
+                            
+                            try {
+                                Log.d("NotificacionesFragment", "🚀 Navigating to VideoHomeFragment with videoId=$videoId, commentId=$commentId")
+                                findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment, bundle)
+                            } catch (e: Exception) {
+                                Log.e("NotificacionesFragment", "❌ Error navigating to video home from activity", e)
+                            }
+                        } catch (e: Exception) {
+                            Log.e("NotificacionesFragment", "❌ Error processing notification click", e)
+                            // Navigate without commentId as fallback
+                            val bundle = Bundle().apply {
+                                putLong("videoId", videoId)
+                                putBoolean("openComments", true)
+                            }
+                            try {
+                                findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment, bundle)
+                            } catch (navError: Exception) {
+                                Log.e("NotificacionesFragment", "❌ Error navigating (fallback)", navError)
+                            }
+                        }
                     }
                 }
             }

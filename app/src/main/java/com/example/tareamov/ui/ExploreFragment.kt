@@ -1969,87 +1969,36 @@ class ExploreFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                // 1) Exact local match by title (case-insensitive)
-                val exactLocal = allCoursesList.filter { it.title.equals(q, ignoreCase = true) }
-                if (exactLocal.isNotEmpty()) {
-                    displayCourses(exactLocal)
-                    showDarkToast("Mostrando ${exactLocal.size} resultado(s)")
-                    return@launch
-                }
-
-                // 2) Remote exact match by title via SyncRepository wrapper
+                // Use improved searchCourses which searches in:
+                // - Course title, description, category, tags, creator_username
+                // - Users matching the query and their courses
                 val repo = getSyncRepository()
-                val serverExact = withContext(Dispatchers.IO) {
-                    try {
-                        repo.fetchCourseByTitleFromSupabase(q)
-                    } catch (e: Exception) {
-                        Log.w("ExploreFragment", "repo.fetchCourseByTitleFromSupabase failed", e)
-                        null
-                    }
-                }
-
-                if (serverExact != null) {
-                    displayCourses(listOf(serverExact))
-                    showDarkToast("Mostrando 1 resultado (servidor)")
-                    return@launch
-                }
-
-                // 3) Search by creator username (partial match supported)
-                // First find users matching the query, then fetch courses for those user IDs
-                val matchingUsers = withContext(Dispatchers.IO) {
-                    try {
-                        com.example.tareamov.service.SupabaseClient.searchUsersByUsername(q)
-                    } catch (e: Exception) {
-                        Log.w("ExploreFragment", "searchUsersByUsername failed for '$q'", e)
-                        emptyList<com.example.tareamov.data.entity.Usuario>()
-                    }
-                }
-
-                if (matchingUsers.isNotEmpty()) {
-                    val userIds = matchingUsers.map { it.id }
-                    
-                    val coursesByCreators = withContext(Dispatchers.IO) {
-                        try {
-                            com.example.tareamov.service.SupabaseClient.fetchCoursesByCreatorUserIds(userIds)
-                        } catch (e: Exception) {
-                            Log.w("ExploreFragment", "fetchCoursesByCreatorUserIds failed", e)
-                            emptyList<Course>()
-                        }
-                    }
-
-                    if (coursesByCreators.isNotEmpty()) {
-                        displayCourses(coursesByCreators)
-                        showDarkToast("📚 ${coursesByCreators.size} curso(s) de creadores como '$q'")
-                        return@launch
-                    }
-                }
-
-                // 4) Remote broad search fallback (searches title, description, category, tags)
-                val remoteMatches = withContext(Dispatchers.IO) {
+                val results = withContext(Dispatchers.IO) {
                     try {
                         repo.searchCoursesInSupabase(q)
                     } catch (e: Exception) {
-                        Log.w("ExploreFragment", "repo.searchCoursesInSupabase failed", e)
+                        Log.w("ExploreFragment", "searchCoursesInSupabase failed for '$q'", e)
                         emptyList<Course>()
                     }
                 }
 
-                if (remoteMatches.isNotEmpty()) {
-                    displayCourses(remoteMatches)
-                    showDarkToast("Mostrando ${remoteMatches.size} resultado(s) remotos")
+                if (results.isNotEmpty()) {
+                    displayCourses(results)
+                    Log.d("ExploreFragment", "Search found ${results.size} courses for query: $q")
                     return@launch
                 }
 
-                // 5) Local contains fallback (title, description, category)
-                val containsLocal = allCoursesList.filter {
-                    it.title.contains(q, ignoreCase = true) ||
-                            (it.description?.contains(q, ignoreCase = true) == true) ||
-                            (it.category?.contains(q, ignoreCase = true) == true)
+                // Fallback: Local search if remote returns nothing
+                val localResults = allCoursesList.filter { course ->
+                    course.title.contains(q, ignoreCase = true) ||
+                            (course.description?.contains(q, ignoreCase = true) == true) ||
+                            (course.category?.contains(q, ignoreCase = true) == true) ||
+                            (course.tags?.contains(q, ignoreCase = true) == true)
                 }.sortedByDescending { it.timestamp }
 
-                displayCourses(containsLocal)
-                if (containsLocal.isNotEmpty()) {
-                    showDarkToast("Mostrando ${containsLocal.size} resultado(s) local(es)")
+                displayCourses(localResults)
+                if (localResults.isNotEmpty()) {
+                    Log.d("ExploreFragment", "Local search found ${localResults.size} courses for query: $q")
                 } else {
                     showDarkToast("❌ No se encontraron resultados para '$q'")
                 }
@@ -2057,11 +2006,13 @@ class ExploreFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error filterCourses", e)
                 showDarkToast("❌ Error en la búsqueda")
+                // Final fallback: show all courses on error
+                displayCourses(allCoursesList.sortedByDescending { it.timestamp })
             }
         }
     }
 
-    // Show filter options dialog with modern BottomSheet
+    // Show filter options dialog with modern BottomSheet    // Show filter options dialog with modern BottomSheet
     @Suppress("DEPRECATION")
     private fun showFilterOptions() {
         val bottomSheetDialog = BottomSheetDialog(requireContext(), R.style.DarkBottomSheetDialogTheme)

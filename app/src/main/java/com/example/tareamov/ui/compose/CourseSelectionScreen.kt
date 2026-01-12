@@ -25,6 +25,9 @@ import com.example.tareamov.adapter.CourseAdapter
 import com.example.tareamov.data.entity.Course
 
 import androidx.compose.ui.draw.clipToBounds
+import com.example.tareamov.service.TTSService
+import androidx.compose.material.icons.filled.VolumeUp
+import kotlinx.coroutines.launch
 
 @Composable
 fun CourseSelectionScreen(
@@ -42,6 +45,8 @@ fun CourseSelectionScreen(
     val refreshTrigger by viewModel.refreshTrigger.collectAsState()
     
     val context = LocalContext.current
+    val ttsService = remember { TTSService.getInstance(context) }
+    val coroutineScope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier
@@ -69,7 +74,7 @@ fun CourseSelectionScreen(
             
             Spacer(modifier = Modifier.width(8.dp))
             
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "¿En qué curso deseas",
                     color = Color.White,
@@ -81,6 +86,24 @@ fun CourseSelectionScreen(
                     color = Color(0xFF40C4FF),
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold
+                )
+            }
+
+            IconButton(
+                onClick = {
+                    coroutineScope.launch {
+                        val textToRead = "Lista de cursos para elegir.... " + 
+                            if (enrolledCourses.isEmpty()) "No hay cursos disponibles." 
+                            else enrolledCourses.joinToString(", ") { it.title }
+                        ttsService.speak(textToRead)
+                    }
+                },
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.VolumeUp,
+                    contentDescription = "Leer lista de cursos",
+                    tint = Color(0xFF40C4FF)
                 )
             }
         }

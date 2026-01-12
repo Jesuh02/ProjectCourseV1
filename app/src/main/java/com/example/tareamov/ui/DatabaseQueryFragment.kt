@@ -79,9 +79,16 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     private var lastSupabaseUrl: String? = null
     
     // User-specific SharedPreferences for better persistence
-    private val chatPrefs by lazy {
-        sessionManager.getChatPreferences(requireContext())
-    }
+    // Use nullable to avoid crash when context is not available
+    private var _chatPrefs: android.content.SharedPreferences? = null
+    private val chatPrefs: android.content.SharedPreferences
+        get() {
+            if (_chatPrefs == null && isAdded && context != null) {
+                _chatPrefs = sessionManager.getChatPreferences(requireContext())
+            }
+            return _chatPrefs ?: context?.getSharedPreferences("fallback_chat_prefs", Context.MODE_PRIVATE)
+                ?: throw IllegalStateException("Context not available")
+        }
 
     // Session management per user
     private var currentSessionId: String = ""
@@ -2343,6 +2350,12 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
     }
 
     private fun saveChatHistory() {
+        // Safety checks before accessing context-dependent resources
+        if (!isAdded || context == null || !::sessionManager.isInitialized) {
+            Log.d("DatabaseQueryFragment", "saveChatHistory: Fragment not ready, skipping save")
+            return
+        }
+        
         try {
             val messages = chatHistory.takeLast(maxMessagesPerSession) // Limit saved messages
             val messageStrings = messages.map { it.toStorageString() }
@@ -2355,7 +2368,7 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
                 
             Log.d("DatabaseQueryFragment", "Saved ${messages.size} messages for user: ${sessionManager.getUsername()}")
         } catch (e: Exception) {
-            Log.e("DatabaseQueryFragment", "Error saving chat history for user: ${sessionManager.getUsername()}", e)
+            Log.e("DatabaseQueryFragment", "Error saving chat history", e)
         }
     }
     
@@ -2664,32 +2677,48 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
 
 
     override fun onDestroyView() {
-        // Stop TTS playback
-        if (::ttsService.isInitialized) {
-            ttsService.stopPlayback()
-        }
-
-        // Save chat history before destroying view
-        saveChatHistory()
-        
-        // Remove any pending callbacks
-        view?.removeCallbacks(autoSaveRunnable)
-        
-        // Remove keyboard listener to avoid memory leaks
-        keyboardLayoutListener?.let { listener ->
-            binding.root.viewTreeObserver.removeOnGlobalLayoutListener(listener)
-        }
-        keyboardLayoutListener = null
-        
-        // Unregister from user change notifications
-        SessionManager.removeUserChangeListener(this)
-        
-        // Close MCP HTTP client connection
         try {
-            mcpHttpClient.close()
-            Log.d(TAG, "✅ MCP HTTP client closed")
+            // Stop TTS playback
+            if (::ttsService.isInitialized) {
+                ttsService.stopPlayback()
+            }
+
+            // Save chat history before destroying view (with safety check)
+            if (isAdded && context != null && ::sessionManager.isInitialized) {
+                try {
+                    saveChatHistory()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error saving chat history", e)
+                }
+            }
+            
+            // Remove any pending callbacks
+            view?.removeCallbacks(autoSaveRunnable)
+            
+            // Remove keyboard listener to avoid memory leaks
+            keyboardLayoutListener?.let { listener ->
+                try {
+                    _binding?.root?.viewTreeObserver?.removeOnGlobalLayoutListener(listener)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error removing keyboard listener", e)
+                }
+            }
+            keyboardLayoutListener = null
+            
+            // Unregister from user change notifications
+            SessionManager.removeUserChangeListener(this)
+            
+            // Close MCP HTTP client connection
+            if (::mcpHttpClient.isInitialized) {
+                try {
+                    mcpHttpClient.close()
+                    Log.d(TAG, "✅ MCP HTTP client closed")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error closing MCP HTTP client", e)
+                }
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error closing MCP HTTP client", e)
+            Log.e(TAG, "Error in onDestroyView", e)
         }
 
     // Unregister Supabase request listener to avoid leaking fragment
@@ -2697,27 +2726,40 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
         
         super.onDestroyView()
         _binding = null
+        _chatPrefs = null // Clean up SharedPreferences reference
     }
     
     override fun onStop() {
         super.onStop()
         
+        // Safety check - ensure fragment is still attached
+        if (!isAdded || context == null) {
+            Log.d(TAG, "⚠️ onStop: Fragment not attached, skipping background task scheduling")
+            return
+        }
+        
         // If there's an ongoing query, schedule it as background task
         if (isProcessingQuery && pendingQuery != null) {
             Log.d(TAG, "🔄 App going to background - scheduling database query to continue")
             
-            val userId = sessionManager.getUserId() ?: -1L
-            val username = sessionManager.getUsername() ?: "unknown"
-            
-            if (userId > 0) {
-                BackgroundTaskManager.scheduleDatabaseQuery(
-                    context = requireContext(),
-                    query = pendingQuery!!,
-                    userId = userId,
-                    username = username
-                )
+            try {
+                val userId = if (::sessionManager.isInitialized) sessionManager.getUserId() ?: -1L else -1L
+                val username = if (::sessionManager.isInitialized) sessionManager.getUsername() ?: "unknown" else "unknown"
                 
-                Toast.makeText(context, "📋 La consulta continuará en segundo plano", Toast.LENGTH_SHORT).show()
+                if (userId > 0) {
+                    context?.let { ctx ->
+                        BackgroundTaskManager.scheduleDatabaseQuery(
+                            context = ctx,
+                            query = pendingQuery!!,
+                            userId = userId,
+                            username = username
+                        )
+                        
+                        Toast.makeText(ctx, "📋 La consulta continuará en segundo plano", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error scheduling background task", e)
             }
             
             // Clear pending data
@@ -2729,31 +2771,52 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
     override fun onPause() {
         super.onPause()
         // Save chat when app goes to background to preserve user messages
-        saveChatHistory()
+        // Add safety check to prevent crash
+        if (isAdded && context != null && ::sessionManager.isInitialized) {
+            try {
+                saveChatHistory()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving chat history in onPause", e)
+            }
+        }
     }
     
     override fun onResume() {
         super.onResume()
         
-        // Check for pending background results
-        val userId = sessionManager.getUserId() ?: -1L
-        if (userId > 0) {
-            val pendingResult = BackgroundTaskManager.getPendingDatabaseQueryResult(requireContext(), userId)
-            if (pendingResult != null) {
-                Log.d(TAG, "📬 Found pending background result, displaying...")
-                addMessageToChat(pendingResult, false)
-                BackgroundTaskManager.clearDatabaseQueryResult(requireContext(), userId)
-            }
+        // Safety check - ensure fragment is still attached and view exists
+        if (!isAdded || context == null || _binding == null) {
+            Log.d(TAG, "⚠️ onResume: Fragment not ready, skipping operations")
+            return
         }
         
-        // Check if user changed while app was in background
-        val newUser = sessionManager.getUsername()
-        if (currentUser != newUser) {
-            Log.d("DatabaseQueryFragment", "User changed during background: '$currentUser' -> '$newUser'")
-            onUserChanged(currentUser, newUser)
-        } else {
-            // Update user indicator even if user didn't change
-            updateUserIndicator()
+        try {
+            // Check for pending background results
+            if (::sessionManager.isInitialized) {
+                val userId = sessionManager.getUserId() ?: -1L
+                if (userId > 0) {
+                    context?.let { ctx ->
+                        val pendingResult = BackgroundTaskManager.getPendingDatabaseQueryResult(ctx, userId)
+                        if (pendingResult != null) {
+                            Log.d(TAG, "📬 Found pending background result, displaying...")
+                            addMessageToChat(pendingResult, false)
+                            BackgroundTaskManager.clearDatabaseQueryResult(ctx, userId)
+                        }
+                    }
+                }
+                
+                // Check if user changed while app was in background
+                val newUser = sessionManager.getUsername()
+                if (currentUser != newUser) {
+                    Log.d("DatabaseQueryFragment", "User changed during background: '$currentUser' -> '$newUser'")
+                    onUserChanged(currentUser, newUser)
+                } else {
+                    // Update user indicator even if user didn't change
+                    updateUserIndicator()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in onResume", e)
         }
     }
 

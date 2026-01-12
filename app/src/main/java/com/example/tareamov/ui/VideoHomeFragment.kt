@@ -185,6 +185,7 @@ class VideoHomeFragment : Fragment() {
         val videoTitle = arguments?.getString("videoTitle")
         val videoUsername = arguments?.getString("videoUsername")
         shouldOpenComments = arguments?.getBoolean("openComments", false) ?: false
+        val targetCommentId = arguments?.getLong("targetCommentId", -1L) ?: -1L
 
         if (videoId != -1L) {
             Log.d("VideoHomeFragment", "📹 Video specific navigation requested:")
@@ -271,7 +272,10 @@ class VideoHomeFragment : Fragment() {
                 if (shouldOpenComments && videoList.isNotEmpty()) {
                     // content is loaded, try to find the video
                     val reqVideoId = arguments?.getLong("videoId", -1L) ?: -1L
+                    val targetCommentId = arguments?.getLong("targetCommentId", -1L) ?: -1L
                     val targetIndex = if (reqVideoId != -1L) videoList.indexOfFirst { it.id == reqVideoId } else 0
+                    
+                    Log.d("VideoHomeFragment", "🎬 Auto-opening comments: videoId=$reqVideoId, commentId=$targetCommentId, videoIndex=$targetIndex")
                     
                     if (targetIndex != -1) {
                          // Post to message queue to ensure view is ready
@@ -279,9 +283,17 @@ class VideoHomeFragment : Fragment() {
                              if (viewPager.currentItem != targetIndex) {
                                  viewPager.setCurrentItem(targetIndex, false)
                              }
-                             showCommentsDialog(videoList[targetIndex])
-                             shouldOpenComments = false // Reset flag
+                             
+                             // Esperar un poco más para asegurar que el video está completamente cargado
+                             viewPager.postDelayed({
+                                 Log.d("VideoHomeFragment", "🎯 Opening comments dialog for video ${videoList[targetIndex].id} with target comment $targetCommentId")
+                                 showCommentsDialog(videoList[targetIndex], targetCommentId)
+                                 shouldOpenComments = false // Reset flag
+                             }, 500) // Delay adicional para asegurar que el video está listo
                          }
+                    } else {
+                        Log.w("VideoHomeFragment", "⚠️ Video not found in list for videoId=$reqVideoId")
+                        shouldOpenComments = false
                     }
                 }
 
@@ -1126,7 +1138,12 @@ class VideoHomeFragment : Fragment() {
             },
             onCommentClick = { videoData ->
                 // Show comment dialog or navigate to comments
-                showCommentsDialog(videoData)
+                // Verificar si hay un targetCommentId desde la notificación
+                val targetId = arguments?.getLong("targetCommentId", -1L) ?: -1L
+                Log.d("VideoHomeFragment", "Comment button clicked for video ${videoData.id}, targetCommentId=$targetId")
+                showCommentsDialog(videoData, targetId)
+                // Limpiar el argumento después de usarlo para que no se reutilice
+                arguments?.remove("targetCommentId")
             },
             checkUserLikedVideo = { videoId ->
                 val userId = getCurrentUserId()
@@ -1161,10 +1178,10 @@ class VideoHomeFragment : Fragment() {
         // Configurar orientación vertical para deslizar como TikTok
         viewPager.orientation = androidx.viewpager2.widget.ViewPager2.ORIENTATION_VERTICAL
         
-        // OPTIMIZATION: Pre-load MORE adjacent videos for INSTANT swipe transitions
-        // This keeps 2 pages before and 2 pages after the current one in memory
-        // Combined with video caching, this makes swipes feel instantaneous
-        viewPager.offscreenPageLimit = 2
+        // OPTIMIZATION: Pre-load adjacent videos for smooth transitions while managing memory
+        // offscreenPageLimit = 1 keeps only 3 videos in memory (previous, current, next)
+        // This prevents OutOfMemoryError while maintaining smooth playback
+        viewPager.offscreenPageLimit = 1
 
         // Desactivar el overscroll effect (el efecto de rebote al final de la lista)
         viewPager.getChildAt(0).overScrollMode = View.OVER_SCROLL_NEVER        // Listener para cambios de página
@@ -1239,42 +1256,17 @@ class VideoHomeFragment : Fragment() {
         // Video info display is now handled by individual video items in ViewPager2
         // This method is kept for potential future use but functionality moved to VideoAdapter
 
-        // Always use the local file path if available
-        val videoPath = videoData.localFilePath
-        if (videoPath != null && File(videoPath).exists()) {
-            // Use this path for playback (e.g., setVideoPath or ExoPlayer)
-            Log.d("VideoHomeFragment", "Playing video from local file: $videoPath")
-        } else {
-            Log.w("VideoHomeFragment", "No local file for video, cannot play after restart: ${videoData.videoUriString}")
-        }
-
-        // --- NUEVO BLOQUE: Cargar avatar de la persona asociada al usuario del video ---
-        lifecycleScope.launch {
-            try {
-                // Obtener username desde course_id
-                val videoUsername = if (videoData.courseId != null && videoData.courseId!! > 0) {
-                    withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
-                    }
-                } else {
-                    videoData.username // Fallback por compatibilidad
-                }
-
-                if (videoUsername != null) {
-                    val db = AppDatabase.getDatabase(requireContext())
-                    val persona = withContext(Dispatchers.IO) {
-                        db.personaDao().getPersonaByUsername(videoUsername)
-                    }
-                    // Avatar loading is now handled by VideoAdapter
-                    Log.d("VideoHomeFragment", "Avatar lookup completed for user: $videoUsername")
-                } else {
-                    Log.w("VideoHomeFragment", "Could not resolve username for video ${videoData.id}")
-                }
-            } catch (e: Exception) {
-                Log.e("VideoHomeFragment", "Error loading video uploader avatar", e)
+        val intent = Intent(requireContext(), VideoPlayerActivity::class.java).apply {
+            putExtra("video_path", videoData.videoUriString)
+            putExtra("video_title", videoData.title)
+            putExtra("video_description", videoData.description)
+            putExtra("username", videoData.username)
+            putExtra("videoId", videoData.id)
+            if (videoData.isPaid) {
+                putExtra("is_paid", true)
             }
         }
-        // --- FIN DEL BLOQUE NUEVO ---
+        startActivity(intent)
     }
 
 
@@ -1353,9 +1345,24 @@ class VideoHomeFragment : Fragment() {
         (requireActivity() as? MainActivity)?.isFullScreenMode = false
     }
 
+    override fun onStop() {
+        super.onStop()
+        // Release videos when fragment is no longer visible to free memory
+        releaseAllVideos()
+        
+        // Force garbage collection to free memory immediately
+        System.gc()
+        Log.d("VideoHomeFragment", "🗑️ Released all videos and triggered GC to free memory")
+    }
+
     override fun onDestroyView() {
         // Release all video players before destroying view
         releaseAllVideos()
+        
+        // Clear video list to release references
+        videoList.clear()
+        allVideosList.clear()
+        
         super.onDestroyView()
     }
     
@@ -2121,9 +2128,12 @@ class VideoHomeFragment : Fragment() {
 
     /**
      * Show comments dialog for a video
+     * @param videoData El video actual
+     * @param targetCommentId ID del comentario al que hacer scroll automáticamente (-1 si no hay)
      */
-    private fun showCommentsDialog(videoData: com.example.tareamov.data.entity.VideoData) {
+    private fun showCommentsDialog(videoData: com.example.tareamov.data.entity.VideoData, targetCommentId: Long = -1L) {
         val context = context ?: return
+        Log.d("VideoHome", "Opening comments dialog for video ${videoData.id}, targetCommentId=$targetCommentId")
 
         // Use BottomSheetDialog for Instagram/TikTok style from bottom
         val bottomSheetDialog = com.google.android.material.bottomsheet.BottomSheetDialog(context, R.style.Theme_TareaMov_BottomSheet)
@@ -2132,6 +2142,7 @@ class VideoHomeFragment : Fragment() {
 
         // Configure bottom sheet behavior
         val bottomSheet = bottomSheetDialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+        var isBottomSheetExpanded = false
         bottomSheet?.let {
             val behavior = com.google.android.material.bottomsheet.BottomSheetBehavior.from(it)
             behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
@@ -2140,6 +2151,17 @@ class VideoHomeFragment : Fragment() {
             // Set peek height to 60% of screen height
             behavior.peekHeight = (resources.displayMetrics.heightPixels * 0.6).toInt()
             it.setBackgroundResource(android.R.color.transparent)
+            
+            // Listen for when the bottom sheet is fully expanded
+            behavior.addBottomSheetCallback(object : com.google.android.material.bottomsheet.BottomSheetBehavior.BottomSheetCallback() {
+                override fun onStateChanged(bottomSheet: View, newState: Int) {
+                    if (newState == com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED) {
+                        isBottomSheetExpanded = true
+                        Log.d("VideoHome", "📐 Bottom sheet fully expanded")
+                    }
+                }
+                override fun onSlide(bottomSheet: View, slideOffset: Float) {}
+            })
         }
 
         val commentsRecyclerView = dialogView.findViewById<RecyclerView>(R.id.commentsRecyclerView)
@@ -2262,8 +2284,11 @@ class VideoHomeFragment : Fragment() {
         // Load comments with delay to show skeleton animation
         lifecycleScope.launch {
             try {
-                // Simulate network delay for skeleton effect (remove in production if not needed)
-                kotlinx.coroutines.delay(1000)
+                skeletonContainer?.visibility = View.VISIBLE
+                commentsRecyclerView?.visibility = View.GONE
+                
+                // Short delay to show skeleton briefly for better UX
+                kotlinx.coroutines.delay(300)
 
                 val comments = syncRepository.getVideoComments(videoData.id)
 
@@ -2276,7 +2301,42 @@ class VideoHomeFragment : Fragment() {
                 } else {
                     emptyText?.visibility = View.GONE
                     commentsRecyclerView?.visibility = View.VISIBLE
+                    
+                    // Establecer el adapter y lista
                     commentsAdapter.submitList(comments)
+                    
+                    // Scrollear y destacar el comentario objetivo si existe
+                    if (targetCommentId != -1L) {
+                        Log.d("VideoHome", "📝 Comments list submitted (${comments.size} items), preparing to scroll to comment $targetCommentId")
+                        
+                        // Use OnLayoutChangeListener to detect when RecyclerView has finished layout
+                        commentsRecyclerView?.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+                            override fun onLayoutChange(
+                                v: View?, left: Int, top: Int, right: Int, bottom: Int,
+                                oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int
+                            ) {
+                                // Remove listener immediately to avoid multiple triggers
+                                commentsRecyclerView?.removeOnLayoutChangeListener(this)
+                                
+                                Log.d("VideoHome", "📏 RecyclerView layout complete, dimensions: ${right-left}x${bottom-top}")
+                                
+                                // Wait for bottom sheet animation and item rendering (increased to 900ms)
+                                commentsRecyclerView?.postDelayed({
+                                    if (isBottomSheetExpanded) {
+                                        Log.d("VideoHome", "🎯 Bottom sheet ready, scrolling to comment $targetCommentId")
+                                        scrollToAndHighlightComment(commentsRecyclerView, commentsAdapter, targetCommentId)
+                                    } else {
+                                        // Bottom sheet animation still in progress, wait longer
+                                        Log.d("VideoHome", "⏳ Bottom sheet still animating, waiting 700ms more...")
+                                        commentsRecyclerView?.postDelayed({
+                                            Log.d("VideoHome", "🎯 Forcing scroll to comment $targetCommentId")
+                                            scrollToAndHighlightComment(commentsRecyclerView, commentsAdapter, targetCommentId)
+                                        }, 700)
+                                    }
+                                }, 900) // Increased delay for complete bottom sheet expansion + item rendering
+                            }
+                        })
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("VideoHomeFragment", "Error loading comments", e)
@@ -2337,6 +2397,217 @@ class VideoHomeFragment : Fragment() {
     }
 
     /**
+     * Scrollea a un comentario específico y lo destaca visualmente
+     * Maneja tanto comentarios de nivel superior como respuestas anidadas
+     */
+    private fun scrollToAndHighlightComment(
+        recyclerView: RecyclerView?,
+        commentsAdapter: CommentsAdapter,
+        targetCommentId: Long
+    ) {
+        recyclerView ?: return
+        
+        Log.d("VideoHome", "🎯 Searching for comment ID: $targetCommentId")
+        
+        // Buscar el comentario en el adapter (puede ser top-level o respuesta)
+        val commentResult = commentsAdapter.findCommentById(targetCommentId)
+        
+        if (commentResult == null) {
+            Log.w("VideoHome", "⚠️ Target comment ID $targetCommentId NOT found in any comments")
+            lifecycleScope.launch(Dispatchers.Main) {
+                Toast.makeText(
+                    recyclerView.context,
+                    "Comentario no encontrado. Es posible que haya sido eliminado.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            return
+        }
+        
+        val (comment, parentId) = commentResult
+        
+        if (parentId == null) {
+            // Es un comentario de nivel superior - scroll directo
+            Log.d("VideoHome", "✅ Found TOP-LEVEL comment: ${comment.comment.take(30)}...")
+            val position = commentsAdapter.getParentPosition(comment.id)
+            if (position != -1) {
+                scrollToPositionAndHighlight(recyclerView, position, targetCommentId)
+            }
+        } else {
+            // Es una respuesta - necesitamos expandir el padre primero
+            Log.d("VideoHome", "✅ Found REPLY comment with parentId=$parentId: ${comment.comment.take(30)}...")
+            
+            val parentPosition = commentsAdapter.getParentPosition(parentId)
+            if (parentPosition == -1) {
+                Log.w("VideoHome", "⚠️ Parent comment not found for parentId=$parentId")
+                return
+            }
+            
+            // Primero scroll al padre
+            (recyclerView.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager)
+                ?.scrollToPositionWithOffset(parentPosition, 50)
+            
+            // Expandir las respuestas del padre
+            val wasAlreadyExpanded = commentsAdapter.isParentExpanded(parentId)
+            if (!wasAlreadyExpanded) {
+                commentsAdapter.expandRepliesForParent(parentId)
+                Log.d("VideoHome", "📂 Expanded replies for parent at position $parentPosition")
+            }
+            
+            // Esperar a que se renderice la expansión y luego buscar el reply view
+            recyclerView.postDelayed({
+                highlightReplyInExpandedSection(recyclerView, parentPosition, parentId, targetCommentId, commentsAdapter)
+            }, if (wasAlreadyExpanded) 300 else 600)
+        }
+    }
+    
+    /**
+     * Hace scroll a una posición específica y destaca el comentario
+     */
+    private fun scrollToPositionAndHighlight(recyclerView: RecyclerView, position: Int, commentId: Long) {
+        Log.d("VideoHome", "📍 Scrolling to position $position for comment $commentId")
+        
+        // Scroll inmediato a la posición
+        (recyclerView.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager)
+            ?.scrollToPositionWithOffset(position, 100)
+        
+        // Smooth scroll para centrar
+        recyclerView.post {
+            recyclerView.smoothScrollToPosition(position)
+        }
+        
+        // Highlight después del scroll
+        recyclerView.postDelayed({
+            highlightViewAtPosition(recyclerView, position, commentId)
+        }, 800)
+    }
+    
+    /**
+     * Busca y destaca una respuesta dentro de la sección expandida de un comentario padre
+     */
+    private fun highlightReplyInExpandedSection(
+        recyclerView: RecyclerView,
+        parentPosition: Int,
+        parentId: Long,
+        replyCommentId: Long,
+        adapter: CommentsAdapter
+    ) {
+        try {
+            val parentViewHolder = recyclerView.findViewHolderForAdapterPosition(parentPosition)
+            val parentView = parentViewHolder?.itemView
+            
+            if (parentView == null) {
+                Log.w("VideoHome", "⚠️ Parent view not found at position $parentPosition")
+                return
+            }
+            
+            // Buscar el contenedor de respuestas
+            val repliesContainer = parentView.findViewById<LinearLayout>(R.id.repliesContainer)
+            if (repliesContainer == null || repliesContainer.visibility != View.VISIBLE) {
+                Log.w("VideoHome", "⚠️ Replies container not visible, retrying...")
+                recyclerView.postDelayed({
+                    highlightReplyInExpandedSection(recyclerView, parentPosition, parentId, replyCommentId, adapter)
+                }, 300)
+                return
+            }
+            
+            // Obtener las respuestas del adapter para encontrar el índice
+            val replies = adapter.getRepliesForParent(parentId)
+            val replyIndex = replies.indexOfFirst { it.id == replyCommentId }
+            
+            if (replyIndex == -1 || replyIndex >= repliesContainer.childCount) {
+                Log.w("VideoHome", "⚠️ Reply not found in container. Index: $replyIndex, Children: ${repliesContainer.childCount}")
+                return
+            }
+            
+            val replyView = repliesContainer.getChildAt(replyIndex)
+            if (replyView != null) {
+                Log.d("VideoHome", "✨ Found reply view at index $replyIndex, highlighting...")
+                
+                // Scroll para asegurar que la respuesta sea visible
+                replyView.post {
+                    // Calcular posición absoluta en la pantalla
+                    val location = IntArray(2)
+                    replyView.getLocationOnScreen(location)
+                    val recyclerLocation = IntArray(2)
+                    recyclerView.getLocationOnScreen(recyclerLocation)
+                    
+                    // Si la respuesta está fuera de la vista, hacer scroll
+                    val replyTop = location[1] - recyclerLocation[1]
+                    val recyclerHeight = recyclerView.height
+                    
+                    if (replyTop < 0 || replyTop > recyclerHeight - replyView.height) {
+                        // Smooth scroll para mostrar la respuesta
+                        val scrollAmount = replyTop - (recyclerHeight / 3)
+                        recyclerView.smoothScrollBy(0, scrollAmount)
+                    }
+                }
+                
+                // Aplicar highlight visual
+                replyView.postDelayed({
+                    applyHighlightAnimation(replyView, replyCommentId)
+                }, 400)
+            }
+        } catch (e: Exception) {
+            Log.e("VideoHome", "❌ Error highlighting reply", e)
+        }
+    }
+    
+    /**
+     * Destaca un view en una posición específica del RecyclerView
+     */
+    private fun highlightViewAtPosition(recyclerView: RecyclerView, position: Int, commentId: Long) {
+        try {
+            val viewHolder = recyclerView.findViewHolderForAdapterPosition(position)
+            viewHolder?.itemView?.let { itemView ->
+                applyHighlightAnimation(itemView, commentId)
+            } ?: Log.w("VideoHome", "⚠️ ViewHolder not found for position $position")
+        } catch (e: Exception) {
+            Log.e("VideoHome", "❌ Error highlighting comment", e)
+        }
+    }
+    
+    /**
+     * Aplica animación de highlight a un view
+     */
+    private fun applyHighlightAnimation(itemView: View, commentId: Long) {
+        // Guardar el background original
+        val originalBackground = itemView.background
+        
+        // Crear un drawable con color sutil (gris claro semitransparente) y border radius
+        val highlightDrawable = android.graphics.drawable.GradientDrawable().apply {
+            // Color ligeramente más claro que el fondo oscuro (#1A1A1A -> #2A2A2A con alpha)
+            setColor(android.graphics.Color.parseColor("#40FFFFFF")) // Blanco con 25% alpha
+            cornerRadius = 12f * itemView.context.resources.displayMetrics.density // 12dp border radius
+        }
+        itemView.background = highlightDrawable
+        
+        // Animación de pulse suave
+        val scaleX = android.animation.ObjectAnimator.ofFloat(itemView, "scaleX", 1f, 1.02f, 1f)
+        val scaleY = android.animation.ObjectAnimator.ofFloat(itemView, "scaleY", 1f, 1.02f, 1f)
+        scaleX.duration = 350
+        scaleY.duration = 350
+        
+        val animatorSet = android.animation.AnimatorSet()
+        animatorSet.playTogether(scaleX, scaleY)
+        animatorSet.start()
+        
+        // Remover highlight después de 3 segundos con fade out
+        itemView.postDelayed({
+            val alphaAnimator = android.animation.ObjectAnimator.ofFloat(itemView, "alpha", 1f, 0.9f, 1f)
+            alphaAnimator.duration = 400
+            alphaAnimator.addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    itemView.background = originalBackground
+                }
+            })
+            alphaAnimator.start()
+        }, 3000)
+        
+        Log.d("VideoHome", "✨ Highlighted comment ID: $commentId")
+    }
+    
+    /**
      * Simple adapter for comments
      */
     inner class CommentsAdapter(
@@ -2354,6 +2625,9 @@ class VideoHomeFragment : Fragment() {
         private val likeCounts = mutableMapOf<Long, Int>()
         // Map to track expanded replies state
         private val expandedReplies = mutableMapOf<Long, Boolean>()
+        
+        // Callback para notificar cuando se expanda un comentario padre (para scroll a respuesta)
+        var onParentExpanded: ((parentId: Long, parentPosition: Int) -> Unit)? = null
 
         fun submitList(newComments: List<com.example.tareamov.data.entity.VideoComment>) {
             allComments = newComments
@@ -2363,6 +2637,63 @@ class VideoHomeFragment : Fragment() {
                 .groupBy { it.parentId!! }
 
             notifyDataSetChanged()
+        }
+        
+        /**
+         * Busca un comentario por ID en todos los comentarios (incluyendo respuestas)
+         * @return Pair<comentario, parentId?> o null si no se encuentra
+         */
+        fun findCommentById(commentId: Long): Pair<com.example.tareamov.data.entity.VideoComment, Long?>? {
+            // Buscar en top-level
+            val topLevel = topLevelComments.find { it.id == commentId }
+            if (topLevel != null) return Pair(topLevel, null)
+            
+            // Buscar en respuestas
+            for ((parentId, replies) in repliesMap) {
+                val reply = replies.find { it.id == commentId }
+                if (reply != null) return Pair(reply, parentId)
+            }
+            return null
+        }
+        
+        /**
+         * Obtiene el índice de un comentario padre en topLevelComments
+         */
+        fun getParentPosition(parentId: Long): Int {
+            return topLevelComments.indexOfFirst { it.id == parentId }
+        }
+        
+        /**
+         * Expande las respuestas de un comentario padre específico
+         * @return true si se expandió, false si ya estaba expandido o no existe
+         */
+        fun expandRepliesForParent(parentId: Long): Boolean {
+            val position = getParentPosition(parentId)
+            if (position == -1) return false
+            
+            val wasExpanded = expandedReplies[parentId] ?: false
+            if (!wasExpanded) {
+                expandedReplies[parentId] = true
+                notifyItemChanged(position)
+                Log.d("CommentsAdapter", "📂 Expanded replies for parent $parentId at position $position")
+                onParentExpanded?.invoke(parentId, position)
+                return true
+            }
+            return false
+        }
+        
+        /**
+         * Verifica si las respuestas de un padre están expandidas
+         */
+        fun isParentExpanded(parentId: Long): Boolean {
+            return expandedReplies[parentId] ?: false
+        }
+        
+        /**
+         * Obtiene las respuestas de un comentario padre
+         */
+        fun getRepliesForParent(parentId: Long): List<com.example.tareamov.data.entity.VideoComment> {
+            return repliesMap[parentId] ?: emptyList()
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CommentViewHolder {

@@ -25,11 +25,23 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import com.example.tareamov.service.TTSService
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.shape.CircleShape
+import kotlinx.coroutines.launch
 
 @Composable
 fun EvaluativeReinforcementScreen(
     onCourseSelectionClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    val ttsService = remember { TTSService.getInstance(context) }
+    val coroutineScope = rememberCoroutineScope()
+
     // Animation state for the robot (bobbing up and down)
     val infiniteTransition = rememberInfiniteTransition(label = "robotAnimation")
     val dy by infiniteTransition.animateFloat(
@@ -78,13 +90,35 @@ fun EvaluativeReinforcementScreen(
     ) {
         Spacer(modifier = Modifier.weight(1f))
 
-        // Speech Bubble
-        Box(
+        // Speech Bubble with TTS
+        Row(
             modifier = Modifier
                 .padding(bottom = 24.dp)
-                .offset(y = dy.dp) // Move bubble with robot or independently? Maybe independently looks better or static.
+                .offset(y = dy.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            SpeechBubble(text = displayedText)
+            Box(modifier = Modifier.weight(1f, fill = false)) {
+                SpeechBubble(text = displayedText)
+            }
+            
+            Spacer(modifier = Modifier.width(8.dp))
+            
+            IconButton(
+                onClick = { 
+                    coroutineScope.launch {
+                        ttsService.speak(fullText) 
+                    }
+                },
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(Color(0xFF40C4FF).copy(alpha = 0.2f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.VolumeUp,
+                    contentDescription = "Leer mensaje",
+                    tint = Color(0xFF40C4FF)
+                )
+            }
         }
 
         // Robot Character

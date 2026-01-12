@@ -57,7 +57,40 @@ class SelectTaskFragment : Fragment() {
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View? {
-        return inflater.inflate(R.layout.fragment_select_task, container, false)
+        // Inflate view and wrap in FrameLayout with FAB for TTS
+        val originalView = inflater.inflate(R.layout.fragment_select_task, container, false)
+        val context = requireContext()
+        val ttsService = com.example.tareamov.service.TTSService.getInstance(context)
+
+        val wrapper = android.widget.FrameLayout(context)
+        wrapper.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        wrapper.addView(originalView, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        val fab = com.google.android.material.floatingactionbutton.FloatingActionButton(context)
+        fab.setImageDrawable(androidx.core.content.ContextCompat.getDrawable(context, android.R.drawable.ic_lock_silent_mode_off))
+        fab.backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#40C4FF"))
+        fab.imageTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
+        fab.compatElevation = 10f
+        
+        val params = android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        params.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+        val margin = (16 * resources.displayMetrics.density).toInt()
+        params.setMargins(margin, margin, margin, margin)
+        
+        fab.setOnClickListener {
+             lifecycleScope.launch {
+                 val tasks = if (this@SelectTaskFragment::taskSelectionAdapter.isInitialized) taskSelectionAdapter.currentList else emptyList()
+                 val text = "Lista de tareas para elegir: " + if(tasks.isEmpty()) "No hay tareas disponibles." else tasks.joinToString(", ") { it.name }
+                 ttsService.speak(text)
+             }
+        }
+        
+        wrapper.addView(fab, params)
+
+        return wrapper
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {

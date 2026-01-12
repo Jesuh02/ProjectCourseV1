@@ -335,6 +335,13 @@ object SupabaseClient {
         return result
     }
 
+    /**
+     * @deprecated Video insertion should be handled by the backend API.
+     * Use the backend endpoint POST /video/insert instead.
+     * This method is kept for backward compatibility only.
+     * @see SyncRepository.uploadVideoViaBackendApi
+     */
+    @Deprecated("Use backend API /video/insert instead", ReplaceWith("uploadVideoViaBackendApi(video)"))
     suspend fun insertVideo(video: com.example.tareamov.data.entity.VideoData): Long? = withContext(Dispatchers.IO) {
         try {
             val map = mutableMapOf<String, Any?>(
@@ -355,19 +362,22 @@ object SupabaseClient {
                 map["course_id"] = video.courseId
             }
             
-            // Include id if provided (for manual ID assignment)
-            if (video.id > 0) {
-                map["id"] = video.id
-            }
+            // Do NOT include id - let database auto-generate it
+            // if (video.id > 0) { map["id"] = video.id }
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
+            
+            Log.d("SupabaseClient", "insertVideo payload: ${gson.toJson(map)}")
+            
+            // Simple POST insert (no ON CONFLICT since videos table lacks unique constraint on remote_id)
             val url = "$baseUrl/rest/v1/videos"
+            val effectiveKey = effectiveApiKey()
 
             val request = Request.Builder()
                 .url(url)
                 .post(body)
-                .addHeader("apikey", apiKey)
-                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("apikey", effectiveKey)
+                .addHeader("Authorization", "Bearer $effectiveKey")
                 .addHeader("Accept", "application/json")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Prefer", "return=representation")
@@ -375,8 +385,21 @@ object SupabaseClient {
 
             client.newCall(request).execute().use { resp ->
                 val respBody = resp.body?.string()
+                Log.d("SupabaseClient", "insertVideo response: code=${resp.code}, body=$respBody")
+                
                 if (!resp.isSuccessful) {
                     val bodyStr = respBody ?: ""
+                    // Handle duplicate key error (23505) gracefully - video already exists
+                    if (resp.code == 409 && bodyStr.contains("23505")) {
+                        Log.w("SupabaseClient", "Video already exists (duplicate key), skipping insert")
+                        // Try to fetch the existing video ID by title and course_id
+                        val existingId = fetchExistingVideoId(video.title, video.courseId)
+                        if (existingId != null) {
+                            Log.d("SupabaseClient", "Found existing video ID: $existingId")
+                            return@withContext existingId
+                        }
+                        return@withContext null
+                    }
                     Log.e("SupabaseClient", "insertVideo failed: ${resp.code} ${resp.message} body=$bodyStr")
                     throw Exception("Supabase insertVideo failed: ${resp.code} ${resp.message} body=$bodyStr")
                 }
@@ -389,13 +412,23 @@ object SupabaseClient {
                 try {
                     val jsonArray = com.google.gson.JsonParser.parseString(respBody).asJsonArray
                     if (jsonArray.size() > 0) {
-                        val idElem = jsonArray[0].asJsonObject.get("id")
-                        val returnedId = idElem?.asLong
+                        val obj = jsonArray[0].asJsonObject
+                        val idElem = obj.get("id")
+                        // Handle both numeric and string ID formats
+                        val returnedId = when {
+                            idElem == null || idElem.isJsonNull -> null
+                            idElem.isJsonPrimitive -> {
+                                val prim = idElem.asJsonPrimitive
+                                if (prim.isNumber) prim.asLong
+                                else prim.asString.toLongOrNull()
+                            }
+                            else -> null
+                        }
                         Log.d("SupabaseClient", "insertVideo success: video ID = $returnedId")
                         return@withContext returnedId
                     }
                 } catch (e: Exception) {
-                    Log.e("SupabaseClient", "Error parsing insertVideo response", e)
+                    Log.e("SupabaseClient", "Error parsing insertVideo response: $respBody", e)
                     e.printStackTrace()
                 }
 
@@ -406,6 +439,42 @@ object SupabaseClient {
             e.printStackTrace()
             return@withContext null
         }
+    }
+    
+    // Helper to fetch existing video ID when duplicate is detected
+    private suspend fun fetchExistingVideoId(title: String, courseId: Long?): Long? = withContext(Dispatchers.IO) {
+        try {
+            val encodedTitle = java.net.URLEncoder.encode(title, "UTF-8")
+            val filter = if (courseId != null) {
+                "title=eq.$encodedTitle&course_id=eq.$courseId"
+            } else {
+                "title=eq.$encodedTitle"
+            }
+            val url = "$baseUrl/rest/v1/videos?$filter&select=id&limit=1"
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Accept", "application/json")
+                .build()
+                
+            client.newCall(request).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string()
+                    if (!body.isNullOrEmpty()) {
+                        val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                        if (jsonArray.size() > 0) {
+                            return@withContext jsonArray[0].asJsonObject.get("id")?.asLong
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching existing video ID", e)
+        }
+        return@withContext null
     }
 
     /**
@@ -460,41 +529,10 @@ object SupabaseClient {
      * Fetch previous reinforcement questions to avoid repetition.
      */
     suspend fun fetchReinforcementHistory(userId: Long, courseId: Long, topicId: Long = -1L, taskId: Long = -1L): List<String> = withContext(Dispatchers.IO) {
-        try {
-            var url = "$baseUrl/rest/v1/reinforcement_question_history?user_id=eq.$userId&course_id=eq.$courseId&select=questions"
-            if (topicId > 0) url += "&topic_id=eq.$topicId"
-            if (taskId > 0) url += "&task_id=eq.$taskId"
-            
-            val request = Request.Builder()
-                .url(url)
-                .get()
-                .addHeader("apikey", effectiveApiKey())
-                .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
-                .build()
-
-            client.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext emptyList()
-                val bodyStr = resp.body?.string() ?: return@withContext emptyList()
-                
-                val historyQuestions = mutableListOf<String>()
-                val jsonArray = com.google.gson.JsonParser.parseString(bodyStr).asJsonArray
-                jsonArray.forEach { row ->
-                    val questionsArray = row.asJsonObject.getAsJsonArray("questions")
-                    questionsArray?.forEach { q ->
-                        // Assuming questions are stored as objects with "question" field or strings
-                        if (q.isJsonObject && q.asJsonObject.has("question")) {
-                            historyQuestions.add(q.asJsonObject.get("question").asString)
-                        } else if (q.isJsonPrimitive) {
-                            historyQuestions.add(q.asString)
-                        }
-                    }
-                }
-                return@withContext historyQuestions
-            }
-        } catch (e: Exception) {
-            Log.e("SupabaseClient", "fetchReinforcementHistory exception", e)
-            return@withContext emptyList()
-        }
+        // OPTIMIZATION: Return empty list. History is now managed server-side (MCPService).
+        // This prevents transferring massive JSON data and overflowing tokens.
+        // The MCP Service (Backend) will automatically fetch the recent history context.
+        return@withContext emptyList()
     }
 
     suspend fun insertCourse(course: com.example.tareamov.data.entity.Course): Long? = withContext(Dispatchers.IO) {
@@ -1900,6 +1938,15 @@ object SupabaseClient {
             trimmed.replace(" ", "+")
         }
 
+        android.util.Log.d("SupabaseClient", "searchCourses: query='$trimmed', encoded='$encodedTerm'")
+
+        // Strategy: Search in two phases
+        // 1. Search courses by title, description, category, tags, creator_username
+        // 2. Search users by username and get their courses
+        
+        val results = mutableSetOf<Course>() // Use set to avoid duplicates
+
+        // Phase 1: Search courses directly
         val path = buildString {
             append("courses?or=(")
             append("title.ilike.*$encodedTerm*")
@@ -1911,32 +1958,60 @@ object SupabaseClient {
             append("&limit=$limit")
         }
 
-        return try {
-            val remote = fetchList(path, Array<Course>::class.java)
-            if (remote.isNotEmpty()) {
-                remote
-            } else {
-                fetchCourses().filter { course ->
-                    course.title.contains(trimmed, ignoreCase = true) ||
-                            course.description.contains(trimmed, ignoreCase = true) ||
-                            (course.category?.contains(trimmed, ignoreCase = true) == true) ||
-                            (course.tags?.contains(trimmed, ignoreCase = true) == true)
+        try {
+            val courseResults = fetchList(path, Array<Course>::class.java)
+            android.util.Log.d("SupabaseClient", "searchCourses: Phase 1 found ${courseResults.size} courses")
+            results.addAll(courseResults)
+        } catch (e: Exception) {
+            android.util.Log.w("SupabaseClient", "searchCourses Phase 1 failed", e)
+        }
+
+        // Phase 2: Search for users matching the query and get their courses
+        try {
+            val userPath = "usuarios?or=(username.ilike.*$encodedTerm*,nombre.ilike.*$encodedTerm*)&select=id,username&limit=10"
+            val userResults = fetchList(userPath, Array<Usuario>::class.java)
+            android.util.Log.d("SupabaseClient", "searchCourses: Phase 2 found ${userResults.size} matching users")
+            
+            // For each matching user, get their courses
+            for (user in userResults) {
+                try {
+                    val userCoursesPath = "courses?creator_user_id=eq.${user.id}&order=timestamp.desc&limit=50"
+                    val userCourses = fetchList(userCoursesPath, Array<Course>::class.java)
+                    android.util.Log.d("SupabaseClient", "searchCourses: User '${user.usuario}' has ${userCourses.size} courses")
+                    results.addAll(userCourses)
+                } catch (e: Exception) {
+                    android.util.Log.w("SupabaseClient", "searchCourses: Failed to fetch courses for user ${user.usuario}", e)
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.w("SupabaseClient", "searchCourses remote search failed for query='$trimmed'", e)
+            android.util.Log.w("SupabaseClient", "searchCourses Phase 2 (user search) failed", e)
+        }
+
+        // If no results from remote search, fallback to local filtering
+        if (results.isEmpty()) {
+            android.util.Log.d("SupabaseClient", "searchCourses: No remote results, falling back to local search")
             try {
-                fetchCourses().filter { course ->
+                val localResults = fetchCourses().filter { course ->
                     course.title.contains(trimmed, ignoreCase = true) ||
                             course.description.contains(trimmed, ignoreCase = true) ||
                             (course.category?.contains(trimmed, ignoreCase = true) == true) ||
                             (course.tags?.contains(trimmed, ignoreCase = true) == true)
                 }
+                android.util.Log.d("SupabaseClient", "searchCourses: Local fallback found ${localResults.size} courses")
+                return localResults.take(limit)
             } catch (fallback: Exception) {
                 android.util.Log.w("SupabaseClient", "searchCourses fallback filtering failed", fallback)
-                emptyList()
+                return emptyList()
             }
         }
+
+        // Sort by timestamp and return unique results
+        val finalResults = results.distinctBy { it.id }
+            .sortedByDescending { it.timestamp }
+            .take(limit)
+        
+        android.util.Log.d("SupabaseClient", "searchCourses: Returning ${finalResults.size} unique courses")
+        return finalResults
     }
     suspend fun fetchVideosOrThrow(): List<VideoData> = withContext(Dispatchers.IO) {
         // Try typed mapping first
@@ -5335,6 +5410,47 @@ object SupabaseClient {
     }
     
     /**
+     * Get a single comment by ID
+     */
+    suspend fun getVideoCommentById(commentId: Long): com.example.tareamov.data.entity.VideoComment? = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/video_comments?id=eq.$commentId"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                
+                val body = response.body?.string() ?: return@withContext null
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                if (jsonArray.size() == 0) return@withContext null
+                
+                val obj = jsonArray[0].asJsonObject
+                com.example.tareamov.data.entity.VideoComment(
+                    id = obj.get("id")?.asLong ?: 0,
+                    videoId = obj.get("video_id")?.asLong ?: 0,
+                    usuarioId = obj.get("usuario_id")?.asLong ?: 0,
+                    comment = obj.get("comment")?.asString ?: "",
+                    parentId = if (obj.has("parent_id") && !obj.get("parent_id").isJsonNull) obj.get("parent_id").asLong else null,
+                    createdAt = if (obj.has("created_at") && !obj.get("created_at").isJsonNull) 
+                        obj.get("created_at").asString else null
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error fetching comment by id $commentId", e)
+            null
+        }
+    }
+    
+    /**
      * Get comments for a video
      */
     suspend fun getVideoComments(videoId: Long): List<com.example.tareamov.data.entity.VideoComment> = withContext(Dispatchers.IO) {
@@ -5433,6 +5549,58 @@ object SupabaseClient {
         } catch (e: Exception) {
             Log.e("SupabaseClient", "Error deleting comment $commentId", e)
             false
+        }
+    }
+    
+    /**
+     * Find the most recent comment_id for a specific user on a specific video
+     * Used as fallback when notification metadata is null
+     */
+    suspend fun findCommentIdByVideoAndUsername(videoId: Long, username: String): Long? = withContext(Dispatchers.IO) {
+        try {
+            // First get user_id from username
+            val userId = getUserIdFromUsername(username) ?: run {
+                Log.w("SupabaseClient", "Could not find user_id for username: $username")
+                return@withContext null
+            }
+            
+            Log.d("SupabaseClient", "🔍 Searching for comment by userId=$userId (username=$username) on videoId=$videoId")
+            
+            // Query video_comments for most recent comment by this user on this video
+            val url = "$baseUrl/rest/v1/video_comments?video_id=eq.$videoId&usuario_id=eq.$userId&select=id,created_at,comment&order=created_at.desc&limit=1"
+            val key = effectiveApiKey()
+            
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Accept", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseClient", "Failed to query video_comments: ${response.code}")
+                    return@withContext null
+                }
+                
+                val body = response.body?.string() ?: return@withContext null
+                val jsonArray = com.google.gson.JsonParser.parseString(body).asJsonArray
+                
+                if (jsonArray.size() > 0) {
+                    val commentObj = jsonArray[0].asJsonObject
+                    val commentId = commentObj.get("id")?.asLong
+                    val commentPreview = commentObj.get("comment")?.asString?.take(50) ?: ""
+                    Log.d("SupabaseClient", "✅ Found comment_id=$commentId (preview: $commentPreview)")
+                    return@withContext commentId
+                } else {
+                    Log.w("SupabaseClient", "No comments found for userId=$userId on videoId=$videoId")
+                    return@withContext null
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error finding comment_id by video and username", e)
+            null
         }
     }
     
@@ -6476,7 +6644,7 @@ object SupabaseClient {
                 return@withContext null
             }
 
-            val map = mapOf(
+            val map = mutableMapOf<String, Any?>(
                 "user_id" to notification.userId,
                 "type" to notification.type,
                 "title" to notification.title,
@@ -6487,6 +6655,12 @@ object SupabaseClient {
                 "related_id" to notification.relatedId,
                 "is_read" to notification.isRead
             )
+            
+            // Include metadata if present
+            if (notification.metadata != null) {
+                map["metadata"] = notification.metadata
+                Log.d("SupabaseClient", "📦 Including metadata in notification: ${notification.metadata}")
+            }
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
             val url = "$baseUrl/rest/v1/notifications"

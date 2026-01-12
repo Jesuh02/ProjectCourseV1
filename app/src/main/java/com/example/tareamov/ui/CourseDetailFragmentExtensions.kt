@@ -264,32 +264,27 @@ fun Fragment.showPaymentOptions(
                      return@launch
                 }
                 
-                // 3. Update dialog for browser opening
-                messageView.text = "¡Listo! Presiona 'Pagar Ahora' para continuar"
+                // 3. Redirect automatically to payment URL and hide confirm button
+                confirmButton.visibility = View.GONE
+                messageView.text = "Abriendo página de pago...\nRegresa aquí después de completar el pago"
                 coursePriceView.text = "Precio verificado desde BD"
-                confirmButton.text = "Pagar Ahora"
-                confirmButton.isEnabled = true
                 
-                confirmButton.setOnClickListener {
-                    try {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                        startActivity(intent)
-                        
-                        // Update dialog for polling
-                        messageView.text = "Esperando confirmación del pago...\nRegresa aquí después de pagar"
-                        confirmButton.text = "Verificando..."
-                        confirmButton.isEnabled = false
-                        
-                        // Start polling
-                        startPaymentPolling(reference, customDialog, messageView, onPaymentResult) { cancelled ->
-                            isCancelled = cancelled
-                        }
-                        
-                    } catch (e: Exception) {
-                        customDialog.dismiss()
-                        Toast.makeText(context, "No se pudo abrir el navegador: ${e.message}", Toast.LENGTH_LONG).show()
-                        onPaymentResult(false)
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    startActivity(intent)
+                    
+                    // Update dialog for polling
+                    messageView.text = "Esperando confirmación del pago...\nRegresa aquí después de pagar"
+                    
+                    // Start polling immediately
+                    startPaymentPolling(reference, customDialog, messageView, onPaymentResult) { cancelled ->
+                        isCancelled = cancelled
                     }
+                    
+                } catch (e: Exception) {
+                    customDialog.dismiss()
+                    Toast.makeText(context, "No se pudo abrir el navegador: ${e.message}", Toast.LENGTH_LONG).show()
+                    onPaymentResult(false)
                 }
                 
             } else {

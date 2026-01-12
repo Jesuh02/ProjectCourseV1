@@ -27,6 +27,7 @@ import com.example.tareamov.data.dao.RolRecursoDao
 import com.example.tareamov.data.dao.ProgresoEstudianteDao
 import com.example.tareamov.data.dao.VideoCommentDao
 import com.example.tareamov.data.dao.LikeDao
+import com.example.tareamov.data.dao.NotificationDao
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.VideoData
@@ -44,6 +45,7 @@ import com.example.tareamov.data.entity.RolRecurso
 import com.example.tareamov.data.entity.ProgresoEstudiante
 import com.example.tareamov.data.entity.VideoComment
 import com.example.tareamov.data.entity.Like
+import com.example.tareamov.data.entity.Notification
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -67,9 +69,10 @@ import kotlinx.coroutines.launch
         RolRecurso::class,
         ProgresoEstudiante::class,
         VideoComment::class,
-        Like::class  // Polymorphic likes table (replaces VideoLike and UserVideoLike)
+        Like::class,  // Polymorphic likes table (replaces VideoLike and UserVideoLike)
+        Notification::class  // Add Notification entity
     ],
-    version = 35, // Updated version - removed VideoLike and UserVideoLike entities
+    version = 36, // Updated version - added Notification entity with metadata field
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -90,6 +93,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun progresoEstudianteDao(): ProgresoEstudianteDao  // Add ProgresoEstudianteDao
     abstract fun videoCommentDao(): VideoCommentDao  // Add VideoCommentDao
     abstract fun likeDao(): LikeDao  // Polymorphic likes DAO (replaces videoLikeDao)
+    abstract fun notificationDao(): NotificationDao  // Add NotificationDao
 
     // Métodos para notificar cambios en la base de datos
     fun notifyDataChanged() {
@@ -153,7 +157,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
                         MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
                         MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
-                        MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32
+                        MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
+                        MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -1074,6 +1079,66 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.i(TAG, "Migration 31 to 32 completed: Added parent_id to video_comments")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 31 to 32", e)
+                }
+            }
+        }
+
+        // Migration 32 to 33: Placeholder migration
+        private val MIGRATION_32_33 = object : Migration(32, 33) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // No schema changes
+                Log.i(TAG, "Migration 32 to 33 completed")
+            }
+        }
+
+        // Migration 33 to 34: Placeholder migration
+        private val MIGRATION_33_34 = object : Migration(33, 34) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // No schema changes
+                Log.i(TAG, "Migration 33 to 34 completed")
+            }
+        }
+
+        // Migration 34 to 35: Placeholder migration
+        private val MIGRATION_34_35 = object : Migration(34, 35) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // No schema changes
+                Log.i(TAG, "Migration 34 to 35 completed")
+            }
+        }
+
+        // Migration 35 to 36: Add Notification entity with metadata field
+        private val MIGRATION_35_36 = object : Migration(35, 36) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    // Create notifications table
+                    db.execSQL("""
+                        CREATE TABLE IF NOT EXISTS `notifications` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `userId` INTEGER NOT NULL,
+                            `type` TEXT NOT NULL,
+                            `title` TEXT NOT NULL,
+                            `message` TEXT NOT NULL,
+                            `sender_username` TEXT,
+                            `sender_avatar_url` TEXT,
+                            `thumbnail_url` TEXT,
+                            `related_id` INTEGER,
+                            `metadata` TEXT,
+                            `isRead` INTEGER NOT NULL DEFAULT 0,
+                            `created_at` TEXT,
+                            `updated_at` TEXT
+                        )
+                    """.trimIndent())
+                    
+                    // Create index on userId for fast queries
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_notifications_userId` ON `notifications` (`userId`)")
+                    
+                    // Create index on created_at for sorting
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_notifications_created_at` ON `notifications` (`created_at`)")
+                    
+                    Log.i(TAG, "Migration 35 to 36 completed: Created notifications table with metadata field")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 35 to 36", e)
                 }
             }
         }

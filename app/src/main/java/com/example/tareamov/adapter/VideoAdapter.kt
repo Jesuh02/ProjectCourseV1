@@ -186,7 +186,8 @@ class VideoAdapter(
                     .placeholder(android.R.color.black)
                     .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL) // Cache everything
                     .priority(com.bumptech.glide.Priority.IMMEDIATE) // Highest priority loading
-                    .override(com.bumptech.glide.request.target.Target.SIZE_ORIGINAL) // Full resolution
+                    .override(1080, 1920) // Limit size to save memory (Full HD resolution)
+                    .format(com.bumptech.glide.load.DecodeFormat.PREFER_RGB_565) // Use 50% less memory
                     .into(thumbnailView!!)
             } else {
                 // Generate thumbnail from video URL if no thumbnail
@@ -391,6 +392,8 @@ class VideoAdapter(
                             .placeholder(R.drawable.ic_profile)
                             .error(R.drawable.ic_profile)
                             .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
+                            .override(200, 200) // Limit avatar size to save memory
+                            .circleCrop()
                             .into(profileButton)
                     } else {
                         Log.d("VideoAdapter", "No avatar found for username=$username, id=$currentCreatorId")
@@ -478,6 +481,7 @@ class VideoAdapter(
                 exoPlayer = ExoPlayer.Builder(context)
                     .setLoadControl(loadControl)
                     .setHandleAudioBecomingNoisy(false)
+                    .setSeekParameters(androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC) // Tolerant seek for problematic videos
                     .build().also { player ->
                     playerView?.player = player
                     
