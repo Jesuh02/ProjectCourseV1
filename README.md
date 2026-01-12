@@ -7,85 +7,85 @@
 [![DeepSeek](https://img.shields.io/badge/AI-DeepSeek_V3.2-blue?style=for-the-badge)](https://deepseek.com)
 [![Cloud](https://img.shields.io/badge/Backend-Cloud_Native-blueviolet?style=for-the-badge)](https://railway.app)
 
-[Get Started](#-get-started) • [Agent Zoo](#-agent-zoo) • [Architecture](#-architecture) • [Documentation](#-documentation)
+[Comenzar](#-comenzar) • [Zoológico de Agentes](#-zoológico-de-agentes) • [Arquitectura](#-arquitectura) • [Documentación](#-documentación)
 
-<img src="https://via.placeholder.com/1200x400.png?text=CourseV+AI+Platform+Preview" alt="CourseV Banner" width="100%" />
+<img src="https://via.placeholder.com/1200x400.png?text=Vista+Previa+Plataforma+CourseV+AI" alt="Banner CourseV" width="100%" />
 
 </div>
 
-## 🔥 News
+## 🔥 Novedades
 
-- **[2026-01-12]**: **DeepSeek-V3.2 Integration**: We have upgraded our core reasoning engine to DeepSeek-V3.2, enabling high-precision SQL generation and logic.
-- **[2026-01-10]**: **Unique Question Generation**: The Reinforcement Learning module now guarantees 100% unique questions by tracking user history hashes.
-- **[2026-01-05]**: **Self-Correcting SQL**: The BI Agent can now detect SQL errors and fix them autonomously without user intervention.
+- **[12-01-2026]**: **Integración DeepSeek-V3.2**: Hemos actualizado nuestro motor de razonamiento principal a DeepSeek-V3.2, permitiendo una generación de SQL y lógica de alta precisión.
+- **[10-01-2026]**: **Generación de Preguntas Únicas**: El módulo de Aprendizaje por Refuerzo ahora garantiza preguntas 100% únicas mediante el seguimiento de hashes del historial del usuario.
+- **[05-01-2026]**: **SQL Autocorrectivo**: El Agente de BI ahora puede detectar errores de SQL y corregirlos autónomamente sin intervención del usuario.
 
-## Introduction
+## Introducción
 
-**CourseV AI** is a state-of-the-art educational platform that bridges the gap between **Local AI** (privacy-first) and **Cloud AI** (high-reasoning). Unlike traditional LMS apps, CourseV runs on a fully **Agentic Architecture**.
+**CourseV AI** es una plataforma educativa de última generación que cierra la brecha entre la **IA Local** (privacidad primero) y la **IA en la Nube** (alto razonamiento). A diferencia de las aplicaciones LMS tradicionales, CourseV se ejecuta en una **Arquitectura Totalmente Agentiva**.
 
-The application connects to a cloud-based **Node.js MCP Backend** (`index.js`) which orchestrates interactions between the Supabase database and the **DeepSeek-V3.2** Large Language Model.
+La aplicación se conecta a un **Backend MCP en Node.js** basado en la nube (`index.js`) que orquesta las interacciones entre la base de datos Supabase y el Modelo de Lenguaje Grande **DeepSeek-V3.2**.
 
-### Key Features
+### Características Clave
 
-#### 🧠 Adaptive Reinforcement Learning
-*Implemented in `ReinforcementLearningFragment.kt`*
+#### 🧠 Aprendizaje por Refuerzo Adaptativo
+*Implementado en `ReinforcementLearningFragment.kt`*
 
-This feature analyzes the specific course topic and task context to generate assessments that adapt to the user's progress.
+Esta característica analiza el tema específico del curso y el contexto de la tarea para generar evaluaciones que se adaptan al progreso del usuario.
 
-- **Logic**: It generates **10 Assessment Questions** tailored to the content.
-- **Zero Duplication**: The backend (`index.js`) maintains a hash history of every question asked. If the LLM generates a similar question, it is rejected and regenerated. The next 10 questions are guaranteed to be completely different from the previous 10.
+- **Lógica**: Genera **10 Preguntas de Evaluación** adaptadas al contenido.
+- **Cero Duplicación**: El backend (`index.js`) mantiene un historial de hashes de cada pregunta realizada. Si el LLM genera una pregunta similar, es rechazada y regenerada. Las siguientes 10 preguntas están garantizadas para ser completamente diferentes de las 10 anteriores.
 
-#### 📝 Cloud-Based Grading Agent
-*Located in `ChatBotFragment.kt`*
+#### 📝 Agente de Calificación Basado en la Nube
+*Ubicado en `ChatBotFragment.kt`*
 
-This agent acts as a personal teaching assistant capable of grading complex assignments.
+Este agente actúa como un asistente personal de enseñanza capaz de calificar tareas complejas.
 
-- **Capability**: Users upload files (PDF/TXT), and the agent uses **RAG (Retrieval-Augmented Generation)** to grade the assignment against the rubric.
-- **Intelligence**: It provides feedback, points out errors, and suggests improvements, all powered by the Cloud Backend.
+- **Capacidad**: Los usuarios suben archivos (PDF/TXT), y el agente utiliza **RAG (Generación Aumentada por Recuperación)** para calificar la tarea frente a la rúbrica.
+- **Inteligencia**: Proporciona retroalimentación, señala errores y sugiere mejoras, todo impulsado por el Backend en la Nube.
 
-#### 📊 Natural Language to SQL (Business Intelligence)
-*Access via `DatabaseQueryFragment.kt`*
+#### 📊 Lenguaje Natural a SQL (Inteligencia de Negocios)
+*Acceso vía `DatabaseQueryFragment.kt`*
 
-A powerful BI tool that allows non-technical users to access real-time database insights using natural language.
+Una potente herramienta de BI que permite a usuarios no técnicos acceder a información de la base de datos en tiempo real utilizando lenguaje natural.
 
-- **Text-to-SQL**: Convert questions like *"How many students failed the Java course?"* into executable SQL.
-- **Self-Correction**: Uses DeepSeek-V3.2 to analyze SQL errors (e.g., missing columns) and rewrite the query automatically until it succeeds.
+- **Texto a SQL**: Convierte preguntas como *\"¿Cuántos estudiantes reprobaron el curso de Java?\"* en SQL ejecutable.
+- **Autocorrección**: Utiliza DeepSeek-V3.2 para analizar errores de SQL (por ejemplo, columnas faltantes) y reescribir la consulta automáticamente hasta que tenga éxito.
 
-## 🎁 Agent Zoo
+## 🎁 Zoológico de Agentes
 
-We employ specialized agents for different domains within the app:
+Empleamos agentes especializados para diferentes dominios dentro de la aplicación:
 
-| Agent Name | Primary Model | Source File | Function |
+| Nombre del Agente | Modelo Primario | Archivo Fuente | Función |
 |:----------:|:-------------:|:-----------:|:---------|
-| **Tutor** | DeepSeek-V3.2 | `ReinforcementLearningFragment.kt` | Generates unique, non-repeating quizzes. |
-| **Grader** | DeepSeek/Gemma | `ChatBotFragment.kt` | Grades submissions with detailed feedback. |
-| **Analyst** | DeepSeek-V3.2 | `DatabaseQueryFragment.kt` | Converts English to SQL & visualizes data. |
+| **Tutor** | DeepSeek-V3.2 | `ReinforcementLearningFragment.kt` | Genera cuestionarios únicos y no repetitivos. |
+| **Evaluador** | DeepSeek/Gemma | `ChatBotFragment.kt` | Califica entregas con retroalimentación detallada. |
+| **Analista** | DeepSeek-V3.2 | `DatabaseQueryFragment.kt` | Convierte Inglés/Español a SQL y visualiza datos. |
 
-## 🏗 Architecture
+## 🏗 Arquitectura
 
 <div align="center">
-<img src="https://via.placeholder.com/800x400.png?text=Architecture+Diagram:+App+->+MCP+Backend+->+DeepSeek" alt="Architecture" width="80%" />
+<img src="https://via.placeholder.com/800x400.png?text=Diagrama+Arquitectura:+App+->+MCP+Backend+->+DeepSeek" alt="Arquitectura" width="80%" />
 </div>
 
-The system follows a strict separation of concerns:
-1.  **Frontend (Android)**: Handles UI, TTS (Text-to-Speech), and context gathering.
-2.  **MCP Backend (Cloud)**: Located in `distribucion_de_contexto/`. Handles high-load AI processing.
-3.  **Database (Supabase)**: Stores User History, Vector Embeddings, and Course Data.
+El sistema sigue una estricta separación de responsabilidades:
+1.  **Frontend (Android)**: Maneja la UI, TTS (Texto a Voz) y recopilación de contexto.
+2.  **Backend MCP (Nube)**: Ubicado en `distribucion_de_contexto/`. Maneja el procesamiento de IA de alta carga.
+3.  **Base de Datos (Supabase)**: Almacena Historial de Usuario, Embeddings Vectoriales y Datos del Curso.
 
-## 🤗 Get Started
+## 🤗 Comenzar
 
-### 1. Installation
+### 1. Instalación
 
-Clone the repository and open it in Android Studio.
+Clona el repositorio y ábrelo en Android Studio.
 
 ```bash
-git clone https://github.com/YourRepo/CourseV.git
+git clone https://github.com/TuRepo/CourseV.git
 cd CourseV
 ```
 
-### 2. Backend Configuration
+### 2. Configuración del Backend
 
-The backend is critical for the AI agents.
+El backend es crítico para los agentes de IA.
 
 ```bash
 cd distribucion_de_contexto/MCP-backendDeploy
@@ -93,26 +93,26 @@ npm install
 npm start
 ```
 
-### 3. Build Android App
+### 3. Construir App Android
 
 ```bash
 ./gradlew assembleDebug
 ```
 
-## 🔗 DeepSeek Configuration
+## 🔗 Configuración de DeepSeek
 
-CourseV utilizes **DeepSeek-V3.2** for its superior reasoning capabilities. Ensure your backend `.env` file is configured:
+CourseV utiliza **DeepSeek-V3.2** por sus capacidades superiores de razonamiento. Asegúrate de que tu archivo `.env` del backend esté configurado:
 
 ```env
 DEEPSEEK_API_KEY=sk-xxxxxxxxxxxx
 MODEL_VERSION=deepseek-chat-v3.2
 ```
 
-## Acknowledgements
+## Agradecimientos
 
-Special thanks to the open-source community and the teams behind **DeepSeek**, **Ollama**, and **Supabase**.
+Agradecimiento especial a la comunidad de código abierto y a los equipos detrás de **DeepSeek**, **Ollama** y **Supabase**.
 
 ---
 <div align="center">
-  <sub>Designed with precision. Powered by CourseV AI.</sub>
+  <sub>Diseñado con precisión. Impulsado por CourseV AI.</sub>
 </div>
