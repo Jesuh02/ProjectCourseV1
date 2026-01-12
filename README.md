@@ -228,6 +228,20 @@ El sistema sigue una estricta separación de responsabilidades:
 
 ---
 
+### 🗺️ Diagrama Interactivo Navegable (Estilo Lucidchart)
+
+<div align="center">
+  
+**Haz clic en la imagen para explorar el diagrama completo de la arquitectura de forma interactiva** 🔍
+
+[![Arquitectura Completa del Sistema CourseV](https://www.mermaidchart.com/raw/2706f980-5691-4b44-bf04-b3dc8d2b97c1?theme=light&version=v0.1&format=svg)](https://www.mermaidchart.com/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/2706f980-5691-4b44-bf04-b3dc8d2b97c1/share/invite/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkb2N1bWVudElEIjoiMjcwNmY5ODAtNTY5MS00YjQ0LWJmMDQtYjNkYzhkMmI5N2MxIiwiYWNjZXNzIjoiVmlldyIsImlhdCI6MTc2ODIxNTAzNX0.A8F-gSi40JQsLKpyzTAnbwtx0rbXWf5i5xnCQ5xjEqQ)
+
+<sub>📐 **Diagrama Interactivo en MermaidChart** — Navega, amplía y explora cada componente de la arquitectura completa</sub>
+
+</div>
+
+---
+
 ### Arquitectura Completa del Sistema (Frontend + Backend + Comunicación)
 
 ```mermaid
