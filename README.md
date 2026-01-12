@@ -63,107 +63,163 @@ Empleamos agentes especializados para diferentes dominios dentro de la aplicaci�
 
 ## 🏗 Arquitectura
 
-### Arquitectura Frontend (App Móvil)
+### Arquitectura Frontend (Aplicación Móvil Android)
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#9dc3e6', 'primaryTextColor': '#000', 'primaryBorderColor': '#6c8ebf', 'lineColor': '#333', 'secondaryColor': '#f4b183', 'tertiaryColor': '#a9d18e'}}}%%
-flowchart TB
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart LR
     %% Estilos tipo HY-Motion DiT
-    classDef blue fill:#9dc3e6,stroke:#6c8ebf,color:#000,stroke-width:2px,rx:8,ry:8
-    classDef orange fill:#f4b183,stroke:#c65911,color:#000,stroke-width:2px,rx:8,ry:8
-    classDef green fill:#a9d18e,stroke:#548235,color:#000,stroke-width:2px,rx:8,ry:8
-    classDef yellow fill:#ffd966,stroke:#bf9000,color:#000,stroke-width:2px,rx:8,ry:8
+    classDef blue fill:#9dc3e6,stroke:#6c8ebf,color:#000,stroke-width:2px
+    classDef orange fill:#f4b183,stroke:#c65911,color:#000,stroke-width:2px
+    classDef green fill:#a9d18e,stroke:#548235,color:#000,stroke-width:2px
 
-    %% ═══════════════════════════════════════════════════
-    %% CAPA DE ENTRADA (Input Layer)
-    %% ═══════════════════════════════════════════════════
-    subgraph InputLayer [" "]
-        direction LR
-        Touch[Táctil]:::blue
-        Voice[STT / Voz]:::blue
-        Files[Archivos]:::blue
+    %% ENTRADA
+    Input1[Entrada Táctil]:::blue
+    Input2[Entrada de Voz STT]:::blue
+    Input3[Archivos PDF/TXT]:::blue
+
+    %% PROCESAMIENTO
+    Proc1[Optimizador<br/>de Consultas]:::orange
+    Proc2[Constructor<br/>de Contexto]:::orange
+    Proc3[Rastreador<br/>de Hashes]:::orange
+
+    %% STREAM 1: AGENTE TUTOR
+    subgraph Stream1 [" Stream Agente Tutor "]
+        direction TB
+        S1_1[LayerNorm]:::blue
+        S1_2[Scale & Shift]:::orange
+        S1_3[Generación<br/>Única]:::blue
+        S1_4[Verificación<br/>Hash]:::orange
+        S1_5[Gate]:::orange
+        S1_1 --> S1_2 --> S1_3 --> S1_4 --> S1_5
     end
 
-    %% ═══════════════════════════════════════════════════
-    %% CAPA DE PROCESAMIENTO (Processing Layer)  
-    %% ═══════════════════════════════════════════════════
-    subgraph ProcessLayer [" "]
-        direction LR
-        QueryOpt[Query Optimizer]:::orange
-        CtxBuild[Context Builder]:::orange
-        HashTrack[Hash Tracker]:::orange
+    %% STREAM 2: AGENTE ANALISTA
+    subgraph Stream2 [" Stream Agente Analista "]
+        direction TB
+        S2_1[LayerNorm]:::blue
+        S2_2[Scale & Shift]:::orange
+        S2_3[Texto a SQL]:::blue
+        S2_4[Auto-Corrección]:::orange
+        S2_5[Gate]:::orange
+        S2_1 --> S2_2 --> S2_3 --> S2_4 --> S2_5
     end
 
-    %% ═══════════════════════════════════════════════════
-    %% BLOQUES AGENTIVOS (Agent Blocks)
-    %% ═══════════════════════════════════════════════════
-    subgraph AgentBlocks [" "]
-        direction LR
+    %% STREAM 3: AGENTE EVALUADOR
+    subgraph Stream3 [" Stream Agente Evaluador "]
+        direction TB
+        S3_1[LayerNorm]:::blue
+        S3_2[Scale & Shift]:::orange
+        S3_3[Búsqueda RAG]:::blue
+        S3_4[Calificación]:::orange
+        S3_5[Gate]:::orange
+        S3_1 --> S3_2 --> S3_3 --> S3_4 --> S3_5
+    end
+
+    %% SALIDA
+    Output1[Protocolo MCP]:::green
+    Output2[Conexión<br/>Supabase]:::green
+
+    %% CONEXIONES
+    Input1 --> Proc1
+    Input2 --> Proc2
+    Input3 --> Proc3
+
+    Proc1 --> S1_1
+    Proc2 --> S2_1
+    Proc3 --> S3_1
+
+    S1_5 --> Output1
+    S2_5 --> Output1
+    S2_5 -.-> Output2
+    S3_5 --> Output1
+```
+
+<div align="center">
+<sub><b>CourseV Frontend DiT</b> — Arquitectura basada en 3 Streams Paralelos con Gates de Control</sub>
+</div>
+
+---
+
+### Arquitectura Backend (Servidor MCP Node.js)
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart LR
+    %% Estilos
+    classDef blue fill:#9dc3e6,stroke:#6c8ebf,color:#000,stroke-width:2px
+    classDef orange fill:#f4b183,stroke:#c65911,color:#000,stroke-width:2px
+    classDef green fill:#a9d18e,stroke:#548235,color:#000,stroke-width:2px
+    classDef purple fill:#d5a6e6,stroke:#8e44ad,color:#000,stroke-width:2px
+
+    %% ENTRADA DEL CLIENTE
+    Client[📱 Cliente<br/>Android]:::purple
+    
+    %% CAPA DE ENTRADA
+    Router[Router<br/>Express]:::blue
+    Middleware[Middleware<br/>Seguridad]:::orange
+
+    %% STREAM DOBLE: MCP + RAG
+    subgraph DoubleStream [" Stream Doble: MCP & RAG "]
+        direction TB
         
-        subgraph RL_Stream [Agente Tutor]
+        subgraph MCPPath [Ruta MCP]
             direction TB
-            RL1[ViewNorm]:::blue
-            RL2[Scale & Shift]:::orange
-            RL3[Unique Gen]:::blue
-            RL4[Hash Check]:::orange
-            RL5[Gate]:::orange
-            RL1 --> RL2 --> RL3 --> RL4 --> RL5
+            MCP1[Validación]:::blue
+            MCP2[MCPService]:::orange
+            MCP3[Prompt<br/>Optimizado]:::blue
+            MCP4[LLM Service]:::orange
+            MCP5[Gate]:::orange
+            MCP1 --> MCP2 --> MCP3 --> MCP4 --> MCP5
         end
 
-        subgraph BI_Stream [Agente Analista]
+        subgraph RAGPath [Ruta RAG]
             direction TB
-            BI1[ViewNorm]:::blue
-            BI2[Scale & Shift]:::orange
-            BI3[Text-to-SQL]:::blue
-            BI4[Auto-Correct]:::orange
-            BI5[Gate]:::orange
-            BI1 --> BI2 --> BI3 --> BI4 --> BI5
-        end
-
-        subgraph RAG_Stream [Agente Evaluador]
-            direction TB
-            RAG1[ViewNorm]:::blue
-            RAG2[Scale & Shift]:::orange
-            RAG3[RAG Search]:::blue
-            RAG4[Scoring]:::orange
+            RAG1[Doc Processor]:::blue
+            RAG2[Embedding<br/>Service]:::orange
+            RAG3[Vector Store]:::blue
+            RAG4[RAG Service]:::orange
             RAG5[Gate]:::orange
             RAG1 --> RAG2 --> RAG3 --> RAG4 --> RAG5
         end
     end
 
-    %% ═══════════════════════════════════════════════════
-    %% CAPA DE SALIDA (Output Layer)
-    %% ═══════════════════════════════════════════════════
-    subgraph OutputLayer [" "]
-        direction LR
-        MCP[MCP Protocol]:::green
-        Supabase[Supabase Conn]:::green
+    %% STREAM SIMPLE: BI/SQL
+    subgraph SingleStream [" Stream Simple: Analista SQL "]
+        direction TB
+        SQL1[Parser SQL]:::blue
+        SQL2[Validator]:::orange
+        SQL3[Supabase<br/>Query]:::blue
+        SQL4[Auto-Fix]:::orange
+        SQL5[Gate]:::orange
+        SQL1 --> SQL2 --> SQL3 --> SQL4 --> SQL5
     end
 
-    %% ═══════════════════════════════════════════════════
-    %% CONEXIONES PRINCIPALES
-    %% ═══════════════════════════════════════════════════
-    Touch --> QueryOpt
-    Voice --> CtxBuild
-    Files --> HashTrack
+    %% CAPA DE SALIDA
+    Deep[DeepSeek V3.2<br/>☁️ API]:::green
+    Supa[Supabase<br/>PostgreSQL]:::green
+    Cache[Redis Cache]:::orange
 
-    QueryOpt --> RL1
-    CtxBuild --> BI1
-    HashTrack --> RAG1
+    %% CONEXIONES
+    Client ==> Router
+    Router --> Middleware
+    Middleware --> MCP1
+    Middleware --> RAG1
+    Middleware --> SQL1
 
-    RL5 --> MCP
-    BI5 --> MCP
-    BI5 -.-> Supabase
-    RAG5 --> MCP
-
-    %% Salida Final
-    MCP ==> Backend[☁️ DeepSeek V3.2]:::yellow
-    Supabase ==> DB[(PostgreSQL)]:::yellow
+    MCP5 --> Deep
+    RAG5 --> Supa
+    SQL5 --> Supa
+    
+    Deep -.-> Cache
+    Supa -.-> Cache
 ```
 
 <div align="center">
-<sub><b>CourseV Frontend DiT</b> — Arquitectura basada en Streams con Gates de Control</sub>
+<sub><b>CourseV Backend MCP</b> — Motor de IA con Double Stream (MCP+RAG) y Single Stream (SQL)</sub>
 </div>
+
+---
 
 El sistema sigue una estricta separación de responsabilidades:
 1.  **Frontend (Android)**: Maneja la UI, TTS (Texto a Voz) y recopilación de contexto.
