@@ -1152,16 +1152,30 @@ class ChatBotFragment : Fragment() {
             }
             loadingProgressBar.visibility = View.VISIBLE
             
-            // Contexto por defecto: la tarea/archivo actualmente cargado en el chat
-            var effectiveTaskDescription = currentFileContext?.contentSummary ?: ""
-            var effectiveFileContent = currentFileContext?.fileContent ?: ""
-            var effectiveJsonContent = currentFileContext?.jsonContent ?: ""
-            var effectiveMetadata = currentFileContext?.metadata ?: ""
+            // 🚀 CRITICAL FIX: Clear task context if user doesn't reference the task
+            // Detect if message is about the specific task/submission or a general question
+            val hasTaskReference = messageText.contains("#") || 
+                                   messageText.contains("tarea", ignoreCase = true) ||
+                                   messageText.contains("archivo", ignoreCase = true) ||
+                                   messageText.contains("entrega", ignoreCase = true) ||
+                                   messageText.contains("califica", ignoreCase = true) ||
+                                   messageText.contains("nota", ignoreCase = true)
             
             // 🔥 CRÍTICO: Si el mensaje contiene # y taskName está establecido, esperar a que el contexto termine de cargar
-            // Detectar si hay una referencia a tarea pendiente de procesar
-            val hasTaskReference = messageText.contains("#") && taskName.isNotEmpty()
-            if (hasTaskReference) {
+            val needsContextLoad = messageText.contains("#") && taskName.isNotEmpty()
+            
+            // Contexto por defecto: la tarea/archivo actualmente cargado en el chat
+            // PERO SOLO si el usuario hace referencia explícita a la tarea
+            var effectiveTaskDescription = if (hasTaskReference) currentFileContext?.contentSummary ?: "" else ""
+            var effectiveFileContent = if (hasTaskReference) currentFileContext?.fileContent ?: "" else ""
+            var effectiveJsonContent = if (hasTaskReference) currentFileContext?.jsonContent ?: "" else ""
+            var effectiveMetadata = if (hasTaskReference) currentFileContext?.metadata ?: "" else ""
+            
+            if (!hasTaskReference && currentFileContext != null) {
+                Log.d("ChatBotFragment", "🚫 Clearing task context - message doesn't reference task")
+            }
+            
+            if (needsContextLoad) {
                 Log.d("ChatBotFragment", "⏳ Detectado # con taskName='$taskName', esperando a que currentFileContext se cargue...")
                 
                 // Esperar hasta que currentFileContext esté cargado o timeout de 5 segundos
