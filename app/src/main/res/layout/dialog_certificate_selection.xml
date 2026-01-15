@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:card_view="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:padding="8dp">
+
+    <androidx.cardview.widget.CardView
+        android:id="@+id/certificateCard"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        card_view:cardCornerRadius="16dp"
+        card_view:cardUseCompatPadding="false"
+        card_view:cardBackgroundColor="@android:color/transparent"
+        android:padding="0dp">
+
+            <LinearLayout
+            android:layout_width="300dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_liquid_glass_dark"
+            android:padding="20dp">
+
+            <TextView
+                android:id="@+id/certificateDialogTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Tipo de Certificado"
+                android:textColor="@android:color/white"
+                android:textStyle="bold"
+                android:textSize="18sp"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/certificateDialogMessage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textColor="@android:color/white"
+                android:textSize="14sp"
+                android:text="Selecciona el estilo de tu certificado:"
+                android:gravity="center"
+                android:alpha="0.9" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="20dp">
+
+                <!-- Animated Option -->
+                <TextView
+                    android:id="@+id/btnAnimatedCertificate"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp"
+                    android:gravity="center"
+                    android:text="🎨 Certificado Animado (HTML)"
+                    android:textColor="@android:color/white"
+                    android:background="@drawable/bg_button_blue"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Static Option -->
+                <TextView
+                    android:id="@+id/btnStaticCertificate"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp"
+                    android:gravity="center"
+                    android:text="📄 Certificado PDF Estático"
+                    android:textColor="@android:color/white"
+                    android:background="@drawable/bg_button_outline_light"
+                    android:layout_marginBottom="16dp" />
+
+                 <!-- Cancel -->
+                 <TextView
+                    android:id="@+id/btnCancelCertificate"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="8dp"
+                    android:gravity="center"
+                    android:text="Cancelar"
+                    android:textColor="#BBBBBB"
+                    android:textSize="14sp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </androidx.cardview.widget.CardView>
+
+</FrameLayout>

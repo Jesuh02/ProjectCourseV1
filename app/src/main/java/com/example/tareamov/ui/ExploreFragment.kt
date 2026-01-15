@@ -239,7 +239,6 @@ class ExploreFragment : Fragment() {
                 totalCourses = _totalCourses.value,
                 popularCourses = _popularCourses.value,
                 newCourses = _newCourses.value,
-                purchasedCourses = _purchasedCourses.value,
                 searchText = _searchText.value,
                 onSearchTextChanged = { text ->
                     _searchText.value = text
@@ -282,10 +281,6 @@ class ExploreFragment : Fragment() {
                         
                         showNewCourses(newCoursesList)
                     }
-                },
-                onPurchasedCoursesClicked = {
-                    // New click handler for purchased courses filter
-                    filterPurchasedCourses()
                 },
                 isCollapsed = _isHeaderCollapsed.value,
                 onToggleCollapse = { _isHeaderCollapsed.value = !_isHeaderCollapsed.value }
@@ -1163,6 +1158,12 @@ class ExploreFragment : Fragment() {
 
     private fun navigateToCourseDetail(course: Course) {
         lifecycleScope.launch {
+            // Check if we're still on exploreFragment before navigating
+            val navController = findNavController()
+            if (navController.currentDestination?.id != R.id.exploreFragment) {
+                return@launch
+            }
+            
             // Check if current user is the course creator by comparing user IDs
             val isCreator = if (currentUsername != null) {
                 val currentUserId = withContext(Dispatchers.IO) {
@@ -1178,7 +1179,11 @@ class ExploreFragment : Fragment() {
                 putString("courseName", course.title)
                 putBoolean("isCreator", isCreator)
             }
-            findNavController().navigate(R.id.action_exploreFragment_to_courseDetailFragment, bundle)
+            
+            // Double-check destination before navigate to avoid race condition
+            if (navController.currentDestination?.id == R.id.exploreFragment) {
+                navController.navigate(R.id.action_exploreFragment_to_courseDetailFragment, bundle)
+            }
         }
     }
 
@@ -1840,7 +1845,9 @@ class ExploreFragment : Fragment() {
                 // Only stop skeleton if we have data to show
                 if (coursesList.isNotEmpty()) {
                     stopSkeletonAnimation()
-                    Toast.makeText(context, "Error cargando cursos: ${e.message}", Toast.LENGTH_SHORT).show()
+                    context?.let { 
+                        Toast.makeText(it, "Error cargando cursos: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
                 } else {
                     // List is empty. Keep skeleton visible regardless of error type or network status.
                     // This ensures the skeleton persists until we successfully load data.
@@ -1977,14 +1984,12 @@ class ExploreFragment : Fragment() {
                     try {
                         repo.searchCoursesInSupabase(q)
                     } catch (e: Exception) {
-                        Log.w("ExploreFragment", "searchCoursesInSupabase failed for '$q'", e)
                         emptyList<Course>()
                     }
                 }
 
                 if (results.isNotEmpty()) {
                     displayCourses(results)
-                    Log.d("ExploreFragment", "Search found ${results.size} courses for query: $q")
                     return@launch
                 }
 
@@ -1997,9 +2002,7 @@ class ExploreFragment : Fragment() {
                 }.sortedByDescending { it.timestamp }
 
                 displayCourses(localResults)
-                if (localResults.isNotEmpty()) {
-                    Log.d("ExploreFragment", "Local search found ${localResults.size} courses for query: $q")
-                } else {
+                if (localResults.isEmpty()) {
                     showDarkToast("❌ No se encontraron resultados para '$q'")
                 }
 

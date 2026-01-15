@@ -51,6 +51,7 @@ class SupabaseRepository(
     /**
      * Upsert reinforcement question history for a user+course.
      * Uses INSERT ... ON CONFLICT to avoid duplicates.
+     * 🛠️ AUTO-REPAIRS: Auto-generates explanations if missing before inserting
      */
     suspend fun upsertReinforcementHistory(userId: Long, courseId: Long, questionsJson: String): Boolean {
         return try {
@@ -80,11 +81,35 @@ class SupabaseRepository(
                 }
             }
 
-            // Parse incoming questions JSON
+            // Parse incoming questions JSON and AUTO-REPAIR if needed
             try {
                 val incoming = gson.fromJson(questionsJson, com.google.gson.JsonElement::class.java)
                 if (incoming != null && incoming.isJsonArray) {
-                    incoming.asJsonArray.forEach { combinedArray.add(it) }
+                    incoming.asJsonArray.forEachIndexed { index, element ->
+                        if (element.isJsonObject) {
+                            val obj = element.asJsonObject
+                            val explanation = obj.get("explanation")?.takeIf { it.isJsonPrimitive }?.asString
+                            
+                            if (explanation.isNullOrBlank() || explanation.length < 50) {
+                                // AUTO-REPAIR: Generate explanation
+                                Log.w("SupabaseRepository", "🔧 Auto-reparando pregunta $index: explanation insuficiente")
+                                
+                                val correctIndex = obj.get("correctIndex")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
+                                val options = obj.get("options")?.takeIf { it.isJsonArray }?.asJsonArray
+                                val correctOption = options?.get(correctIndex)?.takeIf { it.isJsonPrimitive }?.asString ?: "la opción correcta"
+                                
+                                obj.addProperty("explanation", 
+                                    "La respuesta correcta es: \"$correctOption\". " +
+                                    "Esta opción es correcta según el contenido y material de referencia proporcionado en el curso. " +
+                                    "Las demás opciones no cumplen con los criterios establecidos en el material educativo."
+                                )
+                                Log.i("SupabaseRepository", "✨ Explanation auto-generada: ${obj.get("explanation").asString.length} chars")
+                            }
+                            combinedArray.add(obj)
+                        } else {
+                            combinedArray.add(element)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 // If incoming isn't a JSON array, try to wrap it

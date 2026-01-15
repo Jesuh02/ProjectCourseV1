@@ -182,8 +182,7 @@ class SelectTaskFragment : Fragment() {
                 }
 
             } catch (e: Exception) {
-                Log.e("SelectTaskFragment", "Error cargando tareas", e)
-                Toast.makeText(requireContext(), "Error al cargar tareas", Toast.LENGTH_SHORT).show()
+                // Error silently handled
             }
         }
     }

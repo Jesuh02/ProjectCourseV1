@@ -151,11 +151,7 @@ class ReinforcementLearningFragment : Fragment() {
         // Check if there are pending background results
         if (fragmentCourseId != -1L) {
             viewModel.checkForPendingBackgroundResults(fragmentCourseId)?.let { json ->
-                Toast.makeText(
-                    requireContext(), 
-                    "Preguntas generadas en segundo plano", 
-                    Toast.LENGTH_SHORT
-                ).show()
+                // Questions loaded silently from background
             }
         }
     }

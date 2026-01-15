@@ -26,8 +26,19 @@ data class QuizQuestion(
     val question: String,
     val options: List<String>,
     val correctIndex: Int,
-    val explanation: String
-)
+    val explanation: String? = null  // Changed to nullable - sanitization happens during parsing
+) {
+    // Safe getter that NEVER returns null
+    fun getExplanationSafe(): String {
+        return when {
+            explanation.isNullOrBlank() || explanation == "null" -> {
+                val correctOpt = options.getOrElse(correctIndex) { "la opción correcta" }
+                "La respuesta correcta es: \"$correctOpt\". Explicación auto-generada."
+            }
+            else -> explanation
+        }
+    }
+}
 
 data class AnalyzedFile(
     val name: String,
@@ -342,7 +353,22 @@ class ReinforcementLearningViewModel(
                     try {
                         val cleanJson = jsonText.substring(startIndex, endIndex + 1)
                         val type = object : TypeToken<List<QuizQuestion>>() {}.type
-                        questions = Gson().fromJson(cleanJson, type)
+                        val rawQuestions: List<QuizQuestion>? = Gson().fromJson(cleanJson, type)
+                        
+                        // CRITICAL: Sanitize explanation field - Gson may set it to null even with default value
+                        questions = rawQuestions?.map { q ->
+                            val safeExplanation = when {
+                                q.explanation == null || q.explanation == "null" || q.explanation.isBlank() -> {
+                                    val correctOpt = q.options.getOrElse(q.correctIndex) { "la opción correcta" }
+                                    Log.w("ReinforcementVM", "🔧 Auto-generating explanation for: ${q.question.take(50)}...")
+                                    "La respuesta correcta es: \"$correctOpt\". Esta explicación fue generada automáticamente."
+                                }
+                                else -> q.explanation
+                            }
+                            q.copy(explanation = safeExplanation)
+                        } ?: emptyList()
+                        
+                        Log.d("ReinforcementVM", "✅ Parsed ${questions.size} questions, all with valid explanations")
                     } catch (e: Exception) {
                         Log.w("ReinforcementVM", "Failed to parse JSON: ${e.message}")
                     }
@@ -438,7 +464,19 @@ class ReinforcementLearningViewModel(
         viewModelScope.launch {
             _uiState.value = ReinforcementState.Loading
             try {
-                val questions: List<QuizQuestion> = Gson().fromJson(questionsJson, object : TypeToken<List<QuizQuestion>>() {}.type)
+                val rawQuestions: List<QuizQuestion>? = Gson().fromJson(questionsJson, object : TypeToken<List<QuizQuestion>>() {}.type)
+                // Sanitize explanations
+                val questions = rawQuestions?.map { q ->
+                    val safeExplanation = when {
+                        q.explanation.isNullOrBlank() || q.explanation == "null" -> {
+                            val correctOpt = q.options.getOrElse(q.correctIndex) { "la opción correcta" }
+                            "La respuesta correcta es: \"$correctOpt\". Explicación auto-generada."
+                        }
+                        else -> q.explanation
+                    }
+                    q.copy(explanation = safeExplanation)
+                } ?: emptyList()
+                
                 if (questions.isEmpty()) {
                     _uiState.value = ReinforcementState.Error("No se encontraron preguntas válidas en los datos pre-cargados.")
                 } else {

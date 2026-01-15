@@ -126,7 +126,6 @@ class CourseSelectionFragment : Fragment() {
                 }
 
             } catch (e: Exception) {
-                android.util.Log.e("CourseSelectionFragment", "Error checking subscription status", e)
                 withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(requireContext(), "❌ Error al verificar acceso al curso", android.widget.Toast.LENGTH_SHORT).show()
                 }

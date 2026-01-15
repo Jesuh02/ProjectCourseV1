@@ -53,6 +53,10 @@
             app:argType="string"
             app:nullable="true"
             android:defaultValue="@null" />
+        <!-- Self-navigation action for safety -->
+        <action
+            android:id="@+id/action_videoHomeFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment" />
         <action
             android:id="@+id/action_videoHomeFragment_to_homeFragment"
             app:destination="@id/homeFragment" />

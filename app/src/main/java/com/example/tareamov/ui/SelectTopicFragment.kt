@@ -176,7 +176,6 @@ class SelectTopicFragment : Fragment() {
                     viewModel.fetchTopicsForCourse(courseId)
                 }
             } catch (e: Exception) {
-                Log.e("SelectTopicFragment", "Error fetching remote topics", e)
                 // On error, fall back to local
                 viewModel.fetchTopicsForCourse(courseId)
             }

@@ -196,11 +196,16 @@ class NotificacionesFragment : Fragment() {
             Notification.TYPE_TASK_SUBMISSION -> {
                 Log.d("Notificaciones", "Task submission notification clicked: ${notification.relatedId}")
                 notification.relatedId?.let { taskId ->
-                    // Navigate to task submissions to see the submission (for course creator)
+                    // Navigate to task submissions and highlight the specific submission from senderUsername
                     val bundle = Bundle().apply {
                         putLong("taskId", taskId)
                         putString("taskName", notification.message.substringAfter("\"").substringBefore("\""))
                         putString("courseCreatorUsername", sessionManager.getUsername())
+                        // Pass the username of who submitted the task so we can scroll to their submission
+                        notification.senderUsername?.let {
+                            putString("scrollToSubmissionUsername", it)
+                            Log.d("NotificacionesFragment", "📍 Passing submission to scroll: $it for taskId=$taskId")
+                        }
                     }
                     try {
                         findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
@@ -323,16 +328,34 @@ class NotificacionesFragment : Fragment() {
     private fun setupNavigation() {
         bottomNavBinding.homeNavLayout.setOnClickListener {
             updateBottomNavSelection("home")
-            findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment)
+            try {
+                if (findNavController().currentDestination?.id == R.id.notificacionesFragment) {
+                    findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("NotificacionesFragment", "Navigation error:", e)
+            }
         }
 
         bottomNavBinding.exploreButton.setOnClickListener {
             updateBottomNavSelection("explore")
-            findNavController().navigate(R.id.action_notificacionesFragment_to_exploreFragment)
+            try {
+                if (findNavController().currentDestination?.id == R.id.notificacionesFragment) {
+                    findNavController().navigate(R.id.action_notificacionesFragment_to_exploreFragment)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("NotificacionesFragment", "Navigation error:", e)
+            }
         }
 
         bottomNavBinding.goToHomeButton.setOnClickListener {
-            findNavController().navigate(R.id.action_notificacionesFragment_to_contentUploadFragment)
+            try {
+                if (findNavController().currentDestination?.id == R.id.notificacionesFragment) {
+                    findNavController().navigate(R.id.action_notificacionesFragment_to_contentUploadFragment)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("NotificacionesFragment", "Navigation error:", e)
+            }
         }
 
         bottomNavBinding.activityButton.setOnClickListener {
@@ -341,7 +364,13 @@ class NotificacionesFragment : Fragment() {
 
         bottomNavBinding.profileNavButton.setOnClickListener {
             updateBottomNavSelection("profile")
-            findNavController().navigate(R.id.action_notificacionesFragment_to_profileFragment)
+            try {
+                if (findNavController().currentDestination?.id == R.id.notificacionesFragment) {
+                    findNavController().navigate(R.id.action_notificacionesFragment_to_profileFragment)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("NotificacionesFragment", "Navigation error:", e)
+            }
         }
     }
 

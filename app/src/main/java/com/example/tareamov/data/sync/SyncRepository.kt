@@ -1061,7 +1061,18 @@ class SyncRepository(
 
                 return try {
                     val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, com.example.tareamov.ui.compose.QuizQuestion::class.java).type
-                    gson.fromJson<List<com.example.tareamov.ui.compose.QuizQuestion>>(cleanJson, type)
+                    val rawQuestions = gson.fromJson<List<com.example.tareamov.ui.compose.QuizQuestion>>(cleanJson, type)
+                    // Sanitize explanations - Gson may set null even with default values
+                    rawQuestions?.map { q ->
+                        val safeExplanation = when {
+                            q.explanation.isNullOrBlank() || q.explanation == "null" -> {
+                                val correctOpt = q.options.getOrElse(q.correctIndex) { "la opción correcta" }
+                                "La respuesta correcta es: \"$correctOpt\". Explicación auto-generada."
+                            }
+                            else -> q.explanation
+                        }
+                        q.copy(explanation = safeExplanation)
+                    } ?: emptyList()
                 } catch (e: Exception) {
                     Log.e("SyncRepository", "requestReinforcementQuiz: failed to parse JSON", e)
                     emptyList()

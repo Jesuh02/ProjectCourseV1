@@ -58,6 +58,7 @@ class TaskSubmissionsFragment : Fragment() {
     private var hasUserSubmitted = false
     private var userSubmission: TaskSubmission? = null
     private var isSubmitting: Boolean = false
+    private var scrollToSubmissionUsername: String? = null
     
     // Información de la tarea, tema y curso
     private var taskDescription: String = ""
@@ -108,6 +109,8 @@ class TaskSubmissionsFragment : Fragment() {
             taskId = it.getLong("taskId", -1)
             taskName = it.getString("taskName", "")
             courseCreatorUsername = it.getString("courseCreatorUsername")
+            scrollToSubmissionUsername = it.getString("scrollToSubmissionUsername")
+            Log.d("TaskSubmissionsFragment", "Received scrollToSubmissionUsername: $scrollToSubmissionUsername")
         }
         sessionManager = SessionManager.getInstance(requireContext())
         fileAnalysisService = FileAnalysisService(requireContext())
@@ -595,11 +598,77 @@ class TaskSubmissionsFragment : Fragment() {
                     view?.findViewById<TextView>(R.id.emptyStateTextView)?.visibility = View.GONE
                     recyclerView.visibility = View.VISIBLE
                     adapter.updateSubmissions(submissions)
+                    
+                    // Scroll to specific submission if scrollToSubmissionUsername was provided
+                    if (!scrollToSubmissionUsername.isNullOrBlank()) {
+                        scrollToSubmissionByUsername(submissions, scrollToSubmissionUsername!!)
+                    }
                 }
 
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "Error loading submissions", e)
                 Toast.makeText(context, "Error al cargar entregas: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun scrollToSubmissionByUsername(submissions: List<TaskSubmission>, targetUsername: String) {
+        lifecycleScope.launch {
+            try {
+                // Fetch all users to map studentId to username
+                val usuarios = withContext(Dispatchers.IO) {
+                    try {
+                        SupabaseClient.fetchUsuarios()
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error fetching usuarios for scroll mapping", e)
+                        emptyList()
+                    }
+                }
+                
+                // Create a map of userId to username for quick lookup
+                val userIdToUsername = usuarios.associateBy({ it.id }, { it.usuario })
+                
+                // Find the submission index where student username matches the target
+                val targetIndex = submissions.indexOfFirst { submission ->
+                    val submissionUsername = userIdToUsername[submission.studentId]
+                    submissionUsername?.equals(targetUsername, ignoreCase = true) == true
+                }
+                
+                if (targetIndex >= 0) {
+                    Log.d("TaskSubmissionsFragment", "✅ Found submission from $targetUsername at index $targetIndex")
+                    recyclerView.smoothScrollToPosition(targetIndex)
+                    
+                    // Highlight the submission with visual feedback (lighter background)
+                    view?.postDelayed({
+                        val viewHolder = recyclerView.findViewHolderForAdapterPosition(targetIndex)
+                        if (viewHolder != null) {
+                            val cardView = viewHolder.itemView as? androidx.cardview.widget.CardView
+                            
+                            // Color un poco más claro que el fondo (#1E1E2E) -> #3E3E4E
+                            val highlightColor = android.graphics.Color.parseColor("#3E3E4E") // Lightened dark blue/grey
+                            val originalColor = android.graphics.Color.parseColor("#1E1E2E") // Original card color
+                            
+                            if (cardView != null) {
+                                cardView.setCardBackgroundColor(highlightColor)
+                                
+                                // Reset after 3 seconds
+                                view?.postDelayed({
+                                    cardView.setCardBackgroundColor(originalColor)
+                                }, 3000)
+                            } else {
+                                // Fallback for non-CardView root (though XML uses CardView)
+                                viewHolder.itemView.setBackgroundColor(highlightColor)
+                                view?.postDelayed({
+                                    viewHolder.itemView.setBackgroundColor(originalColor)
+                                }, 3000)
+                            }
+                        }
+                    }, 500) // Increased delay slightly to ensure scroll finishes
+                } else {
+                    Log.w("TaskSubmissionsFragment", "⚠️ Could not find submission from $targetUsername in submissions list (checked ${submissions.size} submissions)")
+                }
+            } catch (e: Exception) {
+                Log.e("TaskSubmissionsFragment", "❌ Error scrolling to submission by username", e)
             }
         }
     }
@@ -614,7 +683,9 @@ class TaskSubmissionsFragment : Fragment() {
                     }
                     if (pushed) {
                         Log.i("TaskSubmissionsFragment", "✅ Updated submission pushed to Supabase.")
-                        Toast.makeText(context, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
+                        context?.let { ctx ->
+                            Toast.makeText(ctx, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
+                        }
                         
                         // Enviar notificación al estudiante sobre la calificación
                         sendGradeNotificationToStudent(submission, grade, feedback)
@@ -627,20 +698,28 @@ class TaskSubmissionsFragment : Fragment() {
                         recalculateAllStudentsProgressForCourse()
                     } else {
                         Log.w("TaskSubmissionsFragment", "Failed to push updated submission to Supabase.")
-                        Toast.makeText(context, "Calificación guardada localmente; se reintentará subirla más tarde.", Toast.LENGTH_SHORT).show()
+                        context?.let { ctx ->
+                            Toast.makeText(ctx, "Calificación guardada localmente; se reintentará subirla más tarde.", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e("TaskSubmissionsFragment", "Exception pushing updated submission to Supabase", e)
-                    Toast.makeText(context, "Error enviando calificación al servidor; se reintentará.", Toast.LENGTH_SHORT).show()
+                    context?.let { ctx ->
+                        Toast.makeText(ctx, "Error enviando calificación al servidor; se reintentará.", Toast.LENGTH_SHORT).show()
+                    }
                 }
 
                 // Update UI
-                Toast.makeText(context, "Calificación procesada", Toast.LENGTH_SHORT).show()
+                context?.let { ctx ->
+                    Toast.makeText(ctx, "Calificación procesada", Toast.LENGTH_SHORT).show()
+                }
                 loadSubmissions()
                 if (isCourseCreator) loadTaskProgress()
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "Error updating grade", e)
-                Toast.makeText(context, "Error al guardar calificación: ${e.message}", Toast.LENGTH_SHORT).show()
+                context?.let { ctx ->
+                    Toast.makeText(ctx, "Error al guardar calificación: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

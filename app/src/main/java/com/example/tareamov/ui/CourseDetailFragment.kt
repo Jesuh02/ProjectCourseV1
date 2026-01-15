@@ -90,6 +90,29 @@ class CourseDetailFragment : Fragment() {
     private lateinit var editCourseButton: ImageButton
     private var refreshJob: kotlinx.coroutines.Job? = null // Job to handle refresh cancellation
     private var isLoadingCourseDetails = false // Flag to prevent multiple simultaneous loads
+    
+    // 🔄 CONTENT CACHING: Prevent re-loading when returning from other fragments
+    private var cachedTopicsContainer: List<Pair<Topic, List<Task>>>? = null
+    private var cachedCreatorInfo: Triple<String?, Long, Boolean>? = null // username, userId, isSubscribed
+    private var cachedCourseData: com.example.tareamov.data.entity.Course? = null
+    private var courseDataLoadTime: Long = 0L
+    private val CACHE_VALIDITY_MS = 30000L // Cache valid for 30 seconds
+    
+    // 🛡️ Safe Toast helper - prevents NPE when fragment is detached
+    private fun showSafeToast(message: String, duration: Int = Toast.LENGTH_SHORT) {
+        try {
+            val ctx = context ?: return // Silently fail if context is null (fragment detached)
+            Toast.makeText(ctx, message, duration).show()
+        } catch (e: Exception) {
+            Log.w("CourseDetailFragment", "Toast failed (fragment detached?): $message")
+        }
+    }
+    
+    // 🔄 Cache validity check
+    private fun isCacheValid(): Boolean {
+        return System.currentTimeMillis() - courseDataLoadTime < CACHE_VALIDITY_MS
+    }
+    
     // Repository for remote checks
     private val syncRepository by lazy { com.example.tareamov.data.sync.SyncRepository(
         AppDatabase.getDatabase(requireContext()).usuarioDao(),
@@ -147,7 +170,7 @@ class CourseDetailFragment : Fragment() {
                             
                             withContext(Dispatchers.Main) {
                                 if (isApproved && isComplete) {
-                                    Toast.makeText(context, "¡Pago completo verificado! Curso desbloqueado.", Toast.LENGTH_LONG).show()
+                                    showSafeToast("¡Pago completo verificado! Curso desbloqueado.", Toast.LENGTH_LONG)
                                     loadCourseDetails() // Reload to update UI
                                 } else if (isApproved && !isComplete) {
                                     val formattedRemaining = try {
@@ -158,7 +181,7 @@ class CourseDetailFragment : Fragment() {
                                          java.text.NumberFormat.getCurrencyInstance(java.util.Locale("es", "CO")).format(result["paid"] as? Double ?: 0.0)
                                     } catch (e: Exception) { "" }
 
-                                    Toast.makeText(context, "Pago parcial recibido ($formattedPaid). Falta: $formattedRemaining", Toast.LENGTH_LONG).show()
+                                    showSafeToast("Pago parcial recibido ($formattedPaid). Falta: $formattedRemaining", Toast.LENGTH_LONG)
                                     loadCourseDetails()
                                 }
                             }
@@ -257,14 +280,14 @@ class CourseDetailFragment : Fragment() {
                 if (currentCourseName.isNullOrBlank()) {
                     // If the name is still blank after checking both sources
                     Log.w("CourseDetailFragment", "Course name is blank when trying to add task.")
-                    Toast.makeText(context, "Nombre del curso no cargado aún. Intenta de nuevo.", Toast.LENGTH_SHORT).show()
+                    showSafeToast("Nombre del curso no cargado aún. Intenta de nuevo.")
                 } else {
                     // Course name is available, proceed with navigation
                     navigateToSelectTopic(currentCourseName, isCreatingTask = true) // Pass the confirmed name and creation flag
                 }
             } else {
                 Log.e("CourseDetailFragment", "Invalid courseId (-1) when trying to add task.")
-                Toast.makeText(context, "ID de curso inválido.", Toast.LENGTH_SHORT).show()
+                showSafeToast("ID de curso inválido.")
             }
         }
         // *** END OF MODIFIED BLOCK ***
@@ -290,7 +313,7 @@ class CourseDetailFragment : Fragment() {
         if (courseId != -1L) {
             loadCourseDetails()
         } else {
-            Toast.makeText(context, "Error: ID de curso inválido", Toast.LENGTH_SHORT).show()
+            showSafeToast("Error: ID de curso inválido")
             // Consider navigating back if courseId is invalid from the start
             // findNavController().navigateUp()
         }
@@ -1450,7 +1473,7 @@ class CourseDetailFragment : Fragment() {
             } catch (e: Exception) { // This is the correct catch block for the main try
                 stopSkeletonAnimation()
                 Log.e("CourseDetailFragment", "Error loading course details", e)
-                Toast.makeText(context, "Error al cargar detalles del curso", Toast.LENGTH_SHORT).show()
+                showSafeToast("Error al cargar detalles del curso")
                 noTopicsTextView?.text = "Error al cargar datos." // Generic error message
                 noTopicsTextView?.visibility = View.VISIBLE
                 noTopicsTextView?.alpha = 0f
@@ -1613,12 +1636,12 @@ class CourseDetailFragment : Fragment() {
         val creatorId = creatorUserId
 
         if (currentUser == null || currentUserId == -1L) {
-            Toast.makeText(context, "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
+            showSafeToast("Debes iniciar sesión para suscribirte")
             return
         }
 
         if (creatorUser == null || creatorId == -1L) {
-            Toast.makeText(context, "Error: No se puede identificar al creador del curso", Toast.LENGTH_SHORT).show()
+            showSafeToast("Error: No se puede identificar al creador del curso")
             return
         }
 
@@ -1644,7 +1667,7 @@ class CourseDetailFragment : Fragment() {
                     // }
                     // subscriberCountTextView.text = formatSubscriberCount(newCount) // Moved to ExploreFragment cards
 
-                    Toast.makeText(context, "Te has desuscrito de $creatorUser", Toast.LENGTH_SHORT).show()
+                    showSafeToast("Te has desuscrito de $creatorUser")
                 } else {
                     // Suscribirse
                     val subscription = Subscription(
@@ -1667,12 +1690,12 @@ class CourseDetailFragment : Fragment() {
                     // }
                     // subscriberCountTextView.text = formatSubscriberCount(newCount) // Moved to ExploreFragment cards
 
-                    Toast.makeText(context, "Te has suscrito a $creatorUser", Toast.LENGTH_SHORT).show()
+                    showSafeToast("Te has suscrito a $creatorUser")
                 }
 
             } catch (e: Exception) {
                 Log.e("CourseDetailFragment", "Error processing subscription", e)
-                Toast.makeText(context, "Error al procesar la suscripción: ${e.message}", Toast.LENGTH_SHORT).show()
+                showSafeToast("Error al procesar la suscripción: ${e.message}")
             }
         }
     }
@@ -1908,7 +1931,7 @@ class CourseDetailFragment : Fragment() {
             setTextColor(resources.getColor(android.R.color.white, null))
             setOnClickListener { 
                 // Simple task interaction
-                Toast.makeText(context, "Tarea: ${task.name}", Toast.LENGTH_SHORT).show()
+                showSafeToast("Tarea: ${task.name}")
             }
             background = resources.getDrawable(R.drawable.bg_card_premium, null)
             val params = LinearLayout.LayoutParams(
@@ -2757,7 +2780,7 @@ class CourseDetailFragment : Fragment() {
                     }
                 } else {
                     Log.e("CourseDetailFragment", "Empty URI string for content item: ${item.name}")
-                    Toast.makeText(context, "URI del video no válida", Toast.LENGTH_SHORT).show()
+                    showSafeToast("URI del video no válida")
                     return
                 }
 
@@ -2781,7 +2804,7 @@ class CourseDetailFragment : Fragment() {
                     Log.d("CourseDetailFragment", "Successfully started VideoPlayerActivity with URI: $processedUri")
                 } catch (e: Exception) {
                     Log.e("CourseDetailFragment", "Error starting VideoPlayerActivity: ${e.message}", e)
-                    Toast.makeText(context, "Error al abrir el reproductor de video", Toast.LENGTH_SHORT).show()
+                    showSafeToast("Error al abrir el reproductor de video")
                 }
                 return
             }
@@ -2801,7 +2824,7 @@ class CourseDetailFragment : Fragment() {
                     startActivity(intent)
                 } catch (e: Exception) {
                     Log.e("CourseDetailFragment", "Error opening remote document: ${e.message}", e)
-                    Toast.makeText(context, "No se puede abrir el documento: ${item.name}", Toast.LENGTH_SHORT).show()
+                    showSafeToast("No se puede abrir el documento: ${item.name}")
                 }
                 return
             }
@@ -2837,11 +2860,11 @@ class CourseDetailFragment : Fragment() {
                 startActivity(intent)
             } catch (e: Exception) {
                 Log.e("CourseDetailFragment", "Error opening content: ${e.message}", e)
-                Toast.makeText(context, "No se puede abrir el contenido: ${item.name}", Toast.LENGTH_SHORT).show()
+                showSafeToast("No se puede abrir el contenido: ${item.name}")
             }
         } catch (e: Exception) {
             Log.e("CourseDetailFragment", "Error opening content URI: ${item.uriString}", e)
-            Toast.makeText(context, "No se puede abrir el contenido: ${item.name}", Toast.LENGTH_SHORT).show()
+            showSafeToast("No se puede abrir el contenido: ${item.name}")
         }
     }
 
@@ -2876,7 +2899,7 @@ class CourseDetailFragment : Fragment() {
                     }
                 }
             } else {
-                android.widget.Toast.makeText(context, "URI del video no válida", android.widget.Toast.LENGTH_SHORT).show()
+                showSafeToast("URI del video no válida")
                 return
             }
 
@@ -2884,7 +2907,7 @@ class CourseDetailFragment : Fragment() {
             (activity as? com.example.tareamov.MainActivity)?.showFloatingPlayer(processedUri)
         } catch (e: Exception) {
             android.util.Log.e("CourseDetailFragment", "Error opening floating player", e)
-            android.widget.Toast.makeText(context, "No se pudo abrir el reproductor flotante", android.widget.Toast.LENGTH_SHORT).show()
+            showSafeToast("No se pudo abrir el reproductor flotante")
         }
     }
 
@@ -3156,7 +3179,7 @@ class CourseDetailFragment : Fragment() {
                 if (price != null && price >= 0) {
                     updateCoursePrice(price)
                 } else {
-                    Toast.makeText(context, "Precio inválido. Debe ser un número positivo.", Toast.LENGTH_SHORT).show()
+                    showSafeToast("Precio inválido. Debe ser un número positivo.")
                 }
             }
             .setNegativeButton("Cancelar", null)

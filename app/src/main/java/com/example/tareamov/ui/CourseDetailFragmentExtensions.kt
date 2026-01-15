@@ -378,17 +378,31 @@ private fun Fragment.startPaymentPolling(
  * Muestra un diálogo para seleccionar el tipo de certificado
  */
 private fun showCertificateTypeDialog(context: android.content.Context, courseId: Int, username: String, averageGrade: Float) {
-    AlertDialog.Builder(context)
-        .setTitle("Tipo de Certificado")
-        .setMessage("Selecciona el tipo de certificado que deseas generar:")
-        .setPositiveButton("🎨 Certificado Animado (HTML)") { _, _ ->
-            generateCertificate(context, courseId, username, averageGrade, animated = true)
-        }
-        .setNegativeButton("📄 Certificado PDF Estático") { _, _ ->
-            generateCertificate(context, courseId, username, averageGrade, animated = false)
-        }
-        .setNeutralButton("Cancelar", null)
-        .show()
+    val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_certificate_selection, null)
+    
+    val dialog = AlertDialog.Builder(context)
+        .setView(dialogView)
+        .setCancelable(true)
+        .create()
+
+    // Transparent background to show the rounded CardView properly
+    dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+    dialogView.findViewById<View>(R.id.btnAnimatedCertificate).setOnClickListener {
+        dialog.dismiss()
+        generateCertificate(context, courseId, username, averageGrade, animated = true)
+    }
+
+    dialogView.findViewById<View>(R.id.btnStaticCertificate).setOnClickListener {
+        dialog.dismiss()
+        generateCertificate(context, courseId, username, averageGrade, animated = false)
+    }
+
+    dialogView.findViewById<View>(R.id.btnCancelCertificate).setOnClickListener {
+        dialog.dismiss()
+    }
+
+    dialog.show()
 }
 
 private fun generateCertificate(context: android.content.Context, courseId: Int, username: String, averageGrade: Float, animated: Boolean) {

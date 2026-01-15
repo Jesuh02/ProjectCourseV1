@@ -1444,6 +1444,18 @@ class UserProfileViewFragment : Fragment() {
     }
 
     private fun handleContentClick(content: VideoData) {
+        // 🛡️ Safety check: Ensure we're still on UserProfileViewFragment before navigating
+        try {
+            val currentDestination = findNavController().currentDestination
+            if (currentDestination?.id != R.id.userProfileViewFragment) {
+                Log.w("UserProfileView", "⚠️ Navigation ignored - not on UserProfileViewFragment (currently on: ${currentDestination?.label})")
+                return
+            }
+        } catch (e: Exception) {
+            Log.e("UserProfileView", "❌ Navigation check failed", e)
+            return
+        }
+        
         // Verificar si el click es en un curso o video basándose en el filtro actual
         when (currentFilter) {
             ContentType.COURSE -> {
@@ -1452,7 +1464,11 @@ class UserProfileViewFragment : Fragment() {
                     putLong("courseId", content.id)
                     putString("courseName", content.title)
                 }
-                findNavController().navigate(R.id.action_userProfileViewFragment_to_courseDetailFragment, bundle)
+                try {
+                    findNavController().navigate(R.id.action_userProfileViewFragment_to_courseDetailFragment, bundle)
+                } catch (e: Exception) {
+                    Log.e("UserProfileView", "Navigation to courseDetailFragment failed: ${e.message}")
+                }
             }
             ContentType.VIDEO -> {
                 // Navegar al VideoHomeFragment con el video específico
@@ -1461,7 +1477,11 @@ class UserProfileViewFragment : Fragment() {
                     putString("videoTitle", content.title)
                     putString("videoUsername", content.username)
                 }
-                findNavController().navigate(R.id.action_userProfileViewFragment_to_videoHomeFragment, bundle)
+                try {
+                    findNavController().navigate(R.id.action_userProfileViewFragment_to_videoHomeFragment, bundle)
+                } catch (e: Exception) {
+                    Log.e("UserProfileView", "Navigation to videoHomeFragment failed: ${e.message}")
+                }
             }
         }
     }
@@ -1482,12 +1502,28 @@ class UserProfileViewFragment : Fragment() {
                 false
             }
 
+            // 🛡️ Safety check: Ensure we're still on UserProfileViewFragment before navigating
+            try {
+                val currentDestination = findNavController().currentDestination
+                if (currentDestination?.id != R.id.userProfileViewFragment) {
+                    Log.w("UserProfileView", "⚠️ navigateToCourseDetail cancelled - not on UserProfileViewFragment (currently on: ${currentDestination?.label})")
+                    return@launch
+                }
+            } catch (e: Exception) {
+                Log.e("UserProfileView", "❌ navigateToCourseDetail check failed", e)
+                return@launch
+            }
+
             val bundle = Bundle().apply {
                 putLong("courseId", course.id)
                 putString("courseTitle", course.title)
                 putBoolean("isCreator", isCreator)
             }
-            findNavController().navigate(R.id.action_userProfileViewFragment_to_courseDetailFragment, bundle)
+            try {
+                findNavController().navigate(R.id.action_userProfileViewFragment_to_courseDetailFragment, bundle)
+            } catch (e: Exception) {
+                Log.e("UserProfileView", "navigateToCourseDetail navigation failed: ${e.message}")
+            }
         }
     }
 

@@ -48,7 +48,6 @@ fun ExploreHeader(
     totalCourses: Int,
     popularCourses: Int,
     newCourses: Int,
-    purchasedCourses: Int,
     searchText: String,
     onSearchTextChanged: (String) -> Unit,
     activeFilterName: String?,
@@ -56,7 +55,6 @@ fun ExploreHeader(
     onClearFilter: () -> Unit,
     onPopularCoursesClicked: () -> Unit,
     onNewCoursesClicked: () -> Unit,
-    onPurchasedCoursesClicked: () -> Unit,
     isCollapsed: Boolean,
     onToggleCollapse: () -> Unit
 ) {
@@ -120,10 +118,8 @@ fun ExploreHeader(
                     totalCourses = totalCourses,
                     popularCourses = popularCourses,
                     newCourses = newCourses,
-                    purchasedCourses = purchasedCourses,
                     onPopularCoursesClicked = onPopularCoursesClicked,
-                    onNewCoursesClicked = onNewCoursesClicked,
-                    onPurchasedCoursesClicked = onPurchasedCoursesClicked
+                    onNewCoursesClicked = onNewCoursesClicked
                 )
 
                 Text(
@@ -277,10 +273,8 @@ fun StatsSection(
     totalCourses: Int,
     popularCourses: Int,
     newCourses: Int,
-    purchasedCourses: Int,
     onPopularCoursesClicked: () -> Unit,
-    onNewCoursesClicked: () -> Unit,
-    onPurchasedCoursesClicked: () -> Unit
+    onNewCoursesClicked: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -305,14 +299,6 @@ fun StatsSection(
             count = newCourses, 
             label = "Nuevos", 
             onClick = onNewCoursesClicked
-        )
-        
-        Divider()
-        
-        StatItem(
-            count = purchasedCourses, 
-            label = "Comprados", 
-            onClick = onPurchasedCoursesClicked
         )
     }
 }

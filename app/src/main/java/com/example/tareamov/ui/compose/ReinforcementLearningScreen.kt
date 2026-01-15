@@ -355,44 +355,89 @@ fun ReinforcementLearningScreen(
                             }
                         },
                         onNextClick = {
-                            if (currentQuestionIndex < state.questions.size - 1) {
-                                currentQuestionIndex++
-                                showExplanation = false
-                                selectedOptionIndex = -1
-                            } else {
-                                // Finished - Quiz completed, show completion state
-                                isQuizActive = false
-                                historySaved = false // Reset history flag to save new questions
-                                // Reset quiz state for next round
-                                currentQuestionIndex = 0
-                                showExplanation = false
-                                selectedOptionIndex = -1
-                                // Don't auto-generate here - let the user see the WelcomeView
-                                // which will show "GENERAR PREGUNTAS" button in Initial state
-                                // The forceRegenerateQuestions resets state to Initial
-                                viewModel?.resetToInitial()
-                            }
+                            currentQuestionIndex++
+                            showExplanation = false
+                            selectedOptionIndex = -1
                         }
                     )
                 } else {
-                    // Completed
-                    Text("¡Felicidades! Has completado el refuerzo.", color = Color.White)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = { 
-                            // Reset state to initial to trigger regeneration
-                            isQuizActive = false
-                            historySaved = false // Reset history flag to save new questions
-                            onStartClick() // This calls viewModel.loadQuestions which sets state to Loading -> fetches NEW questions
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF58CC02)),
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        shape = RoundedCornerShape(16.dp)
-                    ) { 
-                        Text("GENERAR PREGUNTAS", fontSize = 18.sp, fontWeight = FontWeight.Bold) 
+                    // Completed View
+                    // Calculate stats
+                    val totalQuestions = state.questions.size
+                    val correctAnswers = currentScore / 10
+                    val incorrectAnswers = totalQuestions - correctAnswers
+                    
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "¡Cuestionario Completado!",
+                            color = Color.White,
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(32.dp))
+                        
+                        // Robot Happy
+                        Box(
+                            modifier = Modifier.size(150.dp).scale(scale).offset(y = dy.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                             CuteRobot(isSpeaking = false)
+                        }
+                        
+                        Spacer(modifier = Modifier.height(32.dp))
+                        
+                        // Stats Card
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF2B303B)),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(24.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Correctas:", color = Color.White, fontSize = 18.sp)
+                                    Text("$correctAnswers", color = Color(0xFF4CAF50), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Incorrectas:", color = Color.White, fontSize = 18.sp)
+                                    Text("$incorrectAnswers", color = Color(0xFFF44336), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                }
+// Puntaje removed per request
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(32.dp))
+                        
+                        Button(
+                            onClick = { 
+                                // Return to start
+                                isQuizActive = false
+                                historySaved = false
+                                currentQuestionIndex = 0
+                                showExplanation = false
+                                selectedOptionIndex = -1
+                                viewModel?.resetToInitial()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF58CC02)),
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Text("FINALIZAR REVISIÓN", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = { isQuizActive = false }) { Text("Volver") }
                 }
             } else {
                 // Fallback if state lost
@@ -768,7 +813,7 @@ fun QuizView(
                     verticalAlignment = Alignment.Top
                 ) {
                     Text(
-                        text = "Explicación: ${question.explanation}",
+                        text = "Explicación: ${question.getExplanationSafe()}",
                         color = Color(0xFFDDDDDD),
                         fontSize = 14.sp,
                         fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
@@ -791,7 +836,7 @@ fun QuizView(
                                     isExplanationSpeaking = false
                                 } else {
                                     val feedbackVoice = if (isCorrectSelection) "¡Correcto!" else "Incorrecto"
-                                    val fullExplanation = "$feedbackVoice. ${question.explanation}"
+                                    val fullExplanation = "$feedbackVoice. ${question.getExplanationSafe()}"
                                     // Set speaking state IMMEDIATELY for instant visual feedback
                                     isExplanationSpeaking = true
                                     

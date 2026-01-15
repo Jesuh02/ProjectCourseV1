@@ -407,6 +407,13 @@ class LLMBackgroundWorker(
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
         
+        if (Build.VERSION.SDK_INT >= 34) {
+             return ForegroundInfo(
+                 NOTIFICATION_ID, 
+                 notification, 
+                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+             )
+        }
         return ForegroundInfo(NOTIFICATION_ID, notification)
     }
 
