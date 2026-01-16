@@ -57,6 +57,7 @@ import android.view.ViewOutlineProvider
 import android.animation.ObjectAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
 import com.example.tareamov.ui.ShimmerFrameLayout
+import com.example.tareamov.ui.showPaymentOptions // Import payment extension
 
 import androidx.lifecycle.ViewModelProvider
 import com.example.tareamov.viewmodel.VideoHomeViewModel
@@ -143,6 +144,9 @@ class VideoHomeFragment : Fragment() {
                 insets
             }
         }
+
+        // Initialize Premium Badge
+        // NOTE: Premium badge is now per-video in item_video.xml, not top-nav
 
         // Initialize VideoManager
         videoManager = VideoManager(requireContext())
@@ -1022,10 +1026,124 @@ class VideoHomeFragment : Fragment() {
                 findNavController().navigate(R.id.userProfileViewFragment, bundle)
             },
             onUsernameClick = { videoData ->
-                // Navigate to CourseDetailFragment using course_id from video
-                // OR show message and redirect to profile if video has no course
+                // Check if paid content Logic
+                // If paid and not enrolled -> Show Payment Options (DON'T navigate to CourseDetail)
+                // Else -> Navigate to Course Detail
                 lifecycleScope.launch {
                     try {
+                        var shouldShowPayment = false
+                        var coursePrice = 0.0
+                        var courseName = videoData.title ?: "Curso Premium"
+                        var courseId = videoData.courseId ?: 0L
+                        
+                        // ALWAYS check course premium status from course table (not videoData.isPaid)
+                        // because videoData.isPaid may not be synced correctly
+                        if (videoData.courseId != null && videoData.courseId!! > 0) {
+                            val paymentCheckResult = withContext(Dispatchers.IO) {
+                                val db = AppDatabase.getDatabase(requireContext())
+                                val userId = getCurrentUserId()
+                                
+                                try {
+                                    // First try local DB, then Supabase
+                                    var course = db.courseDao().getCourseById(videoData.courseId!!)
+                                    
+                                    // If not found locally, try Supabase
+                                    if (course == null) {
+                                        course = com.example.tareamov.service.SupabaseClient.fetchCourseById(videoData.courseId!!)
+                                    }
+                                    
+                                    if (course != null) {
+                                        coursePrice = course.price
+                                        courseName = course.title ?: courseName
+                                        courseId = course.id
+                                        
+                                        // Check if course is premium (isPremium OR price > 0)
+                                        val isPaidCourse = course.isPremium || course.price > 0
+                                        Log.d("VideoHomeFragment", "Course ${course.id} isPremium=${course.isPremium}, price=${course.price}, isPaidCourse=$isPaidCourse")
+                                        
+                                        if (!isPaidCourse) {
+                                            // Free course - no payment needed
+                                            return@withContext false
+                                        }
+                                        
+                                        // Check if user is the creator (creator always has access)
+                                        if (userId > 0 && course.creatorUserId == userId) {
+                                            Log.d("VideoHomeFragment", "User is creator, access granted")
+                                            return@withContext false
+                                        }
+                                        
+                                        if (userId <= 0) {
+                                            // Not logged in -> Must pay/login for premium course
+                                            Log.d("VideoHomeFragment", "User not logged in, must pay")
+                                            return@withContext true
+                                        }
+                                        
+                                        // Check enrollment via ProgresoEstudianteDao
+                                        val isEnrolledLocal = db.progresoEstudianteDao().getProgreso(userId, course.id) != null
+                                        Log.d("VideoHomeFragment", "isEnrolledLocal=$isEnrolledLocal")
+                                        
+                                        if (isEnrolledLocal) {
+                                            return@withContext false // Already enrolled locally
+                                        }
+                                        
+                                        // Also check Supabase for enrollment (using fetchProgresosByUsuario)
+                                        val isEnrolledRemote = try {
+                                            val progresos = com.example.tareamov.service.SupabaseClient.fetchProgresosByUsuario(userId)
+                                            progresos.any { it.cursoId == course.id }
+                                        } catch (e: Exception) {
+                                            Log.e("VideoHomeFragment", "Error checking remote enrollment", e)
+                                            false
+                                        }
+                                        Log.d("VideoHomeFragment", "isEnrolledRemote=$isEnrolledRemote")
+                                        
+                                        // If not enrolled anywhere, needs payment
+                                        !isEnrolledRemote
+                                    } else {
+                                        // Course not found - don't block access
+                                        Log.w("VideoHomeFragment", "Course not found for courseId=${videoData.courseId}")
+                                        false
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e("VideoHomeFragment", "Error checking course premium status", e)
+                                    false
+                                }
+                            }
+                            shouldShowPayment = paymentCheckResult
+                        }
+
+                        if (shouldShowPayment) {
+                            // Get userId BEFORE switching to Main context (since getCurrentUserId is suspend)
+                            val paymentUserId = getCurrentUserId()
+                            val paymentUsername = withContext(Dispatchers.Main) { getCurrentUsername() }
+                            Log.d("VideoHomeFragment", "Payment check: username=$paymentUsername, userId=$paymentUserId")
+                            
+                            withContext(Dispatchers.Main) {
+                                showPaymentOptions(
+                                    courseId,
+                                    courseName,
+                                    coursePrice,
+                                    paymentUsername,
+                                    paymentUserId
+                                ) { success -> 
+                                    if (success) {
+                                        Toast.makeText(context, "¡Acceso desbloqueado!", Toast.LENGTH_SHORT).show()
+                                        // Navigate to course detail after successful payment
+                                        lifecycleScope.launch {
+                                            val bundle = Bundle().apply {
+                                                putLong("courseId", courseId)
+                                                putString("courseName", courseName)
+                                            }
+                                            val navController = findNavController()
+                                            if (navController.currentDestination?.id == R.id.videoHomeFragment) {
+                                                navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return@launch // CRITICAL: Don't continue to CourseDetail navigation
+                        }
+
                         // Use courseId directly from video if available
                         if (videoData.courseId != null && videoData.courseId!! > 0) {
                             val bundle = Bundle().apply {
@@ -1206,6 +1324,8 @@ class VideoHomeFragment : Fragment() {
                 
                 currentVideoIndex = position
                 viewModel.currentVideoIndex = position
+
+                // NOTE: Premium badge is now shown per-video in item_video.xml
 
                 // Cargar más videos cuando se acerque al final
                 if (position >= videoList.size - 2 && !isLoadingVideos && videoList.size < viewModel.totalVideos) {
@@ -1468,6 +1588,15 @@ class VideoHomeFragment : Fragment() {
     }
 
     private fun getCurrentUsername(): String? {
+        // Use SessionManager for consistent username retrieval
+        if (!::sessionManager.isInitialized) {
+            sessionManager = SessionManager.getInstance(requireContext())
+        }
+        val username = sessionManager.getUsername()
+        if (!username.isNullOrBlank()) {
+            return username
+        }
+        // Fallback to shared preferences
         val sharedPreferences = requireActivity().getSharedPreferences(
             "auth_prefs", Context.MODE_PRIVATE
         )

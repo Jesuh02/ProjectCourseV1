@@ -214,7 +214,7 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                 }
                 
                 if (userId > 0L) {
-                    // 1. Fetch ALL courses first (to have full data, consistent with ExploreFragment)
+                    // 1. Fetch ALL courses from Supabase (all creators, including current user)
                     val allCourses = try {
                         withContext(Dispatchers.IO) {
                             com.example.tareamov.service.SupabaseClient.fetchCourses()
@@ -223,29 +223,18 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                         emptyList()
                     }
 
-                    // 2. Fetch enrolled IDs
-                    val enrolledIds = try {
-                        withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.fetchEnrolledCourseIds(userId)
-                        }
-                    } catch (e: Exception) {
-                        emptyList()
-                    }
-
-                    // 3. Filter courses
-                    val enrolledCoursesList = allCourses.filter { course ->
-                        enrolledIds.contains(course.id) && course.creatorUserId != userId
-                    }.sortedByDescending { it.timestamp }
+                    // 2. Show ALL courses sorted by newest first (no filter by creator or enrollment)
+                    val coursesList = allCourses.sortedByDescending { it.timestamp }
                     
                     // Update master list and displayed list
-                    allEnrolledCourses = enrolledCoursesList
-                    _enrolledCourses.value = enrolledCoursesList
+                    allEnrolledCourses = coursesList
+                    _enrolledCourses.value = coursesList
                     
                     // Update subscription status after loading courses
                     loadSubscriptionStatus()
                     
-                    // 4. Update completion status
-                    updateCompletedStatus(enrolledCoursesList)
+                    // 3. Update completion status
+                    updateCompletedStatus(coursesList)
                 } else {
                     allEnrolledCourses = emptyList()
                     _enrolledCourses.value = emptyList()

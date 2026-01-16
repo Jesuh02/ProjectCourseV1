@@ -124,6 +124,7 @@ class VideoAdapter(
         private val commentCountText: TextView? = itemView.findViewById(R.id.commentCountText)
         private val followLabel: TextView? = itemView.findViewById(R.id.followLabel)
         private val audioText: TextView? = itemView.findViewById(R.id.audioText)
+        private val premiumBadge: TextView? = itemView.findViewById(R.id.premiumBadge)
         
         private var currentJob: Job? = null
         private var mediaPlayer: MediaPlayer? = null
@@ -159,6 +160,29 @@ class VideoAdapter(
             isVideoSetup = false
             descriptionText.text = videoData.description
             titleText.text = videoData.title
+            
+            // Show premium badge - check course premium status, not just videoData.isPaid
+            // Start with videoData.isPaid but also check course in background
+            premiumBadge?.visibility = if (videoData.isPaid) View.VISIBLE else View.GONE
+            
+            // Also check course isPremium from database for accurate premium badge display
+            if (videoData.courseId != null && videoData.courseId!! > 0) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val db = com.example.tareamov.data.AppDatabase.getDatabase(itemView.context)
+                        var course = db.courseDao().getCourseById(videoData.courseId!!)
+                        if (course == null) {
+                            course = com.example.tareamov.service.SupabaseClient.fetchCourseById(videoData.courseId!!)
+                        }
+                        val isPremium = course?.isPremium == true || (course?.price ?: 0.0) > 0
+                        withContext(Dispatchers.Main) {
+                            premiumBadge?.visibility = if (isPremium) View.VISIBLE else View.GONE
+                        }
+                    } catch (e: Exception) {
+                        Log.w("VideoAdapter", "Error checking course premium status: ${e.message}")
+                    }
+                }
+            }
 
             // Reset views and states (but NOT isLiked - let DB determine it)
             videoView.visibility = View.VISIBLE

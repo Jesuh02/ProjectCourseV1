@@ -17,6 +17,7 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
+import androidx.appcompat.app.AlertDialog
 import com.example.tareamov.R
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
@@ -66,26 +67,31 @@ class ContentUploadFragment : Fragment() {
         videoUploadOption.setOnClickListener {
             openGalleryForVideo()
         }
-
-        // Set up short upload button
-        val shortUploadOption = view.findViewById<LinearLayout>(R.id.shortUploadOption)
-        shortUploadOption.setOnClickListener {
-            openGalleryForVideo()
-        }
-
-        // Set up live stream button
-        val liveUploadOption = view.findViewById<LinearLayout>(R.id.liveUploadOption)
-        liveUploadOption.setOnClickListener {
-            // For live streaming, we would typically navigate to a camera preview
-            // For now, just show a message or navigate back
-            findNavController().navigateUp()
-        }
+        
 
         // Set up publication upload button
         val publicationUploadOption = view.findViewById<LinearLayout>(R.id.publicationUploadOption)
         publicationUploadOption.setOnClickListener {
-            // Navigate to course creation screen
-            findNavController().navigate(R.id.action_contentUploadFragment_to_courseCreationFragment)
+            // Offer choice: simple publication or didactic course
+            val options = arrayOf("Publicación simple", "Crear curso didáctico")
+            AlertDialog.Builder(requireContext())
+                .setTitle("¿Qué deseas crear?")
+                .setItems(options) { _, which ->
+                    when (which) {
+                        0 -> {
+                            // Publicación simple - reuse existing course creation flow with flag=false
+                            val bundle = Bundle().apply { putBoolean("isDidacticCourse", false) }
+                            findNavController().navigate(R.id.action_contentUploadFragment_to_courseCreationFragment, bundle)
+                        }
+                        1 -> {
+                            // Crear curso didáctico - navigate with flag=true
+                            val bundle = Bundle().apply { putBoolean("isDidacticCourse", true) }
+                            findNavController().navigate(R.id.action_contentUploadFragment_to_courseCreationFragment, bundle)
+                        }
+                    }
+                }
+                .setNegativeButton("Cancelar", null)
+                .show()
         }
     }
 

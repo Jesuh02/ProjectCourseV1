@@ -7955,4 +7955,27 @@ object SupabaseClient {
             emptyList()
         }
     }
+
+    suspend fun hasSuccessfulTransaction(userId: Long, courseId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Note: status check depends on exact string in DB. Default is PENDING.
+            // Assumption: successful status is 'APPROVED' or 'COMPLETED'. Adjust as needed.
+            // Using a broader check if status is NOT 'PENDING' might be safer if we don't know the exact success string,
+            // but usually we want positive confirmation.
+            // Based on other code (ExploreFragment), we should check.
+            val path = "transactions?user_id=eq.$userId&course_id=eq.$courseId&status=eq.APPROVED&limit=1"
+            val request = buildGetRequest(path)
+            val response = client.newCall(request).execute()
+            val body = response.body?.string()
+            
+            if (response.isSuccessful && !body.isNullOrEmpty()) {
+                val array = com.google.gson.JsonParser.parseString(body).asJsonArray
+                return@withContext array.size() > 0
+            }
+            return@withContext false
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error checking if has successful transaction", e)
+            return@withContext false
+        }
+    }
 }

@@ -1358,7 +1358,23 @@ class UserProfileViewFragment : Fragment() {
                         if (isEnrolled) {
                             handleContentClick(course)
                         } else {
-                            showDarkToast("❌ Este es un curso de pago. Debes realizar el pago para acceder.", Toast.LENGTH_LONG)
+                            // Integrate Payment Options
+                            Log.d("UserProfileView", "User not enrolled in paid course, triggering payment flow")
+                            showPaymentOptions(
+                                courseId = course.id,
+                                courseName = course.title,
+                                coursePrice = course.price ?: 0.0,
+                                username = currentUserUsername,
+                                userId = currentUserId,
+                                onPaymentResult = { success ->
+                                    if (success) {
+                                        showDarkToast("✅ Pago exitoso. ¡Bienvenido al curso!", Toast.LENGTH_LONG)
+                                        handleContentClick(course)
+                                    } else {
+                                        showDarkToast("El proceso de pago fue cancelado o no completado.", Toast.LENGTH_SHORT)
+                                    }
+                                }
+                            )
                         }
                     }
                     return@launch
