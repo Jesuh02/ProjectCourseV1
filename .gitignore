@@ -106,6 +106,18 @@ Thumbs.db
 
 # Avoid nested repositories
 ProjectCourseV1/
+
+# ============================================================
+# SENSITIVE ENVIRONMENT FILES - DO NOT COMMIT
+# ============================================================
 distribucion_de_contexto/.env
+distribucion_de_contexto/.env.*
+distribucion_de_contexto/MCP-backendDeploy/.env
+distribucion_de_contexto/MCP-backendDeploy/.env.*
+distribucion_de_contexto/ddl.sql
+
+# Keep example env file for reference
+!distribucion_de_contexto/MCP-backendDeploy/.env.example
+distribucion_de_contexto/ddl.sql
 distribucion_de_contexto/ddl.sql
 distribucion_de_contexto/ddl.sql

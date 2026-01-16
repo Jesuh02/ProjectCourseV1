@@ -33,8 +33,33 @@ val localPropsMap: Map<String, String> = if (localPropsFile.exists()) {
         .toMap()
 } else emptyMap()
 
-// Primary property names: SUPABASE_URL, SUPABASE_KEY
-// Backwards-compatible fallbacks: projectid (to build URL), supabaseapi (anon key), service_role
+// ============================================================
+// QA ENVIRONMENT VARIABLES
+// ============================================================
+val qaSupabaseUrl = localPropsMap["QA_SUPABASE_URL"]?.replace("\\:", ":") ?: "https://vxuksizvwrkctrvpciyp.supabase.co"
+val qaSupabaseAnonKey = localPropsMap["QA_SUPABASE_ANON_KEY"] ?: ""
+val qaBackendUrl = localPropsMap["QA_BACKEND_URL"]?.replace("\\:", ":") ?: "https://mcp-backenddeploy-production.up.railway.app"
+
+// ============================================================
+// PRODUCTION ENVIRONMENT VARIABLES
+// ============================================================
+val prodSupabaseUrl = localPropsMap["PROD_SUPABASE_URL"]?.replace("\\:", ":") ?: "https://gzckzrocfmhsizlrnqep.supabase.co"
+val prodSupabaseAnonKey = localPropsMap["PROD_SUPABASE_ANON_KEY"] ?: ""
+val prodBackendUrl = localPropsMap["PROD_BACKEND_URL"]?.replace("\\:", ":") ?: "https://mcp-backenddeploy-production-4ed0.up.railway.app"
+
+// ============================================================
+// SHARED VARIABLES (same for both environments)
+// ============================================================
+val deepseekApiKey = localPropsMap["DEEPSEEK_API_KEY"] ?: ""
+val r2AccountId = localPropsMap["R2_ACCOUNT_ID"] ?: ""
+val r2AccessKeyId = localPropsMap["R2_ACCESS_KEY_ID"] ?: ""
+val r2SecretAccessKey = localPropsMap["R2_SECRET_ACCESS_KEY"] ?: ""
+val r2BucketName = localPropsMap["R2_BUCKET_NAME"] ?: "coursev-files"
+val r2EndpointRaw = localPropsMap["R2_ENDPOINT"] ?: ""
+val r2Endpoint = r2EndpointRaw.replace("\\:", ":").replace("\\=", "=")
+val hostIp = localPropsMap["HOST_IP"] ?: "10.0.2.2"
+
+// Legacy fallback (backwards compatibility)
 val supabaseUrlProp = (project.findProperty("SUPABASE_URL") as? String)
     ?: localPropsMap["SUPABASE_URL"]
     ?: ""
@@ -51,7 +76,6 @@ val supabaseUrl = if (supabaseUrlProp.isNotBlank()) {
 } else ""
 
 // Prefer only the public/anon key for client builds. Do NOT embed service_role or other secret keys.
-// Recognized public key properties (in order): SUPABASE_ANON_KEY, SUPABASE_KEY, supabaseapi
 val supabaseAnonKey = (project.findProperty("SUPABASE_ANON_KEY") as? String)
     ?: localPropsMap["SUPABASE_ANON_KEY"]
     ?: (project.findProperty("SUPABASE_KEY") as? String)
@@ -68,9 +92,6 @@ val serviceRolePresent = ((project.findProperty("service_role") as? String)
 if (serviceRolePresent) {
     println("WARNING: service_role key detected in project properties/local.properties. This build will NOT embed service_role into the APK. Move privileged ops to a backend.")
 }
-
-// Leer la IP del host (útil para emuladores). Por defecto 10.0.2.2 para Android Emulator
-val hostIp = project.findProperty("HOST_IP") as? String ?: localPropsMap["HOST_IP"] ?: "10.0.2.2"
 
 android {
     buildFeatures {
@@ -99,25 +120,16 @@ android {
         // Provide a single authority string for FileProvider usage
         manifestPlaceholders["fileProviderAuthority"] = "${applicationId}.fileprovider"
 
-    // Exponer variables de Supabase y HOST_IP como BuildConfig
+    // Note: SUPABASE_URL and SUPABASE_ANON_KEY are now defined per Product Flavor (qa/prod)
+    // Legacy fallback for backwards compatibility (used when no flavor is selected)
     buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
-    // Expose only the anon/public key to the client. If empty, the app must obtain a key at runtime or use backend endpoints.
     buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
     buildConfigField("String", "HOST_IP", "\"$hostIp\"")
     
-    // DeepSeek API Key para LLM
-    val deepseekApiKey = (project.findProperty("DEEPSEEK_API_KEY") as? String) ?: localPropsMap["DEEPSEEK_API_KEY"] ?: ""
+    // DeepSeek API Key para LLM (shared across environments)
     buildConfigField("String", "DEEPSEEK_API_KEY", "\"$deepseekApiKey\"")
     
-    // Cloudflare R2 Storage Configuration
-    val r2AccountId = (project.findProperty("R2_ACCOUNT_ID") as? String) ?: localPropsMap["R2_ACCOUNT_ID"] ?: ""
-    val r2AccessKeyId = (project.findProperty("R2_ACCESS_KEY_ID") as? String) ?: localPropsMap["R2_ACCESS_KEY_ID"] ?: ""
-    val r2SecretAccessKey = (project.findProperty("R2_SECRET_ACCESS_KEY") as? String) ?: localPropsMap["R2_SECRET_ACCESS_KEY"] ?: ""
-    val r2BucketName = (project.findProperty("R2_BUCKET_NAME") as? String) ?: localPropsMap["R2_BUCKET_NAME"] ?: "coursev-files"
-    // Remove escape characters from R2_ENDPOINT (local.properties escapes : as \:)
-    val r2EndpointRaw = (project.findProperty("R2_ENDPOINT") as? String) ?: localPropsMap["R2_ENDPOINT"] ?: ""
-    val r2Endpoint = r2EndpointRaw.replace("\\:", ":").replace("\\=", "=")
-    
+    // Cloudflare R2 Storage Configuration (shared across environments)
     buildConfigField("String", "R2_ACCOUNT_ID", "\"$r2AccountId\"")
     buildConfigField("String", "R2_ACCESS_KEY_ID", "\"$r2AccessKeyId\"")
     buildConfigField("String", "R2_SECRET_ACCESS_KEY", "\"$r2SecretAccessKey\"")
@@ -141,6 +153,40 @@ android {
             )
         }
     }
+
+    // ============================================================
+    // PRODUCT FLAVORS: QA vs PRODUCTION
+    // Build variants: qaDebug, qaRelease, prodDebug, prodRelease
+    // ============================================================
+    flavorDimensions += "environment"
+    
+    productFlavors {
+        create("qa") {
+            dimension = "environment"
+            applicationIdSuffix = ".qa"
+            versionNameSuffix = "-QA"
+            
+            // QA Supabase Configuration
+            buildConfigField("String", "SUPABASE_URL", "\"$qaSupabaseUrl\"")
+            buildConfigField("String", "SUPABASE_ANON_KEY", "\"$qaSupabaseAnonKey\"")
+            buildConfigField("String", "BACKEND_URL", "\"$qaBackendUrl\"")
+            buildConfigField("String", "ENVIRONMENT", "\"QA\"")
+            buildConfigField("Boolean", "IS_PRODUCTION", "false")
+        }
+        
+        create("prod") {
+            dimension = "environment"
+            // No suffix for production - uses base applicationId
+            
+            // Production Supabase Configuration
+            buildConfigField("String", "SUPABASE_URL", "\"$prodSupabaseUrl\"")
+            buildConfigField("String", "SUPABASE_ANON_KEY", "\"$prodSupabaseAnonKey\"")
+            buildConfigField("String", "BACKEND_URL", "\"$prodBackendUrl\"")
+            buildConfigField("String", "ENVIRONMENT", "\"PRODUCTION\"")
+            buildConfigField("Boolean", "IS_PRODUCTION", "true")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
