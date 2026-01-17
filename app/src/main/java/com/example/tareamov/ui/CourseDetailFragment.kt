@@ -2063,7 +2063,13 @@ class CourseDetailFragment : Fragment() {
                     setPadding(32, 16, 32, 16)
                     setOnClickListener {
                         // Navigate to CourseTaskFragment to add a new task for this topic
-                        navigateToAddTask(topic.id, topic.courseId)
+                        // Use fragment's courseId instead of topic.courseId (which might be null)
+                        if (courseId != -1L) {
+                            navigateToAddTask(topic.id, courseId)
+                        } else {
+                            Log.e("CourseDetailFragment", "Cannot add task: courseId is invalid (-1)")
+                            showSafeToast("Error: ID del curso no válido")
+                        }
                     }
                 }
                 tasksContainer.addView(addTaskBtn)
@@ -2088,6 +2094,7 @@ class CourseDetailFragment : Fragment() {
         val bundle = Bundle().apply {
             putLong("topicId", topicId)
             putLong("courseId", courseId)
+            putLong("taskId", -1L) // Required argument, -1 for new task creation
         }
         findNavController().navigate(R.id.action_courseDetailFragment_to_courseTaskFragment, bundle)
     }

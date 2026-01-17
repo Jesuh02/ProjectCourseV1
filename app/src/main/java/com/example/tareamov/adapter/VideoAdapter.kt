@@ -150,7 +150,9 @@ class VideoAdapter(
         fun bind(videoData: VideoData) {
             // Check if we're binding the same video - if so, skip re-setup
             val newVideoUri = videoData.getBestVideoUri()?.toString()
-            if (currentBoundVideoUri == newVideoUri && isVideoSetup && currentVideoData?.id == videoData.id) {
+            // Fix: Removed isVideoSetup check to prevent infinite re-buffering loop and thumbnail flashing
+            // when updates occur while the video is preparing.
+            if (currentBoundVideoUri == newVideoUri && currentVideoData?.id == videoData.id) {
                 Log.d("VideoAdapter", "Skipping re-bind for same video: ${videoData.title}")
                 return
             }

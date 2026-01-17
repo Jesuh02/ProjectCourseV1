@@ -1710,66 +1710,30 @@ class UserProfileViewFragment : Fragment() {
     // === FUNCIONES CRUD PARA CURSOS (Identical to ExploreFragment) ===
     
     /**
-     * Editar curso - Identical to ExploreFragment implementation
+     * Editar curso - Redirects to CourseCreationFragment with course data
+     * Matches functionality of ExploreFragment
      */
     private fun editCourse(course: VideoData) {
         // Check if current user is the creator before allowing edit
         if (getCurrentUsername() != null && getCurrentUsername() == course.username) {
             Log.d("UserProfileView", "Edit course requested: ${course.title}")
 
-            // Create edit dialog with dark theme
-            val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_edit_course, null)
-            val titleEdit = dialogView.findViewById<android.widget.EditText>(R.id.editCourseTitle)
-            val descEdit = dialogView.findViewById<android.widget.EditText>(R.id.editCourseDescription)
-
-            // Set current values
-            titleEdit.setText(course.title)
-            descEdit.setText(course.description)
-
-            // Set text color to white for better visibility in dark theme
-            titleEdit.setTextColor(android.graphics.Color.WHITE)
-            descEdit.setTextColor(android.graphics.Color.WHITE)
-            titleEdit.setHintTextColor(android.graphics.Color.parseColor("#CCCCCC"))
-            descEdit.setHintTextColor(android.graphics.Color.parseColor("#CCCCCC"))
-
-            // Create dialog with dark theme
-            val dialogBuilder = androidx.appcompat.app.AlertDialog.Builder(
-                androidx.appcompat.view.ContextThemeWrapper(requireContext(), R.style.DarkAlertDialogTheme)
-            )
-
-            dialogBuilder
-                .setTitle("✏️ Editar Curso")
-                .setView(dialogView)
-                .setPositiveButton("💾 Guardar") { _, _ ->
-                    val newTitle = titleEdit.text.toString().trim()
-                    val newDesc = descEdit.text.toString().trim()
-
-                    if (newTitle.isNotEmpty()) {
-                        updateCourseDetails(course, newTitle, newDesc)
-                        Toast.makeText(requireContext(), "✅ Curso actualizado: $newTitle", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(requireContext(), "❌ El título no puede estar vacío", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                .setNegativeButton("❌ Cancelar", null)
-
-            val dialog = dialogBuilder.create()
-
-            // Apply additional dark theme styling
-            dialog.setOnShowListener {
-                dialog.window?.setBackgroundDrawableResource(R.drawable.dark_dialog_background)
-                dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.apply {
-                    setTextColor(android.graphics.Color.parseColor("#4CAF50")) // Green for save
-                    textSize = 16f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                }
-                dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.apply {
-                    setTextColor(android.graphics.Color.parseColor("#A259FF")) // Purple for cancel
-                    textSize = 16f
+            val bundle = Bundle().apply {
+                putLong("courseId", course.id)
+                putBoolean("isEditing", true)
+            }
+            
+            try {
+                findNavController().navigate(R.id.action_userProfileViewFragment_to_courseCreationFragment, bundle)
+            } catch (e: Exception) {
+                Log.e("UserProfileView", "Error navigating to edit course", e)
+                try {
+                    // Fallback to destination ID if action fails
+                    findNavController().navigate(R.id.courseCreationFragment, bundle)
+                } catch (e2: Exception) {
+                    Toast.makeText(requireContext(), "Error al abrir editor", Toast.LENGTH_SHORT).show()
                 }
             }
-
-            dialog.show()
         } else {
             Toast.makeText(requireContext(), "❌ Solo el creador puede editar el curso", Toast.LENGTH_SHORT).show()
             Log.w("UserProfileView", "Edit denied: User is not the course creator")
@@ -1912,36 +1876,51 @@ class UserProfileViewFragment : Fragment() {
     }
 
     /**
-     * Show confirmation dialog for deletion
+     * Show confirmation dialog for deletion - Matches ExploreFragment styling
      */
     private fun showDeleteConfirmationDialog(course: VideoData) {
+        // Custom floating confirmation dialog matching ExploreFragment
+        val dialog = android.app.Dialog(requireContext())
         val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_confirm_delete, null)
-        val dialog = android.app.AlertDialog.Builder(requireContext())
-            .setView(dialogView)
-            .create()
         
+        // Transparent background for the dialog window
+        dialog.setContentView(dialogView)
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.window?.setGravity(android.view.Gravity.CENTER)
+        
+        // Apply window animations
+        dialog.window?.setWindowAnimations(android.R.style.Animation_Dialog)
 
         // Set dialog message
         val messageTextView = dialogView.findViewById<TextView>(R.id.confirmDeleteMessage)
         messageTextView.text = "¿Estás seguro de que deseas eliminar '${course.title}'? Esta acción no se puede deshacer."
+        
+        // Set dialog title
+        val titleTextView = dialogView.findViewById<TextView>(R.id.confirmDeleteTitle)
+        titleTextView.text = "🗑️ Eliminar Curso"
 
         // Cancel button
-        dialogView.findViewById<TextView>(R.id.cancelDeleteButton).setOnClickListener {
+        val cancelButton = dialogView.findViewById<TextView>(R.id.cancelDeleteButton)
+        cancelButton.setOnClickListener {
+            Log.d("UserProfileView", "Delete cancelled for course: ${course.title}")
             dialog.dismiss()
         }
 
-        // Confirm button
-        dialogView.findViewById<TextView>(R.id.confirmDeleteButton).setOnClickListener {
+        // Confirm button - Perform deletion
+        val confirmButton = dialogView.findViewById<TextView>(R.id.confirmDeleteButton)
+        confirmButton.setOnClickListener {
+            Log.d("UserProfileView", "Delete confirmed for course: ${course.title}")
             dialog.dismiss()
             performDeleteCourse(course)
         }
 
         dialog.show()
+        Log.d("UserProfileView", "Delete confirmation dialog shown for: ${course.title}")
     }
 
     /**
-     * Actually perform the course/video deletion
+     * Actually perform the course/video deletion - Updated to match ExploreFragment logic
      */
     private fun performDeleteCourse(course: VideoData) {
         viewLifecycleOwner.lifecycleScope.launch {
@@ -1949,73 +1928,61 @@ class UserProfileViewFragment : Fragment() {
                 // Show loading indicator
                 Toast.makeText(requireContext(), "Eliminando curso...", Toast.LENGTH_SHORT).show()
 
-                val deleteSuccess = withContext(Dispatchers.IO) {
-                    // Delete from Supabase first
-                    val supabaseVideoDeleted = SupabaseClient.deleteVideoById(course.id)
-                    val supabaseCourseDeleted = if (course.courseId != null) {
-                        SupabaseClient.deleteCourseById(course.courseId)
-                    } else {
-                        true // No courseId, nothing to delete
-                    }
+                withContext(Dispatchers.IO) {
+                    // Delete from both Course table and VideoData table for complete cleanup
+                    // Use id as courseId consistent with ExploreFragment logic
+                    courseRepository.deleteCourseById(course.id)
 
-                    if (supabaseVideoDeleted && supabaseCourseDeleted) {
-                        // Delete from local database
-                        courseRepository.deleteCourseById(course.id)
-
-                        // Also delete from VideoData table to ensure complete removal
-                        val videoData = courseRepository.getVideoById(course.id)
-                        if (videoData != null) {
-                            courseRepository.deleteVideo(videoData)
-                            Log.d("UserProfileView", "Course also deleted from VideoData table: ${course.id}")
-                        }
-                        true
-                    } else {
-                        Log.w("UserProfileView", "Failed to delete from Supabase: video=$supabaseVideoDeleted, course=$supabaseCourseDeleted")
-                        false
+                    // Also delete from VideoData table to ensure complete removal
+                    val videoData = courseRepository.getVideoById(course.id)
+                    if (videoData != null) {
+                        courseRepository.deleteVideo(videoData)
+                        Log.d("UserProfileView", "Course also deleted from VideoData table: ${course.id}")
                     }
                 }
 
                 // Update UI on main thread
                 withContext(Dispatchers.Main) {
-                    if (deleteSuccess) {
-                        // Remove from local lists immediately for faster UI response using ID to ensure correct removal
-                        val idToRemove = course.id
-                        
-                        // Remove from all lists
-                        allContent.removeAll { it.id == idToRemove }
-                        allCourses.removeAll { it.id == idToRemove }
-                        allVideos.removeAll { it.id == idToRemove }
-                        
-                        // Update adapters
-                        if (::contentAdapter.isInitialized) {
-                            contentAdapter.removeCourse(idToRemove)
-                        }
-                        
-                        if (::videoAdapter.isInitialized) {
-                            videoAdapter.updateVideos(allVideos)
-                        }
-                        
-                        Log.d("UserProfileView", "Course removed from local lists and adapter: ${course.title}")
+                    // Remove from local lists immediately for faster UI response
+                    val idToRemove = course.id
+                    
+                    // Remove from all lists
+                    allContent.removeAll { it.id == idToRemove }
+                    allCourses.removeAll { it.id == idToRemove }
+                    allVideos.removeAll { it.id == idToRemove }
+                    
+                    // Update adapters
+                    if (::contentAdapter.isInitialized) {
+                        contentAdapter.removeCourse(idToRemove)
+                    }
+                    
+                    if (::videoAdapter.isInitialized) {
+                        videoAdapter.updateVideos(allVideos)
+                    }
 
-                        // Update counts
-                        coursesCountTextView.text = allCourses.size.toString()
-                        videosCountTextView.text = allVideos.size.toString()
-                        updateCountBadges()
+                    // Update counts
+                    coursesCountTextView.text = allCourses.size.toString()
+                    videosCountTextView.text = allVideos.size.toString()
+                    updateCountBadges()
 
-                        // Refresh the content display
-                        filterContent()
-                        
-                        Toast.makeText(requireContext(), "✅ Curso eliminado: ${course.title}", Toast.LENGTH_SHORT).show()
-                        Log.d("UserProfileView", "Course successfully deleted: ${course.title}")
-                    } else {
-                        Toast.makeText(requireContext(), "❌ Error al eliminar el curso de Supabase", Toast.LENGTH_LONG).show()
+                    // Refresh the content display
+                    filterContent()
+                    
+                    Toast.makeText(requireContext(), "Curso eliminado exitosamente", Toast.LENGTH_SHORT).show()
+                    Log.d("UserProfileView", "Course deleted successfully locally: ${course.title}")
+
+                    // Trigger remote delete (non-blocking) using SyncRepository like ExploreFragment
+                    try {
+                        syncRepository.deleteCourseRemoteById(idToRemove)
+                    } catch (e: Exception) {
+                         Log.w("UserProfileView", "Failed to trigger remote delete for course id=$idToRemove", e)
                     }
                 }
 
             } catch (e: Exception) {
                 Log.e("UserProfileView", "Error deleting course: ${course.title}", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "❌ Error al eliminar el curso", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), "Error al eliminar el curso: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -2053,21 +2020,40 @@ class UserProfileViewFragment : Fragment() {
                     }
                     
                     // Actualizar ambos adaptadores
-                    contentAdapter.notifyDataSetChanged()
-                    videoAdapter.updateVideos(allVideos)
+                    if (::contentAdapter.isInitialized) {
+                        contentAdapter.notifyDataSetChanged()
+                    }
+                    if (::videoAdapter.isInitialized) {
+                        videoAdapter.updateVideos(allVideos)
+                    }
                     
                     // Actualizar contadores
                     updateCountBadges()
                     
                     // Refrescar la vista actual
                     filterContent()
-                    
-                    Toast.makeText(requireContext(), "✅ Curso actualizado", Toast.LENGTH_SHORT).show()
+                }
+
+                // Show syncing toast
+                Toast.makeText(requireContext(), "Sincronizando cambios...", Toast.LENGTH_SHORT).show()
+
+                // Trigger remote Sync using SyncRepository like ExploreFragment
+                try {
+                     // Use IO context for conversion just in case
+                     val courseEntity = withContext(Dispatchers.IO) {
+                        courseRepository.convertVideoDataToCoursePublic(updatedCourse)
+                     }
+                     Log.d("UserProfileView", "Triggering upsertCourseToSupabase from Profile...")
+                     syncRepository.upsertCourseToSupabase(courseEntity)
+                     
+                     withContext(Dispatchers.Main) {
+                         Toast.makeText(requireContext(), "✅ Cambio guardado", Toast.LENGTH_SHORT).show()
+                     }
+                } catch (e: Exception) {
+                    Log.w("UserProfileView", "Failed to trigger remote upsert for course update", e)
                 }
 
                 Log.d("UserProfileView", "Course updated: $newTitle")
-                // Reload user content to show updated data
-                username?.let { loadUserData(it) }
             } catch (e: Exception) {
                 Log.e("UserProfileView", "Error updating course details", e)
                 withContext(Dispatchers.Main) {
