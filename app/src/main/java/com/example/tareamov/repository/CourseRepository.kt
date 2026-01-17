@@ -78,7 +78,7 @@ class CourseRepository(private val context: Context) {
             val videos = videoDao.getAllVideos()
             val filtered = videos.filter { 
                 it.title.contains(query, ignoreCase = true) || 
-                it.description.contains(query, ignoreCase = true) 
+                it.description?.contains(query, ignoreCase = true) == true
             }
             filtered.map { convertVideoDataToCourse(it) }
         }
@@ -184,7 +184,7 @@ class CourseRepository(private val context: Context) {
                         VideoData(
                             id = course.id,
                             username = username,
-                            description = course.description,
+                            description = course.description ?: "",
                             title = course.title,
                             videoUriString = course.videoUri,
                             localFilePath = course.localFilePath,
@@ -303,13 +303,13 @@ class CourseRepository(private val context: Context) {
         return Course(
             id = video.id,
             title = video.title,
-            description = video.description,
+            description = video.description ?: "",
             creatorUserId = userId,
             thumbnailUri = video.thumbnailUri,
             videoUri = video.videoUriString,
             localFilePath = video.localFilePath,
             duration = null,
-            category = determineCourseCategory(video.title, video.description), // Auto-categorize
+            category = determineCourseCategory(video.title, video.description ?: ""), // Auto-categorize
             price = video.price ?: 0.0,
             isPremium = video.isPaid,
             isPublished = true,
@@ -371,7 +371,7 @@ class CourseRepository(private val context: Context) {
         return Course(
             id = video.id,
             title = video.title,
-            description = video.description,
+            description = video.description ?: "",
             creatorUserId = userId,
             thumbnailUri = video.thumbnailUri,
             videoUri = video.videoUriString, // VideoData uses 'videoUriString' not 'videoPath'

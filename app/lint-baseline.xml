@@ -11067,8 +11067,8 @@
 
     <issue
         id="HardcodedText"
-        message="Hardcoded string &quot;Sube un video desde tu galería&quot;, should use `@string` resource"
-        errorLine1="                    android:text=&quot;Sube un video desde tu galería&quot;"
+        message="Hardcoded string &quot;Sube tu video y comparte tu conocimiento&quot;, should use `@string` resource"
+        errorLine1="                    android:text=&quot;Sube tu video y comparte tu conocimiento&quot;"
         errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/layout/fragment_content_upload.xml"
@@ -11133,8 +11133,8 @@
 
     <issue
         id="HardcodedText"
-        message="Hardcoded string &quot;Comparte fotos e imágenes&quot;, should use `@string` resource"
-        errorLine1="                    android:text=&quot;Comparte fotos e imágenes&quot;"
+        message="Hardcoded string &quot;Crea tu curso didactico profecional&quot;, should use `@string` resource"
+        errorLine1="                    android:text=&quot;Crea tu curso didactico profecional&quot;"
         errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/layout/fragment_content_upload.xml"

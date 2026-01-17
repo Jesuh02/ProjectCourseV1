@@ -101,7 +101,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Sube un video desde tu galería"
+                    android:text="Sube tu video y comparte tu conocimiento"
                     android:textColor="#8E8E93"
                     android:textSize="14sp" />
             </LinearLayout>
@@ -151,7 +151,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Comparte fotos e imágenes"
+                    android:text="Crea tu curso didactico profecional"
                     android:textColor="#8E8E93"
                     android:textSize="14sp" />
             </LinearLayout>
