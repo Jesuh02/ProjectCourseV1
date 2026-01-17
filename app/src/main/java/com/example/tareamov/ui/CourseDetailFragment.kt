@@ -2764,7 +2764,7 @@ class CourseDetailFragment : Fragment() {
                                 // Try to get a content URI using FileProvider
                                 val contentUri = FileProvider.getUriForFile(
                                     requireContext(),
-                                    "${requireContext().packageName}.service.fileprovider",
+                                    "${requireContext().packageName}.fileprovider",
                                     file
                                 )
                                 processedUri = contentUri.toString()
@@ -2836,7 +2836,7 @@ class CourseDetailFragment : Fragment() {
             // Create a content URI using FileProvider
             val contentUriForSharing = if (contentUri.scheme == "file") {                FileProvider.getUriForFile(
                     requireContext(),
-                    "${requireContext().packageName}.service.fileprovider",
+                    "${requireContext().packageName}.fileprovider",
                     file
                 )
             } else {
@@ -2886,7 +2886,7 @@ class CourseDetailFragment : Fragment() {
                         try {
                             val contentUri = androidx.core.content.FileProvider.getUriForFile(
                                 requireContext(),
-                                "${requireContext().packageName}.service.fileprovider",
+                                "${requireContext().packageName}.fileprovider",
                                 file
                             )
                             processedUri = contentUri.toString()

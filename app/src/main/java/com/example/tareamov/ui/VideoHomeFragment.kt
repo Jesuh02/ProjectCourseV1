@@ -226,7 +226,7 @@ class VideoHomeFragment : Fragment() {
                 
                 // Make skeleton tappable to retry
                 skeletonContainer.setOnClickListener {
-                    Toast.makeText(context, "Reintentando conexión...", Toast.LENGTH_SHORT).show()
+                    context?.let { Toast.makeText(it, "Reintentando conexión...", Toast.LENGTH_SHORT).show() }
                     viewModel.loadVideos(isRefresh = true)
                 }
             } else if (!hasError) {
@@ -327,6 +327,20 @@ class VideoHomeFragment : Fragment() {
                         }
                     }
                 }
+                
+                // CRITICAL: Ensure the current video starts playing after data loads
+                // This handles the case where onPageSelected(0) was called before videos were loaded
+                // or where the video was prepared but never got the play signal
+                viewPager?.postDelayed({
+                    val currentPosition = viewPager.currentItem
+                    val recyclerView = viewPager.getChildAt(0) as? RecyclerView
+                    val holder = recyclerView?.findViewHolderForAdapterPosition(currentPosition) as? VideoAdapter.VideoViewHolder
+                    if (holder != null) {
+                        Log.d("VideoHomeFragment", "Ensuring video plays at position $currentPosition after data load")
+                        videoAdapter.setActivePosition(currentPosition)
+                        holder.playVideo()
+                    }
+                }, 100) // Small delay to ensure ViewHolder is bound
             }
         }
 
@@ -883,7 +897,7 @@ class VideoHomeFragment : Fragment() {
         val currentUserId = getCurrentUserId()
         if (currentUserId == -1L) {
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
+                context?.let { Toast.makeText(it, "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show() }
             }
             return
         }
@@ -914,7 +928,7 @@ class VideoHomeFragment : Fragment() {
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "Error toggling subscription", e)
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Error al actualizar suscripción en Supabase", Toast.LENGTH_SHORT).show()
+                context?.let { Toast.makeText(it, "Error al actualizar suscripción en Supabase", Toast.LENGTH_SHORT).show() }
             }
         }
     }
@@ -1126,7 +1140,7 @@ class VideoHomeFragment : Fragment() {
                                     paymentUserId
                                 ) { success -> 
                                     if (success) {
-                                        Toast.makeText(context, "¡Acceso desbloqueado!", Toast.LENGTH_SHORT).show()
+                                        context?.let { Toast.makeText(it, "¡Acceso desbloqueado!", Toast.LENGTH_SHORT).show() }
                                         // Navigate to course detail after successful payment
                                         lifecycleScope.launch {
                                             val bundle = Bundle().apply {
@@ -1213,7 +1227,7 @@ class VideoHomeFragment : Fragment() {
                         }
                     } catch (e: Exception) {
                         Log.e("VideoHomeFragment", "Error navigating for video ${videoData.id}", e)
-                        Toast.makeText(context, "No se pudo abrir el perfil", Toast.LENGTH_SHORT).show()
+                        context?.let { Toast.makeText(it, "No se pudo abrir el perfil", Toast.LENGTH_SHORT).show() }
                     }
                 }
             },
@@ -1785,7 +1799,7 @@ class VideoHomeFragment : Fragment() {
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "Error navigating to profile fragment: ${e.message}")
             // Show a toast to inform the user
-            Toast.makeText(context, "No se pudo navegar al perfil", Toast.LENGTH_SHORT).show()
+            context?.let { Toast.makeText(it, "No se pudo navegar al perfil", Toast.LENGTH_SHORT).show() }
         }    }
 
     private fun navigateToVideoIndex(index: Int) {
@@ -2243,15 +2257,17 @@ class VideoHomeFragment : Fragment() {
             val shareIntent = Intent.createChooser(sendIntent, "Compartir información del video")
             startActivity(shareIntent)
 
-            Toast.makeText(
-                context,
-                "ℹ️ Se compartió la información del video\n⚠️ El video no está disponible públicamente",
-                Toast.LENGTH_LONG
-            ).show()
+            context?.let {
+                Toast.makeText(
+                    it,
+                    "ℹ️ Se compartió la información del video\n⚠️ El video no está disponible públicamente",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
 
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "❌ Error compartiendo video: ${e.message}", e)
-            Toast.makeText(context, "Error al compartir video: ${e.message}", Toast.LENGTH_SHORT).show()
+            context?.let { Toast.makeText(it, "Error al compartir video: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
     }
 
@@ -2358,7 +2374,7 @@ class VideoHomeFragment : Fragment() {
                         // Now sync with backend
                         syncRepository.likeVideoComment(comment.id, comment.videoId, userId, comment.usuarioId)
                     } else {
-                        Toast.makeText(context, "Debes iniciar sesión", Toast.LENGTH_SHORT).show()
+                        context?.let { Toast.makeText(it, "Debes iniciar sesión", Toast.LENGTH_SHORT).show() }
                     }
                 }
             },
@@ -2505,14 +2521,14 @@ class VideoHomeFragment : Fragment() {
                                 emptyText?.visibility = View.GONE
                                 commentsRecyclerView?.visibility = View.VISIBLE
                                 commentsAdapter.submitList(comments)
-                                Toast.makeText(context, "Comentario agregado", Toast.LENGTH_SHORT).show()
+                                context?.let { Toast.makeText(it, "Comentario agregado", Toast.LENGTH_SHORT).show() }
                             }
                         } else {
-                            Toast.makeText(context, "Debes iniciar sesión para comentar", Toast.LENGTH_SHORT).show()
+                            context?.let { Toast.makeText(it, "Debes iniciar sesión para comentar", Toast.LENGTH_SHORT).show() }
                         }
                     } catch (e: Exception) {
                         Log.e("VideoHomeFragment", "Error adding comment", e)
-                        Toast.makeText(context, "Error al agregar comentario", Toast.LENGTH_SHORT).show()
+                        context?.let { Toast.makeText(it, "Error al agregar comentario", Toast.LENGTH_SHORT).show() }
                     }
                 }
             }

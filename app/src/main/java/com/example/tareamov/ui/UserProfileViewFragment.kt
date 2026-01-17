@@ -185,7 +185,7 @@ class UserProfileViewFragment : Fragment() {
             setupBottomNavigation(view)
         } catch (e: Exception) {
             Log.e("UserProfileViewFragment", "Error in onViewCreated: ${e.message}")
-            Toast.makeText(context, "Error al cargar el perfil de usuario", Toast.LENGTH_SHORT).show()
+            context?.let { Toast.makeText(it, "Error al cargar el perfil de usuario", Toast.LENGTH_SHORT).show() }
             // Navigate back if there's a critical error
             findNavController().navigateUp()
         }
@@ -270,7 +270,7 @@ class UserProfileViewFragment : Fragment() {
         } catch (e: Exception) {
             // Log the error and handle it gracefully
             Log.e("UserProfileViewFragment", "Error initializing views: ${e.message}")
-            Toast.makeText(context, "Error al cargar la interfaz del perfil", Toast.LENGTH_SHORT).show()
+            context?.let { Toast.makeText(it, "Error al cargar la interfaz del perfil", Toast.LENGTH_SHORT).show() }
             // If in a critical error state, navigate back
             findNavController().navigateUp()
         }
@@ -329,7 +329,7 @@ class UserProfileViewFragment : Fragment() {
 
         val searchResults = searchSource.filter { content ->
             content.title.contains(currentSearchQuery, ignoreCase = true) ||
-            content.description.contains(currentSearchQuery, ignoreCase = true) ||
+            content.description?.contains(currentSearchQuery, ignoreCase = true) == true ||
             content.username.contains(currentSearchQuery, ignoreCase = true)
         }
 
@@ -392,7 +392,7 @@ class UserProfileViewFragment : Fragment() {
                     val courseEntity = com.example.tareamov.data.entity.Course(
                         id = course.id,
                         title = course.title,
-                        description = course.description,
+                        description = course.description ?: "",
                         creatorUserId = -1L, // Will be resolved in handleSubscriptionClick
                         category = "Programación",
                         thumbnailUri = course.thumbnailUri,
@@ -423,7 +423,7 @@ class UserProfileViewFragment : Fragment() {
                     val courseEntity = com.example.tareamov.data.entity.Course(
                         id = course.id,
                         title = course.title,
-                        description = course.description,
+                        description = course.description ?: "",
                         creatorUserId = -1L, // Will be resolved in handleEnrollmentClick
                         category = "Programación",
                         thumbnailUri = course.thumbnailUri,
@@ -474,7 +474,7 @@ class UserProfileViewFragment : Fragment() {
                         findNavController().navigate(R.id.videoDetailsFragment, bundle)
                     } catch (e: Exception) {
                         Log.e("UserProfileViewFragment", "Error navigating to edit video", e)
-                        Toast.makeText(context, "Error al abrir editor", Toast.LENGTH_SHORT).show()
+                        context?.let { Toast.makeText(it, "Error al abrir editor", Toast.LENGTH_SHORT).show() }
                     }
                 },
                 onDeleteClickListener = { video ->
@@ -949,6 +949,24 @@ class UserProfileViewFragment : Fragment() {
                         val remoteVideos = videosDeferred.await()
                         if (!remoteVideos.isNullOrEmpty()) {
                             userVideosList = remoteVideos
+                            
+                            // Save to local DB to ensure persistence of remote_id/course_id relationships
+                            // This fulfills the requirement that videos fetched by remote_id OR course_id are stored locally
+                            try {
+                                val database = AppDatabase.getDatabase(act.applicationContext)
+                                var withRemoteId = 0
+                                var withCourseId = 0
+                                
+                                remoteVideos.forEach { video ->
+                                    if (video.remoteId != null && video.remoteId!! > 0) withRemoteId++
+                                    if (video.courseId != null && video.courseId!! > 0) withCourseId++
+                                    
+                                    database.videoDao().insertVideo(video)
+                                }
+                                Log.d("UserProfileView", "Cached ${remoteVideos.size} videos from Supabase: $withRemoteId with remote_id, $withCourseId with course_id")
+                            } catch (e: Exception) {
+                                Log.e("UserProfileView", "Failed to cache videos locally", e)
+                            }
                         }
                     }
                 } catch (e: Exception) {

@@ -148,7 +148,7 @@ class CourseTopicFragment : Fragment() {
                 val topicName = view.findViewById<EditText>(R.id.topicNameEditText)?.text.toString()
 
                 if (topicName.isBlank()) {
-                    Toast.makeText(context, "Por favor ingresa un nombre para el tema antes de agregar tareas", Toast.LENGTH_SHORT).show()
+                    context?.let { Toast.makeText(it, "Por favor ingresa un nombre para el tema antes de agregar tareas", Toast.LENGTH_SHORT).show() }
                     return@setOnClickListener
                 }
 
@@ -297,7 +297,7 @@ class CourseTopicFragment : Fragment() {
         val topicDescription = view?.findViewById<EditText>(R.id.topicDescriptionEditText)?.text.toString()
 
         if (topicName.isBlank()) {
-            Toast.makeText(context, "Por favor ingresa un nombre para el tema", Toast.LENGTH_SHORT).show()
+            context?.let { Toast.makeText(it, "Por favor ingresa un nombre para el tema", Toast.LENGTH_SHORT).show() }
             return
         }
 
@@ -401,7 +401,7 @@ class CourseTopicFragment : Fragment() {
             }
         } catch (e: Exception) {
             Log.e("CourseTopicFragment", "Error opening video picker", e)
-            Toast.makeText(context, "Error al abrir el selector de videos", Toast.LENGTH_SHORT).show()
+            context?.let { Toast.makeText(it, "Error al abrir el selector de videos", Toast.LENGTH_SHORT).show() }
         }
     }
 
@@ -422,7 +422,7 @@ class CourseTopicFragment : Fragment() {
             documentPickerLauncher.launch(intent) // Use the launcher instead of startActivityForResult
         } catch (e: Exception) {
             Log.e("CourseTopicFragment", "Error opening document picker", e)
-            Toast.makeText(context, "Error al abrir el selector de documentos", Toast.LENGTH_SHORT).show()
+            context?.let { Toast.makeText(it, "Error al abrir el selector de documentos", Toast.LENGTH_SHORT).show() }
         }
     }
 
@@ -611,7 +611,7 @@ class CourseTopicFragment : Fragment() {
         val topicDescription = view?.findViewById<EditText>(R.id.topicDescriptionEditText)?.text.toString()
 
         if (topicName.isBlank()) {
-            Toast.makeText(context, "Por favor ingresa un nombre para el tema", Toast.LENGTH_SHORT).show()
+            context?.let { Toast.makeText(it, "Por favor ingresa un nombre para el tema", Toast.LENGTH_SHORT).show() }
             return
         }
 
