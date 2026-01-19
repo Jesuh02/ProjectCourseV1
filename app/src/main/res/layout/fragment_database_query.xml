@@ -311,6 +311,16 @@
                     android:imeOptions="actionSend" />
             </LinearLayout>
 
+            <ImageButton
+                android:id="@+id/micButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="bottom"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_btn_speak_now"
+                android:tint="#AAAAAA"
+                android:padding="8dp"/>
+
             <!-- Send button -->
             <FrameLayout
                 android:layout_width="wrap_content"
@@ -357,6 +367,63 @@
                     android:visibility="gone"
                     android:indeterminateTint="#10A37F" />
             </FrameLayout>
+        </LinearLayout>
+
+        <!-- Voice Input Mode (Replaces Message Input when active) -->
+        <LinearLayout
+            android:id="@+id/voiceInputLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="60dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="4dp"
+            android:background="#0A0A0A"
+            android:visibility="gone">
+
+            <ImageButton
+                android:id="@+id/cancelVoiceButton"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                android:background="@drawable/circle_background_dark"
+                android:backgroundTint="#333333"
+                android:padding="8dp"
+                app:tint="#FFFFFF" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:paddingHorizontal="8dp">
+
+                <TextView
+                    android:id="@+id/voiceStatusText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Ver texto"
+                    android:textColor="#AAAAAA"
+                    android:textSize="12sp"
+                    android:layout_marginBottom="4dp"/>
+
+                <com.example.tareamov.ui.widget.VoiceVisualizerView
+                    android:id="@+id/voiceVisualizer"
+                    android:layout_width="match_parent"
+                    android:layout_height="30dp" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/stopRecordingButton"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="@drawable/send_button_background"
+                android:backgroundTint="#FFFFFF"
+                android:src="@android:drawable/ic_media_pause"
+                android:tint="#000000"
+                android:padding="8dp" />
         </LinearLayout>
 
         <!-- Modern footer with model info -->

@@ -42,11 +42,41 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import com.example.tareamov.service.ServerEndpointResolver
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
-import android.widget.EditText
-import android.widget.Button
 import android.provider.OpenableColumns
+import android.widget.EditText
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.Manifest
+import android.widget.ImageButton
+import com.example.tareamov.ui.widget.VoiceVisualizerView
 
 class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
+
+    // Voice Recognition
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var voiceIntent: Intent? = null
+    private var isListening = false
+    private lateinit var voiceInputLayout: LinearLayout
+    private lateinit var queryInputLayout: LinearLayout
+    private lateinit var voiceVisualizer: VoiceVisualizerView
+    private lateinit var stopRecordingButton: ImageButton
+    private lateinit var cancelVoiceButton: ImageButton
+    private lateinit var voiceStatusText: TextView
+    private lateinit var micButton: ImageButton
+    
+    // Permission
+    private val requestAudioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            startListening()
+        } else {
+            Toast.makeText(context, "Permiso de micrófono requerido para voz", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     private var _binding: FragmentDatabaseQueryBinding? = null
     private val binding get() = _binding!!
@@ -636,6 +666,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
 
         // Make brain icon visible initially
         binding.emptyStateContainer.visibility = View.VISIBLE
+        
+        setupVoiceRecognition()
 
         // Load logo image from drawable resources
         try {
@@ -2921,5 +2953,177 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
                 }
             }
         }
+    }
+
+    // ============================================================================================
+    // VOICE RECOGNITION LOGIC
+    // ============================================================================================
+
+    private fun setupVoiceRecognition() {
+        voiceInputLayout = binding.voiceInputLayout
+        queryInputLayout = binding.queryInputLayout
+        voiceVisualizer = binding.voiceVisualizer
+        stopRecordingButton = binding.stopRecordingButton
+        cancelVoiceButton = binding.cancelVoiceButton
+        voiceStatusText = binding.voiceStatusText
+        micButton = binding.micButton
+
+        micButton.setOnClickListener {
+            checkAudioPermissionAndStart()
+        }
+
+        stopRecordingButton.setOnClickListener {
+            stopListening()
+        }
+        
+        cancelVoiceButton.setOnClickListener {
+            stopListening()
+        }
+    }
+
+    private fun checkAudioPermissionAndStart() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                requireContext(),
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            startListening()
+        }
+    }
+
+    private fun startListening() {
+        if (isListening) return
+
+        try {
+            // Hide keyboard
+            val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.hideSoftInputFromWindow(binding.queryInput.windowToken, 0)
+            
+            // Toggle UI
+            queryInputLayout.visibility = View.GONE
+            voiceInputLayout.visibility = View.VISIBLE
+            
+            if (speechRecognizer == null) {
+                createSpeechRecognizer()
+            }
+
+            voiceIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            }
+
+            speechRecognizer?.startListening(voiceIntent)
+            isListening = true
+            
+            voiceStatusText.text = "Escuchando..."
+            voiceVisualizer.startAnimating()
+            
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error al iniciar voz: ${e.message}", Toast.LENGTH_SHORT).show()
+            e.printStackTrace()
+            // Restore UI
+            queryInputLayout.visibility = View.VISIBLE
+            voiceInputLayout.visibility = View.GONE
+        }
+    }
+
+    private fun stopListening() {
+        if (!isListening) {
+             if (voiceInputLayout.visibility == View.VISIBLE) {
+                 voiceInputLayout.visibility = View.GONE
+                 queryInputLayout.visibility = View.VISIBLE
+             }
+             return
+        }
+        
+        try {
+            speechRecognizer?.stopListening()
+            isListening = false
+            voiceVisualizer.stopAnimating()
+            
+            // Restore UI
+            voiceInputLayout.visibility = View.GONE
+            queryInputLayout.visibility = View.VISIBLE
+            
+            // Focus input
+            binding.queryInput.requestFocus()
+            
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun createSpeechRecognizer() {
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(requireContext())
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {}
+
+            override fun onBeginningOfSpeech() {
+                voiceStatusText.text = "Te escucho..."
+            }
+
+            override fun onRmsChanged(rmsdB: Float) {
+                // Update visualizer
+                voiceVisualizer.updateAmplitude(rmsdB)
+            }
+
+            override fun onBufferReceived(buffer: ByteArray?) {}
+
+            override fun onEndOfSpeech() {
+                voiceStatusText.text = "Procesando..."
+            }
+
+            override fun onError(error: Int) {
+                isListening = false
+                voiceVisualizer.stopAnimating()
+                
+                // Hide overlay and restore input
+                voiceInputLayout.visibility = View.GONE
+                queryInputLayout.visibility = View.VISIBLE
+                
+                val errorMessage = when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No te entendí"
+                    SpeechRecognizer.ERROR_NETWORK -> "Error de conexión"
+                    else -> null
+                }
+                
+                if (errorMessage != null) {
+                    Toast.makeText(context, errorMessage, Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    val text = matches[0]
+                    binding.queryInput.setText(text)
+                    binding.queryInput.setSelection(text.length)
+                }
+                
+                // Hide overlay
+                voiceInputLayout.visibility = View.GONE
+                queryInputLayout.visibility = View.VISIBLE
+                
+                isListening = false
+                voiceVisualizer.stopAnimating()
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                     voiceStatusText.text = matches[0]
+                }
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        speechRecognizer?.destroy()
     }
 }

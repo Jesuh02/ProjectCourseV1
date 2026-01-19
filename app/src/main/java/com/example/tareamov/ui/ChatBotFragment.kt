@@ -50,8 +50,29 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.Manifest
+import androidx.activity.result.contract.ActivityResultContracts
+import com.example.tareamov.ui.widget.VoiceVisualizerView
+
 class ChatBotFragment : Fragment() {
     
+    // Voice Recognition
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var voiceIntent: Intent? = null
+    private var isListening = false
+    private lateinit var voiceInputLayout: LinearLayout
+    private lateinit var messageInputContainer: LinearLayout
+    private lateinit var voiceVisualizer: VoiceVisualizerView
+    private lateinit var stopRecordingButton: ImageButton
+    private lateinit var cancelVoiceButton: ImageButton
+    private lateinit var voiceStatusText: TextView
+    private lateinit var micButton: ImageButton
+
     // Background task tracking
     private var isProcessingLLM = false
     private var pendingPrompt: String? = null
@@ -62,6 +83,16 @@ class ChatBotFragment : Fragment() {
     private var pendingSubmissionId: Long? = null
     private var pendingTaskId: Long? = null
     
+    private val requestAudioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            startListening()
+        } else {
+            Toast.makeText(context, "Permiso de micrófono requerido para voz", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun clearChat() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
@@ -114,7 +145,9 @@ class ChatBotFragment : Fragment() {
     private lateinit var activeContextValue: TextView
     private lateinit var activeContextIcon: ImageView
     private lateinit var fabScrollToBottom: com.google.android.material.floatingactionbutton.FloatingActionButton
-
+    
+    // Voice components initialized in onViewCreated
+    
     private lateinit var chatAdapter: ChatMessageAdapter
     private lateinit var database: AppDatabase
 
@@ -537,6 +570,15 @@ class ChatBotFragment : Fragment() {
         activeContextIcon = view.findViewById(R.id.activeContextIcon)
         fabScrollToBottom = view.findViewById(R.id.fabScrollToBottom)
         
+        // Voice UI
+        voiceInputLayout = view.findViewById(R.id.voiceInputLayout)
+        messageInputContainer = view.findViewById(R.id.messageInputContainer)
+        voiceVisualizer = view.findViewById(R.id.voiceVisualizer)
+        stopRecordingButton = view.findViewById(R.id.stopRecordingButton)
+        cancelVoiceButton = view.findViewById(R.id.cancelVoiceButton)
+        voiceStatusText = view.findViewById(R.id.voiceStatusText)
+        micButton = view.findViewById(R.id.micButton)
+
         // Initialize task overlay components
         taskListOverlay = view.findViewById(R.id.taskListOverlay)
         taskListOverlayBackground = view.findViewById(R.id.taskListOverlayBackground)
@@ -867,6 +909,18 @@ class ChatBotFragment : Fragment() {
 
         sendButton.setOnClickListener {
             sendMessage()
+        }
+
+        micButton.setOnClickListener {
+            checkAudioPermissionAndStart()
+        }
+
+        stopRecordingButton.setOnClickListener {
+            stopListening()
+        }
+        
+        cancelVoiceButton.setOnClickListener {
+            stopListening()
         }
 
         gradedTasksButton.setOnClickListener {
@@ -4344,5 +4398,163 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 Log.e("ChatBotFragment", "❌ Error enviando notificación de calificación: ${e.message}", e)
             }
         }
+    }
+
+    // ============================================================================================
+    // VOICE RECOGNITION LOGIC
+    // ============================================================================================
+
+    private fun checkAudioPermissionAndStart() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                requireContext(),
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            startListening()
+        }
+    }
+
+    private fun startListening() {
+        if (isListening) return
+
+        try {
+            // Hide keyboard
+            val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.hideSoftInputFromWindow(messageEditText.windowToken, 0)
+            
+            // Toggle UI
+            messageInputContainer.visibility = View.GONE
+            voiceInputLayout.visibility = View.VISIBLE
+            
+            if (speechRecognizer == null) {
+                createSpeechRecognizer()
+            }
+
+            voiceIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            }
+
+            speechRecognizer?.startListening(voiceIntent)
+            isListening = true
+            
+            voiceStatusText.text = "Escuchando..."
+            voiceVisualizer.startAnimating()
+            
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error al iniciar voz: ${e.message}", Toast.LENGTH_SHORT).show()
+            e.printStackTrace()
+            // Restore UI on error
+            messageInputContainer.visibility = View.VISIBLE
+            voiceInputLayout.visibility = View.GONE
+        }
+    }
+
+    private fun stopListening() {
+        if (!isListening) {
+             // Ensure UI is reset even if we weren't "listening" but UI was showing
+             if (voiceInputLayout.visibility == View.VISIBLE) {
+                 voiceInputLayout.visibility = View.GONE
+                 messageInputContainer.visibility = View.VISIBLE
+             }
+             return
+        }
+        
+        try {
+            speechRecognizer?.stopListening()
+            isListening = false
+            voiceVisualizer.stopAnimating()
+            
+            // Restore UI
+            voiceInputLayout.visibility = View.GONE
+            messageInputContainer.visibility = View.VISIBLE
+            
+            // Focus input
+            messageEditText.requestFocus()
+            
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun createSpeechRecognizer() {
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(requireContext())
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                Log.d("ChatBotFragment", "Voice: onReadyForSpeech")
+            }
+
+            override fun onBeginningOfSpeech() {
+                Log.d("ChatBotFragment", "Voice: onBeginningOfSpeech")
+                voiceStatusText.text = "Te escucho..."
+            }
+
+            override fun onRmsChanged(rmsdB: Float) {
+                // Update visualizer
+                voiceVisualizer.updateAmplitude(rmsdB)
+            }
+
+            override fun onBufferReceived(buffer: ByteArray?) {}
+
+            override fun onEndOfSpeech() {
+                Log.d("ChatBotFragment", "Voice: onEndOfSpeech")
+                voiceStatusText.text = "Procesando..."
+            }
+
+            override fun onError(error: Int) {
+                Log.e("ChatBotFragment", "Voice error: $error")
+                isListening = false
+                voiceVisualizer.stopAnimating()
+                
+                // Hide overlay and restore input
+                voiceInputLayout.visibility = View.GONE
+                messageInputContainer.visibility = View.VISIBLE
+                
+                val errorMessage = when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No te entendí"
+                    SpeechRecognizer.ERROR_NETWORK -> "Error de conexión"
+                    SpeechRecognizer.ERROR_AUDIO -> "Error de audio"
+                    else -> "Error de voz ($error)"
+                }
+                
+                if (error != SpeechRecognizer.ERROR_CLIENT) {
+                    Toast.makeText(context, errorMessage, Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            override fun onResults(results: Bundle?) {
+                Log.d("ChatBotFragment", "Voice: onResults")
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    val text = matches[0]
+                    messageEditText.setText(text)
+                    messageEditText.setSelection(text.length)
+                }
+                
+                // Hide overlay and restore input
+                voiceInputLayout.visibility = View.GONE
+                messageInputContainer.visibility = View.VISIBLE
+                
+                isListening = false
+                voiceVisualizer.stopAnimating()
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                     voiceStatusText.text = matches[0]
+                }
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        speechRecognizer?.destroy()
     }
 }
