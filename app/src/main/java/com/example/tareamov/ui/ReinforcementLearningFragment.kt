@@ -6,6 +6,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.compose.ui.platform.ComposeView
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import com.example.tareamov.service.ServerEndpointResolver
 import androidx.compose.runtime.produceState
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
@@ -20,6 +24,41 @@ class ReinforcementLearningFragment : Fragment() {
 
     private lateinit var viewModel: ReinforcementLearningViewModel
     private var fragmentCourseId: Long = -1L
+    private lateinit var mcpHttpClient: com.example.tareamov.service.MCPHttpClient
+
+    override fun onAttach(context: android.content.Context) {
+        super.onAttach(context)
+        try {
+            mcpHttpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
+        } catch (e: Exception) {
+            android.util.Log.w("ReinforceFrag", "Failed to init MCPHttpClient: ${e.message}")
+        }
+
+        // Pre-warm resolver: choose local quickly or fallback to cloud
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val base = try { kotlinx.coroutines.withTimeoutOrNull(200) { ServerEndpointResolver.fastResolveMcpBaseUrl() } } catch (e: Exception) { null }
+                if (!base.isNullOrBlank() && base != ServerEndpointResolver.RAILWAY_MCP_URL) {
+                    // Quick verification: only force local base if reachable immediately
+                    val reachable = try { ServerEndpointResolver.isServiceReachable(base, "/health") } catch (e: Exception) { false }
+                    if (reachable) {
+                        try { mcpHttpClient.setForcedBaseUrl(base) } catch (_: Exception) {}
+                        android.util.Log.i("ReinforceFrag", "Resolved and verified local MCP base for fragment: $base")
+                    } else {
+                        try { mcpHttpClient.setForcedBaseUrl(ServerEndpointResolver.RAILWAY_MCP_URL) } catch (_: Exception) {}
+                        android.util.Log.w("ReinforceFrag", "fastResolve returned local host but it was not reachable - using cloud: ${ServerEndpointResolver.RAILWAY_MCP_URL}")
+                    }
+                } else {
+                    // Fast fallback to cloud if no local backend found or resolver returned cloud
+                    try { mcpHttpClient.setForcedBaseUrl(ServerEndpointResolver.RAILWAY_MCP_URL) } catch (_: Exception) {}
+                    android.util.Log.w("ReinforceFrag", "No local MCP resolved or resolver returned cloud; falling back to cloud: ${ServerEndpointResolver.RAILWAY_MCP_URL}")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("ReinforceFrag", "fastResolve failed: ${e.message}")
+                try { mcpHttpClient.setForcedBaseUrl(ServerEndpointResolver.RAILWAY_MCP_URL) } catch (_: Exception) {}
+            }
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -122,17 +161,37 @@ class ReinforcementLearningFragment : Fragment() {
                         findNavController().popBackStack()
                     },
                     onStartClick = {
-                        // ALWAYS force regeneration to get NEW questions from the server
-                        // This ensures a fresh call to the backend every time
-                        android.util.Log.d("ReinforceFrag", "═══════════════════════════════════════════════════")
-                        android.util.Log.d("ReinforceFrag", "🚀 onStartClick TRIGGERED!")
-                        android.util.Log.d("ReinforceFrag", "   📚 courseId: $courseId")
-                        android.util.Log.d("ReinforceFrag", "   📖 courseName: $courseName")
-                        android.util.Log.d("ReinforceFrag", "   📑 topicId: $topicId")
-                        android.util.Log.d("ReinforceFrag", "   📝 taskId: $taskId")
-                        android.util.Log.d("ReinforceFrag", "   🔥 Calling viewModel.forceRegenerateQuestions()...")
-                        android.util.Log.d("ReinforceFrag", "═══════════════════════════════════════════════════")
-                        viewModel.forceRegenerateQuestions(courseId, courseName, topicId, taskId)
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            android.util.Log.d("ReinforceFrag", "═══════════════════════════════════════════════════")
+                            android.util.Log.d("ReinforceFrag", "🚀 onStartClick TRIGGERED!")
+                            android.util.Log.d("ReinforceFrag", "   📚 courseId: $courseId")
+                            android.util.Log.d("ReinforceFrag", "   📖 courseName: $courseName")
+                            android.util.Log.d("ReinforceFrag", "   📑 topicId: $topicId")
+                            android.util.Log.d("ReinforceFrag", "   📝 taskId: $taskId")
+                            android.util.Log.d("ReinforceFrag", "   🔍 Checking local MCP health before regenerating...")
+
+                            // Use fastResolve to determine quickly whether a local host exists.
+                            // Use fastResolve to determine quickly whether a local host exists.
+                            val resolved = try { ServerEndpointResolver.fastResolveMcpBaseUrl() } catch (e: Exception) { null }
+                            if (!resolved.isNullOrBlank() && resolved != ServerEndpointResolver.RAILWAY_MCP_URL) {
+                                val verified = try { ServerEndpointResolver.isServiceReachable(resolved, "/health") } catch (e: Exception) { false }
+                                if (verified) {
+                                    android.util.Log.d("ReinforceFrag", "Local MCP resolved quickly and verified: $resolved — using local")
+                                    try { mcpHttpClient.setForcedBaseUrl(resolved) } catch (_: Exception) {}
+                                } else {
+                                    android.util.Log.w("ReinforceFrag", "Resolved local MCP not reachable — using cloud immediately: ${ServerEndpointResolver.RAILWAY_MCP_URL}")
+                                    try { mcpHttpClient.setForcedBaseUrl(ServerEndpointResolver.RAILWAY_MCP_URL) } catch (_: Exception) {}
+                                }
+                            } else {
+                                android.util.Log.w("ReinforceFrag", "No local MCP resolved quickly — using cloud immediately: ${ServerEndpointResolver.RAILWAY_MCP_URL}")
+                                try { mcpHttpClient.setForcedBaseUrl(ServerEndpointResolver.RAILWAY_MCP_URL) } catch (_: Exception) {}
+                            }
+
+                            // Always invoke the ViewModel; it will use the forced base URL set above
+                            // and will do a very fast local attempt or immediate cloud call accordingly.
+                            viewModel.forceRegenerateQuestions(courseId, courseName, topicId, taskId)
+                            android.util.Log.d("ReinforceFrag", "═══════════════════════════════════════════════════")
+                        }
                     },
                     viewModel = viewModel
                 )

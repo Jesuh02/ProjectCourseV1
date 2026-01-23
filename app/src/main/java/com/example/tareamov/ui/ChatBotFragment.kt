@@ -22,6 +22,10 @@ import com.example.tareamov.data.entity.TaskSubmission
 
 import com.example.tareamov.service.FileAnalysisService
 import com.example.tareamov.service.TTSService
+import com.example.tareamov.service.ServerEndpointResolver
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import com.google.gson.Gson
 import com.example.tareamov.ui.adapter.ChatMessageAdapter
 import com.example.tareamov.adapter.TaskOverlayAdapter
 import com.example.tareamov.adapter.TaskItem
@@ -60,7 +64,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import com.example.tareamov.ui.widget.VoiceVisualizerView
 
 class ChatBotFragment : Fragment() {
-    
+
     // Voice Recognition
     private var speechRecognizer: SpeechRecognizer? = null
     private var voiceIntent: Intent? = null
@@ -82,7 +86,7 @@ class ChatBotFragment : Fragment() {
     private var pendingMetadata: String? = null
     private var pendingSubmissionId: Long? = null
     private var pendingTaskId: Long? = null
-    
+
     private val requestAudioPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
@@ -100,7 +104,7 @@ class ChatBotFragment : Fragment() {
             }
             Toast.makeText(context, "Chat limpiado", Toast.LENGTH_SHORT).show()
             chatAdapter.submitList(emptyList())
-            
+
             // Limpiar también la lista de tareas calificadas en memoria
             gradedTasksList.clear()
             gradedTaskOverlayAdapter.updateGradedTasks(emptyList())
@@ -145,9 +149,9 @@ class ChatBotFragment : Fragment() {
     private lateinit var activeContextValue: TextView
     private lateinit var activeContextIcon: ImageView
     private lateinit var fabScrollToBottom: com.google.android.material.floatingactionbutton.FloatingActionButton
-    
+
     // Voice components initialized in onViewCreated
-    
+
     private lateinit var chatAdapter: ChatMessageAdapter
     private lateinit var database: AppDatabase
 
@@ -157,6 +161,52 @@ class ChatBotFragment : Fragment() {
     // Listener instance so we can remove it in onDestroyView
     private var sessionChangeListener: com.example.tareamov.util.SessionManager.UserChangeListener? = null
     private lateinit var syncRepository: com.example.tareamov.data.sync.SyncRepository
+
+    private lateinit var mcpHttpClient: com.example.tareamov.service.MCPHttpClient
+
+    override fun onAttach(context: android.content.Context) {
+        super.onAttach(context)
+        try {
+            mcpHttpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
+        } catch (e: Exception) {
+            Log.w("ChatBotFragment", "Failed to init MCPHttpClient: ${e.message}")
+        }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // If a forced URL was saved (via prefs), honor it first
+                ServerEndpointResolver.getForcedMcpBaseUrl()?.let { forced ->
+                    try {
+                        if (ServerEndpointResolver.isServiceReachable(forced)) {
+                            mcpHttpClient.setForcedBaseUrl(forced)
+                            Log.i("ChatBotFragment", "Using forced MCP URL from prefs: $forced")
+                            return@launch
+                        } else {
+                            Log.w("ChatBotFragment", "Forced MCP URL not reachable: $forced")
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                // Fast-resolve (gateway + subnet probes) with ServerEndpointResolver (short bounded wait)
+                try {
+                    val resolved = kotlinx.coroutines.withTimeoutOrNull(200) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
+                    if (!resolved.isNullOrBlank()) {
+                        mcpHttpClient.setForcedBaseUrl(resolved)
+                        Log.i("ChatBotFragment", "Fast-resolved MCP base URL: $resolved")
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    Log.d("ChatBotFragment", "fastResolve failed: ${e.message}")
+                }
+
+                // Fallback to cloud
+                mcpHttpClient.setForcedBaseUrl(ServerEndpointResolver.RAILWAY_MCP_URL)
+                Log.i("ChatBotFragment", "Falling back to cloud MCP: ${ServerEndpointResolver.RAILWAY_MCP_URL}")
+            } catch (e: Exception) {
+                Log.w("ChatBotFragment", "Error resolving MCP base: ${e.message}")
+            }
+        }
+    }
 
     // Runtime host selection: choose correct host for emulator vs physical device
     private fun isRunningOnEmulator(): Boolean {
@@ -180,7 +230,7 @@ class ChatBotFragment : Fragment() {
             try {
                 val wifiManager = requireContext().applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
                 val dhcpInfo = wifiManager.dhcpInfo
-                
+
                 // Convertir la IP del gateway a formato legible
                 val gatewayInt = dhcpInfo.gateway
                 val gateway = String.format(
@@ -190,9 +240,9 @@ class ChatBotFragment : Fragment() {
                     gatewayInt shr 16 and 0xff,
                     gatewayInt shr 24 and 0xff
                 )
-                
+
                 Log.d("ChatBotFragment", "Gateway IP detected: $gateway")
-                
+
                 // La IP del PC suele estar en la misma subred que el gateway
                 // Intentar con la IP del dispositivo actual para deducir la red
                 val myIpInt = dhcpInfo.ipAddress
@@ -203,12 +253,12 @@ class ChatBotFragment : Fragment() {
                     myIpInt shr 16 and 0xff,
                     myIpInt shr 24 and 0xff
                 )
-                
+
                 Log.d("ChatBotFragment", "Device IP: $myIp")
-                
+
                 // Extraer la red base (primeros 3 octetos)
                 val networkBase = myIp.substringBeforeLast(".")
-                
+
                 // Probar IPs comunes en redes locales donde suele estar el servidor
                 // Generalmente los PCs tienen IPs más bajas que los móviles
                 val commonServerIps = listOf(
@@ -218,12 +268,12 @@ class ChatBotFragment : Fragment() {
                     "$networkBase.2",
                     gateway             // El gateway mismo en algunos casos
                 )
-                
+
                 // Retornar la primera IP que funcione (en el futuro se puede hacer ping)
                 // Por ahora retornamos la más probable (.90 o .100)
-                return commonServerIps.firstOrNull { testConnection(it, 3001, 1000) } 
+                return commonServerIps.firstOrNull { testConnection(it, 3001, 1000) }
                     ?: "$networkBase.90"  // Fallback a .90
-                    
+
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error detecting host IP: ${e.message}")
                 // Fallback: usar IP común en redes 192.168.1.x
@@ -231,7 +281,7 @@ class ChatBotFragment : Fragment() {
             }
         }
     }
-    
+
     /**
      * Prueba si hay conexión al servidor en la IP y puerto especificados
      */
@@ -249,7 +299,13 @@ class ChatBotFragment : Fragment() {
     }
 
     private fun getMicroserviceBaseUrl(): String {
-        // Use Railway Cloud in production
+        // Prefer a locally-resolved MCP host when available (fast path for physical devices).
+        // `peekMcpBaseUrl()` is non-suspending and returns the last-known good host (if any).
+        val local = try { ServerEndpointResolver.peekMcpBaseUrl() } catch (_: Exception) { null }
+        if (!local.isNullOrBlank()) {
+            return if (local.endsWith("/")) local else "$local/"
+        }
+        // Fallback to Railway Cloud in production
         return "https://mcp-backenddeploy-production.up.railway.app/"
     }
 
@@ -257,34 +313,39 @@ class ChatBotFragment : Fragment() {
         // Ollama is now replaced by DeepSeek in the cloud backend
         return "https://mcp-backenddeploy-production.up.railway.app"
     }
-    // Aumentar los timeouts para evitar que el chat cierre la espera antes de que el modelo responda
-    private val microservicioApi: MicroservicioApi by lazy {
+    // Build a MicroservicioApi instance on demand using the currently resolved base URL.
+    private fun buildMicroservicioApi(): MicroservicioApi {
         val okHttpClient = okhttp3.OkHttpClient.Builder()
             .connectTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
             .addInterceptor { chain ->
-                // Agregar el header X-API-Key a todas las peticiones al microservicio
                 val originalRequest = chain.request()
                 val requestWithApiKey = originalRequest.newBuilder()
                     .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
                     .header("Content-Type", "application/json")
-                    .header("Connection", "close") // Forzar cierre de conexión para evitar hangs
+                    .header("Connection", "close")
                     .build()
                 chain.proceed(requestWithApiKey)
             }
             .build()
+
+        val base = getMicroserviceBaseUrl()
         val retrofit = Retrofit.Builder()
-            .baseUrl(getMicroserviceBaseUrl())
+            .baseUrl(if (base.endsWith("/")) base else "$base/")
             .addConverterFactory(GsonConverterFactory.create())
             .client(okHttpClient)
             .build()
-        retrofit.create(MicroservicioApi::class.java)
+        return retrofit.create(MicroservicioApi::class.java)
     }
+
+    // Expose a property-like accessor so existing call sites can use `microservicioApi`.
+    private val microservicioApi: MicroservicioApi
+        get() = buildMicroservicioApi()
 
     private val sessionId = UUID.randomUUID().toString()
     private var currentFileContext: FileContext? = null
-    
+
     // Variables para monitorear el cursor y mostrar la lista de tareas
     private var lastCursorPosition = -1
     private val cursorCheckHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -300,7 +361,7 @@ class ChatBotFragment : Fragment() {
             }
         }
     }
-    
+
     // Variables para almacenar información de la tarea, tema y curso
     private var taskName: String = ""
     private var taskDescription: String = ""
@@ -308,7 +369,7 @@ class ChatBotFragment : Fragment() {
     private var courseTitle: String = ""
     private var deliveryDate: String = ""
     private var courseId: Long = -1L // ID del curso actual para obtener tareas
-    
+
     // UI Components for task overlay
     private lateinit var taskListOverlay: androidx.cardview.widget.CardView
     private lateinit var taskListOverlayBackground: View
@@ -324,7 +385,7 @@ class ChatBotFragment : Fragment() {
     private var isSelectingCourse = true
     private var selectedCourseId: Long = -1L
     private var selectedCourseTitle: String = ""
-    
+
     // UI Components for graded tasks overlay
     private lateinit var gradedTasksOverlay: androidx.cardview.widget.CardView
     private lateinit var gradedTasksOverlayBackground: View
@@ -333,7 +394,7 @@ class ChatBotFragment : Fragment() {
     private lateinit var closeGradedTasksButton: ImageButton
     private lateinit var gradedTaskOverlayAdapter: com.example.tareamov.adapter.GradedTaskOverlayAdapter
     private val gradedTasksList: MutableList<GradedTaskItem> = mutableListOf()
-    
+
     private var isUpdatingTextSpans: Boolean = false
 
     /**
@@ -350,7 +411,7 @@ class ChatBotFragment : Fragment() {
         return try {
             // Obtener el ID del usuario autenticado para notificaciones
             val currentUserId = sessionManager.getUserId()
-            
+
             if (!esPreguntaNota) {
                 // Solo llama3 responde
                 val request = com.example.tareamov.network.MicroservicioPromptRequest(
@@ -360,8 +421,14 @@ class ChatBotFragment : Fragment() {
                     fileContent = fileContent,
                     userId = currentUserId
                 )
-                val response = microservicioApi.procesarPrompt(request)
-                response.respuesta_texto ?: "No se pudo obtener respuesta."
+                // Try local Docker MCP quickly first; if no result, fall back to cloud Retrofit call
+                val local = tryLocalProcesarPrompt(request)
+                if (local != null) {
+                    local.respuesta_texto ?: local.error ?: "No se pudo obtener respuesta."
+                } else {
+                    val response = microservicioApi.procesarPrompt(request)
+                    response.respuesta_texto ?: "No se pudo obtener respuesta."
+                }
             } else {
                 // gemma3n analiza y da veredicto, llama3 da feedback
                 val request = com.example.tareamov.network.MicroservicioPromptRequest(
@@ -371,11 +438,116 @@ class ChatBotFragment : Fragment() {
                     fileContent = fileContent,
                     userId = currentUserId
                 )
-                val response = microservicioApi.procesarPrompt(request)
-                response.respuesta_texto ?: "No se pudo obtener respuesta."
+                val local = tryLocalProcesarPrompt(request)
+                if (local != null) {
+                    local.respuesta_texto ?: local.error ?: "No se pudo obtener respuesta."
+                } else {
+                    val response = microservicioApi.procesarPrompt(request)
+                    response.respuesta_texto ?: "No se pudo obtener respuesta."
+                }
             }
         } catch (e: Exception) {
             "Error al procesar la entrega: ${e.message}"
+        }
+    }
+
+    // Fast local attempt to POST /procesar-prompt on candidate local hosts.
+    private suspend fun tryLocalProcesarPrompt(request: com.example.tareamov.network.MicroservicioPromptRequest): com.example.tareamov.network.MicroservicioPromptResponse? {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Ask resolver for the fastest candidate (parallel, short timeout)
+                val resolved = try {
+                    ServerEndpointResolver.fastResolveMcpBaseUrl()
+                } catch (e: Exception) {
+                    Log.d("ChatBotFragment", "fastResolve failed: ${e.message}")
+                    null
+                }
+
+                // If resolver immediately returned the cloud URL, short-circuit to cloud
+                if (resolved == null || resolved == ServerEndpointResolver.RAILWAY_MCP_URL) {
+                    Log.d("ChatBotFragment", "fastResolve indicates cloud or none; skipping local attempts and using cloud immediately")
+                    // Build a Retrofit call directly to cloud to return result quickly
+                    try {
+                        val ok = okhttp3.OkHttpClient.Builder()
+                            .connectTimeout(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                            .writeTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                            .build()
+
+                        val retrofit = Retrofit.Builder()
+                            .baseUrl(if (ServerEndpointResolver.RAILWAY_MCP_URL.endsWith("/")) ServerEndpointResolver.RAILWAY_MCP_URL else ServerEndpointResolver.RAILWAY_MCP_URL + "/")
+                            .addConverterFactory(GsonConverterFactory.create())
+                            .client(ok)
+                            .build()
+
+                        val api = retrofit.create(com.example.tareamov.network.MicroservicioApi::class.java)
+                        return@withContext api.procesarPrompt(request)
+                    } catch (e: Exception) {
+                        Log.d("ChatBotFragment", "Cloud immediate call failed: ${e.message}")
+                        return@withContext null
+                    }
+                }
+
+                // Otherwise, try the resolved local host quickly with tight timeouts
+                val localBase = resolved.trimEnd('/')
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(80, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    .readTimeout(1200, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    .build()
+
+                val mediaType = "application/json; charset=utf-8".toMediaType()
+                val payload = Gson().toJson(request)
+                val url = if (localBase.endsWith("/")) localBase + "procesar-prompt" else "$localBase/procesar-prompt"
+
+                try {
+                    val req = Request.Builder()
+                        .url(url)
+                        .post(payload.toRequestBody(mediaType))
+                        .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
+                        .header("Connection", "close")
+                        .build()
+
+                    client.newCall(req).execute().use { resp ->
+                        val body = resp.body?.string() ?: ""
+                        if (resp.isSuccessful && body.isNotBlank()) {
+                            try {
+                                val gson = Gson()
+                                return@withContext gson.fromJson(body, com.example.tareamov.network.MicroservicioPromptResponse::class.java)
+                            } catch (e: Exception) {
+                                return@withContext com.example.tareamov.network.MicroservicioPromptResponse(respuesta_texto = body)
+                            }
+                        } else {
+                            Log.d("ChatBotFragment", "Local host responded non-success: ${resp.code}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d("ChatBotFragment", "Local quick attempt error for $localBase: ${e.message}")
+                }
+
+                // If local attempt failed, immediately call cloud (fast fallback)
+                try {
+                    val ok = okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .writeTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+
+                    val retrofit = Retrofit.Builder()
+                        .baseUrl(if (ServerEndpointResolver.RAILWAY_MCP_URL.endsWith("/")) ServerEndpointResolver.RAILWAY_MCP_URL else ServerEndpointResolver.RAILWAY_MCP_URL + "/")
+                        .addConverterFactory(GsonConverterFactory.create())
+                        .client(ok)
+                        .build()
+
+                    val api = retrofit.create(com.example.tareamov.network.MicroservicioApi::class.java)
+                    return@withContext api.procesarPrompt(request)
+                } catch (e: Exception) {
+                    Log.d("ChatBotFragment", "Cloud fallback call failed: ${e.message}")
+                    return@withContext null
+                }
+            } catch (e: Exception) {
+                Log.d("ChatBotFragment", "tryLocalProcesarPrompt error: ${e.message}")
+            }
+            null
         }
     }
 
@@ -432,17 +604,17 @@ class ChatBotFragment : Fragment() {
         loadFileContextFromArguments()
 
 
-        
+
         // Inicializar monitoreo del cursor para mostrar lista de tareas
         cursorCheckHandler.post(cursorCheckRunnable)
-        
+
         // Cargar tareas calificadas persistidas al inicializar
         loadGradedTasksOnStart()
-        
+
         // Setup keyboard handling para que no tape el contenido
         setupKeyboardHandling(view)
     }
-    
+
     /**
      * Configura el manejo del teclado estilo ChatGPT:
      * - El topbar permanece fijo arriba
@@ -452,19 +624,19 @@ class ChatBotFragment : Fragment() {
     private fun setupKeyboardHandling(view: View) {
         val rootLayout = view.findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.chatBotRootLayout)
         val inputAreaWrapper = view.findViewById<LinearLayout>(R.id.inputAreaWrapper)
-        
+
         // Usar WindowInsets para detectar el teclado y ajustar solo el área de input
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { v, insets ->
             val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
             val navigationBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            
+
             // Mover el inputAreaWrapper hacia arriba cuando aparece el teclado
             val bottomPadding = if (imeInsets.bottom > 0) {
                 imeInsets.bottom
             } else {
                 navigationBars.bottom
             }
-            
+
             // Aplicar el padding solo al área de input (no a toda la vista)
             inputAreaWrapper.setPadding(
                 inputAreaWrapper.paddingLeft,
@@ -472,7 +644,7 @@ class ChatBotFragment : Fragment() {
                 inputAreaWrapper.paddingRight,
                 bottomPadding
             )
-            
+
             // Scroll al último mensaje cuando aparece el teclado
             if (imeInsets.bottom > 0) {
                 messagesRecyclerView.post {
@@ -481,10 +653,10 @@ class ChatBotFragment : Fragment() {
                     }
                 }
             }
-            
+
             insets
         }
-        
+
         // Solicitar insets
         ViewCompat.requestApplyInsets(rootLayout)
     }
@@ -498,17 +670,17 @@ class ChatBotFragment : Fragment() {
         // Detener reproducción TTS si está activa
         ttsService.stopPlayback()
     }
-    
+
     override fun onStop() {
         super.onStop()
-        
+
         // If there's an ongoing LLM request, schedule it as background task
         if (isProcessingLLM && pendingPrompt != null) {
             Log.d("ChatBotFragment", "🔄 App going to background - scheduling LLM task to continue")
-            
+
             val userId = sessionManager.getUserId() ?: -1L
             val username = sessionManager.getUsername() ?: "unknown"
-            
+
             if (userId > 0) {
                 BackgroundTaskManager.scheduleChatMessage(
                     context = requireContext(),
@@ -523,15 +695,15 @@ class ChatBotFragment : Fragment() {
                     submissionId = pendingSubmissionId,
                     taskId = pendingTaskId
                 )
-                
+
                 Toast.makeText(context, "📋 La tarea continuará en segundo plano", Toast.LENGTH_SHORT).show()
             }
-            
+
             // Clear pending data
             clearPendingTaskData()
         }
     }
-    
+
     private fun clearPendingTaskData() {
         isProcessingLLM = false
         pendingPrompt = null
@@ -546,14 +718,14 @@ class ChatBotFragment : Fragment() {
     private fun initializeViews(view: View) {
         // Handle TopBar Insets for status bar only - with minimal padding
         val topBar = view.findViewById<LinearLayout>(R.id.topBar)
-        
+
         ViewCompat.setOnApplyWindowInsetsListener(topBar) { v, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             // Solo agregar el padding de la barra de estado, sin padding adicional
             v.setPadding(v.paddingLeft, statusBars.top, v.paddingRight, v.paddingBottom)
             insets
         }
-        
+
         // Forzar que el topBar siempre esté arriba incluso durante animaciones
         topBar.post {
             topBar.bringToFront()
@@ -569,7 +741,7 @@ class ChatBotFragment : Fragment() {
         activeContextValue = view.findViewById(R.id.activeContextValue)
         activeContextIcon = view.findViewById(R.id.activeContextIcon)
         fabScrollToBottom = view.findViewById(R.id.fabScrollToBottom)
-        
+
         // Voice UI
         voiceInputLayout = view.findViewById(R.id.voiceInputLayout)
         messageInputContainer = view.findViewById(R.id.messageInputContainer)
@@ -588,14 +760,14 @@ class ChatBotFragment : Fragment() {
         backToCoursesButton = view.findViewById(R.id.backToCoursesButton)
         overlayTitleTextView = view.findViewById(R.id.overlayTitleTextView)
         overlaySearchEditText = view.findViewById(R.id.overlaySearchEditText)
-        
+
         // Initialize graded tasks overlay components
         gradedTasksOverlay = view.findViewById(R.id.gradedTasksOverlay)
         gradedTasksOverlayBackground = view.findViewById(R.id.gradedTasksOverlayBackground)
         gradedTasksRecyclerView = view.findViewById(R.id.gradedTasksRecyclerView)
         gradedCourseNameTextView = view.findViewById(R.id.gradedCourseNameTextView)
         closeGradedTasksButton = view.findViewById(R.id.closeGradedTasksButton)
-        
+
         // Setup task overlay adapter
         taskOverlayAdapter = TaskOverlayAdapter(emptyList()) { task ->
             onTaskSelected(task)
@@ -622,7 +794,7 @@ class ChatBotFragment : Fragment() {
             val submissionId = args.getLong("submissionId", -1L)
             val errorMessage = args.getString("errorMessage")
             val fileName = args.getString("fileName")
-            
+
             // LOGGING DETALLADO PARA DEBUGGING
             Log.d("ChatBotFragment", "==============================================")
             Log.d("ChatBotFragment", "📋 LOADING FILE CONTEXT FROM ARGUMENTS:")
@@ -635,7 +807,7 @@ class ChatBotFragment : Fragment() {
             // Retrieve task info from arguments to update UI immediately
             val argTaskName = args.getString("taskName")
             val argTaskDescription = args.getString("taskDescription")
-            
+
             if (!argTaskName.isNullOrEmpty()) {
                 taskName = argTaskName
                 if (::activeContextValue.isInitialized) {
@@ -646,7 +818,7 @@ class ChatBotFragment : Fragment() {
                     }
                 }
             }
-            
+
             if (!argTaskDescription.isNullOrEmpty()) {
                 taskDescription = argTaskDescription
             }
@@ -736,10 +908,10 @@ class ChatBotFragment : Fragment() {
                     Log.w("ChatBotFragment", "Exception fetching FileContext from Supabase for submissionId=$submissionId: ${e.message}")
                 }
             }
-            
+
             // Cargar información de la tarea, tema y curso
             updateCourseInfo(submissionId)
-            
+
             // Logging mínimo
             Log.d("ChatBotFragment", "🔍 FileContext cargado - submissionId: $submissionId, presente: ${currentFileContext != null}")
             if (currentFileContext != null) {
@@ -835,7 +1007,7 @@ class ChatBotFragment : Fragment() {
             override fun onUserChanged(previousUser: String?, newUser: String?) {
                 val updated = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUserAvatar()
                 chatAdapter.setUserAvatarUrl(updated)
-                
+
                 // Also try to fetch fresh avatar from Supabase
                 lifecycleScope.launch {
                     try {
@@ -867,17 +1039,17 @@ class ChatBotFragment : Fragment() {
                     }, 100)
                 }
             }
-            
+
             // Listener para mostrar/ocultar FAB según posición del scroll
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
                 override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                     super.onScrolled(recyclerView, dx, dy)
-                    
+
                     val layoutManager = recyclerView.layoutManager as? LinearLayoutManager
                     if (layoutManager != null && chatAdapter.itemCount > 0) {
                         val lastVisiblePosition = layoutManager.findLastCompletelyVisibleItemPosition()
                         val lastItemPosition = chatAdapter.itemCount - 1
-                        
+
                         // Mostrar FAB si no estamos en el último mensaje
                         if (lastVisiblePosition < lastItemPosition) {
                             showScrollToBottomFab()
@@ -918,7 +1090,7 @@ class ChatBotFragment : Fragment() {
         stopRecordingButton.setOnClickListener {
             stopListening()
         }
-        
+
         cancelVoiceButton.setOnClickListener {
             stopListening()
         }
@@ -930,7 +1102,7 @@ class ChatBotFragment : Fragment() {
         clearChatButton.setOnClickListener {
             clearChat()
         }
-        
+
         fabScrollToBottom.setOnClickListener {
             scrollToBottomSmooth()
         }
@@ -967,7 +1139,7 @@ class ChatBotFragment : Fragment() {
             true
         }
 
-    // Detect "#" character to show task list and highlight references
+        // Detect "#" character to show task list and highlight references
         messageEditText.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -987,7 +1159,7 @@ class ChatBotFragment : Fragment() {
                     // Scroll to bottom when new messages are added
                     if (messages.isNotEmpty()) {
                         messagesRecyclerView.smoothScrollToPosition(messages.size - 1)
-                        
+
                         // Ocultar FAB cuando hay scroll automático al final
                         messagesRecyclerView.postDelayed({
                             hideScrollToBottomFab()
@@ -1007,22 +1179,22 @@ class ChatBotFragment : Fragment() {
      */
     private fun showEditMessageDialog(message: ChatMessage) {
         val context = context ?: return
-        
+
         val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_edit_message, null)
         val editMessageInput = dialogView.findViewById<EditText>(R.id.editMessageInput)
         val saveButton = dialogView.findViewById<View>(R.id.saveButton)
         val cancelButton = dialogView.findViewById<View>(R.id.cancelButton)
-        
+
         editMessageInput.setText(message.message)
         editMessageInput.setSelection(message.message.length)
-        
+
         val dialog = androidx.appcompat.app.AlertDialog.Builder(context)
             .setView(dialogView)
             .setCancelable(true)
             .create()
-            
+
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        
+
         saveButton.setOnClickListener {
             val newText = editMessageInput.text.toString().trim()
             if (newText.isNotEmpty() && newText != message.message) {
@@ -1030,11 +1202,11 @@ class ChatBotFragment : Fragment() {
             }
             dialog.dismiss()
         }
-        
+
         cancelButton.setOnClickListener {
             dialog.dismiss()
         }
-        
+
         dialog.show()
     }
 
@@ -1045,22 +1217,22 @@ class ChatBotFragment : Fragment() {
                 // Update the message text
                 val updatedMessage = message.copy(message = newText)
                 database.chatMessageDao().updateMessage(updatedMessage)
-                
+
                 // Delete all messages AFTER this one
                 val allMessages = database.chatMessageDao().getAllMessages().first()
                 val messageIndex = allMessages.indexOfFirst { it.id == message.id }
-                
+
                 if (messageIndex != -1 && messageIndex < allMessages.size - 1) {
                     val messagesToDelete = allMessages.subList(messageIndex + 1, allMessages.size)
-                    messagesToDelete.forEach { 
-                        database.chatMessageDao().deleteMessage(it) 
+                    messagesToDelete.forEach {
+                        database.chatMessageDao().deleteMessage(it)
                     }
                 }
             }
-            
+
             // 2. Refresh UI
             loadMessages()
-            
+
             // 3. Resend to LLM (Reuse sendMessage logic but without creating new user message)
             // We'll call a modified version of the logic inside sendMessage
             processMessageWithLLM(newText)
@@ -1070,7 +1242,7 @@ class ChatBotFragment : Fragment() {
     private fun processMessageWithLLM(messageText: String) {
         lifecycleScope.launch {
             loadingProgressBar.visibility = View.VISIBLE
-            
+
             // Prepare context variables (similar to sendMessage)
             val effectiveTaskDescription = taskDescription
             val effectiveFileContent = currentFileContext?.fileContent ?: ""
@@ -1078,7 +1250,7 @@ class ChatBotFragment : Fragment() {
             val effectiveMetadata = currentFileContext?.metadata ?: ""
             val currentSubmissionId = currentFileContext?.submissionId
             val currentTaskIdForRequest = currentSubmissionId
-            
+
             // Track pending task data for background processing if app goes to background
             isProcessingLLM = true
             pendingPrompt = messageText
@@ -1096,7 +1268,7 @@ class ChatBotFragment : Fragment() {
                 val llmResponse = withContext(Dispatchers.IO) {
                     try {
                         val currentStudentId = sessionManager.getUserId()
-                        
+
                         val body = com.example.tareamov.network.MicroservicioPromptRequest(
                             prompt = messageText,
                             ollamaUrl = getOllamaUrl(),
@@ -1109,12 +1281,12 @@ class ChatBotFragment : Fragment() {
                             taskId = currentTaskIdForRequest,
                             studentId = currentStudentId,
                             fileUri = null
-                        )   
-                        
+                        )
+
                         val currentUserId = sessionManager.getUserId()
                         val bodyWithUserId = body.copy(userId = currentUserId)
                         val res = microservicioApi.procesarPrompt(bodyWithUserId)
-                        
+
                         if (res.respuesta_texto.isNullOrBlank()) {
                             if (effectiveFileContent.isBlank() || effectiveFileContent.length < 50) {
                                 LLMResponse("El archivo enviado está vacío o no se pudo leer su contenido.", 0f)
@@ -1128,12 +1300,12 @@ class ChatBotFragment : Fragment() {
                         LLMResponse("Error al procesar la solicitud: ${e.message}", null)
                     }
                 }
-                
+
                 // Clear pending data - task completed successfully
                 clearPendingTaskData()
-                
+
                 val response = llmResponse.text.replace("#", "").replace("**", "")
-                
+
                 val hasCalification = detectCalification(messageText, response) || llmResponse.nota != null
                 val calificationValue = if (llmResponse.nota != null) {
                     val notaValue = llmResponse.nota
@@ -1141,7 +1313,7 @@ class ChatBotFragment : Fragment() {
                 } else {
                     extractCalificationValue(response)
                 }
-                
+
                 val botMessage = ChatMessage(
                     message = response,
                     isFromUser = false,
@@ -1162,9 +1334,9 @@ class ChatBotFragment : Fragment() {
                         }
                     } catch (e: Exception) { }
                 }
-                
+
                 loadMessages()
-                
+
             } catch (e: Exception) {
                 Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             } finally {
@@ -1205,40 +1377,40 @@ class ChatBotFragment : Fragment() {
                 }
             }
             loadingProgressBar.visibility = View.VISIBLE
-            
+
             // 🚀 CRITICAL FIX: Clear task context if user doesn't reference the task
             // Detect if message is about the specific task/submission or a general question
-            val hasTaskReference = messageText.contains("#") || 
-                                   messageText.contains("tarea", ignoreCase = true) ||
-                                   messageText.contains("archivo", ignoreCase = true) ||
-                                   messageText.contains("entrega", ignoreCase = true) ||
-                                   messageText.contains("califica", ignoreCase = true) ||
-                                   messageText.contains("nota", ignoreCase = true)
-            
+            val hasTaskReference = messageText.contains("#") ||
+                    messageText.contains("tarea", ignoreCase = true) ||
+                    messageText.contains("archivo", ignoreCase = true) ||
+                    messageText.contains("entrega", ignoreCase = true) ||
+                    messageText.contains("califica", ignoreCase = true) ||
+                    messageText.contains("nota", ignoreCase = true)
+
             // 🔥 CRÍTICO: Si el mensaje contiene # y taskName está establecido, esperar a que el contexto termine de cargar
             val needsContextLoad = messageText.contains("#") && taskName.isNotEmpty()
-            
+
             // Contexto por defecto: la tarea/archivo actualmente cargado en el chat
             // PERO SOLO si el usuario hace referencia explícita a la tarea
             var effectiveTaskDescription = if (hasTaskReference) currentFileContext?.contentSummary ?: "" else ""
             var effectiveFileContent = if (hasTaskReference) currentFileContext?.fileContent ?: "" else ""
             var effectiveJsonContent = if (hasTaskReference) currentFileContext?.jsonContent ?: "" else ""
             var effectiveMetadata = if (hasTaskReference) currentFileContext?.metadata ?: "" else ""
-            
+
             if (!hasTaskReference && currentFileContext != null) {
                 Log.d("ChatBotFragment", "🚫 Clearing task context - message doesn't reference task")
             }
-            
+
             if (needsContextLoad) {
                 Log.d("ChatBotFragment", "⏳ Detectado # con taskName='$taskName', esperando a que currentFileContext se cargue...")
-                
+
                 // Esperar hasta que currentFileContext esté cargado o timeout de 5 segundos
                 var waitCount = 0
                 while (currentFileContext == null && waitCount < 50) { // 50 * 100ms = 5 segundos
                     delay(100)
                     waitCount++
                 }
-                
+
                 if (currentFileContext != null) {
                     Log.d("ChatBotFragment", "✅ currentFileContext cargado después de ${waitCount * 100}ms")
                     // Actualizar todos los contextos efectivos desde currentFileContext
@@ -1250,25 +1422,25 @@ class ChatBotFragment : Fragment() {
                     Log.w("ChatBotFragment", "⚠️ Timeout esperando currentFileContext después de 5 segundos")
                 }
             }
-            
+
             // Agregar información del tipo de archivo para que el LLM lo entienda mejor
             if (currentFileContext != null && effectiveFileContent.isNotEmpty()) {
                 val fileName = currentFileContext!!.fileName
                 val fileType = currentFileContext!!.fileType
                 val fileExtension = fileName.substringAfterLast('.', "")
-                
+
                 // Detectar si el archivo no pudo ser procesado (lógica mejorada)
                 // Un archivo es no procesable solo si tiene mensajes de error Y contenido muy corto
                 val tieneIndicadoresError = effectiveFileContent.contains("Tipo de archivo no soportado") ||
-                                           effectiveFileContent.contains("no pudo ser procesado") ||
-                                           effectiveFileContent.contains("ESTADO DEL ANÁLISIS")
-                
+                        effectiveFileContent.contains("no pudo ser procesado") ||
+                        effectiveFileContent.contains("ESTADO DEL ANÁLISIS")
+
                 val contenidoMuyCorto = effectiveFileContent.length < 200
-                
+
                 // Solo marcar como no procesable si tiene errores específicos O es muy corto
                 val archivoNoProcessable = (tieneIndicadoresError && contenidoMuyCorto) ||
-                                           (fileType.equals("UNKNOWN", ignoreCase = true) && contenidoMuyCorto)
-                
+                        (fileType.equals("UNKNOWN", ignoreCase = true) && contenidoMuyCorto)
+
                 if (archivoNoProcessable) {
                     // Marcar claramente que el archivo no es procesable
                     val fileMetadata = """
@@ -1292,13 +1464,13 @@ class ChatBotFragment : Fragment() {
                         |=== CONTENIDO DEL ARCHIVO ===
                         |
                     """.trimMargin()
-                    
+
                     effectiveFileContent = fileMetadata + effectiveFileContent
                 }
-                
+
                 Log.d("ChatBotFragment", "📎 Metadata agregada al archivo: Nombre=$fileName, Tipo=$fileType, Extensión=$fileExtension, Procesable=${!archivoNoProcessable}")
             }
-            
+
             // FALLBACK: Si taskDescription está vacío, intentar obtener el último contentSummary desde Supabase
             if (effectiveTaskDescription.isEmpty()) {
                 Log.d("ChatBotFragment", "🔄 taskDescription vacío, intentando fallback con último contentSummary desde Supabase")
@@ -1328,15 +1500,15 @@ class ChatBotFragment : Fragment() {
             // También verificar si hay una tarea seleccionada manualmente (taskName no vacío)
             val refMatch = Regex("#(\\d+)").find(messageText)
             val refNameMatch = Regex("#([^\\s]+)").find(messageText)
-            
+
             // 🔥 Prioridad 1: Tarea seleccionada manualmente (variables de instancia) o currentFileContext cargado
             // Si currentFileContext está presente, SIEMPRE usarlo primero (fue cargado por onTaskSelected)
             if (currentFileContext != null) {
                 Log.d("ChatBotFragment", "🔗 Usando currentFileContext establecido por onTaskSelected")
-                
+
                 // 🔥 CRÍTICO: fileContent contiene el contenido del archivo del estudiante
                 effectiveFileContent = currentFileContext!!.fileContent
-                
+
                 // 🔥 CRÍTICO: Si el fileContent está vacío, intentar usar contentSummary o metadata
                 if (effectiveFileContent.isBlank()) {
                     Log.d("ChatBotFragment", "⚠️ fileContent está vacío, buscando alternativas...")
@@ -1346,7 +1518,7 @@ class ChatBotFragment : Fragment() {
                         Log.d("ChatBotFragment", "📄 Usando extractedText como fileContent: ${effectiveFileContent.length} caracteres")
                     }
                 }
-                
+
                 // 🔥 CRÍTICO: taskDescription debe combinar la descripción de la tarea + info del archivo
                 // taskDescription (variable de instancia) contiene la descripción del profesor
                 // contentSummary contiene un resumen del archivo
@@ -1361,7 +1533,7 @@ class ChatBotFragment : Fragment() {
                     if (currentFileContext!!.fileName.isNotBlank()) {
                         append("\n📎 ARCHIVO ENVIADO POR EL ESTUDIANTE: ${currentFileContext!!.fileName}")
                     }
-                    if (!currentFileContext!!.contentSummary.isNullOrBlank() && 
+                    if (!currentFileContext!!.contentSummary.isNullOrBlank() &&
                         currentFileContext!!.contentSummary != taskDescription) {
                         append("\n📄 RESUMEN DEL CONTENIDO: ${currentFileContext!!.contentSummary}")
                     }
@@ -1373,25 +1545,25 @@ class ChatBotFragment : Fragment() {
 
                     // 🔥 LOGIC TO CONTROL GRADING VS Q&A
                     val lowerMessage = messageText.lowercase()
-                    val isGradingRequest = lowerMessage.contains("calific") || 
-                                           lowerMessage.contains("nota") || 
-                                           lowerMessage.contains("evalu") || 
-                                           lowerMessage.contains("puntaje") ||
-                                           lowerMessage.contains("grade") ||
-                                           lowerMessage.contains("score") ||
-                                           lowerMessage.contains("rate")
+                    val isGradingRequest = lowerMessage.contains("calific") ||
+                            lowerMessage.contains("nota") ||
+                            lowerMessage.contains("evalu") ||
+                            lowerMessage.contains("puntaje") ||
+                            lowerMessage.contains("grade") ||
+                            lowerMessage.contains("score") ||
+                            lowerMessage.contains("rate")
 
                     if (isGradingRequest) {
-                            append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
-                        } else {
-                            append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
-                        }
+                        append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
+                    } else {
+                        append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
+                    }
                 }
-                
+
                 // También cargar jsonContent y metadata si están disponibles
                 effectiveJsonContent = currentFileContext!!.jsonContent ?: ""
                 effectiveMetadata = currentFileContext!!.metadata ?: ""
-                
+
                 Log.d("ChatBotFragment", "✅ fileContent de currentFileContext: ${effectiveFileContent.length} caracteres")
                 Log.d("ChatBotFragment", "✅ taskDescription construido: ${effectiveTaskDescription.length} caracteres")
                 Log.d("ChatBotFragment", "✅ Tarea asociada: $taskName")
@@ -1400,7 +1572,7 @@ class ChatBotFragment : Fragment() {
             // Prioridad 2: Si taskName está establecido pero currentFileContext es null
             else if (taskName.isNotEmpty() && taskDescription.isNotEmpty()) {
                 Log.d("ChatBotFragment", "🔗 Usando contexto de tarea seleccionada manualmente: $taskName")
-                
+
                 // 🔥 CRÍTICO: Construir effectiveTaskDescription con formato de emojis
                 // para que el microservicio pueda extraer la información estructurada
                 effectiveTaskDescription = buildString {
@@ -1413,13 +1585,13 @@ class ChatBotFragment : Fragment() {
 
                     // 🔥 LOGIC TO CONTROL GRADING VS Q&A
                     val lowerMessage = messageText.lowercase()
-                    val isGradingRequest = lowerMessage.contains("calific") || 
-                                           lowerMessage.contains("nota") || 
-                                           lowerMessage.contains("evalu") || 
-                                           lowerMessage.contains("puntaje") ||
-                                           lowerMessage.contains("grade") ||
-                                           lowerMessage.contains("score") ||
-                                           lowerMessage.contains("rate")
+                    val isGradingRequest = lowerMessage.contains("calific") ||
+                            lowerMessage.contains("nota") ||
+                            lowerMessage.contains("evalu") ||
+                            lowerMessage.contains("puntaje") ||
+                            lowerMessage.contains("grade") ||
+                            lowerMessage.contains("score") ||
+                            lowerMessage.contains("rate")
 
                     if (isGradingRequest) {
                         append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
@@ -1427,40 +1599,40 @@ class ChatBotFragment : Fragment() {
                         append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
                     }
                 }
-                
+
                 Log.d("ChatBotFragment", "✅ taskDescription construido: ${effectiveTaskDescription.length} caracteres")
                 Log.d("ChatBotFragment", "📋 TaskDescription preview: ${effectiveTaskDescription.take(300)}...")
-                
+
                 // Si TODAVÍA no hay contenido de archivo pero hay tarea seleccionada, intentar cargar contexto asociado
                 if (effectiveFileContent.isEmpty() && courseId != -1L) {
                     val username = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUsername()
                     val userId = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUserId()
-                    
+
                     if (!username.isNullOrEmpty() && userId != -1L) {
                         withContext(Dispatchers.IO) {
                             try {
                                 val supabaseClient = com.example.tareamov.service.SupabaseClient
-                                
+
                                 // 1. Buscar tarea (local o remota)
                                 var task = database.taskDao().getTaskByNameAndCourse(taskName, courseId)
-                                
+
                                 if (task == null && supabaseClient.isConfigured()) {
-                                     try {
-                                         val remoteTopics = supabaseClient.fetchTopicsByCourse(courseId)
-                                         if (remoteTopics.isNotEmpty()) {
-                                             val remoteTasks = supabaseClient.fetchTasksByTopicIds(remoteTopics.map { it.id })
-                                             task = remoteTasks.firstOrNull { it.name == taskName }
-                                         }
-                                     } catch (e: Exception) {
-                                         Log.w("ChatBotFragment", "Error buscando tarea remota: ${e.message}")
-                                     }
+                                    try {
+                                        val remoteTopics = supabaseClient.fetchTopicsByCourse(courseId)
+                                        if (remoteTopics.isNotEmpty()) {
+                                            val remoteTasks = supabaseClient.fetchTasksByTopicIds(remoteTopics.map { it.id })
+                                            task = remoteTasks.firstOrNull { it.name == taskName }
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.w("ChatBotFragment", "Error buscando tarea remota: ${e.message}")
+                                    }
                                 }
 
                                 if (task != null) {
                                     val finalTask = task
                                     // 2. Buscar submission (local o remota)
                                     val localSubmission = database.taskSubmissionDao().getUserSubmissionForTask(finalTask.id, userId)
-                                    
+
                                     val submission = if (localSubmission == null && supabaseClient.isConfigured()) {
                                         try {
                                             val remoteSubs = supabaseClient.fetchTaskSubmissions()
@@ -1476,7 +1648,7 @@ class ChatBotFragment : Fragment() {
                                     if (submission != null) {
                                         // 3. Buscar FileContext (local o remoto)
                                         val localFc = database.fileContextDao().getFileContextBySubmission(submission.id)
-                                        
+
                                         val fc = if (localFc == null && supabaseClient.isConfigured()) {
                                             try {
                                                 val remoteFcs = supabaseClient.fetchFileContexts()
@@ -1493,7 +1665,7 @@ class ChatBotFragment : Fragment() {
                                             effectiveFileContent = fc.fileContent
                                             effectiveJsonContent = fc.jsonContent ?: ""
                                             effectiveMetadata = fc.metadata ?: ""
-                                            
+
                                             // 🔥 CRÍTICO: Reconstruir effectiveTaskDescription con formato de emojis
                                             // incluyendo información del archivo encontrado
                                             effectiveTaskDescription = buildString {
@@ -1514,13 +1686,13 @@ class ChatBotFragment : Fragment() {
 
                                                 // 🔥 LOGIC TO CONTROL GRADING VS Q&A
                                                 val lowerMessage = messageText.lowercase()
-                                                val isGradingRequest = lowerMessage.contains("calific") || 
-                                                                       lowerMessage.contains("nota") || 
-                                                                       lowerMessage.contains("evalu") || 
-                                                                       lowerMessage.contains("puntaje") ||
-                                                                       lowerMessage.contains("grade") ||
-                                                                       lowerMessage.contains("score") ||
-                                                                       lowerMessage.contains("rate")
+                                                val isGradingRequest = lowerMessage.contains("calific") ||
+                                                        lowerMessage.contains("nota") ||
+                                                        lowerMessage.contains("evalu") ||
+                                                        lowerMessage.contains("puntaje") ||
+                                                        lowerMessage.contains("grade") ||
+                                                        lowerMessage.contains("score") ||
+                                                        lowerMessage.contains("rate")
 
                                                 if (isGradingRequest) {
                                                     append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
@@ -1563,7 +1735,7 @@ class ChatBotFragment : Fragment() {
                         // 🔥 CONSTRUIR CONTEXTO COMPLETO DE LA TAREA
                         val taskTitle = referencedTask.taskName
                         val taskDescFromProf = referencedTask.taskDescription ?: ""
-                        
+
                         val baseTaskContext = buildString {
                             append("📋 TAREA: $taskTitle\n")
                             if (taskDescFromProf.isNotBlank()) {
@@ -1572,13 +1744,13 @@ class ChatBotFragment : Fragment() {
 
                             // 🔥 LOGIC TO CONTROL GRADING VS Q&A
                             val lowerMessage = messageText.lowercase()
-                            val isGradingRequest = lowerMessage.contains("calific") || 
-                                                   lowerMessage.contains("nota") || 
-                                                   lowerMessage.contains("evalu") || 
-                                                   lowerMessage.contains("puntaje") ||
-                                                   lowerMessage.contains("grade") ||
-                                                   lowerMessage.contains("score") ||
-                                                   lowerMessage.contains("rate")
+                            val isGradingRequest = lowerMessage.contains("calific") ||
+                                    lowerMessage.contains("nota") ||
+                                    lowerMessage.contains("evalu") ||
+                                    lowerMessage.contains("puntaje") ||
+                                    lowerMessage.contains("grade") ||
+                                    lowerMessage.contains("score") ||
+                                    lowerMessage.contains("rate")
 
                             if (isGradingRequest) {
                                 append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
@@ -1594,7 +1766,7 @@ class ChatBotFragment : Fragment() {
                                 try {
                                     val supabaseClient = com.example.tareamov.service.SupabaseClient
                                     val userId = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUserId()
-                                    
+
                                     // 🔥 RESOLVER taskId REMOTO por nombre de tarea
                                     var remoteTaskId = referencedTask.taskId
                                     if (supabaseClient.isConfigured()) {
@@ -1608,17 +1780,17 @@ class ChatBotFragment : Fragment() {
                                             Log.w("ChatBotFragment", "⚠️ Error resolviendo taskId remoto: ${e.message}")
                                         }
                                     }
-                                    
+
                                     // 🔥 BUSCAR SUBMISSION POR student_id (integer en Supabase)
                                     var submission: TaskSubmission? = null
-                                    
+
                                     if (supabaseClient.isConfigured()) {
                                         Log.d("ChatBotFragment", "🌐 Buscando submission en Supabase por student_id=$userId y taskId=$remoteTaskId")
                                         val remoteSubmissions = supabaseClient.fetchTaskSubmissionsByTaskAndStudentId(remoteTaskId, userId)
                                         submission = remoteSubmissions.firstOrNull()
                                         Log.d("ChatBotFragment", "📊 Submissions encontradas: ${remoteSubmissions.size}")
                                     }
-                                    
+
                                     // Fallback a búsqueda local por studentId
                                     if (submission == null) {
                                         submission = database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, userId)
@@ -1628,7 +1800,7 @@ class ChatBotFragment : Fragment() {
                                     if (submission != null) {
                                         val currentSubmission = submission!! // Copia local inmutable
                                         Log.d("ChatBotFragment", "✅ Submission encontrada: id=${currentSubmission.id}, file='${currentSubmission.fileName}'")
-                                        
+
                                         // Buscar FileContext
                                         var fc: FileContext? = null
                                         if (supabaseClient.isConfigured()) {
@@ -1645,7 +1817,7 @@ class ChatBotFragment : Fragment() {
                                             effectiveFileContent = currentFc.fileContent
                                             effectiveJsonContent = currentFc.jsonContent ?: ""
                                             effectiveMetadata = currentFc.metadata ?: ""
-                                            
+
                                             // 🔥 COMBINAR: contexto de tarea + info del archivo
                                             effectiveTaskDescription = buildString {
                                                 append(baseTaskContext)
@@ -1655,16 +1827,16 @@ class ChatBotFragment : Fragment() {
                                                 if (!currentFc.contentSummary.isNullOrBlank() && currentFc.contentSummary != taskDescFromProf) {
                                                     append("\n📄 RESUMEN DEL CONTENIDO:\n${currentFc.contentSummary}")
                                                 }
-                                                
+
                                                 // 🔥 LOGIC TO CONTROL GRADING VS Q&A
                                                 val lowerMessage = messageText.lowercase()
-                                                val isGradingRequest = lowerMessage.contains("calific") || 
-                                                                       lowerMessage.contains("nota") || 
-                                                                       lowerMessage.contains("evalu") || 
-                                                                       lowerMessage.contains("puntaje") ||
-                                                                       lowerMessage.contains("grade") ||
-                                                                       lowerMessage.contains("score") ||
-                                                                       lowerMessage.contains("rate")
+                                                val isGradingRequest = lowerMessage.contains("calific") ||
+                                                        lowerMessage.contains("nota") ||
+                                                        lowerMessage.contains("evalu") ||
+                                                        lowerMessage.contains("puntaje") ||
+                                                        lowerMessage.contains("grade") ||
+                                                        lowerMessage.contains("score") ||
+                                                        lowerMessage.contains("rate")
 
                                                 if (isGradingRequest) {
                                                     append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
@@ -1702,35 +1874,35 @@ class ChatBotFragment : Fragment() {
                         } catch (_: Exception) {}
                     }
                 }
-                
-                val referencedTask = currentCourseTasks.firstOrNull { 
-                    it.taskName.equals(nameRef, ignoreCase = true) || it.taskName.contains(nameRef, ignoreCase = true) 
+
+                val referencedTask = currentCourseTasks.firstOrNull {
+                    it.taskName.equals(nameRef, ignoreCase = true) || it.taskName.contains(nameRef, ignoreCase = true)
                 }
-                
+
                 if (referencedTask != null) {
                     Log.d("ChatBotFragment", "🔗 Tarea referenciada por nombre: ${referencedTask.taskName} (id=${referencedTask.taskId})")
-                    
+
                     // 🔥 CONSTRUIR CONTEXTO COMPLETO DE LA TAREA
                     // Incluir: título, descripción del profesor, y contenido del estudiante
                     val taskTitle = referencedTask.taskName
                     val taskDescFromProf = referencedTask.taskDescription ?: ""
-                    
+
                     // Contexto base con título y descripción del profesor
                     val baseTaskContext = buildString {
                         append("📋 TAREA: $taskTitle\n")
                         if (taskDescFromProf.isNotBlank()) {
                             append("📝 DESCRIPCIÓN DEL PROFESOR:\n$taskDescFromProf\n")
                         }
-                        
+
                         // 🔥 LOGIC TO CONTROL GRADING VS Q&A
                         val lowerMessage = messageText.lowercase()
-                        val isGradingRequest = lowerMessage.contains("calific") || 
-                                               lowerMessage.contains("nota") || 
-                                               lowerMessage.contains("evalu") || 
-                                               lowerMessage.contains("puntaje") ||
-                                               lowerMessage.contains("grade") ||
-                                               lowerMessage.contains("score") ||
-                                               lowerMessage.contains("rate")
+                        val isGradingRequest = lowerMessage.contains("calific") ||
+                                lowerMessage.contains("nota") ||
+                                lowerMessage.contains("evalu") ||
+                                lowerMessage.contains("puntaje") ||
+                                lowerMessage.contains("grade") ||
+                                lowerMessage.contains("score") ||
+                                lowerMessage.contains("rate")
 
                         if (isGradingRequest) {
                             append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
@@ -1738,18 +1910,18 @@ class ChatBotFragment : Fragment() {
                             append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
                         }
                     }
-                    
+
                     effectiveTaskDescription = baseTaskContext
-                    
+
                     // 🔥 CRÍTICO: También cargar el FileContext asociado a esta tarea
                     val userId = sessionManager.getUserId()
                     val username = sessionManager.getUsername() ?: ""
-                    
+
                     if (userId != -1L) {
                         withContext(Dispatchers.IO) {
                             try {
                                 val supabaseClient = com.example.tareamov.service.SupabaseClient
-                                
+
                                 // 🔥 RESOLVER taskId REMOTO por nombre de tarea
                                 var remoteTaskId = referencedTask.taskId
                                 if (supabaseClient.isConfigured()) {
@@ -1763,10 +1935,10 @@ class ChatBotFragment : Fragment() {
                                         Log.w("ChatBotFragment", "⚠️ Error resolviendo taskId remoto: ${e.message}")
                                     }
                                 }
-                                
+
                                 // Buscar submission del usuario para esta tarea
                                 var submission: TaskSubmission? = null
-                                
+
                                 // 🔥 PRIORIDAD: Buscar en Supabase por student_id (integer)
                                 if (supabaseClient.isConfigured()) {
                                     try {
@@ -1778,18 +1950,18 @@ class ChatBotFragment : Fragment() {
                                         Log.w("ChatBotFragment", "Error buscando submission en Supabase: ${e.message}")
                                     }
                                 }
-                                
+
                                 // Fallback a local por studentId
                                 if (submission == null) {
                                     submission = database.taskSubmissionDao().getUserSubmissionForTask(referencedTask.taskId, userId)
                                     Log.d("ChatBotFragment", "📊 Submission encontrada localmente para #${referencedTask.taskName}: ${submission?.id}")
                                 }
-                                
+
                                 if (submission != null) {
                                     val currentSubmission = submission!! // Copia local inmutable
                                     // Buscar FileContext
                                     var fc: FileContext? = null
-                                    
+
                                     if (supabaseClient.isConfigured()) {
                                         try {
                                             fc = supabaseClient.fetchFileContextBySubmissionId(currentSubmission.id)
@@ -1798,18 +1970,18 @@ class ChatBotFragment : Fragment() {
                                             Log.w("ChatBotFragment", "Error buscando FileContext en Supabase: ${e.message}")
                                         }
                                     }
-                                    
+
                                     if (fc == null) {
                                         fc = database.fileContextDao().getFileContextBySubmission(currentSubmission.id)
                                         Log.d("ChatBotFragment", "📄 FileContext local: ${fc?.fileName}")
                                     }
-                                    
+
                                     fc?.let { currentFc ->
                                         // 🔥 CARGAR CONTENIDO DEL ARCHIVO DEL ESTUDIANTE
                                         effectiveFileContent = currentFc.fileContent
                                         effectiveJsonContent = currentFc.jsonContent ?: ""
                                         effectiveMetadata = currentFc.metadata ?: ""
-                                        
+
                                         // 🔥 COMBINAR: contexto de tarea + contenido del archivo del estudiante
                                         // El taskDescription ahora incluye título + descripción del profesor
                                         // El fileContent tiene el contenido del archivo del estudiante
@@ -1822,7 +1994,7 @@ class ChatBotFragment : Fragment() {
                                                 append("\n📄 RESUMEN DEL CONTENIDO:\n${currentFc.contentSummary}")
                                             }
                                         }
-                                        
+
                                         // Establecer como contexto actual para futuras referencias
                                         currentFileContext = currentFc
                                         Log.d("ChatBotFragment", "✅ FileContext cargado para #${referencedTask.taskName}: ${currentFc.fileContent.length} caracteres")
@@ -1842,7 +2014,7 @@ class ChatBotFragment : Fragment() {
                     }
                 }
             }
-            
+
             // Logging mínimo (sin contenido sensible ni longitudes)
             Log.d("ChatBotFragment", "📋 Enviando contexto al microservicio...")
             Log.d("ChatBotFragment", "   - FileContext presente: ${currentFileContext != null}")
@@ -1864,7 +2036,7 @@ class ChatBotFragment : Fragment() {
                         // Si no tenemos submissionId, podemos intentar buscar por userId
                         val currentTaskIdForRequest = currentSubmissionId // El backend usará submissionId para encontrar taskId
                         val currentStudentId = sessionManager.getUserId()
-                        
+
                         val body = com.example.tareamov.network.MicroservicioPromptRequest(
                             prompt = messageText,
                             ollamaUrl = getOllamaUrl(),
@@ -1879,7 +2051,7 @@ class ChatBotFragment : Fragment() {
                             taskId = currentTaskIdForRequest,
                             studentId = currentStudentId,
                             fileUri = null // El backend lo obtiene de task_submissions si es necesario
-                        )   
+                        )
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📤 ENVIANDO AL MICROSERVICIO:")
                         Log.d("ChatBotFragment", "==============================================")
@@ -1893,7 +2065,7 @@ class ChatBotFragment : Fragment() {
                         Log.d("ChatBotFragment", "taskId: $currentTaskIdForRequest")
                         Log.d("ChatBotFragment", "studentId: $currentStudentId")
                         Log.d("ChatBotFragment", "==============================================")
-                        
+
                         // Usar suspend function en lugar de .execute() para mejor manejo de timeouts
                         // Agregar userId para notificaciones
                         val currentUserId = sessionManager.getUserId()
@@ -1909,7 +2081,7 @@ class ChatBotFragment : Fragment() {
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "✅ ENVIANDO RESPUESTA COMPLETA AL CHAT (SIN FILTROS)")
                         Log.d("ChatBotFragment", "==============================================")
-                        
+
                         // Devolver la respuesta COMPLETA tal como la envía el modelo, incluyendo formato
                         // Si la respuesta es nula y el fileContent está vacío, dar mensaje específico
                         if (res.respuesta_texto.isNullOrBlank()) {
@@ -1950,7 +2122,50 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         }
                     } catch (e: SocketTimeoutException) {
                         Log.e("ChatBotFragment", "❌ SocketTimeoutException: ${e.message}")
-                        LLMResponse("El modelo está tardando más de lo esperado. Intenta nuevamente en unos minutos.", null)
+                        // Try immediate cloud fallback when local model times out
+                        try {
+                            Log.i("ChatBotFragment", "SocketTimeoutException -> attempting immediate cloud fallback")
+                            val ok = okhttp3.OkHttpClient.Builder()
+                                .connectTimeout(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                                .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                                .build()
+
+                            val retrofit = Retrofit.Builder()
+                                .baseUrl(if (ServerEndpointResolver.RAILWAY_MCP_URL.endsWith("/")) ServerEndpointResolver.RAILWAY_MCP_URL else ServerEndpointResolver.RAILWAY_MCP_URL + "/")
+                                .addConverterFactory(GsonConverterFactory.create())
+                                .client(ok)
+                                .build()
+
+                            val api = retrofit.create(com.example.tareamov.network.MicroservicioApi::class.java)
+
+                            val fallbackSubmissionId = currentFileContext?.submissionId
+                            val fallbackTaskId = fallbackSubmissionId // backend resolves taskId from submission
+
+                            val fallbackBody = com.example.tareamov.network.MicroservicioPromptRequest(
+                                prompt = messageText,
+                                ollamaUrl = getOllamaUrl(),
+                                taskDescription = if (effectiveTaskDescription.isNotEmpty()) effectiveTaskDescription else "",
+                                fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else "",
+                                jsonContent = if (effectiveJsonContent.isNotEmpty()) effectiveJsonContent else null,
+                                metadata = if (effectiveMetadata.isNotEmpty()) effectiveMetadata else null,
+                                userId = sessionManager.getUserId(),
+                                submissionId = fallbackSubmissionId,
+                                taskId = fallbackTaskId,
+                                studentId = sessionManager.getUserId(),
+                                fileUri = null
+                            )
+
+                            val cloudRes = api.procesarPrompt(fallbackBody)
+                            if (!cloudRes.respuesta_texto.isNullOrBlank()) {
+                                LLMResponse(cloudRes.respuesta_texto, cloudRes.nota)
+                            } else {
+                                LLMResponse("El modelo en la nube no devolvió respuesta válida.", null)
+                            }
+                        } catch (ce: Exception) {
+                            Log.e("ChatBotFragment", "Cloud fallback failed after timeout: ${ce.message}")
+                            LLMResponse("El modelo está tardando más de lo esperado. Intenta nuevamente en unos minutos.", null)
+                        }
                     } catch (e: java.net.ConnectException) {
                         Log.e("ChatBotFragment", "❌ ConnectException: ${e.message}")
                         LLMResponse("No se puede conectar con el microservicio. Verifica que esté ejecutándose en ${getMicroserviceBaseUrl()}", null)
@@ -1961,9 +2176,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         LLMResponse("Error inesperado: ${e.message}", null)
                     }
                 }
-                
+
                 val response = llmResponse.text.replace("#", "").replace("**", "")
-                
+
                 // Usar la nota del backend si está disponible, sino extraerla del texto
                 val hasCalification = detectCalification(messageText, response) || llmResponse.nota != null
                 val calificationValue = if (llmResponse.nota != null) {
@@ -1975,7 +2190,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     // Fallback: extraer del texto
                     extractCalificationValue(response)
                 }
-                
+
                 val botMessage = ChatMessage(
                     message = response,
                     isFromUser = false,
@@ -2079,10 +2294,10 @@ El archivo enviado está vacío o no se pudo leer su contenido.
     private fun detectCalification(userMessage: String, botResponse: String): Boolean {
         val userMessageLower = userMessage.lowercase()
         val botResponseLower = botResponse.lowercase()
-        
+
         // 1. Detección FUERTE: Si el bot usa el formato estándar de calificación del backend
         // Esto asegura que siempre aparezcan los botones si el backend envió una nota explícita
-        if (botResponseLower.contains("**calificación actual:") || 
+        if (botResponseLower.contains("**calificación actual:") ||
             botResponseLower.contains("**calificacion actual:") ||
             botResponseLower.contains("📊 **calificación actual:") ||
             botResponseLower.contains("calificación actual:") ||
@@ -2094,7 +2309,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             botResponseLower.contains("nota:") && Regex("nota:\\s*\\d+").containsMatchIn(botResponseLower)) {
             return true
         }
-        
+
         // Palabras clave que indican solicitud de calificación
         val calificationKeywords = listOf(
             "calificación", "calificacion", "nota", "puntaje", "puntuación", "puntuacion",
@@ -2102,19 +2317,19 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             "cuánto saqué", "cuanto saque", "mi nota", "mi calificación", "mi calificacion",
             "revisar", "corregir", "feedback", "retroalimentación", "retroalimentacion"
         )
-        
+
         // Verificar si el usuario pidió calificación
         val userAskedForCalification = calificationKeywords.any { keyword ->
             userMessageLower.contains(keyword)
         }
-        
+
         // Verificar si la respuesta contiene formato de calificación
         val botHasCalification = botResponseLower.contains("calificación:") ||
                 botResponseLower.contains("calificacion:") ||
                 Regex("\\d+/\\d+").containsMatchIn(botResponse) ||
                 Regex("calificación.*\\d+").containsMatchIn(botResponseLower) ||
                 Regex("nota.*\\d+").containsMatchIn(botResponseLower)
-        
+
         return userAskedForCalification && botHasCalification
     }
 
@@ -2130,7 +2345,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             Regex("📊 \\*\\*CALIFICACIÓN ACTUAL:\\*\\* (\\d+/\\d+)", RegexOption.IGNORE_CASE),
             Regex("calificación actual:\\s*(\\d+/\\d+)", RegexOption.IGNORE_CASE),
             Regex("calificacion actual:\\s*(\\d+/\\d+)", RegexOption.IGNORE_CASE),
-            
+
             // Formatos anteriores
             Regex("calificación:\\s*(\\d+/\\d+)", RegexOption.IGNORE_CASE),
             Regex("calificacion:\\s*(\\d+/\\d+)", RegexOption.IGNORE_CASE),
@@ -2140,14 +2355,14 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             Regex("calificacion:\\s*(\\d+)", RegexOption.IGNORE_CASE),
             Regex("nota:\\s*(\\d+/\\d+)", RegexOption.IGNORE_CASE)
         )
-        
+
         for (pattern in patterns) {
             val match = pattern.find(botResponse)
             if (match != null) {
                 return match.groupValues[1]
             }
         }
-        
+
         return null
     }
 
@@ -2174,18 +2389,18 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             "(\\d+(?:[.,]\\d+)?)/10".toRegex(RegexOption.IGNORE_CASE),
             "\\*\\*calificación\\s+actual:\\s*(\\d+(?:[.,]\\d+)?)".toRegex(RegexOption.IGNORE_CASE)
         )
-        
+
         for (pattern in patterns) {
             val match = pattern.find(message)
             if (match != null) {
                 val grade = match.groupValues[1]
-                
+
                 // Log para debugging
                 Log.d("ChatBotFragment", "🔍 Grade extraído: '$grade'")
-                
+
                 // Normalizar el formato decimal: reemplazar coma por punto
                 val normalizedGrade = grade.replace(",", ".")
-                
+
                 // Convertir a escala de 10 si es necesario
                 val gradeValue = try {
                     normalizedGrade.toFloat()
@@ -2193,7 +2408,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     Log.e("ChatBotFragment", "❌ No se pudo convertir grade a Float: $grade (normalizado: $normalizedGrade)", e)
                     null
                 }
-                
+
                 return if (gradeValue != null) {
                     if (gradeValue > 10) {
                         // Convertir de escala 100 a 10
@@ -2204,7 +2419,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 } else null
             }
         }
-        
+
         return null
     }
 
@@ -2225,7 +2440,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             .filter { it.trim().isNotEmpty() } // Filtrar líneas vacías
             .joinToString("\n")
             .trim()
-        
+
         // Devolver el mensaje completo limpio (sin límite de caracteres)
         return if (cleanedMessage.isNotEmpty()) cleanedMessage else message
     }
@@ -2238,7 +2453,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             // Buscar patrones #<número> en el mensaje
             val pattern = Regex("#(\\d+)")
             val matches = pattern.findAll(message)
-            
+
             // Tomar la primera referencia encontrada
             val firstMatch = matches.firstOrNull()
             if (firstMatch != null) {
@@ -2246,7 +2461,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 Log.d("ChatBotFragment", "ID de TaskSubmission extraído del mensaje: $taskSubmissionId")
                 return taskSubmissionId
             }
-            
+
             Log.d("ChatBotFragment", "No se encontró referencia #<número> en el mensaje")
             return null
         } catch (e: Exception) {
@@ -2254,7 +2469,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             return null
         }
     }
-    
+
     /**
      * Busca el ID de TaskSubmission en el contexto del chat reciente de manera suspendida
      */
@@ -2263,7 +2478,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             try {
                 val recentMessages = database.chatMessageDao().getRecentMessages(sessionId, limit = 10)
                 val pattern = Regex("#(\\d+)")
-                
+
                 // Buscar en mensajes del usuario (isFromUser = true) en orden inverso
                 for (chatMessage in recentMessages.reversed()) {
                     if (chatMessage.isFromUser) {
@@ -2276,7 +2491,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         }
                     }
                 }
-                
+
                 Log.d("ChatBotFragment", "No se encontró referencia #<número> en el contexto del chat")
                 null
             } catch (e: Exception) {
@@ -2295,24 +2510,24 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 // Extraer la calificación numérica y el feedback del mensaje del bot
                 val grade = extractGradeFromMessage(message.message)
                 val feedback = extractFeedbackFromMessage(message.message)
-                
+
                 if (grade != null && feedback != null) {
                     // Almacenar la calificación en el CalificationManager
                     val calificationManager = CalificationManager.getInstance(requireContext())
-                    
+
                     // Intentar extraer el número del # del mensaje para determinar qué TaskSubmission actualizar
-                    val taskSubmissionId = extractTaskSubmissionIdFromMessage(message.message) 
+                    val taskSubmissionId = extractTaskSubmissionIdFromMessage(message.message)
                         ?: findTaskSubmissionIdInContext() // Buscar en contexto si no se encuentra en el mensaje
                     val targetSubmissionId = taskSubmissionId ?: currentFileContext?.submissionId
-                    
+
                     calificationManager.storePendingCalification(
                         grade = grade,
                         feedback = feedback,
                         submissionId = targetSubmissionId
                     )
-                    
+
                     Log.d("ChatBotFragment", "Calificación almacenada: Grade=$grade, Feedback=$feedback, TargetSubmissionId=$targetSubmissionId")
-                    
+
                     // Actualizar directamente la tabla TaskSubmission
                     if (targetSubmissionId != null) {
                         // Normalizar el formato decimal: reemplazar coma por punto antes de convertir
@@ -2323,7 +2538,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             Log.e("ChatBotFragment", "❌ Error convirtiendo grade '$grade' (normalizado: '$normalizedGrade') a Float", e)
                             null
                         }
-                        
+
                         if (gradeFloat != null) {
                             withContext(Dispatchers.IO) {
                                 // Obtener la entrega por ID desde la base local
@@ -2382,7 +2597,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                     // Obtener información de la tarea para logging
                                     val task = database.taskDao().getTaskById(taskSubmission.taskId)
                                     var taskName = task?.name
-                                    
+
                                     if (taskName == null) {
                                         val supabaseClient = com.example.tareamov.service.SupabaseClient
                                         if (supabaseClient.isConfigured()) {
@@ -2397,7 +2612,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                             }
                                         }
                                     }
-                                    
+
                                     val effectiveTaskName = taskName ?: "Tarea desconocida"
 
                                     Log.d("ChatBotFragment", "✅ TaskSubmission actualizada (local/remote seguirá):")
@@ -2417,11 +2632,11 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                         val okRemote = com.example.tareamov.data.sync.SyncRepository.updateTaskSubmissionToSupabase(updatedSubmission)
                                         if (okRemote) {
                                             Log.i("ChatBotFragment", "✅ TaskSubmission $targetSubmissionId actualizado en Supabase")
-                                            
+
                                             // 📧📱 NOTIFICAR AL ESTUDIANTE que recibió una calificación
                                             // La notificación va al ESTUDIANTE (dueño de la entrega), NO al creador del curso
                                             val graderUsername = sessionManager.getUsername() ?: "Profesor"
-                                            
+
                                             notifyStudentAboutGrade(
                                                 studentId = taskSubmission.studentId,
                                                 taskName = effectiveTaskName,
@@ -2446,14 +2661,14 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         Log.w("ChatBotFragment", "❌ No hay submissionId disponible para actualizar TaskSubmission")
                     }
                 }
-                
+
                 // Marcar la calificación como agregada
                 val updatedMessage = message.copy(calificationAdded = true)
-                
+
                 withContext(Dispatchers.IO) {
                     database.chatMessageDao().updateMessage(updatedMessage)
                 }
-                
+
                 // Mostrar mensaje de confirmación mejorado
                 val taskSubmissionId = extractTaskSubmissionIdFromMessage(message.message)
                 val confirmationText = if (taskSubmissionId != null) {
@@ -2461,7 +2676,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 } else {
                     "✅ **Calificación agregada**\n\nLa calificación ${message.calificationValue ?: "obtenida"} ha sido guardada en la base de datos.\n\n📌 **Información:** Grade: ${grade ?: "N/A"} | Feedback aplicado correctamente."
                 }
-                
+
                 val confirmationMessage = ChatMessage(
                     message = confirmationText,
                     isFromUser = false,
@@ -2469,24 +2684,24 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     , senderUsername = "DeepSeek",
                     senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                 )
-                
+
                 withContext(Dispatchers.IO) {
                     database.chatMessageDao().insertMessage(confirmationMessage)
                 }
-                
+
                 // Recargar mensajes para actualizar la UI
                 loadMessages()
-                
+
                 // Agregar a la lista de tareas calificadas en memoria
                 addToGradedTasksList(message, grade, feedback)
-                
+
                 val toastMessage = if (taskSubmissionId != null) {
                     "Calificación guardada en TaskSubmission #$taskSubmissionId"
                 } else {
                     "Calificación guardada en TaskSubmission"
                 }
                 Toast.makeText(context, toastMessage, Toast.LENGTH_LONG).show()
-                
+
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error agregando calificación: ${e.message}")
                 Toast.makeText(context, "Error al agregar calificación", Toast.LENGTH_SHORT).show()
@@ -2502,16 +2717,16 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             try {
                 // Marcar la calificación como rechazada (agregada = true para ocultar botones)
                 val updatedMessage = message.copy(calificationAdded = true)
-                
+
                 withContext(Dispatchers.IO) {
                     database.chatMessageDao().updateMessage(updatedMessage)
                 }
                 //
                 // Recargar mensajes para actualizar la UI
                 loadMessages()
-                
+
                 Toast.makeText(context, "Calificación no agregada", Toast.LENGTH_SHORT).show()
-                
+
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error rechazando calificación: ${e.message}")
                 Toast.makeText(context, "Error al procesar la acción", Toast.LENGTH_SHORT).show()
@@ -2551,16 +2766,16 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                 // Stop any current playback and reset states
                 ttsService.stopPlayback()
-                chatAdapter.currentList.forEach { 
-                    it.isPlaying = false 
+                chatAdapter.currentList.forEach {
+                    it.isPlaying = false
                     it.isPaused = false
                 }
-                
+
                 // Set playing state
                 message.isPlaying = true
                 message.isPaused = false
                 chatAdapter.notifyDataSetChanged()
-                
+
                 // Mostrar feedback visual
                 if (isAdded && context != null) {
                     Toast.makeText(
@@ -2569,7 +2784,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         Toast.LENGTH_SHORT
                     ).show()
                 }
-                
+
                 // Reproducir el mensaje INMEDIATAMENTE con TTS nativo (sin esperar red)
                 ttsService.speakImmediate(
                     text = message.message,
@@ -2639,42 +2854,42 @@ El archivo enviado está vacío o no se pudo leer su contenido.
         lifecycleScope.launch {
             try {
                 loadingProgressBar.visibility = View.VISIBLE
-                
+
                 // Siempre recargar desde Supabase/DB para tener datos actualizados
                 val gradedTasksFromDB = loadGradedTasksFromChat()
                 gradedTasksList.clear()
                 gradedTasksList.addAll(gradedTasksFromDB)
-                
+
                 loadingProgressBar.visibility = View.GONE
-                
+
                 if (gradedTasksList.isEmpty()) {
                     Toast.makeText(context, "No hay tareas calificadas aún", Toast.LENGTH_SHORT).show()
                     return@launch
                 }
-                
+
                 Log.d("ChatBotFragment", "Mostrando ${gradedTasksList.size} tareas calificadas")
-                
+
                 gradedCourseNameTextView.text = courseTitle.ifEmpty { "Curso Actual" }
                 gradedTaskOverlayAdapter.updateGradedTasks(gradedTasksList.toList()) // Crear copia para evitar modificaciones concurrentes
-                
+
                 gradedTasksOverlayBackground.visibility = View.VISIBLE
                 gradedTasksOverlay.visibility = View.VISIBLE
-                
+
                 gradedTasksOverlayBackground.alpha = 0f
                 gradedTasksOverlay.alpha = 0f
                 gradedTasksOverlay.translationY = 50f
-                
+
                 gradedTasksOverlayBackground.animate()
                     .alpha(1f)
                     .setDuration(200)
                     .start()
-                
+
                 gradedTasksOverlay.animate()
                     .alpha(1f)
                     .translationY(0f)
                     .setDuration(250)
                     .start()
-                
+
             } catch (e: Exception) {
                 loadingProgressBar.visibility = View.GONE
                 Log.e("ChatBotFragment", "Error cargando tareas calificadas", e)
@@ -2715,19 +2930,19 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             try {
                 val gradedTasks = mutableListOf<GradedTaskItem>()
                 val processedTaskSubmissionIds = mutableSetOf<Long>()
-                
+
                 Log.d("ChatBotFragment", "Cargando tareas calificadas...")
-                
+
                 val userId = try {
                     sessionManager.getUserId()
                 } catch (e: Exception) {
                     null
                 }
-                
+
                 // Obtener todas las submissions (intentar Supabase primero si hay curso y usuario)
                 var allSubmissions: List<TaskSubmission> = emptyList()
                 var loadedFromSupabase = false
-                
+
                 if (courseId != -1L && userId != null) {
                     try {
                         Log.d("ChatBotFragment", "Intentando obtener submissions desde Supabase para curso $courseId y usuario $userId")
@@ -2743,7 +2958,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         Log.e("ChatBotFragment", "Error fetching from Supabase: ${e.message}")
                     }
                 }
-                
+
                 // Fallback a local si no se cargó de Supabase
                 if (!loadedFromSupabase) {
                     Log.d("ChatBotFragment", "Cargando submissions desde base de datos local")
@@ -2753,20 +2968,20 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         database.taskSubmissionDao().getAllTaskSubmissions()
                     }
                 }
-                
+
                 Log.d("ChatBotFragment", "Total submissions a procesar: ${allSubmissions.size}")
-                
+
                 for (submission in allSubmissions) {
                     // Evitar duplicados por submission ID
                     if (processedTaskSubmissionIds.contains(submission.id)) {
                         continue
                     }
-                    
+
                     try {
                         if (submission.grade != null) {
                             // Intentar obtener tarea localmente
                             var task = database.taskDao().getTaskById(submission.taskId)
-                            
+
                             // Si no está local y venimos de Supabase, intentar fetch remoto de la tarea
                             if (task == null && loadedFromSupabase) {
                                 try {
@@ -2775,20 +2990,20 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                     Log.e("ChatBotFragment", "Error fetching task ${submission.taskId} from Supabase: ${e.message}")
                                 }
                             }
-                            
+
                             if (task != null) {
                                 val topic = database.topicDao().getTopicById(task.topicId)
                                 // Nota: Si el topic no está, podríamos buscarlo también, pero por ahora "Sin tema" es aceptable
-                                
+
                                 val gradeValue = submission.grade
                                 val gradeDisplay = if (gradeValue > 10) {
                                     String.format("%.1f/10", gradeValue / 10)
                                 } else {
                                     String.format("%.1f/10", gradeValue)
                                 }
-                                
+
                                 val feedback = submission.feedback ?: "Sin feedback disponible"
-                                
+
                                 val gradedTask = GradedTaskItem(
                                     taskId = task.id,
                                     taskName = task.name,
@@ -2798,7 +3013,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                     grade = gradeDisplay,
                                     feedback = feedback
                                 )
-                                
+
                                 gradedTasks.add(gradedTask)
                                 processedTaskSubmissionIds.add(submission.id)
                                 Log.d("ChatBotFragment", "Tarea calificada cargada: ${task.name} - Grade: $gradeDisplay")
@@ -2810,7 +3025,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         Log.e("ChatBotFragment", "Error procesando submission ${submission.id}: ${e.message}")
                     }
                 }
-                
+
                 Log.d("ChatBotFragment", "Total de tareas calificadas cargadas: ${gradedTasks.size}")
                 gradedTasks
             } catch (e: Exception) {
@@ -2827,19 +3042,19 @@ El archivo enviado está vacío o no se pudo leer su contenido.
         lifecycleScope.launch {
             try {
                 Log.d("ChatBotFragment", "Cargando tareas calificadas al inicializar fragmento...")
-                
+
                 // Cargar las tareas calificadas desde la base de datos
                 val gradedTasksFromDB = loadGradedTasksFromChat()
-                
+
                 // Limpiar la lista actual y agregar las tareas cargadas
                 gradedTasksList.clear()
                 gradedTasksList.addAll(gradedTasksFromDB)
-                
+
                 // Actualizar el adaptador
                 gradedTaskOverlayAdapter.updateGradedTasks(gradedTasksList.toList())
-                
+
                 Log.d("ChatBotFragment", "Tareas calificadas cargadas al inicializar: ${gradedTasksList.size}")
-                
+
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error cargando tareas calificadas al inicializar: ${e.message}")
             }
@@ -2856,13 +3071,13 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 "📚 Tema: ${gradedTask.topicName}\n" +
                 "📊 Calificación: ${gradedTask.grade}\n" +
                 "💬 Pregúntame sobre esta calificación..."
-        
+
         messageEditText.setText(taskContext)
         messageEditText.setSelection(taskContext.length)
-        
+
         // Ocultar el overlay
         hideGradedTasksOverlay()
-        
+
         Toast.makeText(context, "Tarea calificada seleccionada: ${gradedTask.taskName}", Toast.LENGTH_SHORT).show()
     }
 
@@ -2877,7 +3092,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             .alpha(1f)
             .setDuration(100)
             .start()
-        
+
         // Show overlay with skeleton immediately
         if (taskListOverlay.visibility != View.VISIBLE) {
             taskListOverlay.visibility = View.VISIBLE
@@ -2887,7 +3102,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 .setDuration(100)
                 .start()
         }
-        
+
         // Reset to course selection mode
         isSelectingCourse = true
         selectedCourseId = -1L
@@ -2896,14 +3111,14 @@ El archivo enviado está vacío o no se pudo leer su contenido.
         overlayTitleTextView.text = "Seleccionar Curso"
         overlaySearchEditText.hint = "Buscar por nombre o categoría..."
         overlaySearchEditText.text.clear()
-        
+
         // Show skeleton loading state immediately
         courseNameTextView.text = "Cargando cursos..."
         taskOverlayAdapter.setLoading(true)
 
         // Setup search listener
         setupSearchListener()
-        
+
         // Setup back button listener
         backToCoursesButton.setOnClickListener {
             navigateBackToCourses()
@@ -2913,30 +3128,30 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             try {
                 // Load ALL courses for the user
                 val courses = loadAllUserCourses()
-                
+
                 courseNameTextView.text = "${courses.size} cursos encontrados"
                 allCoursesList.clear()
                 allCoursesList.addAll(courses)
                 currentCourseTasks.clear()
                 currentCourseTasks.addAll(courses)
-                
+
                 val filtered = if (initialQuery.isNotEmpty()) {
-                    courses.filter { 
-                        it.taskName.contains(initialQuery, ignoreCase = true) || 
-                        it.topicName.contains(initialQuery, ignoreCase = true) // topicName = category
+                    courses.filter {
+                        it.taskName.contains(initialQuery, ignoreCase = true) ||
+                                it.topicName.contains(initialQuery, ignoreCase = true) // topicName = category
                     }
                 } else {
                     courses
                 }
-                
+
                 // Hide skeleton and show real data
                 taskOverlayAdapter.setLoading(false)
                 taskOverlayAdapter.updateTasks(filtered)
-                
+
                 if (courses.isEmpty()) {
                     Toast.makeText(context, "No se encontraron cursos", Toast.LENGTH_SHORT).show()
                 }
-                    
+
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error loading courses for overlay", e)
                 Toast.makeText(context, "Error al cargar los cursos", Toast.LENGTH_SHORT).show()
@@ -2945,7 +3160,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             }
         }
     }
-    
+
     /**
      * Configura el listener de búsqueda para filtrar cursos/tareas
      */
@@ -2953,7 +3168,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
         overlaySearchEditText.removeTextChangedListener(searchTextWatcher)
         overlaySearchEditText.addTextChangedListener(searchTextWatcher)
     }
-    
+
     private val searchTextWatcher = object : android.text.TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
@@ -2962,26 +3177,26 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             filterOverlayList(query)
         }
     }
-    
+
     /**
      * Filtra la lista del overlay según la búsqueda
      */
     private fun filterOverlayList(query: String) {
         val sourceList = if (isSelectingCourse) allCoursesList else currentCourseTasks
-        
+
         val filtered = if (query.isEmpty()) {
             sourceList
         } else {
             sourceList.filter { item ->
                 item.taskName.contains(query, ignoreCase = true) ||
-                item.topicName.contains(query, ignoreCase = true) ||
-                item.taskDescription.contains(query, ignoreCase = true) ||
-                (item.studentUsername?.contains(query, ignoreCase = true) == true)
+                        item.topicName.contains(query, ignoreCase = true) ||
+                        item.taskDescription.contains(query, ignoreCase = true) ||
+                        (item.studentUsername?.contains(query, ignoreCase = true) == true)
             }
         }
-        
+
         taskOverlayAdapter.updateTasks(filtered)
-        
+
         // Update subtitle
         if (isSelectingCourse) {
             courseNameTextView.text = if (query.isEmpty()) {
@@ -2991,7 +3206,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             }
         }
     }
-    
+
     /**
      * Navega de vuelta a la lista de cursos
      */
@@ -3004,7 +3219,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
         overlaySearchEditText.hint = "Buscar por nombre o categoría..."
         overlaySearchEditText.text.clear()
         courseNameTextView.text = "${allCoursesList.size} cursos encontrados"
-        
+
         currentCourseTasks.clear()
         currentCourseTasks.addAll(allCoursesList)
         taskOverlayAdapter.updateTasks(allCoursesList)
@@ -3046,7 +3261,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 Log.w("ChatBotFragment", "No user ID found")
                 return@withContext emptyList()
             }
-            
+
             try {
                 // Fetch courses where the current user is the CREATOR (Owner)
                 val supabaseClient = com.example.tareamov.service.SupabaseClient
@@ -3054,24 +3269,24 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     try {
                         // 1. Get courses created by me
                         val myCourses = supabaseClient.fetchCoursesByCreatorUserId(userId)
-                        
+
                         // 2. Filter: only keep courses that have submissions from students
                         val coursesWithSubmissions = mutableListOf<com.example.tareamov.data.entity.Course>()
-                        
+
                         for (course in myCourses) {
-                             // Use SyncRepository to check for submissions
-                             try {
-                                 // fetchCourseSubmissionsWithUsernames returns a list of submissions
-                                 // If this list is not empty, it means there are submissions.
-                                 val submissions = syncRepository.fetchCourseSubmissionsWithUsernames(course.id)
-                                 if (submissions.isNotEmpty()) {
-                                     coursesWithSubmissions.add(course)
-                                 }
-                             } catch (e: Exception) {
-                                 Log.w("ChatBotFragment", "Error checking submissions for course ${course.id}: ${e.message}")
-                             }
+                            // Use SyncRepository to check for submissions
+                            try {
+                                // fetchCourseSubmissionsWithUsernames returns a list of submissions
+                                // If this list is not empty, it means there are submissions.
+                                val submissions = syncRepository.fetchCourseSubmissionsWithUsernames(course.id)
+                                if (submissions.isNotEmpty()) {
+                                    coursesWithSubmissions.add(course)
+                                }
+                            } catch (e: Exception) {
+                                Log.w("ChatBotFragment", "Error checking submissions for course ${course.id}: ${e.message}")
+                            }
                         }
-                        
+
                         Log.d("ChatBotFragment", "Loaded ${coursesWithSubmissions.size} courses created by user $userId that have submissions")
 
                         coursesWithSubmissions.mapIndexed { index, course ->
@@ -3091,9 +3306,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     // Local fallback: courses created by user AND having submissions
                     val allCourses = database.courseDao().getAllCourses()
                     val myLocalCourses = allCourses.filter { it.creatorUserId == userId }
-                    
+
                     val filtered = mutableListOf<com.example.tareamov.data.entity.Course>()
-                    
+
                     for (course in myLocalCourses) {
                         val topics = database.topicDao().getTopicsByCourse(course.id)
                         var hasSubs = false
@@ -3110,9 +3325,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         }
                         if (hasSubs) filtered.add(course)
                     }
-                    
+
                     filtered.mapIndexed { index, course ->
-                         TaskItem(
+                        TaskItem(
                             taskId = course.id,
                             taskName = course.title,
                             taskDescription = course.description ?: "Sin descripción",
@@ -3141,27 +3356,27 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 // Fetch ALL submissions for the course using the new method with usernames
                 // The method returns List<Map<String, Any?>> which is compatible
                 val submissions = syncRepository.fetchCourseSubmissionsWithUsernames(courseId)
-                
+
                 Log.d("ChatBotFragment", "Loaded ${submissions.size} submissions for course $courseId")
-                
+
                 // Group submissions by student and sort by username
                 // The 'student_username' key is now directly available from the JOIN query
                 val submissionsByStudent = submissions
-                    .groupBy { 
-                         // Use 'student_username' from the query result (from LEFT JOIN usuarios)
-                         // Fallback to "Unknown" if null
-                         (it["student_username"] as? String) ?: "Unknown"
+                    .groupBy {
+                        // Use 'student_username' from the query result (from LEFT JOIN usuarios)
+                        // Fallback to "Unknown" if null
+                        (it["student_username"] as? String) ?: "Unknown"
                     }
                     .toSortedMap(String.CASE_INSENSITIVE_ORDER)
-                
+
                 val taskItems = mutableListOf<TaskItem>()
                 var index = 1
-                
+
                 // Explicitly iterate over entries to avoid inference issues
                 for (entry in submissionsByStudent.entries) {
                     val username = entry.key
                     val studentSubmissions = entry.value
-                    
+
                     // Calculate student average for context
                     val progressManager = com.example.tareamov.util.StudentProgressManager(requireContext())
                     val avgGrade = try {
@@ -3171,14 +3386,14 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         0f
                     }
                     val formattedAvg = String.format("%.1f", avgGrade)
-                    
+
                     // Add each submission for this student
                     for (sub in studentSubmissions) {
                         val taskTitle = sub["task_title"] as? String ?: "Tarea sin título"
                         val grade = (sub["grade"] as? Number)?.toFloat() ?: 0f
                         // submission_date can be Long or String depending on source
                         val submissionDate = sub["submission_date"]
-                        
+
                         // Format grade info
                         val gradeInfo = if (grade > 0) {
                             val gradeFormatted = if (grade % 1 == 0f) grade.toInt().toString() else String.format("%.1f", grade)
@@ -3186,7 +3401,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         } else {
                             "⏳ Pendiente de calificar"
                         }
-                        
+
                         taskItems.add(
                             TaskItem(
                                 taskId = (sub["task_id"] as? Number)?.toLong() ?: 0L,
@@ -3200,7 +3415,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         )
                     }
                 }
-                
+
                 taskItems
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error loading submissions for course $courseId", e)
@@ -3220,7 +3435,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 val taskItems = mutableListOf<TaskItem>()
                 var tasks: List<com.example.tareamov.data.entity.Task> = emptyList()
                 val topicMap = mutableMapOf<Long, String>()
-                
+
                 // Obtener tareas (filtradas por curso si es posible)
                 if (courseId != -1L) {
                     // Intentar cargar localmente primero
@@ -3230,7 +3445,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         courseTasks.addAll(database.taskDao().getTasksByTopicId(topic.id))
                         topicMap[topic.id] = topic.name
                     }
-                    
+
                     if (courseTasks.isNotEmpty()) {
                         tasks = courseTasks
                     } else {
@@ -3241,7 +3456,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 Log.d("ChatBotFragment", "No local tasks for course $courseId, fetching from Supabase")
                                 val remoteTopics = supabaseClient.fetchTopicsByCourse(courseId)
                                 remoteTopics.forEach { topicMap[it.id] = it.name }
-                                
+
                                 val remoteTopicIds = remoteTopics.map { it.id }
                                 if (remoteTopicIds.isNotEmpty()) {
                                     tasks = supabaseClient.fetchTasksByTopicIds(remoteTopicIds)
@@ -3271,12 +3486,12 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         }
                     }
                 }
-                
+
                 Log.d("ChatBotFragment", "Cargando tareas... encontradas: ${tasks.size}")
-                
+
                 // Usar índice secuencial para referencias con #1, #2, etc.
                 var sequentialIndex = 1
-                
+
                 for (task in tasks) {
                     try {
                         // Resolver nombre del tema
@@ -3290,7 +3505,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 topicName = "Sin tema"
                             }
                         }
-                        
+
                         // 🔥 CRÍTICO: Obtener descripción completa de la tarea
                         // Si la descripción local está vacía, intentar obtenerla de Supabase
                         var taskDescription = task.description ?: ""
@@ -3311,7 +3526,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         if (taskDescription.isBlank()) {
                             taskDescription = "Sin descripción"
                         }
-                        
+
                         taskItems.add(
                             TaskItem(
                                 taskId = task.id,
@@ -3325,11 +3540,11 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         Log.e("ChatBotFragment", "Error procesando tarea ${task.id}: ${e.message}")
                     }
                 }
-                
+
                 // Actualizar cache para referencias por #
                 currentCourseTasks.clear()
                 currentCourseTasks.addAll(taskItems)
-                
+
                 Log.d("ChatBotFragment", "Total de tareas cargadas para overlay: ${taskItems.size}")
                 taskItems
             } catch (e: Exception) {
@@ -3351,28 +3566,28 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     isSelectingCourse = false
                     selectedCourseId = task.taskId
                     selectedCourseTitle = task.taskName
-                    
+
                     // Update UI for course mode
                     overlayTitleTextView.text = "Entregas del Curso"
                     backToCoursesButton.visibility = View.VISIBLE
                     courseNameTextView.text = task.taskName
                     overlaySearchEditText.hint = "Buscar por estudiante o tarea..."
                     overlaySearchEditText.text.clear()
-                    
+
                     // Show skeleton while loading submissions
                     taskOverlayAdapter.setLoading(true)
-                    
+
                     val submissions = loadSubmissionsForCourse(task.taskId) // taskId is courseId here
                     currentCourseTasks.clear()
                     currentCourseTasks.addAll(submissions)
-                    
+
                     // Update subtitle with count
                     courseNameTextView.text = "${task.taskName} • ${submissions.size} entregas"
-                    
+
                     // Hide skeleton and show real data
                     taskOverlayAdapter.setLoading(false)
                     taskOverlayAdapter.updateTasks(currentCourseTasks)
-                    
+
                     if (submissions.isEmpty()) {
                         Toast.makeText(context, "No hay entregas en este curso", Toast.LENGTH_SHORT).show()
                     }
@@ -3384,13 +3599,13 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             }
             return
         }
-        
+
         lifecycleScope.launch {
             try {
                 // ✅ CRÍTICO: Actualizar SIEMPRE las variables de instancia para que sendMessage las use
                 taskName = task.taskName
                 taskDescription = task.taskDescription ?: ""
-                
+
                 // Actualizar UI del contexto activo
                 if (::activeContextValue.isInitialized) {
                     activeContextValue.text = taskName
@@ -3399,36 +3614,36 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         activeContextIcon.setColorFilter(android.graphics.Color.parseColor("#DDDDDD"))
                     }
                 }
-                
+
                 Log.d("ChatBotFragment", "🎯 Tarea seleccionada: $taskName")
                 Log.d("ChatBotFragment", "📝 Descripción: $taskDescription")
-                
+
                 // Insertar el nombre de la tarea en el input
                 val currentText = messageEditText.text.toString()
                 val cursorPosition = messageEditText.selectionStart
-                
+
                 // Encontrar el inicio del hashtag actual
                 var start = cursorPosition - 1
                 while (start >= 0 && currentText[start] != '#') {
                     start--
                 }
-                
+
                 if (start >= 0) {
-                    val newText = currentText.substring(0, start) + 
-                                 "#${task.taskName} " + 
-                                 currentText.substring(cursorPosition)
-                    
+                    val newText = currentText.substring(0, start) +
+                            "#${task.taskName} " +
+                            currentText.substring(cursorPosition)
+
                     // Evitar que el TextWatcher dispare la búsqueda de nuevo
                     isUpdatingTextSpans = true
                     messageEditText.setText(newText)
                     messageEditText.setSelection(start + task.taskName.length + 2) // +2 por # y espacio
                     isUpdatingTextSpans = false
                 } else {
-                     // Fallback
-                     messageEditText.setText("#${task.taskName} ")
-                     messageEditText.setSelection(messageEditText.text.length)
+                    // Fallback
+                    messageEditText.setText("#${task.taskName} ")
+                    messageEditText.setSelection(messageEditText.text.length)
                 }
-                
+
                 // Intentar cargar submission y contexto usando el taskId y usuario actual
                 // Use studentUsername from task if available (instructor view), otherwise current user
                 val username = task.studentUsername ?: sessionManager.getUsername() ?: ""
@@ -3451,16 +3666,16 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 } else {
                     sessionManager.getUserId()
                 }
-                
+
                 Log.d("ChatBotFragment", "🔍 Buscando submission para:")
                 Log.d("ChatBotFragment", "   - taskId: ${task.taskId}")
                 Log.d("ChatBotFragment", "   - username: '$username'")
                 Log.d("ChatBotFragment", "   - userId: $userId")
-                
+
                 // Lógica mejorada para obtener la submission y el contexto
                 var fileContext: FileContext? = null
                 var submission: TaskSubmission? = null
-                
+
                 withContext(Dispatchers.IO) {
                     // Log de búsqueda inicial
                     Log.d("ChatBotFragment", "🔍 Buscando submission para:")
@@ -3468,10 +3683,10 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     Log.d("ChatBotFragment", "   - taskName: '${task.taskName}'")
                     Log.d("ChatBotFragment", "   - username: '$username'")
                     Log.d("ChatBotFragment", "   - userId: $userId")
-                    
+
                     val supabaseClient = com.example.tareamov.service.SupabaseClient
                     var foundSubmissions: List<TaskSubmission> = emptyList()
-                    
+
                     // 🔥 PASO 0: Resolver el taskId correcto de Supabase usando el nombre de la tarea
                     // y también obtener la descripción completa de la tarea
                     var remoteTaskId = task.taskId
@@ -3482,7 +3697,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             if (remoteTask != null) {
                                 remoteTaskId = remoteTask.id
                                 Log.d("ChatBotFragment", "✅ TaskId remoto resuelto: $remoteTaskId (local era: ${task.taskId})")
-                                
+
                                 // 🔥 CRÍTICO: Actualizar taskDescription con la descripción de Supabase
                                 // si la descripción local está vacía o es "Sin descripción"
                                 if (taskDescription.isBlank() || taskDescription == "Sin descripción") {
@@ -3499,14 +3714,14 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             Log.w("ChatBotFragment", "⚠️ Error resolviendo taskId remoto: ${e.message}")
                         }
                     }
-                    
+
                     // 1. PRIORIDAD: Buscar en Supabase por taskId remoto y student_id (integer)
                     if (supabaseClient.isConfigured()) {
                         try {
                             Log.d("ChatBotFragment", "🌐 Consultando Supabase por task_id=$remoteTaskId y student_id=$userId...")
                             foundSubmissions = supabaseClient.fetchTaskSubmissionsByTaskAndStudentId(remoteTaskId, userId)
                             Log.d("ChatBotFragment", "📊 Submissions encontradas en Supabase: ${foundSubmissions.size}")
-                            
+
                             foundSubmissions.forEachIndexed { index, sub ->
                                 Log.d("ChatBotFragment", "   [$index] id=${sub.id}, file='${sub.fileName}', date=${sub.submissionDate}")
                             }
@@ -3514,7 +3729,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             Log.w("ChatBotFragment", "⚠️ Error consultando Supabase por student_id: ${e.message}")
                         }
                     }
-                    
+
                     // 2. Fallback: buscar en Supabase todas las submissions y filtrar por studentId
                     if (foundSubmissions.isEmpty() && supabaseClient.isConfigured()) {
                         try {
@@ -3522,7 +3737,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             val allSubmissions = supabaseClient.fetchTaskSubmissions()
                                 .filter { it.taskId == remoteTaskId }
                             Log.d("ChatBotFragment", "📊 Total submissions para taskId=$remoteTaskId: ${allSubmissions.size}")
-                            
+
                             // Filtrar por studentId o intentar match por otros campos
                             foundSubmissions = allSubmissions.filter { it.studentId == userId }
                             Log.d("ChatBotFragment", "📊 Submissions filtradas por studentId=$userId: ${foundSubmissions.size}")
@@ -3530,7 +3745,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             Log.w("ChatBotFragment", "⚠️ Error en fallback Supabase: ${e.message}")
                         }
                     }
-                    
+
                     // 3. Fallback final: base de datos local (usar taskId local)
                     if (foundSubmissions.isEmpty()) {
                         Log.d("ChatBotFragment", "📂 Consultando base de datos local...")
@@ -3538,16 +3753,16 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             .filter { it.studentId == userId }
                         Log.d("ChatBotFragment", "📊 Submissions encontradas localmente: ${foundSubmissions.size}")
                     }
-                    
+
                     // Tomar la submission más reciente
                     val sortedSubmissions = foundSubmissions.sortedByDescending { it.submissionDate }
-                    
+
                     Log.d("ChatBotFragment", "✅ Submissions del usuario actual: ${sortedSubmissions.size}")
-                    
+
                     if (sortedSubmissions.isNotEmpty()) {
                         submission = sortedSubmissions.first()
                         Log.d("ChatBotFragment", "📝 Submission encontrada: id=${submission!!.id}, file='${submission!!.fileName}'")
-                        
+
                         // Guardar en local si vino de Supabase
                         try {
                             database.taskSubmissionDao().insertSubmission(submission!!)
@@ -3555,19 +3770,19 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         } catch (e: Exception) {
                             Log.d("ChatBotFragment", "📝 Submission ya existe en DB local")
                         }
-                        
+
                         // Buscar FileContext primero en Supabase
                         if (supabaseClient.isConfigured()) {
                             try {
                                 Log.d("ChatBotFragment", "🌐 Buscando FileContext en Supabase...")
                                 fileContext = supabaseClient.fetchFileContextBySubmissionId(submission!!.id)
-                                
+
                                 if (fileContext != null) {
                                     Log.d("ChatBotFragment", "📄 FileContext: ENCONTRADO (Supabase)")
                                     Log.d("ChatBotFragment", "   - fileName: ${fileContext!!.fileName}")
                                     Log.d("ChatBotFragment", "   - fileContent length: ${fileContext!!.fileContent.length}")
                                     Log.d("ChatBotFragment", "   - contentSummary: ${fileContext!!.contentSummary?.take(100)}")
-                                    
+
                                     // Guardar en local para futuras consultas
                                     try {
                                         database.fileContextDao().insertFileContext(fileContext!!)
@@ -3580,12 +3795,12 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 Log.w("ChatBotFragment", "⚠️ Error consultando FileContext en Supabase: ${e.message}")
                             }
                         }
-                        
+
                         // Fallback a base de datos local si no se encontró en Supabase
                         if (fileContext == null) {
                             Log.d("ChatBotFragment", "📂 Buscando FileContext en DB local...")
                             fileContext = database.fileContextDao().getFileContextBySubmission(submission!!.id)
-                            
+
                             if (fileContext != null) {
                                 Log.d("ChatBotFragment", "📄 FileContext: ENCONTRADO (Local)")
                                 Log.d("ChatBotFragment", "   - fileName: ${fileContext!!.fileName}")
@@ -3598,18 +3813,18 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     } else {
                         Log.w("ChatBotFragment", "⚠️ No se encontraron submissions para este usuario y tarea")
                     }
-                    
+
                     // 3. Fallback final: Si tenemos submission pero no FileContext, intentar leer el archivo
                     if (fileContext == null && submission != null) {
                         Log.w("ChatBotFragment", "⚠️ FileContext no encontrado, intentando crear contexto desde archivo...")
-                        
+
                         var actualFileContent: String? = null
-                        
+
                         // Intentar leer el contenido real del archivo si el URI aún es accesible
                         try {
                             val fileUri = android.net.Uri.parse(submission!!.fileUri)
                             Log.d("ChatBotFragment", "🔍 Intentando leer archivo desde URI: $fileUri")
-                            
+
                             requireContext().contentResolver.openInputStream(fileUri)?.use { inputStream ->
                                 actualFileContent = inputStream.bufferedReader().use { it.readText() }
                                 Log.d("ChatBotFragment", "✅ Archivo leído exitosamente: ${actualFileContent!!.length} caracteres")
@@ -3617,7 +3832,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         } catch (e: Exception) {
                             Log.w("ChatBotFragment", "⚠️ No se pudo leer el archivo desde URI: ${e.message}")
                         }
-                        
+
                         val fallbackContent = if (actualFileContent != null) {
                             """
                             |=== INFORMACIÓN DEL ARCHIVO (LEÍDO DESDE ALMACENAMIENTO) ===
@@ -3642,9 +3857,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             |Recomendación: Vuelve a cargar el archivo desde TaskSubmissionsFragment para análisis completo.
                         """.trimMargin()
                         }
-                        
+
                         Log.d("ChatBotFragment", "📦 Creando FileContext temporal con ${fallbackContent.length} caracteres")
-                        
+
                         fileContext = FileContext(
                             submissionId = submission!!.id,
                             fileName = submission!!.fileName,
@@ -3652,7 +3867,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             fileContent = fallbackContent,
                             contentSummary = "Entrega realizada: ${submission!!.fileName}"
                         )
-                        
+
                         // Intentar guardar este contexto generado para futuras consultas
                         if (actualFileContent != null) {
                             try {
@@ -3664,11 +3879,11 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         }
                     }
                 }
-                
+
                 if (fileContext != null) {
                     // ✅ CRÍTICO: Establecer este contexto como el contexto actual
                     currentFileContext = fileContext
-                    
+
                     // 🔥 CRÍTICO: Si el fileContent está vacío pero tenemos contentSummary,
                     // intentar obtener contenido adicional de la descripción de la tarea
                     if (fileContext!!.fileContent.isBlank()) {
@@ -3682,18 +3897,18 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             }
                         }
                     }
-                    
+
                     Log.d("ChatBotFragment", "✅ currentFileContext establecido:")
                     Log.d("ChatBotFragment", "   - FileName: ${fileContext!!.fileName}")
                     Log.d("ChatBotFragment", "   - FileContent length: ${fileContext!!.fileContent.length}")
                     Log.d("ChatBotFragment", "   - ContentSummary: ${fileContext!!.contentSummary?.take(100)}")
                     Log.d("ChatBotFragment", "   - TaskDescription actual: ${taskDescription.take(100)}...")
-                    
+
                     // Actualizar información del curso
                     if (submission != null) {
                         updateCourseInfo(submission!!.id)
                     }
-                    
+
                     // Mostrar mensaje informativo sobre el contexto cargado
                     val contextMessage = ChatMessage(
                         message = "📄 **Contexto de tarea cargado**\n\n" +
@@ -3708,26 +3923,26 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         , senderUsername = "DeepSeek",
                         senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                     )
-                    
+
                     // Insertar mensaje en la base de datos
                     withContext(Dispatchers.IO) {
                         database.chatMessageDao().insertMessage(contextMessage)
                     }
-                    
+
                     // Actualizar UI (automático por Flow)
                     // chatAdapter.addMessage(contextMessage) 
                     // messagesRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)
                 } else {
                     Log.d("ChatBotFragment", "⚠️ No se encontró contexto de archivo para la tarea ${task.taskName}")
                     Log.d("ChatBotFragment", "   Pero taskName y taskDescription SÍ están establecidos para sendMessage")
-                    
+
                     // ✅ NO limpiar currentFileContext aquí, dejarlo como null
                     // Las variables taskName y taskDescription YA están establecidas arriba
                     currentFileContext = null
-                    
+
                     // Logic for task without submission or context
                     updateTaskInfoByTaskId(task.taskId)
-                    
+
                     // Show message
                     val contextMessage = ChatMessage(
                         message = "📝 **Tarea seleccionada**\n\n" +
@@ -3745,9 +3960,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     // chatAdapter.addMessage(contextMessage)
                     // messagesRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)
                 }
-                
+
                 hideTaskListOverlay()
-                
+
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error selecting task", e)
                 Toast.makeText(context, "Error al seleccionar la tarea", Toast.LENGTH_SHORT).show()
@@ -3777,7 +3992,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                     // Formatear la fecha de entrega
                                     val dateFormat = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault())
                                     val deliveryDateFormatted = dateFormat.format(submission.submissionDate)
-                                    
+
                                     mapOf(
                                         "taskName" to task.name,
                                         "taskDescription" to (task.description ?: "Sin descripción"),
@@ -3791,7 +4006,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         } else null
                     } else null
                 }
-                
+
                 if (taskInfo != null) {
                     taskName = taskInfo["taskName"] as String
                     taskDescription = taskInfo["taskDescription"] as String
@@ -3799,9 +4014,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     courseTitle = taskInfo["courseTitle"] as String
                     deliveryDate = taskInfo["deliveryDate"] as String
                     courseId = taskInfo["courseId"] as Long
-                    
+
                     Log.d("ChatBotFragment", "Información de tarea cargada: $taskName - $topicName - $courseTitle (courseId: $courseId)")
-                    
+
                     // Actualizar UI del contexto activo
                     if (::activeContextValue.isInitialized) {
                         activeContextValue.text = taskName
@@ -3821,47 +4036,47 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     )
                     chatAdapter.updateTaskInfo(taskInfoForAdapter)
                 } else {
-                        // If we couldn't load task info from local DB, attempt Supabase as fallback
-                        try {
-                            val supabaseClient = com.example.tareamov.service.SupabaseClient
-                            if (supabaseClient.isConfigured()) {
-                                Log.d("ChatBotFragment", "Attempting to load task info from Supabase for submissionId=$submissionId")
-                                val remoteSubmission = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissions().firstOrNull { it.id == submissionId } }
-                                if (remoteSubmission != null) {
-                                    val remoteTask = withContext(Dispatchers.IO) { supabaseClient.fetchTaskById(remoteSubmission.taskId) }
-                                    val remoteTopic = if (remoteTask != null) withContext(Dispatchers.IO) { supabaseClient.fetchTopics().firstOrNull { it.id == remoteTask.topicId } } else null
-                                    val remoteCourse = if (remoteTopic != null) withContext(Dispatchers.IO) { supabaseClient.fetchCourseById(remoteTopic.courseId) } else null
+                    // If we couldn't load task info from local DB, attempt Supabase as fallback
+                    try {
+                        val supabaseClient = com.example.tareamov.service.SupabaseClient
+                        if (supabaseClient.isConfigured()) {
+                            Log.d("ChatBotFragment", "Attempting to load task info from Supabase for submissionId=$submissionId")
+                            val remoteSubmission = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissions().firstOrNull { it.id == submissionId } }
+                            if (remoteSubmission != null) {
+                                val remoteTask = withContext(Dispatchers.IO) { supabaseClient.fetchTaskById(remoteSubmission.taskId) }
+                                val remoteTopic = if (remoteTask != null) withContext(Dispatchers.IO) { supabaseClient.fetchTopics().firstOrNull { it.id == remoteTask.topicId } } else null
+                                val remoteCourse = if (remoteTopic != null) withContext(Dispatchers.IO) { supabaseClient.fetchCourseById(remoteTopic.courseId) } else null
 
-                                    if (remoteTask != null && remoteTopic != null && remoteCourse != null) {
-                                        taskName = remoteTask.name
-                                        taskDescription = remoteTask.description ?: "Sin descripción"
-                                        topicName = remoteTopic.name ?: ""
-                                        courseTitle = remoteCourse.title ?: ""
-                                        deliveryDate = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault()).format(remoteSubmission.submissionDate)
-                                        courseId = remoteTopic.courseId
+                                if (remoteTask != null && remoteTopic != null && remoteCourse != null) {
+                                    taskName = remoteTask.name
+                                    taskDescription = remoteTask.description ?: "Sin descripción"
+                                    topicName = remoteTopic.name ?: ""
+                                    courseTitle = remoteCourse.title ?: ""
+                                    deliveryDate = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault()).format(remoteSubmission.submissionDate)
+                                    courseId = remoteTopic.courseId
 
-                                        Log.i("ChatBotFragment", "Loaded task info from Supabase for submissionId=$submissionId: $taskName - $topicName - $courseTitle")
+                                    Log.i("ChatBotFragment", "Loaded task info from Supabase for submissionId=$submissionId: $taskName - $topicName - $courseTitle")
 
-                                        val taskInfoForAdapter = ChatMessageAdapter.TaskInfo(
-                                            taskName = taskName,
-                                            taskDescription = taskDescription,
-                                            topicName = topicName,
-                                            courseTitle = courseTitle,
-                                            deliveryDate = deliveryDate
-                                        )
-                                        chatAdapter.updateTaskInfo(taskInfoForAdapter)
-                                    } else {
-                                        Log.w("ChatBotFragment", "Supabase returned incomplete task/topic/course data for submissionId=$submissionId")
-                                    }
+                                    val taskInfoForAdapter = ChatMessageAdapter.TaskInfo(
+                                        taskName = taskName,
+                                        taskDescription = taskDescription,
+                                        topicName = topicName,
+                                        courseTitle = courseTitle,
+                                        deliveryDate = deliveryDate
+                                    )
+                                    chatAdapter.updateTaskInfo(taskInfoForAdapter)
                                 } else {
-                                    Log.w("ChatBotFragment", "No se pudo cargar la información de la tarea para submissionId: $submissionId")
+                                    Log.w("ChatBotFragment", "Supabase returned incomplete task/topic/course data for submissionId=$submissionId")
                                 }
                             } else {
                                 Log.w("ChatBotFragment", "No se pudo cargar la información de la tarea para submissionId: $submissionId")
                             }
-                        } catch (e: Exception) {
-                            Log.e("ChatBotFragment", "Error cargando información de la tarea desde Supabase", e)
+                        } else {
+                            Log.w("ChatBotFragment", "No se pudo cargar la información de la tarea para submissionId: $submissionId")
                         }
+                    } catch (e: Exception) {
+                        Log.e("ChatBotFragment", "Error cargando información de la tarea desde Supabase", e)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error cargando información de la tarea", e)
@@ -3964,22 +4179,22 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     val taskSubmission = withContext(Dispatchers.IO) {
                         database.taskSubmissionDao().getSubmissionById(fileContext.submissionId)
                     }
-                    
+
                     taskSubmission?.let { submission ->
                         val task = withContext(Dispatchers.IO) {
                             database.taskDao().getTaskById(submission.taskId)
                         }
-                        
+
                         val topic = task?.let { t ->
                             withContext(Dispatchers.IO) {
                                 database.topicDao().getTopicById(t.topicId)
                             }
                         }
-                        
+
                         if (task != null) {
                             val finalGrade = grade ?: message.calificationValue ?: "N/A"
                             val finalFeedback = feedback ?: message.message
-                            
+
                             val gradedTask = GradedTaskItem(
                                 taskId = task.id,
                                 taskName = task.name,
@@ -3989,13 +4204,13 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 grade = finalGrade,
                                 feedback = finalFeedback
                             )
-                            
+
                             // Verificar que no esté ya en la lista usando submission ID como identificador único
                             // Esto evita duplicados cuando se modifica la calificación de una tarea
-                            val existingTaskIndex = gradedTasksList.indexOfFirst { 
-                                it.taskId == gradedTask.taskId 
+                            val existingTaskIndex = gradedTasksList.indexOfFirst {
+                                it.taskId == gradedTask.taskId
                             }
-                            
+
                             if (existingTaskIndex == -1) {
                                 // Nueva tarea, agregar a la lista
                                 gradedTasksList.add(gradedTask)
@@ -4005,7 +4220,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 gradedTasksList[existingTaskIndex] = gradedTask
                                 Log.d("ChatBotFragment", "Tarea actualizada en lista calificadas: ${task.name} - Grade: $finalGrade - SubmissionId: ${submission.id}")
                             }
-                            
+
                             // Actualizar el adapter con la lista completa
                             gradedTaskOverlayAdapter.updateGradedTasks(gradedTasksList.toList())
                             Log.d("ChatBotFragment", "Total tareas calificadas en memoria: ${gradedTasksList.size}")
@@ -4017,16 +4232,16 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             }
         }
     }
-    
+
     /**
      * Se ejecuta cuando cambia la posición del cursor
      */
     private fun onCursorPositionChanged() {
         if (!::messageEditText.isInitialized) return
-        
+
         val text = messageEditText.text?.toString() ?: ""
         val cursorPosition = messageEditText.selectionStart
-        
+
         // Primero verificar si hay una referencia completa a tarea calificada (#<número>)
         val gradedTaskNumber = checkForGradedTaskReference(text, cursorPosition)
         if (gradedTaskNumber != null) {
@@ -4034,12 +4249,12 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             handleGradedTaskReference(gradedTaskNumber)
             return
         }
-        
+
         val shouldShowTaskList = checkCursorAfterHashtag(text, cursorPosition)
-        
+
         // Debug logging (comentar en producción)
         // Log.d("ChatBotFragment", "Cursor position: $cursorPosition, Text: '$text', Should show: $shouldShowTaskList")
-        
+
         if (shouldShowTaskList) {
             val query = extractHashtagContent(text, cursorPosition)
             if (taskListOverlay.visibility != View.VISIBLE) {
@@ -4069,14 +4284,14 @@ El archivo enviado está vacío o no se pudo leer su contenido.
         val filtered = if (query.isEmpty()) {
             currentCourseTasks.toList()
         } else {
-            currentCourseTasks.filter { 
-                it.taskName.contains(query, ignoreCase = true) || 
-                it.index.toString().contains(query)
+            currentCourseTasks.filter {
+                it.taskName.contains(query, ignoreCase = true) ||
+                        it.index.toString().contains(query)
             }
         }
         taskOverlayAdapter.updateTasks(filtered)
     }
-    
+
     /**
      * Verifica si el cursor está posicionado justo después de un símbolo '#'
      * @param text El texto completo del EditText
@@ -4085,44 +4300,44 @@ El archivo enviado está vacío o no se pudo leer su contenido.
      */
     private fun checkCursorAfterHashtag(text: String, cursorPosition: Int): Boolean {
         if (text.isEmpty() || cursorPosition <= 0) return false
-        
+
         // Caso 1: El cursor está justo después de un '#' recién escrito
         if (cursorPosition > 0 && text[cursorPosition - 1] == '#') {
             return true
         }
-        
+
         // Caso 2: El cursor está en medio o al final de una referencia existente
         if (cursorPosition > 1) {
             // Buscar hacia atrás para encontrar un '#'
             var position = cursorPosition - 1
             var foundContent = false
-            
+
             // Retroceder mientras encontremos caracteres válidos (letras o dígitos)
             while (position >= 0 && (text[position].isLetterOrDigit() || text[position] == '_')) {
                 foundContent = true
                 position--
             }
-            
+
             // Si encontramos contenido y el carácter anterior es '#'
             if (foundContent && position >= 0 && text[position] == '#') {
                 // Verificar que estamos dentro o al final de esta referencia
                 val hashtagStart = position
                 val hashtagEnd = hashtagStart + 1
-                
+
                 // Encontrar el final de la referencia
                 var referenceEnd = hashtagEnd
                 while (referenceEnd < text.length && (text[referenceEnd].isLetterOrDigit() || text[referenceEnd] == '_')) {
                     referenceEnd++
                 }
-                
+
                 // El cursor debe estar entre el '#' y el final de la referencia (inclusive)
                 return cursorPosition >= hashtagEnd && cursorPosition <= referenceEnd
             }
         }
-        
+
         return false
     }
-    
+
     /**
      * Muestra el FAB de scroll con animación suave
      */
@@ -4132,7 +4347,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             fabScrollToBottom.alpha = 0f
             fabScrollToBottom.scaleX = 0.5f
             fabScrollToBottom.scaleY = 0.5f
-            
+
             fabScrollToBottom.animate()
                 .alpha(1f)
                 .scaleX(1f)
@@ -4142,7 +4357,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 .start()
         }
     }
-    
+
     /**
      * Oculta el FAB de scroll con animación suave
      */
@@ -4160,7 +4375,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 .start()
         }
     }
-    
+
     /**
      * Hace scroll suave hasta el último mensaje
      */
@@ -4179,17 +4394,17 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         .start()
                 }
                 .start()
-            
+
             // Scroll suave al último mensaje
             messagesRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)
-            
+
             // Ocultar el FAB después de hacer scroll
             messagesRecyclerView.postDelayed({
                 hideScrollToBottomFab()
             }, 400)
         }
     }
-    
+
     /**
      * Verifica si hay una referencia completa a una tarea calificada (#<número>)
      * @param text El texto completo del EditText
@@ -4198,24 +4413,24 @@ El archivo enviado está vacío o no se pudo leer su contenido.
      */
     private fun checkForGradedTaskReference(text: String, cursorPosition: Int): Int? {
         if (text.isEmpty()) return null
-        
+
         // Buscar patrones #<número> en el texto
         val pattern = Regex("#(\\d+)")
         val matches = pattern.findAll(text)
-        
+
         for (match in matches) {
             val matchStart = match.range.first
             val matchEnd = match.range.last + 1
-            
+
             // Verificar si el cursor está al final de esta referencia o 
             // si acabamos de escribir el último dígito
-            if (cursorPosition == matchEnd || 
+            if (cursorPosition == matchEnd ||
                 (cursorPosition == matchEnd && cursorPosition > 0 && text[cursorPosition - 1].isDigit())) {
-                
+
                 val number = match.groupValues[1].toIntOrNull()
                 if (number != null) {
                     Log.d("ChatBotFragment", "Referencia completa encontrada: #$number en posición $matchStart-$matchEnd, cursor en $cursorPosition")
-                    
+
                     // Verificar que no hay más dígitos después (para evitar activar en #123 cuando escribimos #1234)
                     val nextCharPosition = matchEnd
                     if (nextCharPosition >= text.length || !text[nextCharPosition].isDigit()) {
@@ -4224,10 +4439,10 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 }
             }
         }
-        
+
         return null
     }
-    
+
     /**
      * Maneja la referencia a una tarea calificada específica
      * @param taskNumber El número de la tarea calificada referenciada (ahora es el ID de TaskSubmission)
@@ -4241,31 +4456,31 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     gradedTasksList.clear()
                     gradedTasksList.addAll(gradedTasksFromDB)
                 }
-                
+
                 // Buscar la tarea calificada por su ID de submission (ahora es index)
                 val gradedTask = gradedTasksList.find { it.index == taskNumber }
-                
+
                 if (gradedTask != null) {
                     Log.d("ChatBotFragment", "Tarea calificada encontrada: ${gradedTask.taskName} (submission ID: ${gradedTask.index})")
-                    
+
                     // Cargar el FileContext de esta submission
                     val submissionId = taskNumber.toLong()
                     val fileContext = withContext(Dispatchers.IO) {
                         database.fileContextDao().getFileContextBySubmission(submissionId)
                     }
-                    
+
                     if (fileContext != null) {
                         // Establecer este contexto como el contexto actual
                         currentFileContext = fileContext
-                        
+
                         // Actualizar información del curso
                         updateCourseInfo(submissionId)
-                        
+
                         Log.d("ChatBotFragment", "Contexto de archivo cargado para tarea referenciada:")
                         Log.d("ChatBotFragment", "- FileName: ${fileContext.fileName}")
                         Log.d("ChatBotFragment", "- ContentSummary length: ${fileContext.contentSummary?.length ?: 0}")
                         Log.d("ChatBotFragment", "- FileContent length: ${fileContext.fileContent.length}")
-                        
+
                         // Mostrar mensaje informativo sobre el contexto cargado
                         val contextMessage = ChatMessage(
                             message = "🔗 **Contexto de tarea referenciada cargado**\n\n" +
@@ -4281,7 +4496,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             , senderUsername = "DeepSeek",
                             senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                         )
-                        
+
                         // Insertar mensaje en la base de datos
                         withContext(Dispatchers.IO) {
                             database.chatMessageDao().insertMessage(contextMessage)
@@ -4289,20 +4504,20 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     } else {
                         Log.w("ChatBotFragment", "No se encontró FileContext para submission ID: $submissionId")
                     }
-                    
+
                     // Reemplazar la referencia #<número> con la información completa de la tarea
                     val currentText = messageEditText.text?.toString() ?: ""
                     val pattern = Regex("#$taskNumber\\b")
                     val taskContext = "#${gradedTask.index} ${gradedTask.taskName} (${gradedTask.grade})"
                     val newText = pattern.replace(currentText, taskContext)
-                    
+
                     messageEditText.setText(newText)
                     messageEditText.setSelection(newText.length)
-                    
+
                     Toast.makeText(context, "Tarea calificada #$taskNumber cargada: ${gradedTask.taskName}", Toast.LENGTH_SHORT).show()
                 } else {
                     Log.d("ChatBotFragment", "No se encontró tarea calificada con submission ID #$taskNumber")
-                    
+
                     // Si no existe, mostrar el overlay para que el usuario pueda ver las tareas disponibles
                     if (gradedTasksList.isNotEmpty()) {
                         showGradedTasksOverlay()
@@ -4311,7 +4526,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         Toast.makeText(context, "No hay tareas calificadas disponibles", Toast.LENGTH_SHORT).show()
                     }
                 }
-                
+
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error al manejar referencia a tarea calificada", e)
                 Toast.makeText(context, "Error al buscar tarea calificada", Toast.LENGTH_SHORT).show()
@@ -4321,13 +4536,13 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
     /**
      * 📧📱 Notifica al ESTUDIANTE cuando recibe una calificación en su tarea.
-     * 
+     *
      * IMPORTANTE: Esta notificación va al ESTUDIANTE (dueño de la entrega),
      * NO al creador del curso.
-     * 
+     *
      * Ejemplo: Si usuario 5 le pone un 8 a usuario 6 en su tarea,
      * la notificación le llega al usuario 6 (el estudiante).
-     * 
+     *
      * @param studentId ID del estudiante que recibirá la notificación
      * @param taskName Nombre de la tarea calificada
      * @param grade Calificación numérica (0-10)
@@ -4347,9 +4562,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 Log.d("ChatBotFragment", "   📝 Tarea: $taskName")
                 Log.d("ChatBotFragment", "   📊 Nota: $grade/10")
                 Log.d("ChatBotFragment", "   👤 Calificado por: $gradedByUsername")
-                
+
                 val baseUrl = getMicroserviceBaseUrl().trimEnd('/')
-                
+
                 // Crear el payload JSON
                 // Nota: JSONObject en Android no tiene put(String, Float), usar toDouble()
                 val payload = JSONObject().apply {
@@ -4359,31 +4574,31 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     put("feedback", feedback)
                     put("gradedByUsername", gradedByUsername)
                 }
-                
+
                 // Configurar el cliente HTTP
                 val client = okhttp3.OkHttpClient.Builder()
                     .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
-                
+
                 val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
                 val request = okhttp3.Request.Builder()
                     .url("$baseUrl/notify-grade")
                     .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
                     .post(body)
                     .build()
-                
+
                 val response = client.newCall(request).execute()
-                
+
                 if (response.isSuccessful) {
                     val responseBody = response.body?.string()
                     Log.i("ChatBotFragment", "✅ Notificación de calificación enviada al estudiante $studentId")
                     Log.d("ChatBotFragment", "   Response: $responseBody")
-                    
+
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
-                            context, 
-                            "📧 Estudiante notificado de su calificación", 
+                            context,
+                            "📧 Estudiante notificado de su calificación",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
@@ -4391,9 +4606,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     val errorBody = response.body?.string()
                     Log.w("ChatBotFragment", "⚠️ Error enviando notificación de calificación: ${response.code} - $errorBody")
                 }
-                
+
                 response.close()
-                
+
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "❌ Error enviando notificación de calificación: ${e.message}", e)
             }
@@ -4423,11 +4638,11 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             // Hide keyboard
             val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
             imm.hideSoftInputFromWindow(messageEditText.windowToken, 0)
-            
+
             // Toggle UI
             messageInputContainer.visibility = View.GONE
             voiceInputLayout.visibility = View.VISIBLE
-            
+
             if (speechRecognizer == null) {
                 createSpeechRecognizer()
             }
@@ -4440,10 +4655,10 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
             speechRecognizer?.startListening(voiceIntent)
             isListening = true
-            
+
             voiceStatusText.text = "Escuchando..."
             voiceVisualizer.startAnimating()
-            
+
         } catch (e: Exception) {
             Toast.makeText(context, "Error al iniciar voz: ${e.message}", Toast.LENGTH_SHORT).show()
             e.printStackTrace()
@@ -4455,26 +4670,26 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
     private fun stopListening() {
         if (!isListening) {
-             // Ensure UI is reset even if we weren't "listening" but UI was showing
-             if (voiceInputLayout.visibility == View.VISIBLE) {
-                 voiceInputLayout.visibility = View.GONE
-                 messageInputContainer.visibility = View.VISIBLE
-             }
-             return
+            // Ensure UI is reset even if we weren't "listening" but UI was showing
+            if (voiceInputLayout.visibility == View.VISIBLE) {
+                voiceInputLayout.visibility = View.GONE
+                messageInputContainer.visibility = View.VISIBLE
+            }
+            return
         }
-        
+
         try {
             speechRecognizer?.stopListening()
             isListening = false
             voiceVisualizer.stopAnimating()
-            
+
             // Restore UI
             voiceInputLayout.visibility = View.GONE
             messageInputContainer.visibility = View.VISIBLE
-            
+
             // Focus input
             messageEditText.requestFocus()
-            
+
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -4508,18 +4723,18 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 Log.e("ChatBotFragment", "Voice error: $error")
                 isListening = false
                 voiceVisualizer.stopAnimating()
-                
+
                 // Hide overlay and restore input
                 voiceInputLayout.visibility = View.GONE
                 messageInputContainer.visibility = View.VISIBLE
-                
+
                 val errorMessage = when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH -> "No te entendí"
                     SpeechRecognizer.ERROR_NETWORK -> "Error de conexión"
                     SpeechRecognizer.ERROR_AUDIO -> "Error de audio"
                     else -> "Error de voz ($error)"
                 }
-                
+
                 if (error != SpeechRecognizer.ERROR_CLIENT) {
                     Toast.makeText(context, errorMessage, Toast.LENGTH_SHORT).show()
                 }
@@ -4533,11 +4748,11 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     messageEditText.setText(text)
                     messageEditText.setSelection(text.length)
                 }
-                
+
                 // Hide overlay and restore input
                 voiceInputLayout.visibility = View.GONE
                 messageInputContainer.visibility = View.VISIBLE
-                
+
                 isListening = false
                 voiceVisualizer.stopAnimating()
             }
@@ -4545,7 +4760,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             override fun onPartialResults(partialResults: Bundle?) {
                 val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (!matches.isNullOrEmpty()) {
-                     voiceStatusText.text = matches[0]
+                    voiceStatusText.text = matches[0]
                 }
             }
 

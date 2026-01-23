@@ -21,6 +21,12 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.MCPHttpClient
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 
 data class QuizQuestion(
     val question: String,
@@ -86,14 +92,45 @@ class ReinforcementLearningViewModel(
     private val _analyzedFiles = MutableStateFlow<List<AnalyzedFile>>(emptyList())
     val analyzedFiles: StateFlow<List<AnalyzedFile>> = _analyzedFiles.asStateFlow()
 
-    // Configuration matching ChatBotFragment
-    private val BASE_URL = "https://mcp-backenddeploy-production.up.railway.app/"
-    private val OLLAMA_URL = "https://mcp-backenddeploy-production.up.railway.app"
+    // Configuration matching ChatBotFragment - prefer discovered local MCP host
     private val API_KEY = "tareamov-mcp-api-key-2025-secure"
+    private val BASE_URL: String by lazy {
+        ServerEndpointResolver.peekMcpBaseUrl()?.let { peek ->
+            if (peek.endsWith("/")) peek else "$peek/"
+        } ?: run {
+            val fingerprint = try { android.os.Build.FINGERPRINT ?: "" } catch (e: Exception) { "" }
+            val isEmu = fingerprint.startsWith("generic") || fingerprint.startsWith("unknown")
+            if (isEmu) "http://10.0.2.2:3000/" else "https://mcp-backenddeploy-production.up.railway.app/"
+        }
+    }
+    private val OLLAMA_URL = BASE_URL.trimEnd('/')
 
     init {
         // Initialize the ServerEndpointResolver with the application context
         ServerEndpointResolver.initialize(application)
+        // Fast-resolve MCP endpoint and prefer local Docker host when available for testing
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Honor forced pref if present
+                ServerEndpointResolver.getForcedMcpBaseUrl()?.let { forced ->
+                    try {
+                        if (ServerEndpointResolver.isServiceReachable(forced)) {
+                            MCPHttpClient(application).setForcedBaseUrl(forced)
+                            Log.i("ReinforcementVM", "Using forced MCP URL from prefs: $forced")
+                            return@launch
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                val resolved = ServerEndpointResolver.fastResolveMcpBaseUrl()
+                if (!resolved.isNullOrBlank()) {
+                    MCPHttpClient(application).setForcedBaseUrl(resolved)
+                    Log.i("ReinforcementVM", "Fast-resolved MCP base URL: $resolved")
+                }
+            } catch (e: Exception) {
+                Log.d("ReinforcementVM", "fastResolve/init error: ${e.message}")
+            }
+        }
     }
 
     private fun createApi(): MicroservicioApi {
@@ -321,24 +358,103 @@ class ReinforcementLearningViewModel(
                 // 4. Call LLM via Backend
                 Log.d("ReinforcementVM", "Invocando MicroservicioPromptRequest con userId=$userId, courseId=$courseId, topicId=$topicId, taskId=$taskId")
 
-                val response = api.procesarPrompt(
-                    MicroservicioPromptRequest(
-                        prompt = prompt,
-                        jsonContent = jsonContentString, // Pass file metadata here
-                        ollamaUrl = OLLAMA_URL,
-                        model = "deepseek-chat", // Updated to DeepSeek as requested
-                        userId = if (userId > 0) userId else null,
-                        courseId = if (courseId > 0) courseId else null,
-                        topicId = if (topicId > -1L) topicId else null,
-                        taskId = if (taskId > -1L) taskId else null
-                    )
-                )
+                // Quick local attempt: try local Docker MCP endpoints with very short timeout.
+                suspend fun tryLocalQuick(prompt: String, jsonContent: String, ollamaUrl: String, model: String): String? = withContext(Dispatchers.IO) {
+                    try {
+                        val candidates = mutableListOf<String>()
+                        ServerEndpointResolver.peekMcpBaseUrl()?.let { candidates.add(it.trimEnd('/')) }
+                        candidates.addAll(listOf(
+                            "http://10.0.2.2:3000",
+                            "http://127.0.0.1:3000",
+                            "http://localhost:3000",
+                            "http://host.docker.internal:3000"
+                        ))
 
-                val jsonText = response.respuesta_texto
+                        val client = OkHttpClient.Builder()
+                            .connectTimeout(1200, TimeUnit.MILLISECONDS)
+                            .readTimeout(3000, TimeUnit.MILLISECONDS)
+                            .build()
+
+                        val mediaType = "application/json; charset=utf-8".toMediaType()
+
+                        val payload = JSONObject().apply {
+                            put("prompt", prompt)
+                            put("jsonContent", jsonContent)
+                            put("ollamaUrl", ollamaUrl)
+                            put("model", model)
+                        }.toString()
+
+                        for (base in candidates) {
+                            try {
+                                val url = if (base.endsWith("/")) base + "procesar-prompt" else "$base/procesar-prompt"
+                                val req = Request.Builder()
+                                    .url(url)
+                                    .post(payload.toRequestBody(mediaType))
+                                    .header("X-API-Key", API_KEY)
+                                    .header("Connection", "close")
+                                    .build()
+
+                                client.newCall(req).execute().use { resp ->
+                                    val body = resp.body?.string() ?: ""
+                                    if (resp.isSuccessful && body.isNotBlank()) {
+                                        try {
+                                            val j = JSONObject(body)
+                                            return@withContext j.optString("respuesta_texto", j.optString("respuesta", body))
+                                        } catch (e: Exception) {
+                                            return@withContext body
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.d("ReinforcementVM", "Local attempt error for $base: ${e.message}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.d("ReinforcementVM", "tryLocalQuick error: ${e.message}")
+                    }
+                    return@withContext null
+                }
+
+                var jsonText: String? = null
+                var lastError: String? = null
+
+                // 1) Quick local try
+                try {
+                    val local = tryLocalQuick(prompt, jsonContentString, OLLAMA_URL, "deepseek-chat")
+                    if (!local.isNullOrBlank()) {
+                        jsonText = local
+                        Log.d("ReinforcementVM", "Local quick endpoint returned result")
+                    }
+                } catch (e: Exception) {
+                    Log.w("ReinforcementVM", "Local quick attempt threw: ${e.message}")
+                }
+
+                // 2) If no local result, call cloud API immediately (fast path)
+                if (jsonText.isNullOrBlank()) {
+                    try {
+                        val requestBody = MicroservicioPromptRequest(
+                            prompt = prompt,
+                            jsonContent = jsonContentString,
+                            ollamaUrl = OLLAMA_URL,
+                            model = "deepseek-chat",
+                            userId = if (userId > 0) userId else null,
+                            courseId = if (courseId > 0) courseId else null,
+                            topicId = if (topicId > -1L) topicId else null,
+                            taskId = if (taskId > -1L) taskId else null
+                        )
+                        val response = api.procesarPrompt(requestBody)
+                        jsonText = response.respuesta_texto
+                        lastError = response.error
+                        Log.d("ReinforcementVM", "Cloud API returned; response error=${response.error}")
+                    } catch (e: Exception) {
+                        lastError = e.message
+                        Log.e("ReinforcementVM", "Cloud API call failed: ${e.message}")
+                    }
+                }
 
                 if (jsonText.isNullOrBlank()) {
-                    Log.e("ReinforcementVM", "Respuesta del servidor vacía o nula. Error: ${response.error}")
-                    throw Exception("El servidor devolvió una respuesta vacía: ${response.error}")
+                    Log.e("ReinforcementVM", "Respuesta del servidor vacía o nula. Error: ${lastError}")
+                    throw Exception("El servidor devolvió una respuesta vacía: ${lastError}")
                 }
 
                 Log.d("ReinforcementVM", "Raw LLM response: $jsonText")
@@ -464,21 +580,52 @@ class ReinforcementLearningViewModel(
         viewModelScope.launch {
             _uiState.value = ReinforcementState.Loading
             try {
-                val rawQuestions: List<QuizQuestion>? = Gson().fromJson(questionsJson, object : TypeToken<List<QuizQuestion>>() {}.type)
-                // Sanitize explanations
-                val questions = rawQuestions?.map { q ->
-                    val safeExplanation = when {
-                        q.explanation.isNullOrBlank() || q.explanation == "null" -> {
-                            val correctOpt = q.options.getOrElse(q.correctIndex) { "la opción correcta" }
-                            "La respuesta correcta es: \"$correctOpt\". Explicación auto-generada."
-                        }
-                        else -> q.explanation
-                    }
-                    q.copy(explanation = safeExplanation)
-                } ?: emptyList()
-                
+                // Try parsing as a list of QuizQuestion
+                var questions: List<QuizQuestion> = try {
+                    Gson().fromJson(questionsJson, object : TypeToken<List<QuizQuestion>>() {}.type)
+                } catch (_: Exception) { null } ?: emptyList()
+
+                // If it's not a list, try parsing as an object with a `questions` field
                 if (questions.isEmpty()) {
-                    _uiState.value = ReinforcementState.Error("No se encontraron preguntas válidas en los datos pre-cargados.")
+                    try {
+                        val root = com.google.gson.JsonParser.parseString(questionsJson).asJsonObject
+                        if (root.has("questions")) {
+                            val arr = root.getAsJsonArray("questions")
+                            questions = Gson().fromJson(arr, object : TypeToken<List<QuizQuestion>>() {}.type) ?: emptyList()
+                        }
+                    } catch (_: Exception) {
+                        // ignore
+                    }
+                }
+
+                // Sanitize explanations and ensure options/correctIndex validity
+                questions = questions.mapNotNull { q ->
+                    try {
+                        val opts = q.options ?: listOf("Opción A", "Opción B", "Opción C", "Opción D")
+                        val idx = when {
+                            q.correctIndex < 0 -> 0
+                            q.correctIndex >= opts.size -> 0
+                            else -> q.correctIndex
+                        }
+                        val safeExplanation = when {
+                            q.explanation.isNullOrBlank() || q.explanation == "null" -> {
+                                val correctOpt = opts.getOrElse(idx) { "la opción correcta" }
+                                "La respuesta correcta es: \"$correctOpt\". Explicación auto-generada."
+                            }
+                            else -> q.explanation
+                        }
+                        QuizQuestion(q.question ?: "Pregunta sin texto", opts, idx, safeExplanation)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+
+                // If still empty, generate 10 fallback questions instead of error
+                if (questions.isEmpty()) {
+                    Log.w("ReinforcementVM", "No se encontraron preguntas válidas en los datos pre-cargados; generando preguntas de respaldo.")
+                    val seeds = listOf("Conceptos Generales", "Fundamentos", "Práctica", "Teoría", "Análisis")
+                    questions = generateFallbackQuestionsFromSeeds(seeds)
+                    _uiState.value = ReinforcementState.Success(questions)
                 } else {
                     _uiState.value = ReinforcementState.Success(questions)
                 }
@@ -487,6 +634,38 @@ class ReinforcementLearningViewModel(
                 _uiState.value = ReinforcementState.Error("Error al cargar preguntas pre-cargadas: ${e.message}")
             }
         }
+    }
+
+    private fun generateFallbackQuestionsFromSeeds(seeds: List<String>): List<QuizQuestion> {
+        val fallback = mutableListOf<QuizQuestion>()
+        val effectiveSeeds = if (seeds.isNotEmpty()) seeds else listOf("Tema")
+        for (i in 1..10) {
+            val seedIndex = (i - 1) % effectiveSeeds.size
+            val rawSeed = effectiveSeeds[seedIndex].trim()
+            val seedLabel = if (rawSeed.isEmpty()) "este tema" else rawSeed
+            val uniqueSuffix = (System.nanoTime() % 1000).toString()
+            val variants = listOf(
+                "Considerando '$seedLabel', ¿cuál es su propósito principal?",
+                "En el ámbito de '$seedLabel', selecciona la afirmación verdadera:",
+                "Analiza el concepto de '$seedLabel' y elige la opción correcta:",
+                "¿Qué elemento es crucial para entender '$seedLabel'?",
+                "Desde una perspectiva técnica, ¿cómo se define mejor '$seedLabel'?"
+            )
+            val questionText = "${variants[i % variants.size]} (Ref: $uniqueSuffix)"
+            val correctOption = "Definición técnica precisa sobre $seedLabel"
+            val distractorBase = listOf(
+                "Concepto erróneo común sobre $seedLabel",
+                "Información no relacionada directamente",
+                "Interpretación parcial o incompleta",
+                "Ejemplo práctico simplificado"
+            )
+            val options = listOf(correctOption) + distractorBase.shuffled().take(3)
+            val shuffled = options.shuffled()
+            val correctIndex = shuffled.indexOfFirst { it == correctOption }.coerceAtLeast(0)
+            val explanation = "La respuesta correcta es: \"$correctOption\". Esta explicación fue generada automáticamente."
+            fallback.add(QuizQuestion(questionText, shuffled, correctIndex, explanation))
+        }
+        return fallback
     }
 
     fun addScore(points: Int) {

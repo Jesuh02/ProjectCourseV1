@@ -161,14 +161,14 @@ interface MicroservicioApi {
     @POST("/procesar-prompt")
     suspend fun procesarPrompt(@Body request: MicroservicioPromptRequest): MicroservicioPromptResponse
 
-    @POST("analizar-entrega")
+        @POST("/analizar-entrega")
     suspend fun analizarEntrega(@Body request: AnalizarEntregaRequest): AnalizarEntregaResponse
 
-    @POST("feedback-entrega")
+        @POST("/feedback-entrega")
     suspend fun feedbackEntrega(@Body request: FeedbackEntregaRequest): FeedbackEntregaResponse
     
     // Nuevo endpoint para obtener contenido de una submission desde R2/Supabase
-    @POST("obtener-contenido-submission")
+        @POST("/obtener-contenido-submission")
     suspend fun obtenerContenidoSubmission(@Body request: ObtenerContenidoRequest): ObtenerContenidoResponse
     
     // Nuevo endpoint para listar submissions de una tarea

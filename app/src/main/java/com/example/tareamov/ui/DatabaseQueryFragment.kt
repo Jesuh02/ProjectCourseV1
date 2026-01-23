@@ -39,6 +39,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 import com.example.tareamov.service.ServerEndpointResolver
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -139,6 +142,51 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     )
     private val attachedFiles = mutableListOf<AttachedFile>()
     private lateinit var attachedFilesAdapter: AttachedFilesAdapter
+
+    override fun onAttach(context: Context) {
+        super.onAttach(context)
+        try {
+            mcpHttpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
+        } catch (e: Exception) {
+            Log.w("DatabaseQueryFragment", "Failed to init MCPHttpClient: ${e.message}")
+        }
+
+        // Quickly prefer local cached host if reachable, otherwise fall back to cloud
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // Honor forced URL from prefs first
+                ServerEndpointResolver.getForcedMcpBaseUrl()?.let { forced ->
+                    try {
+                        if (ServerEndpointResolver.isServiceReachable(forced)) {
+                            mcpHttpClient.setForcedBaseUrl(forced)
+                            Log.i("DatabaseQueryFragment", "Using forced MCP URL from prefs: $forced")
+                            return@launch
+                        } else {
+                            Log.w("DatabaseQueryFragment", "Forced MCP URL not reachable: $forced")
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                // Try fast resolve (gateway + subnet candidates) with short timeout
+                try {
+                    val resolved = kotlinx.coroutines.withTimeoutOrNull(200) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
+                    if (!resolved.isNullOrBlank()) {
+                        mcpHttpClient.setForcedBaseUrl(resolved)
+                        Log.i("DatabaseQueryFragment", "Fast-resolved MCP base URL: $resolved")
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    Log.d("DatabaseQueryFragment", "fastResolve failed: ${e.message}")
+                }
+
+                // Cloud fallback
+                mcpHttpClient.setForcedBaseUrl(ServerEndpointResolver.RAILWAY_MCP_URL)
+                Log.i("DatabaseQueryFragment", "Falling back to cloud MCP: ${ServerEndpointResolver.RAILWAY_MCP_URL}")
+            } catch (e: Exception) {
+                Log.w("DatabaseQueryFragment", "Error resolving MCP base: ${e.message}")
+            }
+        }
+    }
 
     // Launcher for picking Excel files
     private val excelPickerLauncher = registerForActivityResult(
@@ -1195,10 +1243,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
                     val remoteUrl = attachedFile.remoteUrl
-                    
+
                     if (remoteUrl != null) {
                         Log.d("DatabaseQueryFragment", "📎 Processing query with attached file: ${attachedFile.name}")
-                        
+
                         // Construct JSON Content
                         val jsonContent = JSONArray().apply {
                             put(JSONObject().apply {
@@ -1208,30 +1256,41 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                                 put("name", attachedFile.name)
                             })
                         }.toString()
-                        
-                        val result = mcpHttpClient.processPromptWithAttachments(query, jsonContent)
-                        
-                        // Clear pending data - task completed
-                        isProcessingQuery = false
-                        pendingQuery = null
-                        
-                        // Hide spinner
-                        binding.loadingSpinner.visibility = View.GONE
-                        binding.sendButton.visibility = View.VISIBLE
-                        
-                        if (result.success) {
-                            // Display response
-                            val responseText = if (result.data is JSONObject) {
-                                result.data.optString("response", result.data.toString())
-                            } else {
-                                result.data?.toString() ?: "Respuesta vacía"
-                            }
-                            addMessageToChat(responseText, false)
+
+                        // First try local MCP /procesar-prompt endpoints directly (fast, short timeouts)
+                        val localResp = tryLocalProcesarPrompt(query, jsonContent, "https://api.deepseek.com", "deepseek-reasoner")
+                        if (localResp != null) {
+                            // Local container answered — use it and skip cloud
+                            isProcessingQuery = false
+                            pendingQuery = null
+                            binding.loadingSpinner.visibility = View.GONE
+                            binding.sendButton.visibility = View.VISIBLE
+                            addMessageToChat(localResp, false)
                         } else {
-                            addMessageToChat("❌ Error: ${result.error}", false)
+                            val result = mcpHttpClient.processPromptWithAttachments(query, jsonContent, "https://api.deepseek.com", "deepseek-reasoner")
+
+                            // Clear pending data - task completed
+                            isProcessingQuery = false
+                            pendingQuery = null
+
+                            // Hide spinner
+                            binding.loadingSpinner.visibility = View.GONE
+                            binding.sendButton.visibility = View.VISIBLE
+
+                            if (result.success) {
+                                // Display response
+                                val responseText = when (result.data) {
+                                    is JSONObject -> result.data.optString("response", result.data.toString())
+                                    is JSONArray -> result.data.toString()
+                                    else -> result.data?.toString() ?: "Respuesta vacía"
+                                }
+                                addMessageToChat(responseText, false)
+                            } else {
+                                addMessageToChat("❌ Error: ${result.error}", false)
+                            }
                         }
                     } else {
-                         // Fallback if upload failed or pending
+                        // Fallback if upload failed or pending
                         binding.loadingSpinner.visibility = View.GONE
                         binding.sendButton.visibility = View.VISIBLE
                         addMessageToChat("⚠️ El archivo adjunto aún no se ha subido o falló la subida. Inténtalo de nuevo.", false)
@@ -2293,6 +2352,65 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
                 false
             }
         }
+    }
+
+    // Try local /procesar-prompt endpoints quickly before falling back to MCP server
+    private suspend fun tryLocalProcesarPrompt(prompt: String, jsonContent: String, ollamaUrl: String, model: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val candidates = listOf(
+                "http://10.0.2.2:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:3000",
+                "http://host.docker.internal:3000",
+                "http://172.18.0.2:3000"
+            )
+
+            val client = OkHttpClient.Builder()
+                .connectTimeout(1200, TimeUnit.MILLISECONDS)
+                .readTimeout(3000, TimeUnit.MILLISECONDS)
+                .build()
+
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+
+            val payload = JSONObject().apply {
+                put("prompt", prompt)
+                put("jsonContent", jsonContent)
+                put("ollamaUrl", ollamaUrl)
+                put("model", model)
+            }.toString()
+
+                    for (base in candidates) {
+                try {
+                    val url = "$base/procesar-prompt"
+                    val req = Request.Builder()
+                        .url(url)
+                        .post(payload.toRequestBody(mediaType))
+                        .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
+                        .header("Connection", "close")
+                        .build()
+
+                    client.newCall(req).execute().use { resp ->
+                        val body = resp.body?.string() ?: ""
+                        if (resp.isSuccessful) {
+                            try {
+                                val j = JSONObject(body)
+                                val text = j.optString("respuesta_texto", j.optString("respuesta", body))
+                                return@withContext text
+                            } catch (e: Exception) {
+                                return@withContext body
+                            }
+                        } else {
+                            Log.d("DatabaseQueryFragment", "Local attempt failed $url -> ${resp.code}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d("DatabaseQueryFragment", "Local attempt error for $base: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.d("DatabaseQueryFragment", "tryLocalProcesarPrompt error: ${e.message}")
+        }
+        return@withContext null
     }
 
     private fun initializeSession() {

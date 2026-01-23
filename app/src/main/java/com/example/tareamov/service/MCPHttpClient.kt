@@ -26,6 +26,7 @@ import java.util.LinkedHashSet
  */
 class MCPHttpClient(private val context: Context) {
     private val tag = "MCPHttpClient"
+    private val API_KEY = "tareamov-mcp-api-key-2025-secure"
     private val requestId = AtomicInteger(0)
     private var isInitialized = false
     @Volatile private var activeBaseUrl: String? = null
@@ -45,12 +46,18 @@ class MCPHttpClient(private val context: Context) {
         }
         try {
             // If host does not include an explicit port, append default MCP port 3000
+            // Do NOT append :3000 for HTTPS cloud URLs (they typically use 443)
             val u = java.net.URI(normalized)
             val hasPort = u.port != -1
             if (!hasPort) {
-                // Rebuild with default port 3000
                 val host = u.host ?: normalized.removePrefix("http://").removePrefix("https://")
-                normalized = "${u.scheme}://$host:3000"
+                normalized = if (u.scheme == "https") {
+                    // Keep https host without explicit port (use default 443)
+                    "${u.scheme}://$host"
+                } else {
+                    // For http scheme assume local MCP uses port 3000
+                    "${u.scheme}://$host:3000"
+                }
             }
         } catch (e: Exception) {
             // Fallback: if parsing fails, ensure it at least has http:// prefix
@@ -58,6 +65,12 @@ class MCPHttpClient(private val context: Context) {
         activeBaseUrl = normalized
         // mark not initialized so next initialize() will try the forced URL
         isInitialized = false
+        // Persist forced URL so resolver and other components can reuse it
+        try {
+            ServerEndpointResolver.setForcedMcpBaseUrl(context.applicationContext, activeBaseUrl)
+        } catch (e: Exception) {
+            Log.d(tag, "Failed to persist forced MCP URL: ${e.message}")
+        }
         Log.i(tag, "Forced MCP base URL set to: $activeBaseUrl")
     }
     
@@ -117,38 +130,87 @@ class MCPHttpClient(private val context: Context) {
             return null
         }
 
-        // Priority 1: Railway Cloud (Production)
-        if (ServerEndpointResolver.RAILWAY_MCP_URL.isNotBlank()) {
-            val res = tryUrl(ServerEndpointResolver.RAILWAY_MCP_URL)
-            if (res != null) return res
-        }
-
-        // Priority 2: Active/Last successful base URL
+        // Priority 1: Active/Last successful base URL (fastest if previously discovered)
         if (!activeBaseUrl.isNullOrBlank()) {
             val res = tryUrl(activeBaseUrl!!)
             if (res != null) return res
         }
 
-        // Priority 3: Cached URL (Peek without blocking discovery)
+        // Priority 2: Cached URL (Peek without blocking discovery)
+        if (!activeBaseUrl.isNullOrBlank()) {
+            val res = tryUrl(activeBaseUrl!!)
+            if (res != null) return res
+        }
+
         val cached = ServerEndpointResolver.peekMcpBaseUrl()
         if (!cached.isNullOrBlank()) {
-            // Skip emulator-only cached hosts when running on a physical device
-            if (!runningOnEmulator() && cached.contains("10.0.2.2")) {
-                Log.i(tag, "Skipping cached emulator host $cached on physical device")
-            } else {
-                val resCached = tryUrl(cached)
-                if (resCached != null) return resCached
+            // Fast probe: perform a very short timeout health check to cached host
+            try {
+                if (!runningOnEmulator() && cached.contains("10.0.2.2")) {
+                    Log.i(tag, "Skipping cached emulator host $cached on physical device")
+                } else {
+                    Log.d(tag, "Fast-probing cached MCP host: $cached")
+                    val fastClient = OkHttpClient.Builder()
+                        .connectTimeout(80, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        .readTimeout(300, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        .build()
+
+                    var healthUrl = cached
+                    if (cached.endsWith("/")) {
+                        healthUrl = cached + "health"
+                    } else {
+                        healthUrl = "$cached/health"
+                    }
+                    val req = Request.Builder().url(healthUrl).get().header("X-API-Key", API_KEY).header("Connection", "close").build()
+
+                        try {
+                            var probeResult: T? = null
+                            fastClient.newCall(req).execute().use { resp ->
+                                if (resp.isSuccessful) {
+                                    Log.d(tag, "Fast probe success for $cached; promoting to activeBaseUrl")
+                                    activeBaseUrl = cached
+                                    probeResult = tryUrl(cached)
+                                } else {
+                                    Log.d(tag, "Fast probe failed for $cached -> ${resp.code}")
+                                }
+                            }
+                            if (probeResult != null) return probeResult
+                        } catch (e: Exception) {
+                            Log.d(tag, "Fast probe exception for $cached: ${e.message}")
+                        }
+                }
+            } catch (e: Exception) {
+                Log.d(tag, "Cached probe error: ${e.message}")
             }
         }
-        // Priority 4: Full Discovery (Last Resort - Blocking)
-        Log.i(tag, "Fast candidates failed, attempting full network discovery...")
+        // Very-fast parallel resolve: ask resolver for the quickest candidate and try it (short bounded wait)
+        try {
+            // Perform a very short bounded fast-resolve; if it doesn't respond quickly, fallback to cloud
+            val fastResolved = try {
+                kotlinx.coroutines.withTimeoutOrNull(200) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
+            } catch (e: Exception) {
+                null
+            }
+
+            if (!fastResolved.isNullOrBlank()) {
+                Log.d(tag, "withMcpBase: fastResolve returned $fastResolved — attempting immediately")
+                val resFast = tryUrl(fastResolved)
+                if (resFast != null) return resFast
+            } else {
+                Log.d(tag, "withMcpBase: fastResolve did not return quickly; will continue with discovery/fallbacks")
+            }
+        } catch (e: Exception) {
+            Log.d(tag, "fastResolve quick attempt failed: ${e.message}")
+        }
+        // Priority 3: Full Discovery (blocking) - ServerEndpointResolver prefers local hosts
+        Log.i(tag, "Attempting full network discovery for MCP (local-first)...")
         val discovered = ServerEndpointResolver.getMcpBaseUrl(forceDiscovery = true)
         if (!discovered.isNullOrBlank()) {
             val resDiscovered = tryUrl(discovered)
             if (resDiscovered != null) return resDiscovered
         }
 
-        // Priority 5: Local Emulator (Fallback for emulators only)
+        // Priority 4: Local Emulator (Fallback for emulators only)
         // Try common emulator ports only if running on an emulator to avoid physical-device timeouts
         val hasLanIp = hasLocalLanIp()
         Log.d(tag, "Emulator fallback decision: runningOnEmulator=${runningOnEmulator()} hasLanIp=$hasLanIp")
@@ -159,6 +221,11 @@ class MCPHttpClient(private val context: Context) {
             if (resEmulator0 != null) return resEmulator0
         } else {
             Log.d(tag, "Not running on emulator - skipping 10.0.2.2 fallbacks")
+        }
+        // Priority 5: Railway Cloud (last resort)
+        if (ServerEndpointResolver.RAILWAY_MCP_URL.isNotBlank()) {
+            val resCloud = tryUrl(ServerEndpointResolver.RAILWAY_MCP_URL)
+            if (resCloud != null) return resCloud
         }
 
         if (lastException != null) {
@@ -204,6 +271,7 @@ class MCPHttpClient(private val context: Context) {
 
             val request = Request.Builder()
                 .url(fullUrl)
+                .header("X-API-Key", API_KEY)
                 .header("Connection", "close") // Forzar cierre de conexión
                 .header("X-MCP-Client", "android")
                 .header("X-MCP-Request-Id", payload.optString("id", "-1"))
@@ -292,7 +360,7 @@ class MCPHttpClient(private val context: Context) {
      * Process prompt with attachments (files)
      * Calls /procesar-prompt directly
      */
-    suspend fun processPromptWithAttachments(prompt: String, jsonContent: String): MCPQueryResult = withContext(Dispatchers.IO) {
+    suspend fun processPromptWithAttachments(prompt: String, jsonContent: String, ollamaUrl: String, model: String): MCPQueryResult = withContext(Dispatchers.IO) {
         return@withContext withMcpBase { base ->
             try {
                 Log.d(tag, "🤖 Processing prompt with attachments: $prompt")
@@ -300,19 +368,8 @@ class MCPHttpClient(private val context: Context) {
                 val payload = JSONObject().apply {
                     put("prompt", prompt)
                     put("jsonContent", jsonContent)
-                    // We need to provide an ollamaUrl or LLM config. 
-                    // The backend routes might expect it or have a default.
-                    // Based on llmRoutes.js: const { prompt, ollamaUrl, model, jsonContent } = req.body;
-                    // It throws if ollamaUrl is missing!
-                    // We should point it to the local or configured LLM URL.
-                    // For now, let's assume the backend has a default or we pass a dummy one if using OpenAI.
-                    // But llmRoutes.js line 131 checks if (!ollamaUrl) throw.
-                    // We should use ServerEndpointResolver to get the LLM URL if possible, or pass a placeholder if using DeepSeek Cloud.
-                    // The backend code calls `targetUrl = ${baseUrl}/api/generate`.
-                    // If we want to use DeepSeek via MCP, we might need to pass the endpoint.
-                    // Let's pass a placeholder or try to find a real one.
-                    put("ollamaUrl", "http://localhost:11434") // Placeholder, backend might override or use it
-                    put("model", "deepseek-r1:8b") // Default model
+                    put("ollamaUrl", ollamaUrl)
+                    put("model", model)
                 }
                 
                 val request = Request.Builder()
@@ -330,8 +387,17 @@ class MCPHttpClient(private val context: Context) {
                     }
                     
                     val json = JSONObject(body)
-                    val responseText = json.optString("respuesta_texto")
-                    
+                    val responseText = json.optString("respuesta_texto").orEmpty()
+
+                    // If backend returned an empty respuesta_texto treat it as failure
+                    if (responseText.isBlank()) {
+                        Log.w(tag, "procesar-prompt returned empty respuesta_texto: $body")
+                        return@withMcpBase MCPQueryResult(
+                            success = false,
+                            error = "Empty respuesta_texto from MCP server"
+                        )
+                    }
+
                     // Parse response if it's JSON string
                     val data = try {
                         JSONObject(responseText)
@@ -342,7 +408,7 @@ class MCPHttpClient(private val context: Context) {
                             responseText // Return raw string
                         }
                     }
-                    
+
                     return@withMcpBase MCPQueryResult(
                         success = true,
                         data = data
@@ -371,6 +437,29 @@ class MCPHttpClient(private val context: Context) {
         if (force) {
             activeBaseUrl = null
             isInitialized = false
+        }
+
+        // Quick fast-resolve: try to discover local backend very fast (200ms)
+        try {
+            val forced = try { ServerEndpointResolver.getForcedMcpBaseUrl() } catch (e: Exception) { null }
+            if (!forced.isNullOrBlank()) {
+                activeBaseUrl = forced
+                Log.d(tag, "initialize: using forced base url: $activeBaseUrl")
+            } else {
+                val fast = try {
+                    kotlinx.coroutines.withTimeoutOrNull(200) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
+                } catch (e: Exception) { null }
+                if (!fast.isNullOrBlank()) {
+                    activeBaseUrl = fast
+                    Log.d(tag, "initialize: fast-resolved local backend: $fast")
+                } else {
+                    // Immediate fallback to cloud to avoid long waits on physical devices
+                    activeBaseUrl = ServerEndpointResolver.RAILWAY_MCP_URL
+                    Log.d(tag, "initialize: fast-resolve did not find local backend; falling back to cloud: $activeBaseUrl")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "initialize fast-resolve error: ${e.message}")
         }
 
         val result = withMcpBase { base ->
@@ -500,12 +589,17 @@ class MCPHttpClient(private val context: Context) {
 
             // Extract data and SQL script, handling null payloads gracefully
             val rawData = mcpResult.opt("data")
-            val data = if (rawData == null || rawData == JSONObject.NULL) null else rawData
+            var data: Any? = null
+            if (rawData == null || rawData == JSONObject.NULL) {
+                data = null
+            } else {
+                data = rawData
+            }
             val sqlScript = mcpResult.optString("sql_script", null)?.takeIf { it.isNotBlank() }
             val metadata = mcpResult.optJSONObject("metadata")
             val formattedSummary = mcpResult.optString("formatted_summary", "").takeIf { it.isNotBlank() }
             val successFlag = metadata?.optBoolean("success", data != null) ?: (data != null)
-            val errorMessage = if (successFlag) {
+            val errorMessage: String? = if (successFlag) {
                 null
             } else {
                 val metadataMessage = metadata?.optString("message")?.takeIf { it.isNotBlank() }

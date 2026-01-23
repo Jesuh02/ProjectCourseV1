@@ -13,7 +13,10 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -34,9 +37,12 @@ object ServerEndpointResolver {
     // MCP HTTP server runs on 3000 (mcp-http.js). Use 3000 so physical devices discover the correct service.
     private const val MCP_PORT = 3000
     private const val OLLAMA_PORT = 11435
-    private const val DEFAULT_TIMEOUT_MS = 1000 // Increased from 500ms to be more reliable on mobile networks
+    // Aggressively low timeout for fast mobile probes (practical lower bound ~50-250ms)
+    // Note: true "microseconds" network probes are not realistic over Wi-Fi/mobile networks.
+    private const val DEFAULT_TIMEOUT_MS = 100 // ms - shortened to speed fast-fail for physical devices
     private const val PREFS_NAME = "server_endpoint_resolver"
     private const val PREF_KEY_PREFIX = "last_host_"
+    private const val PREF_KEY_FORCED_FULL = "mcp_forced_base_url_full"
     private const val MAX_SCAN_HOSTS = 48 // Slightly increased to allow more candidates
     
     // Railway Cloud URLs (Production)
@@ -140,6 +146,141 @@ object ServerEndpointResolver {
 
     suspend fun collectMcpDiagnostics(limit: Int = 32): Map<String, Boolean> {
         return collectDiagnosticsForPort(MCP_PORT, "/health", limit)
+    }
+
+    /**
+     * Fast resolution used by UI: prefer cached local host if reachable quickly,
+     * otherwise return the Railway cloud URL.
+     */
+    suspend fun fastResolveMcpBaseUrl(): String = withContext(Dispatchers.IO) {
+        // 0. Honor an explicit forced full URL set via preferences (useful for testing with Docker host)
+        try {
+            val ctx = appContext
+            if (ctx != null) {
+                val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                prefs.getString(PREF_KEY_FORCED_FULL, null)?.let { forced ->
+                    if (!forced.isNullOrBlank()) {
+                        try {
+                            if (isServiceReachable(forced)) {
+                                Log.i(TAG, "fastResolve: returning forced MCP URL from prefs: $forced")
+                                return@withContext forced
+                            } else {
+                                Log.w(TAG, "fastResolve: forced MCP URL not reachable: $forced")
+                            }
+                        } catch (e: Exception) {
+                            Log.d(TAG, "fastResolve: error checking forced url: ${e.message}")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "fastResolve: forced-pref check failed: ${e.message}")
+        }
+
+        // 1. Quick cached check (non-blocking)
+        val cached = peekMcpBaseUrl()
+        if (!cached.isNullOrBlank()) {
+            try {
+                if (isServiceReachable(cached)) {
+                    return@withContext cached
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "fastResolve: cached host not reachable: ${e.message}")
+            }
+        }
+
+        // 2. Build a compact candidate list (gateway + small subset of subnet candidates)
+        val candidates = LinkedHashSet<String>()
+        try {
+            getGatewayAddress()?.let { gw ->
+                if (gw.isNotBlank()) {
+                    candidates.add(gw)
+                    val base = gw.substringBeforeLast('.')
+                    candidates.add("$base.1")
+                    candidates.add("$base.2")
+                    candidates.add("$base.100")
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Include a few helpful defaults and cached/persisted hosts
+        candidates.addAll(listOf("127.0.0.1", "localhost", "host.docker.internal"))
+        loadPersistedHost(MCP_PORT)?.let { candidates.add(it) }
+        cachedHostsByPort[MCP_PORT]?.let { candidates.add(it) }
+
+        // Add a small subset of subnet candidates (up to 8) to keep probes cheap
+        try {
+            val subnet = collectSubnetCandidates()
+            for (c in subnet.take(8)) candidates.add(c)
+        } catch (_: Exception) {}
+
+        // 3. Probe candidates in parallel and return first success very fast
+        try {
+            val deferredFound = CompletableDeferred<String?>()
+            val probeScope = CoroutineScope(Dispatchers.IO)
+            val jobs = mutableListOf<kotlinx.coroutines.Job>()
+
+            for (host in candidates) {
+                val job = probeScope.launch {
+                    try {
+                        if (isServiceReachableBlocking(host, MCP_PORT, "/health")) {
+                            if (!deferredFound.isCompleted) deferredFound.complete(host)
+                        }
+                    } catch (_: Exception) {}
+                }
+                jobs.add(job)
+            }
+
+            // Wait a small bounded time for any probe to succeed (short, bounded)
+            val foundHost = withTimeoutOrNull(200) { // ms
+                deferredFound.await()
+            }
+
+            // Cancel outstanding probes
+            jobs.forEach { it.cancel() }
+
+            if (!foundHost.isNullOrBlank()) {
+                val url = "http://$foundHost:$MCP_PORT"
+                Log.i(TAG, "fastResolve: parallel probe found host: $url")
+                return@withContext url
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "fastResolve parallel probes error: ${e.message}")
+        }
+
+        // 4. If nothing found quickly, fall back to cloud immediately
+        return@withContext RAILWAY_MCP_URL
+    }
+
+    /**
+     * Set or clear a forced full MCP base URL for tests (e.g. http://192.168.1.90:3000).
+     * When set, `fastResolveMcpBaseUrl` and `getMcpBaseUrl` will prefer this value if reachable.
+     */
+    fun setForcedMcpBaseUrl(context: Context, fullUrl: String?) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (fullUrl.isNullOrBlank()) {
+            prefs.edit().remove(PREF_KEY_FORCED_FULL).apply()
+            Log.i(TAG, "Forced MCP URL cleared from prefs")
+        } else {
+            prefs.edit().putString(PREF_KEY_FORCED_FULL, fullUrl).apply()
+            Log.i(TAG, "Forced MCP URL saved to prefs: $fullUrl")
+            // Attempt to cache host part for faster discovery
+            try {
+                val u = URL(fullUrl)
+                val host = u.host
+                if (!host.isNullOrBlank()) {
+                    cachedHostsByPort[MCP_PORT] = host
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "setForcedMcpBaseUrl: parse error: ${e.message}")
+            }
+        }
+    }
+
+    fun getForcedMcpBaseUrl(): String? {
+        val ctx = appContext ?: return null
+        val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(PREF_KEY_FORCED_FULL, null)
     }
 
     private suspend fun getBaseUrlForPort(port: Int, healthPath: String, forceDiscovery: Boolean): String? {
@@ -312,6 +453,10 @@ object ServerEndpointResolver {
             candidates.add("10.0.2.2")
         }
 
+        // Quick wins: emulator and common docker host alias
+        // Android emulator uses 10.0.2.2 -> host's localhost
+        candidates.add("10.0.2.2")
+        // Some Docker setups expose host.docker.internal for host access
         candidates.add("host.docker.internal")
         candidates.add("127.0.0.1")
         candidates.add("localhost")
