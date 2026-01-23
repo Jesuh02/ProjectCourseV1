@@ -301,12 +301,21 @@ class ChatBotFragment : Fragment() {
     private fun getMicroserviceBaseUrl(): String {
         // Prefer a locally-resolved MCP host when available (fast path for physical devices).
         // `peekMcpBaseUrl()` is non-suspending and returns the last-known good host (if any).
-        val local = try { ServerEndpointResolver.peekMcpBaseUrl() } catch (_: Exception) { null }
-        if (!local.isNullOrBlank()) {
-            return if (local.endsWith("/")) local else "$local/"
+        return try {
+            val fast = kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeoutOrNull(200) {
+                    ServerEndpointResolver.fastResolveMcpBaseUrl()
+                }
+            }
+            if (!fast.isNullOrBlank()) {
+                if (fast.endsWith("/")) fast else "$fast/"
+            } else {
+                // Fallback to Railway Cloud in production
+                "https://mcp-backenddeploy-production.up.railway.app/"
+            }
+        } catch (e: Exception) {
+            "https://mcp-backenddeploy-production.up.railway.app/"
         }
-        // Fallback to Railway Cloud in production
-        return "https://mcp-backenddeploy-production.up.railway.app/"
     }
 
     private fun getOllamaUrl(): String {
@@ -316,9 +325,9 @@ class ChatBotFragment : Fragment() {
     // Build a MicroservicioApi instance on demand using the currently resolved base URL.
     private fun buildMicroservicioApi(): MicroservicioApi {
         val okHttpClient = okhttp3.OkHttpClient.Builder()
-            .connectTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+            .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS) // fail fast on connect
             .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
-            .writeTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val originalRequest = chain.request()
                 val requestWithApiKey = originalRequest.newBuilder()
