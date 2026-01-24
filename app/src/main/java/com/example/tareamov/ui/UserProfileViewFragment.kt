@@ -329,7 +329,7 @@ class UserProfileViewFragment : Fragment() {
 
         val searchResults = searchSource.filter { content ->
             content.title.contains(currentSearchQuery, ignoreCase = true) ||
-            content.description.contains(currentSearchQuery, ignoreCase = true) ||
+            (content.description?.contains(currentSearchQuery, ignoreCase = true) ?: false) ||
             content.username.contains(currentSearchQuery, ignoreCase = true)
         }
 
@@ -392,7 +392,7 @@ class UserProfileViewFragment : Fragment() {
                     val courseEntity = com.example.tareamov.data.entity.Course(
                         id = course.id,
                         title = course.title,
-                        description = course.description,
+                        description = course.description ?: "",
                         creatorUserId = -1L, // Will be resolved in handleSubscriptionClick
                         category = "Programación",
                         thumbnailUri = course.thumbnailUri,
@@ -423,7 +423,7 @@ class UserProfileViewFragment : Fragment() {
                     val courseEntity = com.example.tareamov.data.entity.Course(
                         id = course.id,
                         title = course.title,
-                        description = course.description,
+                        description = course.description ?: "",
                         creatorUserId = -1L, // Will be resolved in handleEnrollmentClick
                         category = "Programación",
                         thumbnailUri = course.thumbnailUri,

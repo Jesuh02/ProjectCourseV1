@@ -572,13 +572,16 @@ class VideoAdapter(
                                         Log.d("VideoAdapter", "ExoPlayer: Restored position to $seekPos ms")
                                     }
                                     
-                                    // Start playback if this is the active position and not paused
-                                    // This handles the case where onViewAttachedToWindow was called before video was prepared
+                                    // ExoPlayer uses playWhenReady to control auto-play
+                                    // If playWhenReady is true (set by playVideo()), it will start automatically
+                                    // If false (initial state or set by pauseVideo()), it stays paused
                                     val currentPosition = bindingAdapterPosition
-                                    if (isActivePosition(currentPosition) && !isVideoPaused && !player.isPlaying) {
+                                    Log.d("VideoAdapter", "ExoPlayer READY: position=$currentPosition, isActive=${isActivePosition(currentPosition)}, playWhenReady=${player.playWhenReady}, isPlaying=${player.isPlaying}")
+                                    
+                                    // If playWhenReady is true but not playing yet, ensure proper volume
+                                    if (player.playWhenReady && !player.isPlaying) {
                                         player.volume = if (isMuted) 0f else 1f
-                                        player.play()
-                                        Log.d("VideoAdapter", "ExoPlayer auto-started for active position $currentPosition")
+                                        Log.d("VideoAdapter", "ExoPlayer will start with volume=${player.volume}")
                                     }
                                 }
                                 Player.STATE_BUFFERING -> {
@@ -882,11 +885,6 @@ class VideoAdapter(
          */
         private fun releaseExoPlayer() {
             try {
-                // Detach player from PlayerView first to avoid leaking the view
-                try {
-                    playerView?.player = null
-                } catch (_: Exception) {}
-
                 exoPlayer?.release()
                 exoPlayer = null
             } catch (_: Exception) {}
@@ -901,9 +899,13 @@ class VideoAdapter(
             
             if (useExoPlayer) {
                 try {
-                    // CRITICAL: Mute FIRST, then pause to prevent audio leak
-                    exoPlayer?.volume = 0f
-                    exoPlayer?.pause()
+                    exoPlayer?.let { player ->
+                        // CRITICAL: Mute FIRST, then pause to prevent audio leak
+                        player.volume = 0f
+                        // Set playWhenReady to false to prevent auto-play when ready
+                        player.playWhenReady = false
+                        player.pause()
+                    }
                     Log.d("VideoAdapter", "ExoPlayer paused and muted")
                 } catch (e: Exception) {
                     Log.e("VideoAdapter", "Error pausing ExoPlayer", e)
@@ -931,10 +933,6 @@ class VideoAdapter(
             
             // Release ExoPlayer
             try {
-                try {
-                    playerView?.player = null
-                } catch (_: Exception) {}
-
                 exoPlayer?.stop()
                 exoPlayer?.release()
                 exoPlayer = null
@@ -955,25 +953,6 @@ class VideoAdapter(
             } catch (e: Exception) {
                 Log.e("VideoAdapter", "Error releasing VideoView/MediaPlayer", e)
             }
-
-            // Clear image resources held by views to reduce memory pressure
-            try {
-                thumbnailView?.let { Glide.with(itemView).clear(it) }
-            } catch (_: Exception) {}
-            try {
-                profileButton?.let { Glide.with(itemView).clear(it) }
-            } catch (_: Exception) {}
-            try {
-                thumbnailView?.setImageDrawable(null)
-            } catch (_: Exception) {}
-
-            // Remove listeners and references
-            try {
-                playPauseOverlay?.setOnClickListener(null)
-                profileButton.setOnClickListener(null)
-                usernameText.setOnClickListener(null)
-                titleText.setOnClickListener(null)
-            } catch (_: Exception) {}
         }
         
         /**
@@ -985,21 +964,32 @@ class VideoAdapter(
             try {
                 isVideoPaused = false
                 val position = bindingAdapterPosition
-                Log.d("VideoAdapter", "playVideo called for position $position")
+                Log.d("VideoAdapter", "playVideo called for position $position, useExoPlayer=$useExoPlayer")
                 
                 if (useExoPlayer) {
                     exoPlayer?.let { player ->
+                        // Restore volume based on mute state
+                        player.volume = if (isMuted) 0f else 1f
+                        
                         // Check if already playing to avoid restarting
                         if (player.isPlaying) {
                             Log.d("VideoAdapter", "ExoPlayer already playing for position $position, skipping")
-                            // Just ensure volume is correct
-                            player.volume = if (isMuted) 0f else 1f
                             return
                         }
-                        // Restore volume based on mute state
-                        player.volume = if (isMuted) 0f else 1f
-                        player.play()
-                        Log.d("VideoAdapter", "ExoPlayer started for position $position")
+                        
+                        // Set playWhenReady to true - this will start playback when ready
+                        // This handles both cases: player ready now OR player preparing
+                        player.playWhenReady = true
+                        
+                        // If player is in READY state but not playing, explicitly start
+                        if (player.playbackState == Player.STATE_READY) {
+                            player.play()
+                            Log.d("VideoAdapter", "ExoPlayer started (was READY) for position $position")
+                        } else {
+                            Log.d("VideoAdapter", "ExoPlayer will auto-play when ready (state=${player.playbackState}) for position $position")
+                        }
+                    } ?: run {
+                        Log.w("VideoAdapter", "ExoPlayer is null for position $position")
                     }
                 } else {
                     // Check if MediaPlayer is prepared
@@ -1807,18 +1797,8 @@ class VideoAdapter(
         val position = holder.bindingAdapterPosition
         Log.d("VideoAdapter", "onViewDetachedFromWindow: position=$position")
         
-        // ALWAYS pause, mute and release resources when detached - helps prevent audio leaks and OOM
+        // ALWAYS pause and mute when detached - this is critical to prevent audio leaks
         holder.pauseVideo()
-        holder.releasePlayer()
-    }
-
-    override fun onViewRecycled(holder: VideoViewHolder) {
-        super.onViewRecycled(holder)
-        try {
-            holder.releasePlayer()
-        } catch (e: Exception) {
-            Log.w("VideoAdapter", "Error releasing recycled view resources", e)
-        }
     }
     
     /**

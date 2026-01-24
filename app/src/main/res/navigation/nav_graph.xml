@@ -321,11 +321,11 @@
         <argument
             android:name="courseId"
             app:argType="long"
-            />
+            android:defaultValue="-1L" />
         <argument
             android:name="topicId"
             app:argType="long"
-            />
+            android:defaultValue="-1L" />
         <argument
             android:name="topicNumber"
             app:argType="integer"
@@ -363,15 +363,15 @@
         <argument
             android:name="topicId"
             app:argType="long"
-            />
+            android:defaultValue="-1L" />
         <argument
             android:name="taskId"
             app:argType="long"
-            />
+            android:defaultValue="-1L" />
         <argument
             android:name="courseId"
             app:argType="long"
-            />
+            android:defaultValue="-1L" />
         <argument
             android:name="courseName"
             app:argType="string"
