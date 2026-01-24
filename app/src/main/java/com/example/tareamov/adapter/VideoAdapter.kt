@@ -486,23 +486,19 @@ class VideoAdapter(
             }
             
             try {
-                val context = itemView.context
-                
-                // Initialize video cache for instant loading
-                com.example.tareamov.util.VideoCacheManager.initialize(context)
-                
-                // ULTRA-AGGRESSIVE Load control for INSTANT startup (<0.1s perceived)
-                // minBufferMs = 100ms (absolute minimum buffer)
-                // maxBufferMs = 50000ms (buffer up to 50s for smooth playback)
-                // bufferForPlaybackMs = 50ms (start playback almost immediately!)
-                // bufferForPlaybackAfterRebufferMs = 100ms (resume instantly after rebuffer)
+                val appContext = itemView.context.applicationContext
+
+                // Initialize video cache with application context
+                com.example.tareamov.util.VideoCacheManager.initialize(appContext)
+
+                // Conservative LoadControl to avoid excessive memory per-player
+                // minBufferMs = 1500ms, maxBufferMs = 10000ms, bufferForPlaybackMs = 250ms
                 val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(100, 50000, 50, 100)
+                    .setBufferDurationsMs(1500, 10000, 250, 500)
                     .setPrioritizeTimeOverSizeThresholds(true)
-                    .setTargetBufferBytes(androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
                     .build()
-                
-                exoPlayer = ExoPlayer.Builder(context)
+
+                exoPlayer = ExoPlayer.Builder(appContext)
                     .setLoadControl(loadControl)
                     .setHandleAudioBecomingNoisy(false)
                     .setSeekParameters(androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC) // Tolerant seek for problematic videos
@@ -526,7 +522,7 @@ class VideoAdapter(
                     
                     // Use cached MediaSource for INSTANT loading
                     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-                    val mediaSource = com.example.tareamov.util.VideoCacheManager.createCachedMediaSource(context, uri.toString())
+                    val mediaSource = com.example.tareamov.util.VideoCacheManager.createCachedMediaSource(appContext, uri.toString())
                     player.setMediaSource(mediaSource)
                     
                     // CRITICAL: Enable seamless looping
@@ -885,6 +881,8 @@ class VideoAdapter(
          */
         private fun releaseExoPlayer() {
             try {
+                // Clear the PlayerView's reference first to avoid leaking the view/activity
+                try { playerView?.player = null } catch (_: Exception) {}
                 exoPlayer?.release()
                 exoPlayer = null
             } catch (_: Exception) {}
@@ -933,6 +931,7 @@ class VideoAdapter(
             
             // Release ExoPlayer
             try {
+                try { playerView?.player = null } catch (_: Exception) {}
                 exoPlayer?.stop()
                 exoPlayer?.release()
                 exoPlayer = null
