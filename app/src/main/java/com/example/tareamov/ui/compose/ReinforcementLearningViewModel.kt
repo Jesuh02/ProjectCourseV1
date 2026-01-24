@@ -134,10 +134,22 @@ class ReinforcementLearningViewModel(
     }
 
     private fun createApi(): MicroservicioApi {
+        // Try a very fast local resolution first (200ms). If found, use it; otherwise use BASE_URL.
+        val resolvedBase = try {
+            kotlinx.coroutines.runBlocking {
+                ServerEndpointResolver.fastResolveMcpBaseUrl()
+            }
+        } catch (e: Exception) { null }
+
+        val effectiveBase = when {
+            !resolvedBase.isNullOrBlank() -> if (resolvedBase.endsWith("/")) resolvedBase else "$resolvedBase/"
+            else -> BASE_URL
+        }
+
         val okHttpClient = okhttp3.OkHttpClient.Builder()
-            .connectTimeout(300, TimeUnit.SECONDS)
-            .readTimeout(300, TimeUnit.SECONDS)
-            .writeTimeout(300, TimeUnit.SECONDS)
+            .connectTimeout(0, TimeUnit.MILLISECONDS) // no connect timeout
+            .readTimeout(0, TimeUnit.MILLISECONDS)    // no read timeout
+            .writeTimeout(0, TimeUnit.MILLISECONDS)   // no write timeout
             .addInterceptor { chain ->
                 val originalRequest = chain.request()
                 val requestWithApiKey = originalRequest.newBuilder()
@@ -147,8 +159,13 @@ class ReinforcementLearningViewModel(
             }
             .build()
 
+        // Ensure Retrofit backup client targets the CLOUD endpoint when BASE_URL is a local/emulator address.
+        val cloudCandidate = ServerEndpointResolver.RAILWAY_MCP_URL.let { if (it.endsWith("/")) it else "$it/" }
+        val isLocalHost = listOf("10.0.2.2", "127.0.0.1", "localhost", "host.docker.internal").any { BASE_URL.contains(it) }
+        val retrofitBase = if (isLocalHost) cloudCandidate else if (BASE_URL.endsWith("/")) BASE_URL else "$BASE_URL/"
+
         val retrofit = Retrofit.Builder()
-            .baseUrl(BASE_URL)
+            .baseUrl(retrofitBase)
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
@@ -362,17 +379,17 @@ class ReinforcementLearningViewModel(
                 suspend fun tryLocalQuick(prompt: String, jsonContent: String, ollamaUrl: String, model: String): String? = withContext(Dispatchers.IO) {
                     try {
                         val candidates = mutableListOf<String>()
-                        ServerEndpointResolver.peekMcpBaseUrl()?.let { candidates.add(it.trimEnd('/')) }
-                        candidates.addAll(listOf(
-                            "http://10.0.2.2:3000",
-                            "http://127.0.0.1:3000",
-                            "http://localhost:3000",
-                            "http://host.docker.internal:3000"
-                        ))
+                        // Small, prioritized list of likely local MCP endpoints (fast probes)
+                        try {
+                            val likely = ServerEndpointResolver.getLikelyMcpCandidates()
+                            candidates.addAll(likely)
+                        } catch (e: Exception) {
+                            ServerEndpointResolver.peekMcpBaseUrl()?.let { candidates.add(it.trimEnd('/')) }
+                        }
 
                         val client = OkHttpClient.Builder()
-                            .connectTimeout(1200, TimeUnit.MILLISECONDS)
-                            .readTimeout(3000, TimeUnit.MILLISECONDS)
+                            .connectTimeout(300, TimeUnit.MILLISECONDS) // very short probe to fallback quickly
+                            .readTimeout(2000, TimeUnit.MILLISECONDS)
                             .build()
 
                         val mediaType = "application/json; charset=utf-8".toMediaType()
@@ -442,10 +459,15 @@ class ReinforcementLearningViewModel(
                             topicId = if (topicId > -1L) topicId else null,
                             taskId = if (taskId > -1L) taskId else null
                         )
-                        val response = api.procesarPrompt(requestBody)
-                        jsonText = response.respuesta_texto
-                        lastError = response.error
-                        Log.d("ReinforcementVM", "Cloud API returned; response error=${response.error}")
+                        try {
+                            val cloudResp = withContext(Dispatchers.IO) { api.procesarPrompt(requestBody) }
+                            jsonText = cloudResp.respuesta_texto
+                            lastError = cloudResp.error
+                            Log.d("ReinforcementVM", "Cloud API returned; response error=${cloudResp.error}")
+                        } catch (e: Exception) {
+                            lastError = e.message
+                            Log.e("ReinforcementVM", "Cloud API call failed: ${e.message}")
+                        }
                     } catch (e: Exception) {
                         lastError = e.message
                         Log.e("ReinforcementVM", "Cloud API call failed: ${e.message}")

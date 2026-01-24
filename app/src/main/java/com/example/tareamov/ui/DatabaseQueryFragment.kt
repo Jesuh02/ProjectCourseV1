@@ -169,7 +169,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
 
                 // Try fast resolve (gateway + subnet candidates) with short timeout
                 try {
-                    val resolved = kotlinx.coroutines.withTimeoutOrNull(200) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
+                    val resolved = kotlinx.coroutines.withTimeoutOrNull(120) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
                     if (!resolved.isNullOrBlank()) {
                         mcpHttpClient.setForcedBaseUrl(resolved)
                         Log.i("DatabaseQueryFragment", "Fast-resolved MCP base URL: $resolved")

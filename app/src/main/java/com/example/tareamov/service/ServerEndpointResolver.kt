@@ -39,7 +39,8 @@ object ServerEndpointResolver {
     private const val OLLAMA_PORT = 11435
     // Aggressively low timeout for fast mobile probes (practical lower bound ~50-250ms)
     // Note: true "microseconds" network probes are not realistic over Wi-Fi/mobile networks.
-    private const val DEFAULT_TIMEOUT_MS = 100 // ms - shortened to speed fast-fail for physical devices
+    // Use a slightly smaller timeout to make local detection faster on phones.
+    private const val DEFAULT_TIMEOUT_MS = 150 // ms - faster fast-fail for physical devices
     private const val PREFS_NAME = "server_endpoint_resolver"
     private const val PREF_KEY_PREFIX = "last_host_"
     private const val PREF_KEY_FORCED_FULL = "mcp_forced_base_url_full"
@@ -268,8 +269,18 @@ object ServerEndpointResolver {
             try {
                 val u = URL(fullUrl)
                 val host = u.host
-                if (!host.isNullOrBlank()) {
+                val scheme = u.protocol
+                val port = if (u.port == -1) u.defaultPort else u.port
+                // Only cache as a local MCP host when it's an http host on MCP_PORT or explicit local IPs.
+                val isLikelyLocal = try {
+                    host == "127.0.0.1" || host == "localhost" || host == "10.0.2.2" || host.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))
+                } catch (e: Exception) { false }
+
+                if (!host.isNullOrBlank() && scheme == "http" && (port == MCP_PORT || isLikelyLocal)) {
                     cachedHostsByPort[MCP_PORT] = host
+                } else {
+                    // Do not cache cloud HTTPS hosts as local MCP hosts (prevents adding :3000 to cloud domain)
+                    Log.d(TAG, "Not caching forced MCP host for discovery (scheme=$scheme, host=$host, port=$port)")
                 }
             } catch (e: Exception) {
                 Log.d(TAG, "setForcedMcpBaseUrl: parse error: ${e.message}")
@@ -417,6 +428,67 @@ object ServerEndpointResolver {
         return prefs.getString("$PREF_KEY_PREFIX$port", null)
     }
 
+    /**
+     * Return a short list of likely MCP HTTP candidates on the LAN.
+     * Includes gateway IP (if available), emulator host aliases and host.docker.internal.
+     * This is intentionally small and ordered by likelihood so probes are fast.
+     */
+    fun getLikelyMcpCandidates(): List<String> {
+        val candidates = LinkedHashSet<String>()
+        try {
+            // Forced/persisted full URL first
+            getForcedMcpBaseUrl()?.let { f ->
+                if (f.isNotBlank()) candidates.add(f.trimEnd('/'))
+            }
+
+            // Add common aliases
+            candidates.add("http://host.docker.internal:3000")
+            candidates.add("http://10.0.2.2:3000")
+
+            // Try gateway IP if available (WiFi)
+            try {
+                val wifi = wifiManager
+                if (wifi != null) {
+                    @Suppress("DEPRECATION")
+                    val dhcp = wifi.dhcpInfo
+                    val gw = dhcp?.gateway ?: 0
+                    if (gw != 0) {
+                        // Convert int gateway to dotted-quad
+                        val g = listOf(
+                            (gw and 0xFF),
+                            (gw shr 8 and 0xFF),
+                            (gw shr 16 and 0xFF),
+                            (gw shr 24 and 0xFF)
+                        ).joinToString(".")
+                        candidates.add("http://$g:3000")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "gateway lookup failed: ${e.message}")
+            }
+
+            // Add fallback common host guesses on the subnet (small set)
+            val subnetGuesses = listOf(1, 2, 10, 20, 40, 100)
+            // Try to derive device local IP to construct sibling addresses
+            try {
+                val cm = connectivityManager
+                val linkProps = cm?.getLinkProperties(cm.activeNetwork)
+                val addr = linkProps?.linkAddresses?.firstOrNull { it.address is Inet4Address }?.address?.hostAddress
+                if (!addr.isNullOrBlank()) {
+                    val parts = addr.split('.')
+                    if (parts.size == 4) {
+                        val base = parts.subList(0, 3).joinToString(".")
+                        for (n in subnetGuesses) candidates.add("http://$base.$n:3000")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "subnet guess failed: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "getLikelyMcpCandidates failed: ${e.message}")
+        }
+        return ArrayList(candidates)
+    }
     private fun discoverHostForPortInternal(port: Int, healthPath: String): String? {
         val candidates = buildCandidateHosts()
         if (candidates.isEmpty()) {
@@ -445,9 +517,24 @@ object ServerEndpointResolver {
         loadPersistedHost(MCP_PORT)?.let { candidates.add(it) }
         loadPersistedHost(OLLAMA_PORT)?.let { candidates.add(it) }
 
-        // Explicitly add the user's PC IP
+        // Explicitly add a couple of known dev host IPs (keep these as fallbacks)
         candidates.add("192.168.1.90")
         candidates.add("10.144.200.79")
+
+        // Add a few probable host addresses on the same subnet: .1, .100, .254 — quick wins for many routers
+        try {
+            getGatewayAddress()?.let { gw ->
+                val parts = gw.split('.')
+                if (parts.size == 4) {
+                    val base = parts.subList(0, 3).joinToString(".")
+                    candidates.add("$base.1")
+                    candidates.add("$base.100")
+                    candidates.add("$base.254")
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "adding probable hosts failed: ${e.message}")
+        }
 
         if (isEmulator()) {
             candidates.add("10.0.2.2")

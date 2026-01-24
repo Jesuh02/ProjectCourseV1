@@ -187,7 +187,7 @@ class MCPHttpClient(private val context: Context) {
         try {
             // Perform a very short bounded fast-resolve; if it doesn't respond quickly, fallback to cloud
             val fastResolved = try {
-                kotlinx.coroutines.withTimeoutOrNull(200) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
+                kotlinx.coroutines.withTimeoutOrNull(120) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
             } catch (e: Exception) {
                 null
             }
@@ -447,7 +447,7 @@ class MCPHttpClient(private val context: Context) {
                 Log.d(tag, "initialize: using forced base url: $activeBaseUrl")
             } else {
                 val fast = try {
-                    kotlinx.coroutines.withTimeoutOrNull(200) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
+                    kotlinx.coroutines.withTimeoutOrNull(120) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
                 } catch (e: Exception) { null }
                 if (!fast.isNullOrBlank()) {
                     activeBaseUrl = fast

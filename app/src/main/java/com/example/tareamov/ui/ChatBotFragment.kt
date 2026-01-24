@@ -189,7 +189,7 @@ class ChatBotFragment : Fragment() {
 
                 // Fast-resolve (gateway + subnet probes) with ServerEndpointResolver (short bounded wait)
                 try {
-                    val resolved = kotlinx.coroutines.withTimeoutOrNull(200) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
+                    val resolved = kotlinx.coroutines.withTimeoutOrNull(120) { ServerEndpointResolver.fastResolveMcpBaseUrl() }
                     if (!resolved.isNullOrBlank()) {
                         mcpHttpClient.setForcedBaseUrl(resolved)
                         Log.i("ChatBotFragment", "Fast-resolved MCP base URL: $resolved")
@@ -593,6 +593,24 @@ class ChatBotFragment : Fragment() {
             progresoEstudianteDao = database.progresoEstudianteDao()
         )
         syncRepository.initWithContext(requireContext())
+
+        // Pre-warm MCP endpoint selection so phone uses LAN host quickly or falls back to cloud
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val mcpClient = com.example.tareamov.service.MCPHttpClient(requireContext())
+                val base = try { kotlinx.coroutines.withTimeoutOrNull(120) { ServerEndpointResolver.fastResolveMcpBaseUrl() } } catch (e: Exception) { null }
+                if (!base.isNullOrBlank() && base != ServerEndpointResolver.RAILWAY_MCP_URL) {
+                    mcpClient.setForcedBaseUrl(base)
+                    android.util.Log.i("ChatBotFrag", "Using local MCP base: $base")
+                } else {
+                    // Force immediate cloud fallback to avoid long waits on phone
+                    mcpClient.setForcedBaseUrl(ServerEndpointResolver.RAILWAY_MCP_URL)
+                    android.util.Log.i("ChatBotFrag", "Falling back to cloud MCP: ${ServerEndpointResolver.RAILWAY_MCP_URL}")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("ChatBotFrag", "Pre-warm MCP failed: ${e.message}")
+            }
+        }
 
         initializeViews(view)
         setupRecyclerView()

@@ -705,12 +705,16 @@ class SyncRepository(
                     if (noCourse && rid > 0L) {
                         val uname = idToUsername[rid]
                         if (!uname.isNullOrBlank() && !uname.equals(v.username, ignoreCase = true)) {
-                            v.copy(username = uname)
+                            // Defensive: some fields may be null due to Gson unsafe allocation.
+                            // Ensure non-nullable properties are provided safe defaults when copying.
+                            v.copy(username = uname, description = v.description ?: "")
                         } else {
-                            v
+                            // Also ensure description is non-null even when not changing username
+                            if (v.description == null) v.copy(description = "") else v
                         }
                     } else {
-                        v
+                        // Ensure description non-null for videos coming from typed mapping
+                        if (v.description == null) v.copy(description = "") else v
                     }
                 }
             }
@@ -1166,7 +1170,12 @@ class SyncRepository(
             // Combine and deduplicate by video ID
             val allVideos = (videosByCourse + videosByRemoteId)
                 .distinctBy { video -> video.id }
-                .map { video -> video.copy(username = username, remoteId = userId) }
+                .map { video ->
+                    // Defensive: ensure non-nullable fields are satisfied (Gson may have produced nulls)
+                    val desc = video.description ?: ""
+                    val v = if (video.description == null) video.copy(description = desc) else video
+                    v.copy(username = username, remoteId = userId, description = desc)
+                }
                 .sortedByDescending { video -> video.timestamp }
             
             Log.d("SyncRepository", "fetchVideosByCreatorUserIdFromSupabase: Found ${videosByCourse.size} via courses, ${videosByRemoteId.size} via remote_id, ${allVideos.size} total unique videos for userId=$userId")

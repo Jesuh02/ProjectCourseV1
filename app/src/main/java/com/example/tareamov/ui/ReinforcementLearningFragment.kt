@@ -37,7 +37,7 @@ class ReinforcementLearningFragment : Fragment() {
         // Pre-warm resolver: choose local quickly or fallback to cloud
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val base = try { kotlinx.coroutines.withTimeoutOrNull(200) { ServerEndpointResolver.fastResolveMcpBaseUrl() } } catch (e: Exception) { null }
+                val base = try { kotlinx.coroutines.withTimeoutOrNull(120) { ServerEndpointResolver.fastResolveMcpBaseUrl() } } catch (e: Exception) { null }
                 if (!base.isNullOrBlank() && base != ServerEndpointResolver.RAILWAY_MCP_URL) {
                     // Quick verification: only force local base if reachable immediately
                     val reachable = try { ServerEndpointResolver.isServiceReachable(base, "/health") } catch (e: Exception) { false }
