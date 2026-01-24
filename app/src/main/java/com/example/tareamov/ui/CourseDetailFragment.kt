@@ -3302,15 +3302,17 @@ class CourseDetailFragment : Fragment() {
      * Show confirmation dialog before deleting a topic
      */
     private fun showDeleteTopicConfirmation(topic: Topic) {
-        AlertDialog.Builder(requireContext())
-            .setTitle("Eliminar Tema")
-            .setMessage("¿Estás seguro de que deseas eliminar el tema '${topic.name}'? Esta acción no se puede deshacer y eliminará todo el contenido y tareas asociadas.")
-            .setPositiveButton("Eliminar") { _, _ ->
-                deleteTopic(topic)
-            }
-            .setNegativeButton("Cancelar", null)
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .show()
+        val requestKey = "confirm_delete_topic_${topic.id}"
+        parentFragmentManager.setFragmentResultListener(requestKey, viewLifecycleOwner) { _, bundle ->
+            parentFragmentManager.clearFragmentResultListener(requestKey)
+            val confirmed = bundle.getBoolean("confirmed", false)
+            if (confirmed) deleteTopic(topic)
+        }
+
+        val title = "Eliminar Tema"
+        val message = "¿Estás seguro de que deseas eliminar el tema '${topic.name}'? Esta acción no se puede deshacer y eliminará todo el contenido y tareas asociadas."
+        val dialog = ConfirmDeleteDialogFragment.newInstance(requestKey, title, message)
+        dialog.show(parentFragmentManager, requestKey)
     }
 
     /**
@@ -3382,15 +3384,17 @@ class CourseDetailFragment : Fragment() {
      * Show confirmation dialog before deleting a task
      */
     private fun showDeleteTaskConfirmation(task: Task) {
-        AlertDialog.Builder(requireContext())
-            .setTitle("Eliminar Tarea")
-            .setMessage("¿Estás seguro de que deseas eliminar la tarea '${task.name}'? Esta acción no se puede deshacer y eliminará todas las entregas de los estudiantes.")
-            .setPositiveButton("Eliminar") { _, _ ->
-                deleteTask(task)
-            }
-            .setNegativeButton("Cancelar", null)
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .show()
+        val requestKey = "confirm_delete_task_${task.id}"
+        parentFragmentManager.setFragmentResultListener(requestKey, viewLifecycleOwner) { _, bundle ->
+            parentFragmentManager.clearFragmentResultListener(requestKey)
+            val confirmed = bundle.getBoolean("confirmed", false)
+            if (confirmed) deleteTask(task)
+        }
+
+        val title = "Eliminar Tarea"
+        val message = "¿Estás seguro de que deseas eliminar la tarea '${task.name}'? Esta acción no se puede deshacer y eliminará todas las entregas de los estudiantes."
+        val dialog = ConfirmDeleteDialogFragment.newInstance(requestKey, title, message)
+        dialog.show(parentFragmentManager, requestKey)
     }
 
     /**
@@ -3451,15 +3455,17 @@ class CourseDetailFragment : Fragment() {
      * Show confirmation dialog before deleting content item
      */
     private fun showDeleteContentConfirmation(contentItem: ContentItem, container: LinearLayout, contentView: View) {
-        AlertDialog.Builder(requireContext())
-            .setTitle("Eliminar Contenido")
-            .setMessage("¿Estás seguro de que deseas eliminar '${contentItem.name}'?")
-            .setPositiveButton("Eliminar") { _, _ ->
-                deleteContent(contentItem, container, contentView)
-            }
-            .setNegativeButton("Cancelar", null)
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .show()
+        val requestKey = "confirm_delete_content_${contentItem.id}"
+        parentFragmentManager.setFragmentResultListener(requestKey, viewLifecycleOwner) { _, bundle ->
+            parentFragmentManager.clearFragmentResultListener(requestKey)
+            val confirmed = bundle.getBoolean("confirmed", false)
+            if (confirmed) deleteContent(contentItem, container, contentView)
+        }
+
+        val title = "Eliminar Contenido"
+        val message = "¿Estás seguro de que deseas eliminar '${contentItem.name}'?"
+        val dialog = ConfirmDeleteDialogFragment.newInstance(requestKey, title, message)
+        dialog.show(parentFragmentManager, requestKey)
     }
 
     /**
