@@ -2232,7 +2232,7 @@ class ExploreFragment : Fragment() {
                 if (premiumCourses.isEmpty()) showDarkToast("No hay cursos premium disponibles (offline)") else showDarkToast("Mostrando ${premiumCourses.size} cursos premium (offline)")
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error filtering premium courses", e)
-                Toast.makeText(context, "Error filtrando cursos premium", Toast.LENGTH_SHORT).show()
+                context?.let { Toast.makeText(it, "Error filtrando cursos premium", Toast.LENGTH_SHORT).show() }
             }
         }
     }
@@ -2287,7 +2287,7 @@ class ExploreFragment : Fragment() {
                 if (freeCourses.isEmpty()) showDarkToast("No hay cursos gratuitos disponibles (offline)") else showDarkToast("Mostrando ${freeCourses.size} cursos gratis (offline)")
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error filtering free courses", e)
-                Toast.makeText(context, "Error filtrando cursos gratis", Toast.LENGTH_SHORT).show()
+                context?.let { Toast.makeText(it, "Error filtrando cursos gratis", Toast.LENGTH_SHORT).show() }
             }
         }
     }
@@ -2563,7 +2563,7 @@ class ExploreFragment : Fragment() {
                 Log.d("ExploreFragment", "Filtered to show only user's courses: ${sorted.size} courses")
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error filtering user's courses", e)
-                Toast.makeText(context, "Error filtrando cursos", Toast.LENGTH_SHORT).show()
+                context?.let { Toast.makeText(it, "Error filtrando cursos", Toast.LENGTH_SHORT).show() }
             }
         }
     }
@@ -2590,7 +2590,7 @@ class ExploreFragment : Fragment() {
                 Log.d("ExploreFragment", "Filtered to show only other users' courses: ${sorted.size} courses")
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error filtering other users' courses", e)
-                Toast.makeText(context, "Error filtrando cursos", Toast.LENGTH_SHORT).show()
+                context?.let { Toast.makeText(it, "Error filtrando cursos", Toast.LENGTH_SHORT).show() }
             }
         }
     }
@@ -2636,7 +2636,7 @@ class ExploreFragment : Fragment() {
 
     private fun showDebugStatsInfo() {
         // Show debug stats info
-        Toast.makeText(context, "Debug Stats Info", Toast.LENGTH_SHORT).show()
+        context?.let { Toast.makeText(it, "Debug Stats Info", Toast.LENGTH_SHORT).show() }
     }
 
     private fun showAllCourses() {

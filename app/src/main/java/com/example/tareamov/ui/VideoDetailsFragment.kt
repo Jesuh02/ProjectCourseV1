@@ -836,6 +836,12 @@ class VideoDetailsFragment : Fragment() {
 
                     // Now create video with the specific ID and optional courseId reference
                     updateLoadingProgress(95, "Guardando video en servidor...", false)
+                    
+                    // Business logic for remoteId:
+                    // - If course is created: remoteId = null (video is linked via course_id)
+                    // - If standalone video (no course): remoteId = userId (to identify the creator)
+                    val standaloneRemoteId = if (courseRemoteId == null) userId else null
+                    
                     val videoData = VideoData(
                         id = nextVideoId,
                         username = currentUsername, // Keep username for standalone videos
@@ -845,7 +851,7 @@ class VideoDetailsFragment : Fragment() {
                         isPaid = isPaidCourse,
                         price = if (isPaidCourse) 9.99 else null,
                         courseId = courseRemoteId, // null if no course created, otherwise link to the course
-                        remoteId = userId, // Store creator ID in remote_id as requested
+                        remoteId = standaloneRemoteId, // userId for standalone videos, null for course-linked videos
                         timestamp = System.currentTimeMillis(),
                         thumbnailUri = thumbnailUrl // Include thumbnail URL
                     )

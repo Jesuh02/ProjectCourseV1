@@ -27,7 +27,7 @@ import java.io.File
 data class VideoData(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     @SerializedName(value = "username", alternate = ["creator_username", "user"]) val username: String = "", // This is the creator's username (may be resolved from remote_id)
-    val description: String = "",
+    val description: String? = null,
     val title: String = "",
     @SerializedName("video_uri_string") val videoUriString: String? = null,
     @SerializedName("local_file_path") val localFilePath: String? = null,
@@ -45,7 +45,7 @@ data class VideoData(
     // Secondary constructor for creating from URI
     constructor(
         username: String,
-        description: String,
+        description: String? = null,
         title: String,
         videoUri: Uri?,
         isPaid: Boolean = false,
