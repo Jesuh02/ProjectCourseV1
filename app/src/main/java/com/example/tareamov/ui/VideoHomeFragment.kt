@@ -66,6 +66,7 @@ import androidx.media3.common.util.UnstableApi
 
 @UnstableApi
 class VideoHomeFragment : Fragment() {
+    private val MAX_VIDEOS = 60 // Limit in-memory videos to avoid OOM
     private lateinit var viewModel: VideoHomeViewModel
     private lateinit var profileAvatars: CircleImageView
     private lateinit var videoManager: VideoManager
@@ -240,6 +241,16 @@ class VideoHomeFragment : Fragment() {
             videoList.addAll(videos)
             allVideosList.clear()
             allVideosList.addAll(videos)
+
+            // Trim lists to a safe maximum to avoid holding too many large objects (thumbnails/players)
+            if (videoList.size > MAX_VIDEOS) {
+                val toRemove = videoList.size - MAX_VIDEOS
+                for (i in 0 until toRemove) videoList.removeAt(videoList.size - 1)
+            }
+            if (allVideosList.size > MAX_VIDEOS) {
+                val toRemove = allVideosList.size - MAX_VIDEOS
+                for (i in 0 until toRemove) allVideosList.removeAt(allVideosList.size - 1)
+            }
 
             // Logs requested: show remote_id for videos with course_id = null
             try {
@@ -1517,6 +1528,19 @@ class VideoHomeFragment : Fragment() {
                     holder?.releasePlayer()
                 }
             }
+            // Also clear adapter and large lists to free memory
+            try {
+                recyclerView?.adapter = null
+            } catch (e: Exception) {
+                // ignore
+            }
+            if (::videoAdapter.isInitialized) {
+                try { videoAdapter.updateVideos(emptyList()) } catch (e: Exception) {}
+            }
+            videoList.clear()
+            allVideosList.clear()
+            // Hint GC after releasing heavy resources
+            try { System.gc() } catch (e: Exception) {}
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "Error releasing all videos", e)
         }

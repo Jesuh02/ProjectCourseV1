@@ -882,6 +882,11 @@ class VideoAdapter(
          */
         private fun releaseExoPlayer() {
             try {
+                // Detach player from PlayerView first to avoid leaking the view
+                try {
+                    playerView?.player = null
+                } catch (_: Exception) {}
+
                 exoPlayer?.release()
                 exoPlayer = null
             } catch (_: Exception) {}
@@ -926,6 +931,10 @@ class VideoAdapter(
             
             // Release ExoPlayer
             try {
+                try {
+                    playerView?.player = null
+                } catch (_: Exception) {}
+
                 exoPlayer?.stop()
                 exoPlayer?.release()
                 exoPlayer = null
@@ -946,6 +955,25 @@ class VideoAdapter(
             } catch (e: Exception) {
                 Log.e("VideoAdapter", "Error releasing VideoView/MediaPlayer", e)
             }
+
+            // Clear image resources held by views to reduce memory pressure
+            try {
+                thumbnailView?.let { Glide.with(itemView).clear(it) }
+            } catch (_: Exception) {}
+            try {
+                profileButton?.let { Glide.with(itemView).clear(it) }
+            } catch (_: Exception) {}
+            try {
+                thumbnailView?.setImageDrawable(null)
+            } catch (_: Exception) {}
+
+            // Remove listeners and references
+            try {
+                playPauseOverlay?.setOnClickListener(null)
+                profileButton.setOnClickListener(null)
+                usernameText.setOnClickListener(null)
+                titleText.setOnClickListener(null)
+            } catch (_: Exception) {}
         }
         
         /**
@@ -1779,8 +1807,18 @@ class VideoAdapter(
         val position = holder.bindingAdapterPosition
         Log.d("VideoAdapter", "onViewDetachedFromWindow: position=$position")
         
-        // ALWAYS pause and mute when detached - this is critical to prevent audio leaks
+        // ALWAYS pause, mute and release resources when detached - helps prevent audio leaks and OOM
         holder.pauseVideo()
+        holder.releasePlayer()
+    }
+
+    override fun onViewRecycled(holder: VideoViewHolder) {
+        super.onViewRecycled(holder)
+        try {
+            holder.releasePlayer()
+        } catch (e: Exception) {
+            Log.w("VideoAdapter", "Error releasing recycled view resources", e)
+        }
     }
     
     /**
