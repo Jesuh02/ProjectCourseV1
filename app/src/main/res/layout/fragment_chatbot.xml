@@ -12,13 +12,13 @@
     <!-- Top App Bar - Minimalist (Fixed at top, not affected by keyboard) -->
     <LinearLayout
         android:id="@+id/topBar"
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="56dp"
-        android:background="#0D0D0D"
         android:orientation="horizontal"
-        android:gravity="center_vertical"
         android:paddingHorizontal="20dp"
         android:paddingVertical="8dp"
+        android:gravity="center_vertical"
+        android:background="#0D0D0D"
         android:elevation="4dp"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -36,9 +36,10 @@
 
         <de.hdodenhof.circleimageview.CircleImageView
             android:id="@+id/botAvatarImageView"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:layout_marginStart="8dp"
+            android:layout_marginEnd="12dp"
             android:src="@android:drawable/ic_dialog_info"
             app:civ_border_width="0dp" />
 
@@ -46,7 +47,6 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="12dp"
             android:orientation="vertical">
 
             <TextView
@@ -54,20 +54,32 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Asistente IA"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp"
-                android:textStyle="bold" />
+                android:textColor="#E8E8E8"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.005" />
+
+            <TextView
+                android:id="@+id/botModelTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="DeepSeek-V3.2-Speciale"
+                android:textColor="#666666"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif"
+                android:layout_marginTop="2dp" />
         </LinearLayout>
 
         <ImageButton
             android:id="@+id/clearChatButton"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:background="@drawable/send_button_background"
-            android:backgroundTint="#1A1A1A"
+            android:layout_marginEnd="0dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Limpiar chat"
+            android:padding="8dp"
             android:src="@android:drawable/ic_menu_delete"
-            android:tint="#AAAAAA"
-            android:padding="8dp" />
+            app:tint="#999999" />
     </LinearLayout>
 
     <!-- Divider below top bar -->
