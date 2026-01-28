@@ -11,7 +11,7 @@
 
     <!-- Top App Bar - Minimalist (Fixed at top, not affected by keyboard) -->
     <LinearLayout
-        android:id="@+id/topBar"
+        android:id="@+id/headerLayout"
         android:layout_width="match_parent"
         android:layout_height="56dp"
         android:orientation="horizontal"
@@ -20,14 +20,12 @@
         android:gravity="center_vertical"
         android:background="#0D0D0D"
         android:elevation="4dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintTop_toTopOf="parent">
 
         <ImageButton
             android:id="@+id/backButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/arrow_up_float"
             android:rotation="270"
@@ -38,10 +36,18 @@
             android:id="@+id/botAvatarImageView"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:layout_marginStart="8dp"
+            android:layout_marginStart="12dp"
             android:layout_marginEnd="12dp"
             android:src="@android:drawable/ic_dialog_info"
             app:civ_border_width="0dp" />
+
+        <!-- Status Indicator (match DatabaseQuery header) -->
+        <View
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="@drawable/circle_shape"
+            android:backgroundTint="#10A37F"
+            android:layout_marginEnd="12dp" />
 
         <LinearLayout
             android:layout_width="0dp"

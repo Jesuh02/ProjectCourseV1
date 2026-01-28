@@ -744,18 +744,21 @@ class ChatBotFragment : Fragment() {
 
     private fun initializeViews(view: View) {
         // Handle TopBar Insets for status bar only - with minimal padding
-        val topBar = view.findViewById<LinearLayout>(R.id.topBar)
+        val topBar = view.findViewById<LinearLayout?>(R.id.topBar)
 
-        ViewCompat.setOnApplyWindowInsetsListener(topBar) { v, insets ->
-            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            // Solo agregar el padding de la barra de estado, sin padding adicional
-            v.setPadding(v.paddingLeft, statusBars.top, v.paddingRight, v.paddingBottom)
-            insets
-        }
+        // topBar may be null in some layout inflations; guard against it to avoid crashes
+        topBar?.let { tb ->
+            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
+                val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+                // Solo agregar el padding de la barra de estado, sin padding adicional
+                v.setPadding(v.paddingLeft, statusBars.top, v.paddingRight, v.paddingBottom)
+                insets
+            }
 
-        // Forzar que el topBar siempre esté arriba incluso durante animaciones
-        topBar.post {
-            topBar.bringToFront()
+            // Forzar que el topBar siempre esté arriba incluso durante animaciones
+            tb.post {
+                tb.bringToFront()
+            }
         }
 
         messagesRecyclerView = view.findViewById(R.id.messagesRecyclerView)
