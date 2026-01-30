@@ -403,6 +403,8 @@ class ChatBotFragment : Fragment() {
     private lateinit var closeGradedTasksButton: ImageButton
     private lateinit var gradedTaskOverlayAdapter: com.example.tareamov.adapter.GradedTaskOverlayAdapter
     private val gradedTasksList: MutableList<GradedTaskItem> = mutableListOf()
+    // Track most-recently graded submission so the overlay can show it directly
+    private var lastGradedSubmissionId: Long? = null
 
     private var isUpdatingTextSpans: Boolean = false
 
@@ -744,18 +746,21 @@ class ChatBotFragment : Fragment() {
 
     private fun initializeViews(view: View) {
         // Handle TopBar Insets for status bar only - with minimal padding
-        val topBar = view.findViewById<LinearLayout>(R.id.topBar)
+        val topBar = view.findViewById<LinearLayout?>(R.id.topBar)
 
-        ViewCompat.setOnApplyWindowInsetsListener(topBar) { v, insets ->
-            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            // Solo agregar el padding de la barra de estado, sin padding adicional
-            v.setPadding(v.paddingLeft, statusBars.top, v.paddingRight, v.paddingBottom)
-            insets
-        }
+        // topBar may be null in some layout inflations; guard against it to avoid crashes
+        topBar?.let { tb ->
+            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
+                val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+                // Solo agregar el padding de la barra de estado, sin padding adicional
+                v.setPadding(v.paddingLeft, statusBars.top, v.paddingRight, v.paddingBottom)
+                insets
+            }
 
-        // Forzar que el topBar siempre esté arriba incluso durante animaciones
-        topBar.post {
-            topBar.bringToFront()
+            // Forzar que el topBar siempre esté arriba incluso durante animaciones
+            tb.post {
+                tb.bringToFront()
+            }
         }
 
         messagesRecyclerView = view.findViewById(R.id.messagesRecyclerView)
@@ -1010,9 +1015,18 @@ class ChatBotFragment : Fragment() {
     private fun setupRecyclerView() {
         chatAdapter = ChatMessageAdapter(
             onAddCalificationClick = { message ->
+                // When the user selects the "check" / add calification action on a bot message,
+                // show the graded tasks button so they can view/select graded tasks.
+                try {
+                    gradedTasksButton.visibility = View.VISIBLE
+                } catch (e: Exception) { /* ignore if view not ready */ }
                 handleAddCalification(message)
             },
             onRejectCalificationClick = { message ->
+                // Hide the graded tasks button if user rejects grading
+                try {
+                    gradedTasksButton.visibility = View.GONE
+                } catch (e: Exception) { /* ignore if view not ready */ }
                 handleRejectCalification(message)
             },
             onTTSClick = { message ->
@@ -2671,6 +2685,45 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                                 feedback = feedback,
                                                 gradedByUsername = graderUsername
                                             )
+
+                                            // Añadir la tarea calificada a la lista en memoria y actualizar UI
+                                            try {
+                                                // Preparar datos a nivel IO (estamos en withContext(Dispatchers.IO))
+                                                val topicForTask = try { database.topicDao().getTopicById(task?.topicId ?: -1L) } catch (e: Exception) { null }
+                                                val courseTitleForThis = if (topicForTask?.courseId != null && topicForTask.courseId != 0L) {
+                                                    try {
+                                                        database.courseDao().getCourseById(topicForTask.courseId)?.title
+                                                    } catch (e: Exception) { null }
+                                                } else null
+
+                                                val gradeDisplayForUI = if (gradeFloat > 10) String.format("%.1f/10", gradeFloat / 10) else String.format("%.1f/10", gradeFloat)
+                                                val feedbackForUI = feedback ?: "Sin feedback disponible"
+
+                                                val gradedTaskItem = GradedTaskItem(
+                                                    taskId = task?.id ?: taskSubmission.taskId,
+                                                    taskName = task?.name ?: effectiveTaskName,
+                                                    taskDescription = task?.description ?: "Sin descripción",
+                                                    topicName = topicForTask?.name ?: "Sin tema",
+                                                    index = taskSubmission.id.toInt(),
+                                                    grade = gradeDisplayForUI,
+                                                    feedback = feedbackForUI
+                                                )
+
+                                                withContext(Dispatchers.Main) {
+                                                    // Insertar al inicio para que la tarea reciente aparezca primero
+                                                    gradedTasksList.removeAll { it.index == gradedTaskItem.index }
+                                                    gradedTasksList.add(0, gradedTaskItem)
+                                                    // Recordar la última submission graduada para mostrarla primero cuando el overlay se abra
+                                                    lastGradedSubmissionId = gradedTaskItem.index.toLong()
+                                                    gradedTaskOverlayAdapter.updateGradedTasks(gradedTasksList.toList())
+                                                    // Si detectamos título de curso, mostrarlo en el header
+                                                    courseTitleForThis?.let { gradedCourseNameTextView.text = it }
+                                                    // Asegurarnos que el botón esté visible
+                                                    try { gradedTasksButton.visibility = View.VISIBLE } catch (e: Exception) {}
+                                                }
+                                            } catch (e: Exception) {
+                                                Log.w("ChatBotFragment", "No se pudo añadir la tarea calificada en memoria: ${e.message}")
+                                            }
                                         } else {
                                             Log.w("ChatBotFragment", "⚠️ No se pudo actualizar TaskSubmission $targetSubmissionId en Supabase")
                                         }
@@ -2873,19 +2926,15 @@ El archivo enviado está vacío o no se pudo leer su contenido.
      * Muestra el overlay con las tareas calificadas
      */
     private fun showGradedTasksOverlay() {
-        if (courseId == -1L) {
-            Toast.makeText(context, "No hay información del curso disponible", Toast.LENGTH_SHORT).show()
-            return
-        }
-
+        // Allow showing graded tasks even when courseId is unknown (-1).
+        // In that case we load all graded submissions for the current user across courses.
         lifecycleScope.launch {
             try {
                 loadingProgressBar.visibility = View.VISIBLE
-
                 // Siempre recargar desde Supabase/DB para tener datos actualizados
-                val gradedTasksFromDB = loadGradedTasksFromChat()
+                val loadResult = loadGradedTasksFromChat()
                 gradedTasksList.clear()
-                gradedTasksList.addAll(gradedTasksFromDB)
+                gradedTasksList.addAll(loadResult.items)
 
                 loadingProgressBar.visibility = View.GONE
 
@@ -2896,8 +2945,24 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                 Log.d("ChatBotFragment", "Mostrando ${gradedTasksList.size} tareas calificadas")
 
-                gradedCourseNameTextView.text = courseTitle.ifEmpty { "Curso Actual" }
-                gradedTaskOverlayAdapter.updateGradedTasks(gradedTasksList.toList()) // Crear copia para evitar modificaciones concurrentes
+                // If we just graded a specific submission, prefer to show only that item
+                if (lastGradedSubmissionId != null) {
+                    val filtered = gradedTasksList.filter { it.index == lastGradedSubmissionId!!.toInt() }
+                    if (filtered.isNotEmpty()) {
+                        // If the loader discovered a single course title, use it; otherwise try to infer from the item
+                        gradedCourseNameTextView.text = loadResult.courseTitle ?: filtered.firstOrNull()?.topicName ?: "Tarea calificada"
+                        gradedTaskOverlayAdapter.updateGradedTasks(filtered)
+                        // clear the pointer so next open shows full list
+                        lastGradedSubmissionId = null
+                    } else {
+                        gradedCourseNameTextView.text = loadResult.courseTitle ?: if (courseId == -1L) "Tareas calificadas (todas)" else courseTitle.ifEmpty { "Curso Actual" }
+                        gradedTaskOverlayAdapter.updateGradedTasks(gradedTasksList.toList()) // Crear copia para evitar modificaciones concurrentes
+                    }
+                } else {
+                    // Prefer explicit course title detected during load, else fall back to current course context or a generic label
+                    gradedCourseNameTextView.text = loadResult.courseTitle ?: if (courseId == -1L) "Tareas calificadas (todas)" else courseTitle.ifEmpty { "Curso Actual" }
+                    gradedTaskOverlayAdapter.updateGradedTasks(gradedTasksList.toList()) // Crear copia para evitar modificaciones concurrentes
+                }
 
                 gradedTasksOverlayBackground.visibility = View.VISIBLE
                 gradedTasksOverlay.visibility = View.VISIBLE
@@ -2950,13 +3015,23 @@ El archivo enviado está vacío o no se pudo leer su contenido.
      * Carga las tareas calificadas desde TaskSubmissionDao usando IDs únicos
      */
     /**
+     * Resultado de carga de tareas calificadas: lista de items y título de curso si se identifica uno solo
+     */
+    private data class GradedTasksLoadResult(
+        val items: List<GradedTaskItem>,
+        val courseTitle: String?
+    )
+
+    /**
      * Carga las tareas calificadas desde Supabase (prioridad) o TaskSubmissionDao
      */
-    private suspend fun loadGradedTasksFromChat(): List<GradedTaskItem> {
+    private suspend fun loadGradedTasksFromChat(): GradedTasksLoadResult {
         return withContext(Dispatchers.IO) {
             try {
                 val gradedTasks = mutableListOf<GradedTaskItem>()
                 val processedTaskSubmissionIds = mutableSetOf<Long>()
+                val encounteredCourseIds = mutableSetOf<Long>()
+                val courseTitleMap = mutableMapOf<Long, String>()
 
                 Log.d("ChatBotFragment", "Cargando tareas calificadas...")
 
@@ -3020,6 +3095,18 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                             if (task != null) {
                                 val topic = database.topicDao().getTopicById(task.topicId)
+                                val courseIdFromTopic = topic?.courseId ?: -1L
+                                if (courseIdFromTopic != -1L) {
+                                    encounteredCourseIds.add(courseIdFromTopic)
+                                    try {
+                                        val course = database.courseDao().getCourseById(courseIdFromTopic)
+                                        if (course != null) {
+                                            courseTitleMap[courseIdFromTopic] = course.title
+                                        }
+                                    } catch (e: Exception) {
+                                        // ignore missing course
+                                    }
+                                }
                                 // Nota: Si el topic no está, podríamos buscarlo también, pero por ahora "Sin tema" es aceptable
 
                                 val gradeValue = submission.grade
@@ -3054,10 +3141,16 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 }
 
                 Log.d("ChatBotFragment", "Total de tareas calificadas cargadas: ${gradedTasks.size}")
-                gradedTasks
+                // Determinar si todas las tareas pertenecen a un único curso
+                val singleCourseTitle = if (encounteredCourseIds.size == 1) {
+                    val id = encounteredCourseIds.first()
+                    courseTitleMap[id]
+                } else null
+
+                GradedTasksLoadResult(items = gradedTasks, courseTitle = singleCourseTitle)
             } catch (e: Exception) {
                 Log.e("ChatBotFragment", "Error cargando tareas calificadas desde TaskSubmissionDao", e)
-                emptyList()
+                GradedTasksLoadResult(items = emptyList(), courseTitle = null)
             }
         }
     }
@@ -3071,14 +3164,19 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 Log.d("ChatBotFragment", "Cargando tareas calificadas al inicializar fragmento...")
 
                 // Cargar las tareas calificadas desde la base de datos
-                val gradedTasksFromDB = loadGradedTasksFromChat()
+                val loadResult = loadGradedTasksFromChat()
 
                 // Limpiar la lista actual y agregar las tareas cargadas
                 gradedTasksList.clear()
-                gradedTasksList.addAll(gradedTasksFromDB)
+                gradedTasksList.addAll(loadResult.items)
 
                 // Actualizar el adaptador
                 gradedTaskOverlayAdapter.updateGradedTasks(gradedTasksList.toList())
+
+                // Si se detectó un único curso, mostrar su título en el header del overlay
+                if (loadResult.courseTitle != null) {
+                    gradedCourseNameTextView.text = loadResult.courseTitle
+                }
 
                 Log.d("ChatBotFragment", "Tareas calificadas cargadas al inicializar: ${gradedTasksList.size}")
 
@@ -4479,9 +4577,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             try {
                 // Si la lista en memoria está vacía, cargar desde la base de datos
                 if (gradedTasksList.isEmpty()) {
-                    val gradedTasksFromDB = loadGradedTasksFromChat()
+                    val loadResult = loadGradedTasksFromChat()
                     gradedTasksList.clear()
-                    gradedTasksList.addAll(gradedTasksFromDB)
+                    gradedTasksList.addAll(loadResult.items)
                 }
 
                 // Buscar la tarea calificada por su ID de submission (ahora es index)

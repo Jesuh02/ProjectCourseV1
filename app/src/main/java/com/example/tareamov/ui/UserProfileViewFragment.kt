@@ -45,12 +45,18 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.service.CloudflareR2Service
 import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.ServerEndpointResolver
 import de.hdodenhof.circleimageview.CircleImageView
 import android.view.ViewOutlineProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import com.google.gson.Gson
 import java.io.File
 import java.util.Date
 
@@ -449,6 +455,8 @@ class UserProfileViewFragment : Fragment() {
                         }
                     }
                 }
+            ,
+                showOnlyEditDelete = true
             )
 
             // Configurar adaptador para videos con estilo YouTube
@@ -478,7 +486,19 @@ class UserProfileViewFragment : Fragment() {
                     }
                 },
                 onDeleteClickListener = { video ->
-                    deleteCourse(video)
+                    // Show ConfirmDeleteDialogFragment and call performDeleteCourse(video) on confirm
+                    val requestKey = "confirm_delete_video_${'$'}{video.id}"
+                    parentFragmentManager.setFragmentResultListener(requestKey, viewLifecycleOwner) { _, bundle ->
+                        val confirmed = bundle.getBoolean("confirmed", false)
+                        if (confirmed) {
+                            performDeleteCourse(video)
+                        }
+                    }
+
+                    val title = "Eliminar video"
+                    val message = "¿Estás seguro de que deseas eliminar el video '${'$'}{video.title}'? Esta acción no se puede deshacer."
+                    val dialog = ConfirmDeleteDialogFragment.newInstance(requestKey, title, message, confirmText = "Eliminar", cancelText = "Cancelar")
+                    dialog.show(parentFragmentManager, requestKey)
                 }
             )
 
@@ -1695,66 +1715,27 @@ class UserProfileViewFragment : Fragment() {
      * Editar curso - Identical to ExploreFragment implementation
      */
     private fun editCourse(course: VideoData) {
-        // Check if current user is the creator before allowing edit
-        if (getCurrentUsername() != null && getCurrentUsername() == course.username) {
-            Log.d("UserProfileView", "Edit course requested: ${course.title}")
-
-            // Create edit dialog with dark theme
-            val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_edit_course, null)
-            val titleEdit = dialogView.findViewById<android.widget.EditText>(R.id.editCourseTitle)
-            val descEdit = dialogView.findViewById<android.widget.EditText>(R.id.editCourseDescription)
-
-            // Set current values
-            titleEdit.setText(course.title)
-            descEdit.setText(course.description)
-
-            // Set text color to white for better visibility in dark theme
-            titleEdit.setTextColor(android.graphics.Color.WHITE)
-            descEdit.setTextColor(android.graphics.Color.WHITE)
-            titleEdit.setHintTextColor(android.graphics.Color.parseColor("#CCCCCC"))
-            descEdit.setHintTextColor(android.graphics.Color.parseColor("#CCCCCC"))
-
-            // Create dialog with dark theme
-            val dialogBuilder = androidx.appcompat.app.AlertDialog.Builder(
-                androidx.appcompat.view.ContextThemeWrapper(requireContext(), R.style.DarkAlertDialogTheme)
-            )
-
-            dialogBuilder
-                .setTitle("✏️ Editar Curso")
-                .setView(dialogView)
-                .setPositiveButton("💾 Guardar") { _, _ ->
-                    val newTitle = titleEdit.text.toString().trim()
-                    val newDesc = descEdit.text.toString().trim()
-
-                    if (newTitle.isNotEmpty()) {
-                        updateCourseDetails(course, newTitle, newDesc)
-                        Toast.makeText(requireContext(), "✅ Curso actualizado: $newTitle", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(requireContext(), "❌ El título no puede estar vacío", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                .setNegativeButton("❌ Cancelar", null)
-
-            val dialog = dialogBuilder.create()
-
-            // Apply additional dark theme styling
-            dialog.setOnShowListener {
-                dialog.window?.setBackgroundDrawableResource(R.drawable.dark_dialog_background)
-                dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.apply {
-                    setTextColor(android.graphics.Color.parseColor("#4CAF50")) // Green for save
-                    textSize = 16f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                }
-                dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.apply {
-                    setTextColor(android.graphics.Color.parseColor("#A259FF")) // Purple for cancel
-                    textSize = 16f
-                }
-            }
-
-            dialog.show()
-        } else {
+        // Only the creator can edit the course
+        val current = getCurrentUsername()
+        if (current == null || current != course.username) {
             Toast.makeText(requireContext(), "❌ Solo el creador puede editar el curso", Toast.LENGTH_SHORT).show()
             Log.w("UserProfileView", "Edit denied: User is not the course creator")
+            return
+        }
+
+        Log.d("UserProfileView", "Navigate to CourseCreationFragment for edit: ${course.title} (id=${course.id})")
+
+        // Navigate to CourseCreationFragment and pass courseId and isEditing=true
+        val bundle = android.os.Bundle().apply {
+            putLong("courseId", course.id)
+            putBoolean("isEditing", true)
+        }
+
+        try {
+            findNavController().navigate(com.example.tareamov.R.id.courseCreationFragment, bundle)
+        } catch (e: Exception) {
+            Log.e("UserProfileView", "Navigation to CourseCreationFragment failed", e)
+            Toast.makeText(requireContext(), "No se pudo abrir el editor de curso", Toast.LENGTH_SHORT).show()
         }
     }
     
@@ -1897,29 +1878,19 @@ class UserProfileViewFragment : Fragment() {
      * Show confirmation dialog for deletion
      */
     private fun showDeleteConfirmationDialog(course: VideoData) {
-        val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_confirm_delete, null)
-        val dialog = android.app.AlertDialog.Builder(requireContext())
-            .setView(dialogView)
-            .create()
-        
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-
-        // Set dialog message
-        val messageTextView = dialogView.findViewById<TextView>(R.id.confirmDeleteMessage)
-        messageTextView.text = "¿Estás seguro de que deseas eliminar '${course.title}'? Esta acción no se puede deshacer."
-
-        // Cancel button
-        dialogView.findViewById<TextView>(R.id.cancelDeleteButton).setOnClickListener {
-            dialog.dismiss()
+        // Use ConfirmDeleteDialogFragment and FragmentResult API to centralize confirmation UI
+        val requestKey = "confirm_delete_${course.id}"
+        parentFragmentManager.setFragmentResultListener(requestKey, viewLifecycleOwner) { _, bundle ->
+            val confirmed = bundle.getBoolean("confirmed", false)
+            if (confirmed) {
+                performDeleteCourse(course)
+            }
         }
 
-        // Confirm button
-        dialogView.findViewById<TextView>(R.id.confirmDeleteButton).setOnClickListener {
-            dialog.dismiss()
-            performDeleteCourse(course)
-        }
-
-        dialog.show()
+        val title = "Eliminar curso"
+        val message = "¿Estás seguro de que deseas eliminar '${course.title}'? Esta acción no se puede deshacer."
+        val dialog = ConfirmDeleteDialogFragment.newInstance(requestKey, title, message, confirmText = "Eliminar", cancelText = "Cancelar")
+        dialog.show(parentFragmentManager, requestKey)
     }
 
     /**
@@ -1930,29 +1901,131 @@ class UserProfileViewFragment : Fragment() {
             try {
                 // Show loading indicator
                 Toast.makeText(requireContext(), "Eliminando curso...", Toast.LENGTH_SHORT).show()
-
                 val deleteSuccess = withContext(Dispatchers.IO) {
-                    // Delete from Supabase first
-                    val supabaseVideoDeleted = SupabaseClient.deleteVideoById(course.id)
-                    val supabaseCourseDeleted = if (course.courseId != null) {
-                        SupabaseClient.deleteCourseById(course.courseId)
-                    } else {
-                        true // No courseId, nothing to delete
+                    // Resolve a likely remote Supabase course ID, preferring known courseId
+                    var remoteCourseId: Long? = null
+                    try {
+                        if (course.courseId != null && course.courseId!! > 0) {
+                            remoteCourseId = course.courseId
+                        }
+
+                        // If we don't have a good remoteCourseId yet, try to find it by title
+                        if (remoteCourseId == null) {
+                            try {
+                                val found = com.example.tareamov.service.SupabaseClient.fetchCourseByTitle(course.title)
+                                if (found != null) remoteCourseId = found.id
+                            } catch (e: Exception) {
+                                Log.w("UserProfileView", "Could not resolve remote course id by title: ${e.message}")
+                            }
+                        }
+
+                        // Prefer calling backend to perform cascade deletion securely when we have a remote id
+                        if (remoteCourseId != null) {
+                            try {
+                                val base = try {
+                                    ServerEndpointResolver.getMcpBaseUrl()
+                                } catch (e: Exception) {
+                                    ServerEndpointResolver.fastResolveMcpBaseUrl()
+                                }
+
+                                val client = OkHttpClient()
+                                val gson = Gson()
+                                val jsonMedia = "application/json; charset=utf-8".toMediaType()
+
+                                val payload = mapOf("courseId" to remoteCourseId)
+                                val body = gson.toJson(payload).toRequestBody(jsonMedia)
+                                val url = "${base.trimEnd('/')}/course/delete"
+
+                                val req = Request.Builder()
+                                    .url(url)
+                                    .post(body)
+                                    .addHeader("X-API-Key", "tareamov-mcp-api-key-2025-secure")
+                                    .addHeader("Content-Type", "application/json")
+                                    .build()
+
+                                client.newCall(req).execute().use { resp ->
+                                    val respBody = resp.body?.string() ?: ""
+                                    if (resp.isSuccessful) {
+                                        try {
+                                            val tree: Map<*, *> = gson.fromJson(respBody, Map::class.java)
+                                            val ok = tree["success"] as? Boolean ?: true
+                                            if (ok) {
+                                                // Backend deleted successfully; remove local rows and return
+                                                try { courseRepository.deleteCourseById(remoteCourseId) } catch (_: Exception) {}
+
+                                                try {
+                                                    val remoteVideos = SupabaseClient.fetchVideosByCourseIds(listOf(remoteCourseId))
+                                                    for (v in remoteVideos) {
+                                                        try { SupabaseClient.deleteVideoById(v.id) } catch (_: Exception) {}
+                                                    }
+                                                } catch (_: Exception) {}
+
+                                                return@withContext true
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.w("UserProfileView", "Could not parse backend response: $respBody")
+                                        }
+                                    }
+                                    Log.w("UserProfileView", "Backend /course/delete failed: code=${resp.code} body=$respBody")
+                                    // Fall through to Supabase fallback below
+                                }
+                            } catch (e: Exception) {
+                                Log.w("UserProfileView", "Backend delete attempt failed: ${e.message}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("UserProfileView", "Error resolving remote course id: ${e.message}")
                     }
 
-                    if (supabaseVideoDeleted && supabaseCourseDeleted) {
-                        // Delete from local database
-                        courseRepository.deleteCourseById(course.id)
+                    // Fallback: attempt to delete via SupabaseClient using multiple strategies
+                    try {
+                        // 1) If we resolved a remoteCourseId, delete videos for that course first
+                        if (remoteCourseId != null) {
+                            try {
+                                val remoteVideos = SupabaseClient.fetchVideosByCourseIds(listOf(remoteCourseId))
+                                for (v in remoteVideos) {
+                                    try { SupabaseClient.deleteVideoById(v.id) } catch (_: Exception) {}
+                                }
+                            } catch (e: Exception) {
+                                Log.w("UserProfileView", "Error deleting videos by remote course id: ${e.message}")
+                            }
 
-                        // Also delete from VideoData table to ensure complete removal
-                        val videoData = courseRepository.getVideoById(course.id)
-                        if (videoData != null) {
-                            courseRepository.deleteVideo(videoData)
-                            Log.d("UserProfileView", "Course also deleted from VideoData table: ${course.id}")
+                            val courseDeleted = SupabaseClient.deleteCourseById(remoteCourseId)
+                            if (courseDeleted) {
+                                try { courseRepository.deleteCourseById(remoteCourseId) } catch (_: Exception) {}
+                                return@withContext true
+                            }
                         }
-                        true
-                    } else {
-                        Log.w("UserProfileView", "Failed to delete from Supabase: video=$supabaseVideoDeleted, course=$supabaseCourseDeleted")
+
+                        // 2) If remoteCourseId was not available, try to delete by local course.courseId (if present)
+                        if (course.courseId != null && course.courseId!! > 0) {
+                            val okCourse = SupabaseClient.deleteCourseById(course.courseId!!)
+                            val okVideo = SupabaseClient.deleteVideoById(course.id)
+                            if (okCourse || okVideo) {
+                                try { courseRepository.deleteCourseById(course.courseId!!) } catch (_: Exception) {}
+                                try {
+                                    val localVideo = courseRepository.getVideoById(course.id)
+                                    if (localVideo != null) courseRepository.deleteVideo(localVideo)
+                                } catch (_: Exception) {}
+                                return@withContext true
+                            }
+                        }
+
+                        // 3) Last-resort: try deleting video using its id (may be remote id if synced)
+                        val supabaseVideoDeleted = SupabaseClient.deleteVideoById(course.id)
+                        if (supabaseVideoDeleted) {
+                            try { courseRepository.deleteCourseById(course.id) } catch (_: Exception) {}
+                            try {
+                                val videoData = courseRepository.getVideoById(course.id)
+                                if (videoData != null) courseRepository.deleteVideo(videoData)
+                            } catch (_: Exception) {}
+                            return@withContext true
+                        }
+
+                        Log.w("UserProfileView", "Failed to delete course/video via Supabase fallback")
+                        false
+                    } catch (e: Exception) {
+                        Log.e("UserProfileView", "Exception in fallback Supabase delete: ${e.message}", e)
                         false
                     }
                 }

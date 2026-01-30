@@ -40,7 +40,8 @@ class CreatedCourseAdapter(
     private val onDeleteCourseListener: ((VideoData) -> Unit)? = null, // Callback for deleting course
     private val onChangeThumbnailListener: ((VideoData) -> Unit)? = null, // Callback for changing thumbnail
     private val onSubscriptionClickListener: ((VideoData, Boolean) -> Unit)? = null, // Subscription callback
-    private val onEnrollClickListener: ((VideoData) -> Unit)? = null // Enrollment callback
+    private val onEnrollClickListener: ((VideoData) -> Unit)? = null, // Enrollment callback
+    private val showOnlyEditDelete: Boolean = false // When true, popup shows only Edit and Delete
 ) : RecyclerView.Adapter<CreatedCourseAdapter.CourseViewHolder>() {
 
     private var currentPlayingHolder: CourseViewHolder? = null
@@ -161,47 +162,63 @@ class CreatedCourseAdapter(
             return // Only show context menu to course creators
         }
 
-        // Create PopupMenu with dark theme wrapper
-        val wrapper = androidx.appcompat.view.ContextThemeWrapper(context, R.style.DarkPopupMenuTheme)
-        val popup = androidx.appcompat.widget.PopupMenu(wrapper, view)
-        popup.inflate(R.menu.course_options_menu)
+        // Build a visually-matching popup like the video options (emoji + dark theme)
+        val wrapper = android.view.ContextThemeWrapper(context, R.style.DarkPopupMenuThemeOverlay)
+        val popupMenu = android.widget.PopupMenu(wrapper, view, android.view.Gravity.END)
 
-        // Apply dark theme to popup menu
-        try {
-            val fieldMPopup = androidx.appcompat.widget.PopupMenu::class.java.getDeclaredField("mPopup")
-            fieldMPopup.isAccessible = true
-            val mPopup = fieldMPopup.get(popup)
-            mPopup.javaClass
-                .getDeclaredMethod("setForceShowIcon", Boolean::class.javaPrimitiveType)
-                .invoke(mPopup, true)
-        } catch (e: Exception) {
-            Log.e("CreatedCourseAdapter", "Error showing menu icons", e)
+        // Add Edit and Delete always
+        popupMenu.menu.add(0, 1, 0, "✏️ Modificar")
+        popupMenu.menu.add(0, 2, 1, "🗑️ Eliminar")
+
+        // Optionally add Change Thumbnail when allowed
+        if (!showOnlyEditDelete) {
+            popupMenu.menu.add(0, 3, 2, "🖼️ Cambiar miniatura")
         }
 
-        popup.setOnMenuItemClickListener { menuItem ->
+        // Force icons if possible (reflection fallback)
+        try {
+            val field = android.widget.PopupMenu::class.java.getDeclaredField("mPopup")
+            field.isAccessible = true
+            val menuPopupHelper = field.get(popupMenu)
+            menuPopupHelper.javaClass.getDeclaredMethod("setForceShowIcon", Boolean::class.java)
+                .invoke(menuPopupHelper, true)
+        } catch (e: Exception) {
+            // ignore
+        }
+
+        popupMenu.setOnMenuItemClickListener { menuItem ->
             when (menuItem.itemId) {
-                R.id.menu_edit_course -> {
+                1 -> {
                     editCourse(course)
                     true
                 }
-                R.id.menu_change_thumbnail -> {
-                    changeThumbnail(course)
+                2 -> {
+                    deleteCourse(course)
                     true
                 }
-                R.id.menu_delete_course -> {
-                    deleteCourse(course)
+                3 -> {
+                    changeThumbnail(course)
                     true
                 }
                 else -> false
             }
         }
 
-        popup.show()
-        Log.d("CreatedCourseAdapter", "Dark theme course context menu shown for creator: ${course.title}")
+        popupMenu.show()
+        Log.d("CreatedCourseAdapter", "Styled popup menu shown for creator: ${course.title}")
+    }
+    /**
+     * Delete course request - delegate to hosting fragment/activity.
+     * The hosting component is responsible for showing confirmation UI
+     * (e.g., ConfirmDeleteDialogFragment) and performing the actual delete.
+     */
+    private fun deleteCourse(course: VideoData) {
+        Log.d("CreatedCourseAdapter", "Delete course requested: ${course.title}")
+        onDeleteCourseListener?.invoke(course)
     }
 
     /**
-     * Edit course details
+     * Invoke edit callback provided by the hosting fragment/activity.
      */
     private fun editCourse(course: VideoData) {
         Log.d("CreatedCourseAdapter", "Edit course requested: ${course.title}")
@@ -209,58 +226,12 @@ class CreatedCourseAdapter(
     }
 
     /**
-     * Change course thumbnail
+     * Invoke change-thumbnail callback provided by the hosting fragment/activity.
      */
     private fun changeThumbnail(course: VideoData) {
         Log.d("CreatedCourseAdapter", "Change thumbnail requested: ${course.title}")
         onChangeThumbnailListener?.invoke(course)
     }
-
-    /**
-     * Delete course after confirmation
-     */
-    private fun deleteCourse(course: VideoData) {
-        Log.d("CreatedCourseAdapter", "Delete course requested: ${course.title}")
-
-        // Create AlertDialog with dark theme
-        val dialogBuilder = androidx.appcompat.app.AlertDialog.Builder(
-            androidx.appcompat.view.ContextThemeWrapper(context, R.style.DarkAlertDialogTheme)
-        )
-
-        dialogBuilder
-            .setTitle("⚠️ Eliminar Curso")
-            .setMessage("¿Estás seguro de que quieres eliminar permanentemente el curso \"${course.title}\"?\n\n" +
-                    "🚨 Esta acción no se puede deshacer y se eliminarán:\n\n" +
-                    "• 📚 El curso completo\n" +
-                    "• 🎥 Los videos asociados\n" +
-                    "• 🖼️ Las miniaturas\n" +
-                    "• 📊 Todos los datos relacionados")
-            .setPositiveButton("🗑️ Eliminar") { _, _ ->
-                onDeleteCourseListener?.invoke(course)
-                Log.d("CreatedCourseAdapter", "Course deletion confirmed: ${course.title}")
-            }
-            .setNegativeButton("❌ Cancelar", null)
-            .setCancelable(true)
-
-        val dialog = dialogBuilder.create()
-
-        // Apply additional dark theme styling
-        dialog.setOnShowListener {
-            dialog.window?.setBackgroundDrawableResource(R.drawable.dark_dialog_background)
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.apply {
-                setTextColor(android.graphics.Color.parseColor("#FF4444")) // Red for delete
-                textSize = 16f
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-            }
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.apply {
-                setTextColor(android.graphics.Color.parseColor("#A259FF")) // Purple for cancel
-                textSize = 16f
-            }
-        }
-
-        dialog.show()
-    }
-
     /**
      * ViewHolder para mostrar un curso individual
      */
@@ -294,6 +265,22 @@ class CreatedCourseAdapter(
         private var stopVideoRunnable: Runnable? = null
         private var currentCourse: VideoData? = null
 
+        // Helper to find options menu button by known ids
+        private fun findOptionsMenuButton(root: View): ImageView? {
+            val names = listOf("courseOptionsMenuButton", "moreOptionsButton")
+            for (name in names) {
+                try {
+                    val resourceId = root.context.resources.getIdentifier(name, "id", root.context.packageName)
+                    if (resourceId != 0) {
+                        val v = root.findViewById<ImageView>(resourceId)
+                        if (v != null) return v
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            return null
+        }
+
         init {
             itemView.setOnClickListener {
                 val position = bindingAdapterPosition
@@ -304,17 +291,11 @@ class CreatedCourseAdapter(
                 }
             }
 
-            // Add click listener for the new options menu button next to category
+            // Add click listener for the options menu button (supports multiple layout IDs)
             try {
-                // Get the courseOptionsMenuButton using its ID from the current itemView
-                val resourceId = itemView.context.resources.getIdentifier(
-                    "courseOptionsMenuButton",
-                    "id",
-                    itemView.context.packageName
-                )
-                if (resourceId != 0) {
-                    val optionsMenuButton = itemView.findViewById<ImageView>(resourceId)
-                    optionsMenuButton?.setOnClickListener {
+                val optionsMenuButton = findOptionsMenuButton(itemView)
+                if (optionsMenuButton != null) {
+                    optionsMenuButton.setOnClickListener {
                         val position = bindingAdapterPosition
                         if (position != RecyclerView.NO_POSITION) {
                             val course = courses[position]
@@ -325,7 +306,7 @@ class CreatedCourseAdapter(
                     }
                     Log.d("CreatedCourseAdapter", "Successfully set up options menu button click listener")
                 } else {
-                    Log.w("CreatedCourseAdapter", "Could not find courseOptionsMenuButton resource ID")
+                    Log.w("CreatedCourseAdapter", "Could not find options menu button resource ID")
                 }
             } catch (e: Exception) {
                 Log.e("CreatedCourseAdapter", "Error setting up options menu button click listener", e)
@@ -363,26 +344,18 @@ class CreatedCourseAdapter(
             // FAST: Show/hide options menu button and subscription UI based on permissions
             val isCreator = canUserModifyCourse(course)
             
-            if (isCreator) {
+                if (isCreator) {
                 categoryTextView.text = "Mis Cursos"
                 categoryTextView.setBackgroundColor(android.graphics.Color.parseColor("#4CAF50"))
 
                 // Show options menu button IMMEDIATELY (no animation delay for faster UX)
-                try {
-                    val resourceId = itemView.context.resources.getIdentifier(
-                        "courseOptionsMenuButton",
-                        "id",
-                        itemView.context.packageName
-                    )
-                    if (resourceId != 0) {
-                        val optionsMenuButton = itemView.findViewById<ImageView>(resourceId)
+                    try {
+                        val optionsMenuButton = findOptionsMenuButton(itemView)
                         optionsMenuButton?.visibility = View.VISIBLE
-                        // Remove animation for instant display
                         optionsMenuButton?.alpha = 1f
+                    } catch (e: Exception) {
+                        Log.e("CreatedCourseAdapter", "Error showing options menu button", e)
                     }
-                } catch (e: Exception) {
-                    Log.e("CreatedCourseAdapter", "Error showing options menu button", e)
-                }
                 
                 // Hide subscription container for course creators
                 creatorInfoContainer.visibility = View.GONE
@@ -399,15 +372,8 @@ class CreatedCourseAdapter(
 
                 // Hide menu button IMMEDIATELY for non-creators
                 try {
-                    val resourceId = itemView.context.resources.getIdentifier(
-                        "courseOptionsMenuButton",
-                        "id",
-                        itemView.context.packageName
-                    )
-                    if (resourceId != 0) {
-                        val optionsMenuButton = itemView.findViewById<ImageView>(resourceId)
-                        optionsMenuButton?.visibility = View.GONE
-                    }
+                    val optionsMenuButton = findOptionsMenuButton(itemView)
+                    optionsMenuButton?.visibility = View.GONE
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error hiding options menu button", e)
                 }

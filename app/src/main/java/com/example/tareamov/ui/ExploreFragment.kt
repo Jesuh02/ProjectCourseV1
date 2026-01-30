@@ -594,7 +594,8 @@ class ExploreFragment : Fragment() {
     }
 
     private fun getCurrentUsername(): String? {
-        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        val ctx = context ?: return null
+        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(ctx)
         val username = sessionManager.getUsername()
         Log.d("ExploreFragment", "Current username from SessionManager: $username")
         return username
@@ -604,9 +605,10 @@ class ExploreFragment : Fragment() {
      * Show custom dark themed Toast message
      */
     private fun showDarkToast(message: String, duration: Int = Toast.LENGTH_SHORT) {
-        val toast = Toast.makeText(requireContext(), message, duration)
+        val ctx = context ?: return
+        val toast = Toast.makeText(ctx, message, duration)
         val view = toast.view
-        view?.background = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.dark_toast_background)
+        view?.background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.dark_toast_background)
         view?.findViewById<TextView>(android.R.id.message)?.apply {
             setTextColor(android.graphics.Color.WHITE)
             textSize = 16f
