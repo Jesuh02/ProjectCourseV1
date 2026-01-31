@@ -132,51 +132,36 @@ class AdminDashboardFragment : Fragment() {
     private fun setupSectionTabs(view: View) {
         try {
             val tabAnalytics: LinearLayout = view.findViewById(R.id.tabAnalytics)
-            val tabUsers: LinearLayout = view.findViewById(R.id.tabUsers)
             val tabModeration: LinearLayout = view.findViewById(R.id.tabModeration)
             val tabProgress: LinearLayout = view.findViewById(R.id.tabProgress)
-            val tabPermissions: LinearLayout = view.findViewById(R.id.tabPermissions)
-            
-            // Validar que todos los tabs fueron encontrados
-            if (tabAnalytics == null || tabUsers == null || tabModeration == null || 
-                tabProgress == null || tabPermissions == null) {
-                Log.e("AdminDashboard", "Error: No se pudieron encontrar todos los tabs")
+
+            // Validar que los tabs necesarios fueron encontrados
+            if (tabAnalytics == null || tabModeration == null || tabProgress == null) {
+                Log.e("AdminDashboard", "One or more section tabs not found")
                 return
             }
-            
+
             tabAnalytics.setOnClickListener {
+                updateTabSelection(tabAnalytics, tabModeration, tabProgress)
                 switchSection(DashboardSection.ANALYTICS)
-                updateTabSelection(tabAnalytics, tabUsers, tabModeration, tabProgress, tabPermissions)
             }
-            
-            tabUsers.setOnClickListener {
-                switchSection(DashboardSection.USER_MANAGEMENT)
-                updateTabSelection(tabUsers, tabAnalytics, tabModeration, tabProgress, tabPermissions)
-            }
-            
+
             tabModeration.setOnClickListener {
+                updateTabSelection(tabModeration, tabAnalytics, tabProgress)
                 switchSection(DashboardSection.MODERATION)
-                updateTabSelection(tabModeration, tabAnalytics, tabUsers, tabProgress, tabPermissions)
             }
-            
+
             tabProgress.setOnClickListener {
+                updateTabSelection(tabProgress, tabAnalytics, tabModeration)
                 switchSection(DashboardSection.PROGRESS_TRACKING)
-                updateTabSelection(tabProgress, tabAnalytics, tabUsers, tabModeration, tabPermissions)
             }
-            
-            tabPermissions.setOnClickListener {
-                switchSection(DashboardSection.PERMISSIONS)
-                updateTabSelection(tabPermissions, tabAnalytics, tabUsers, tabModeration, tabProgress)
-            }
-            
+
             // Iniciar con Analytics
             switchSection(DashboardSection.ANALYTICS)
-            updateTabSelection(tabAnalytics, tabUsers, tabModeration, tabProgress, tabPermissions)
+            updateTabSelection(tabAnalytics, tabModeration, tabProgress)
         } catch (e: Exception) {
             Log.e("AdminDashboard", "Error setting up section tabs", e)
-            Toast.makeText(requireContext(), 
-                "Error al configurar las pestañas: ${e.message}", 
-                Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "Error al configurar pestañas", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -230,21 +215,12 @@ class AdminDashboardFragment : Fragment() {
                         val courseIds = creatorCourses.map { it.id }
                         
                         if (courseIds.isEmpty()) {
-                            return@withContext GlobalMetrics(
-                                totalUsers = 0,
-                                activeUsers = 0,
-                                totalCourses = 0,
-                                publishedCourses = 0,
-                                totalSubmissions = 0,
-                                totalNotifications = 0,
-                                totalChatMessages = 0,
-                                certificatesIssued = 0
-                            )
+                            return@withContext GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0)
                         }
-                        
+
                         // SUPER OPTIMIZACIÓN: Obtener todas las métricas en una sola llamada batch
                         val aggregatedMetrics = com.example.tareamov.service.SupabaseClient.fetchAggregatedMetrics(courseIds)
-                        
+
                         GlobalMetrics(
                             totalUsers = aggregatedMetrics.uniqueUsers, // Usuarios únicos inscritos
                             activeUsers = aggregatedMetrics.uniqueUsers, // Mismos usuarios únicos
@@ -264,8 +240,6 @@ class AdminDashboardFragment : Fragment() {
                 // Actualizar caché
                 cachedMetrics = metrics
                 metricsLastUpdated = System.currentTimeMillis()
-                
-                // Actualizar UI con datos reales y animación
                 updateAnalyticsMetrics(metrics, animated = true)
                 Log.d("AdminDashboard", "Analytics loaded successfully")
             } catch (e: kotlinx.coroutines.CancellationException) {
