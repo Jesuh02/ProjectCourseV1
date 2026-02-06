@@ -38,9 +38,8 @@ object ServerEndpointResolver {
     private const val MCP_PORT = 3000
     private const val OLLAMA_PORT = 11435
     // Aggressively low timeout for fast mobile probes (practical lower bound ~50-250ms)
-    // Note: true "microseconds" network probes are not realistic over Wi-Fi/mobile networks.
-    // Use a slightly smaller timeout to make local detection faster on phones.
-    private const val DEFAULT_TIMEOUT_MS = 150 // ms - faster fast-fail for physical devices
+    // Increased to 250ms to be more reliable on slower networks while still failing fast
+    private const val DEFAULT_TIMEOUT_MS = 250
     private const val PREFS_NAME = "server_endpoint_resolver"
     private const val PREF_KEY_PREFIX = "last_host_"
     private const val PREF_KEY_FORCED_FULL = "mcp_forced_base_url_full"
@@ -86,11 +85,13 @@ object ServerEndpointResolver {
         // 1. Try local discovery first
         val localUrl = getBaseUrlForPort(MCP_PORT, "/health", forceDiscovery)
         if (localUrl != null) {
+            Log.i(TAG, "Using local MCP URL: $localUrl")
             return localUrl
         }
         
         // 2. Fallback to Railway (Production)
         // This ensures that if local discovery fails, we always try the cloud
+        Log.i(TAG, "Local MCP discovery failed, falling back to Railway cloud: $RAILWAY_MCP_URL")
         return RAILWAY_MCP_URL
     }
 
@@ -161,15 +162,21 @@ object ServerEndpointResolver {
                 val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 prefs.getString(PREF_KEY_FORCED_FULL, null)?.let { forced ->
                     if (!forced.isNullOrBlank()) {
-                        try {
-                            if (isServiceReachable(forced)) {
-                                Log.i(TAG, "fastResolve: returning forced MCP URL from prefs: $forced")
-                                return@withContext forced
-                            } else {
-                                Log.w(TAG, "fastResolve: forced MCP URL not reachable: $forced")
+                        // SPECIAL CHECK: If the forced URL is one of the known legacy dev IPs that are now invalid, clear it.
+                        if (forced.contains("192.168.1.90") || forced.contains("10.144.200.79")) {
+                            Log.w(TAG, "fastResolve: Found obsolete dev URL in forced prefs, clearing: $forced")
+                            prefs.edit().remove(PREF_KEY_FORCED_FULL).apply()
+                        } else {
+                            try {
+                                if (isServiceReachable(forced)) {
+                                    Log.i(TAG, "fastResolve: returning forced MCP URL from prefs: $forced")
+                                    return@withContext forced
+                                } else {
+                                    Log.w(TAG, "fastResolve: forced MCP URL not reachable: $forced")
+                                }
+                            } catch (e: Exception) {
+                                Log.d(TAG, "fastResolve: error checking forced url: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            Log.d(TAG, "fastResolve: error checking forced url: ${e.message}")
                         }
                     }
                 }
@@ -181,12 +188,26 @@ object ServerEndpointResolver {
         // 1. Quick cached check (non-blocking)
         val cached = peekMcpBaseUrl()
         if (!cached.isNullOrBlank()) {
-            try {
-                if (isServiceReachable(cached)) {
-                    return@withContext cached
+             // SPECIAL CHECK: Obsolete IPs
+             if (cached.contains("192.168.1.90") || cached.contains("10.144.200.79")) {
+                 Log.w(TAG, "fastResolve: clearing obsolete cached host: $cached")
+                 cachedHostsByPort.remove(MCP_PORT)
+                 // Also remove from persistance
+                 appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        ?.edit()?.remove("${PREF_KEY_PREFIX}${MCP_PORT}")?.apply()
+             } else {
+                try {
+                    if (isServiceReachable(cached)) {
+                        return@withContext cached
+                    } else {
+                        // IMPORTANT: If cached host is not reachable, remove it immediately to allow fallback
+                        Log.w(TAG, "fastResolve: cached host no longer reachable, removing: $cached")
+                        cachedHostsByPort.remove(MCP_PORT)
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "fastResolve: cached host not reachable: ${e.message}")
+                    cachedHostsByPort.remove(MCP_PORT)
                 }
-            } catch (e: Exception) {
-                Log.d(TAG, "fastResolve: cached host not reachable: ${e.message}")
             }
         }
 
@@ -206,14 +227,22 @@ object ServerEndpointResolver {
 
         // Include a few helpful defaults and cached/persisted hosts
         candidates.addAll(listOf("127.0.0.1", "localhost", "host.docker.internal"))
-        loadPersistedHost(MCP_PORT)?.let { candidates.add(it) }
-        cachedHostsByPort[MCP_PORT]?.let { candidates.add(it) }
+        loadPersistedHost(MCP_PORT)?.let { 
+             if (it != "192.168.1.90" && it != "10.144.200.79") candidates.add(it)
+        }
+        cachedHostsByPort[MCP_PORT]?.let { 
+             if (it != "192.168.1.90" && it != "10.144.200.79") candidates.add(it)
+        }
 
         // Add a small subset of subnet candidates (up to 8) to keep probes cheap
         try {
             val subnet = collectSubnetCandidates()
             for (c in subnet.take(8)) candidates.add(c)
         } catch (_: Exception) {}
+        
+        // Remove specific bad IPs from candidates if they snuck in
+        candidates.remove("192.168.1.90")
+        candidates.remove("10.144.200.79")
 
         // 3. Probe candidates in parallel and return first success very fast
         try {
@@ -303,16 +332,26 @@ object ServerEndpointResolver {
     private suspend fun ensureHostForPort(port: Int, healthPath: String, forceDiscovery: Boolean): String? = withContext(Dispatchers.IO) {
         if (!forceDiscovery) {
             cachedHostsByPort[port]?.let { cached ->
+                // More strict validation with timeout
                 if (isServiceReachableBlocking(cached, port, healthPath)) {
+                    Log.d(TAG, "Using cached host for port $port: $cached")
                     return@withContext cached
+                } else {
+                    Log.w(TAG, "Cached host $cached:$port no longer reachable, removing from cache")
+                    cachedHostsByPort.remove(port)
+                    // Clear from persisted storage too
+                    appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        ?.edit()?.remove("$PREF_KEY_PREFIX$port")?.apply()
                 }
-                cachedHostsByPort.remove(port)
             }
 
             loadPersistedHost(port)?.let { persisted ->
                 if (isServiceReachableBlocking(persisted, port, healthPath)) {
+                    Log.d(TAG, "Using persisted host for port $port: $persisted")
                     cachedHostsByPort[port] = persisted
                     return@withContext persisted
+                } else {
+                    Log.w(TAG, "Persisted host $persisted:$port no longer reachable")
                 }
             }
         }
@@ -478,11 +517,25 @@ object ServerEndpointResolver {
                     val parts = addr.split('.')
                     if (parts.size == 4) {
                         val base = parts.subList(0, 3).joinToString(".")
-                        for (n in subnetGuesses) candidates.add("http://$base.$n:3000")
+                        for (n in subnetGuesses) {
+                            val ip = "$base.$n"
+                            if (ip != "192.168.1.90" && ip != "10.144.200.79") {
+                                candidates.add("http://$ip:3000")
+                            }
+                        }
                     }
                 }
             } catch (e: Exception) {
-                Log.d(TAG, "subnet guess failed: ${e.message}")
+                Log.d(TAG, "subnet derivation failed: ${e.message}")
+            }
+
+        // Persisted hosts
+        loadPersistedHost(MCP_PORT)?.let { 
+             if (it != "192.168.1.90" && it != "10.144.200.79") candidates.add(it)
+        }
+        loadPersistedHost(OLLAMA_PORT)?.let { 
+             if (it != "192.168.1.90" && it != "10.144.200.79") candidates.add(it)
+       
             }
         } catch (e: Exception) {
             Log.d(TAG, "getLikelyMcpCandidates failed: ${e.message}")
@@ -516,10 +569,6 @@ object ServerEndpointResolver {
         // Persisted hosts
         loadPersistedHost(MCP_PORT)?.let { candidates.add(it) }
         loadPersistedHost(OLLAMA_PORT)?.let { candidates.add(it) }
-
-        // Explicitly add a couple of known dev host IPs (keep these as fallbacks)
-        candidates.add("192.168.1.90")
-        candidates.add("10.144.200.79")
 
         // Add a few probable host addresses on the same subnet: .1, .100, .254 — quick wins for many routers
         try {

@@ -598,36 +598,106 @@ object SupabaseClient {
             
             Log.i("SupabaseClient", "✅ Validación completada: ${repairedQuestions.size} preguntas procesadas")
             
-            // Simply insert the new batch of questions as a new record
-            val payload = mutableMapOf(
+            // 1. Insertar SESSION
+            val sessionPayload = mutableMapOf(
                 "user_id" to userId,
-                "course_id" to courseId,
-                "questions" to repairedQuestions
+                "course_id" to courseId
             )
-            if (topicId > 0) payload["topic_id"] = topicId
-            if (taskId > 0) payload["task_id"] = taskId
+            if (topicId > 0) sessionPayload["topic_id"] = topicId
+            if (taskId > 0) sessionPayload["task_id"] = taskId
             
-            val body = gson.toJson(payload).toRequestBody(jsonMedia)
-            val url = "$baseUrl/rest/v1/reinforcement_question_history"
-            
-            val requestPost = Request.Builder()
-                .url(url)
-                .post(body)
+            val sessionBody = gson.toJson(sessionPayload).toRequestBody(jsonMedia)
+            val sessionRequest = Request.Builder()
+                .url("$baseUrl/rest/v1/question_sessions")
+                .post(sessionBody)
                 .addHeader("apikey", effectiveApiKey())
                 .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Prefer", "return=representation")
                 .build()
 
-            client.newCall(requestPost).execute().use { resp ->
+            val sessionId = client.newCall(sessionRequest).execute().use { resp ->
                 if (!resp.isSuccessful) {
-                    val b = resp.body?.string()
-                    Log.e("SupabaseClient", "insertReinforcementHistory failed: ${resp.code} ${resp.message} body=$b")
+                    Log.e("SupabaseClient", "Error creating session: ${resp.code} ${resp.message} ${resp.body?.string()}")
                     return@withContext false
                 }
-                Log.i("SupabaseClient", "✅ Reinforcement history insertado exitosamente con ${repairedQuestions.size} preguntas")
-                return@withContext true
+                val respString = resp.body?.string() ?: return@withContext false
+                val list = gson.fromJson(respString, List::class.java)
+                val first = list.firstOrNull() as? Map<*, *>
+                (first?.get("id") as? Number)?.toLong()
+            } ?: return@withContext false
+
+            Log.d("SupabaseClient", "✅ Session created ID: $sessionId")
+
+            // 2. Insertar Preguntas y Opciones loop
+            var successCount = 0
+            
+            for (qMap in repairedQuestions) {
+                // Convert qMap to typed map just in case
+                @Suppress("UNCHECKED_CAST")
+                val safeMap = qMap as? Map<String, Any?> ?: continue
+                
+                // Insert Question
+                val qPayload = mapOf(
+                    "session_id" to sessionId,
+                    "user_id" to userId,
+                    "course_id" to courseId,
+                    "question_text" to (safeMap["question"] as? String ?: ""),
+                    "correct_index" to ((safeMap["correctIndex"] as? Number)?.toInt() ?: 0),
+                    "explanation" to (safeMap["explanation"] as? String ?: "")
+                )
+                
+                val qBody = gson.toJson(qPayload).toRequestBody(jsonMedia)
+                val qRequest = Request.Builder()
+                    .url("$baseUrl/rest/v1/questions_history")
+                    .post(qBody)
+                    .addHeader("apikey", effectiveApiKey())
+                    .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Prefer", "return=representation")
+                    .build()
+
+                val questionId = client.newCall(qRequest).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        Log.e("SupabaseClient", "Error inserting question: ${resp.code} ${resp.message}")
+                        null
+                    } else {
+                        val respString = resp.body?.string()
+                        val list = gson.fromJson(respString, List::class.java)
+                        val first = list.firstOrNull() as? Map<*, *>
+                        (first?.get("id") as? Number)?.toLong()
+                    }
+                }
+
+                if (questionId != null) {
+                    // Insert Options
+                    val options = safeMap["options"] as? List<*>
+                    if (options != null && options.isNotEmpty()) {
+                        val optionsPayload = options.mapIndexed { idx, optText ->
+                            mapOf(
+                                "question_id" to questionId,
+                                "option_text" to optText.toString(),
+                                "order_index" to idx
+                            )
+                        }
+                        
+                        val optBody = gson.toJson(optionsPayload).toRequestBody(jsonMedia)
+                        val optRequest = Request.Builder()
+                            .url("$baseUrl/rest/v1/question_options")
+                            .post(optBody)
+                            .addHeader("apikey", effectiveApiKey())
+                            .addHeader("Authorization", "Bearer ${effectiveApiKey()}")
+                            .addHeader("Content-Type", "application/json")
+                            .build()
+                            
+                        client.newCall(optRequest).execute().close() // Fire and forget sort of
+                    }
+                    successCount++
+                }
             }
+
+            Log.i("SupabaseClient", "✅ Inserted $successCount/${repairedQuestions.size} questions into history")
+            return@withContext successCount > 0
 
         } catch (e: Exception) {
             Log.e("SupabaseClient", "insertReinforcementHistory exception", e)

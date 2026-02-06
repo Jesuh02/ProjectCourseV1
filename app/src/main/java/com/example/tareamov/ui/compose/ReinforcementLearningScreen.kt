@@ -52,6 +52,10 @@ fun ReinforcementLearningScreen(
     instructorName: String,
     creatorUsername: String? = null,
     creatorAvatarUrl: String? = null,
+    // Debugging / Tracking IDs
+    taskId: Long? = null,
+    topicId: Long? = null,
+    contentItemId: Long? = null,
     onBackClick: () -> Unit,
     onStartClick: () -> Unit,
     viewModel: ReinforcementLearningViewModel? = null // Optional for now to keep compatibility
@@ -70,6 +74,13 @@ fun ReinforcementLearningScreen(
     val selectedTopic by (viewModel?.selectedTopicName?.collectAsState() ?: remember { mutableStateOf<String?>(null) })
     val selectedTask by (viewModel?.selectedTaskName?.collectAsState() ?: remember { mutableStateOf<String?>(null) })
     val analyzedFiles by (viewModel?.analyzedFiles?.collectAsState() ?: remember { mutableStateOf(emptyList<AnalyzedFile>()) })
+    
+    // DEBUG: Log Context IDs to verify flow
+    LaunchedEffect(courseName, taskId, topicId, contentItemId) {
+        android.util.Log.d("ReinforcementScreen", "🚀 Screen Load - IDs: Course=$courseName, Task=$taskId, Topic=$topicId, ContentItem=$contentItemId")
+        if (taskId == null) android.util.Log.w("ReinforcementScreen", "⚠️ Warning: TaskID is null. RAG Optimization might fail.")
+        if (topicId == null) android.util.Log.w("ReinforcementScreen", "⚠️ Warning: TopicID is null.")
+    }
     
     var historySaved by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
@@ -529,7 +540,7 @@ fun WelcomeView(
         Spacer(modifier = Modifier.weight(1f))
 
         if (uiState is ReinforcementState.Loading) {
-            CircularProgressIndicator(color = Color(0xFF58CC02))
+            TicTacToeGame()
         } else if (uiState is ReinforcementState.Error) {
              Text((uiState as ReinforcementState.Error).message, color = Color.Red, fontSize = 14.sp)
              Spacer(modifier = Modifier.height(16.dp))
@@ -893,3 +904,483 @@ fun QuizView(
         }
     }
 }
+
+@Composable
+fun TicTacToeGame() {
+    // ── Board state ──────────────────────────────────────────────
+    var board by remember { mutableStateOf(List(9) { "" }) }
+    var gameStatus by remember { mutableStateOf("PLAYING") }
+    var isBotTurn by remember { mutableStateOf(false) }
+    var winningCells by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var moveCounter by remember { mutableStateOf(0) }
+    var userScore by remember { mutableStateOf(0) }
+    var botScore by remember { mutableStateOf(0) }
+    var drawCount by remember { mutableStateOf(0) }
+    var isBotThinking by remember { mutableStateOf(false) }
+
+    // ── Win patterns ─────────────────────────────────────────────
+    val winPatterns = remember {
+        listOf(
+            listOf(0, 1, 2), listOf(3, 4, 5), listOf(6, 7, 8),
+            listOf(0, 3, 6), listOf(1, 4, 7), listOf(2, 5, 8),
+            listOf(0, 4, 8), listOf(2, 4, 6)
+        )
+    }
+
+    fun getWinningPattern(b: List<String>): List<Int>? {
+        for (p in winPatterns) {
+            if (b[p[0]].isNotEmpty() && b[p[0]] == b[p[1]] && b[p[1]] == b[p[2]]) {
+                return p
+            }
+        }
+        return null
+    }
+
+    fun checkWinner(b: List<String>): String? {
+        val pattern = getWinningPattern(b)
+        if (pattern != null) return b[pattern[0]]
+        if (b.none { it.isEmpty() }) return "DRAW"
+        return null
+    }
+
+    // ── Minimax with Alpha-Beta Pruning (faster & perfect) ──────
+    fun minimax(b: MutableList<String>, depth: Int, isMaximizing: Boolean, alpha: Int, beta: Int): Int {
+        val winner = checkWinner(b)
+        if (winner == "O") return 1000 - depth
+        if (winner == "X") return depth - 1000
+        if (winner == "DRAW") return 0
+
+        var a = alpha
+        var be = beta
+
+        if (isMaximizing) {
+            var bestScore = Int.MIN_VALUE
+            for (i in 0 until 9) {
+                if (b[i].isEmpty()) {
+                    b[i] = "O"
+                    val score = minimax(b, depth + 1, false, a, be)
+                    b[i] = ""
+                    bestScore = maxOf(bestScore, score)
+                    a = maxOf(a, score)
+                    if (be <= a) break
+                }
+            }
+            return bestScore
+        } else {
+            var bestScore = Int.MAX_VALUE
+            for (i in 0 until 9) {
+                if (b[i].isEmpty()) {
+                    b[i] = "X"
+                    val score = minimax(b, depth + 1, true, a, be)
+                    b[i] = ""
+                    bestScore = minOf(bestScore, score)
+                    be = minOf(be, score)
+                    if (be <= a) break
+                }
+            }
+            return bestScore
+        }
+    }
+
+    // ── Strategic move evaluation (Minimax + positional bonus) ──
+    fun getBestMove(b: List<String>): Int {
+        val mutableBoard = b.toMutableList()
+        val emptyIndices = b.indices.filter { b[it].isEmpty() }
+
+        // 1) Optimization: If clear board, take center (best start)
+        if (emptyIndices.size == 9) return 4
+        
+        // 2) Optimization: If only one move made, and it's not center, take center
+        if (emptyIndices.size == 8 && b[4].isEmpty()) return 4
+
+        // 3) Run Minimax for perfect play
+        // We use a small random factor for equal-score moves to reduce deterministic repetition
+        var bestScore = Int.MIN_VALUE
+        var bestMoves = mutableListOf<Int>()
+
+        for (i in emptyIndices) {
+            mutableBoard[i] = "O"
+            val score = minimax(mutableBoard, 0, false, Int.MIN_VALUE, Int.MAX_VALUE)
+            mutableBoard[i] = ""
+
+            if (score > bestScore) {
+                bestScore = score
+                bestMoves.clear()
+                bestMoves.add(i)
+            } else if (score == bestScore) {
+                bestMoves.add(i)
+            }
+        }
+        
+        return bestMoves.randomOrNull() ?: -1
+    }
+
+    // ── Bot turn logic ───────────────────────────────────────────
+    LaunchedEffect(isBotTurn) {
+        if (gameStatus == "PLAYING" && isBotTurn) {
+            isBotThinking = true
+            // Dynamic delay based on game stage to feel more natural
+            val thinkingTime = maxOf(600L, (1000L - (moveCounter * 100))) 
+            delay(thinkingTime) 
+            
+            val move = getBestMove(board)
+            if (move != -1) {
+                val newBoard = board.toMutableList()
+                newBoard[move] = "O"
+                board = newBoard
+                moveCounter++
+            }
+            isBotThinking = false
+            isBotTurn = false
+        }
+    }
+
+    // ── Winner check ─────────────────────────────────────────────
+    LaunchedEffect(board) {
+        val w = checkWinner(board)
+        if (w != null && gameStatus == "PLAYING") {
+            winningCells = getWinningPattern(board) ?: emptyList()
+            gameStatus = if (w == "DRAW") "DRAW" else "WIN_$w"
+            
+            when (gameStatus) {
+                "WIN_X" -> {
+                    userScore++
+                    // If user wins (impossible against perfect bot), reset score as a "New Game" prestige
+                    delay(2000)
+                    userScore = 0
+                    botScore = 0
+                    drawCount = 0
+                }
+                "WIN_O" -> botScore++
+                "DRAW" -> drawCount++
+            }
+            
+            if (gameStatus != "WIN_X") {
+                delay(2000) // Standard delay for restart
+            }
+            
+            // "Juego de 0" logic: clear board for next round
+            board = List(9) { "" }
+            winningCells = emptyList()
+            gameStatus = "PLAYING"
+            isBotTurn = false
+            moveCounter = 0
+        }
+    }
+
+    // ── Animations ───────────────────────────────────────────────
+    val infiniteTransition = rememberInfiniteTransition(label = "tttAnims")
+
+    val titleGlow by infiniteTransition.animateFloat(
+        initialValue = 0.6f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "titleGlow"
+    )
+
+    val thinkingDots by infiniteTransition.animateFloat(
+        initialValue = 0f, targetValue = 3f,
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart),
+        label = "thinkingDots"
+    )
+
+    val winPulse by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(tween(500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "winPulse"
+    )
+
+    val boardGradientShift by infiniteTransition.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(4000, easing = LinearEasing), RepeatMode.Reverse),
+        label = "boardGradient"
+    )
+
+    // ── Status text ──────────────────────────────────────────────
+    val statusText = when {
+        gameStatus == "WIN_X" -> "🎉 ¡Increíble, Ganaste!"
+        gameStatus == "WIN_O" -> "🤖 ¡Gana el Robot!"
+        gameStatus == "DRAW" -> "🤝 ¡Empate!"
+        isBotThinking -> "🤖 Pensando${".".repeat(thinkingDots.toInt())}"
+        else -> "🎮 ¡Tu turno!"
+    }
+
+    val statusColor by animateColorAsState(
+        targetValue = when {
+            gameStatus == "WIN_X" -> Color(0xFFFFD700)
+            gameStatus == "WIN_O" -> Color(0xFFFF6B6B)
+            gameStatus == "DRAW" -> Color(0xFF40C4FF)
+            isBotThinking -> Color(0xFFFF9800)
+            else -> Color(0xFF58CC02)
+        },
+        animationSpec = tween(400),
+        label = "statusColor"
+    )
+
+    // ── UI ───────────────────────────────────────────────────────
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Title
+        Text(
+            text = "🎯 Tic-Tac-Toe",
+            color = Color(0xFF40C4FF).copy(alpha = titleGlow),
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Scoreboard
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .background(Color(0xFF1A1D23), RoundedCornerShape(12.dp))
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Tú", color = Color(0xFF40C4FF), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("$userScore", color = Color(0xFF40C4FF), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Empate", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                Text("$drawCount", color = Color(0xFFAAAAAA), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Robot", color = Color(0xFF58CC02), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("$botScore", color = Color(0xFF58CC02), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Status
+        val statusScale by animateFloatAsState(
+            targetValue = if (gameStatus != "PLAYING") 1.1f else 1f,
+            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+            label = "statusScale"
+        )
+        Text(
+            text = statusText,
+            color = statusColor,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.scale(statusScale)
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Board
+        val boardBorderColor = androidx.compose.ui.graphics.lerp(
+            Color(0xFF58CC02), Color(0xFF40C4FF), boardGradientShift
+        )
+
+        Box(
+            modifier = Modifier
+                .size(270.dp)
+                .border(3.dp, boardBorderColor, RoundedCornerShape(20.dp))
+                .background(Color(0xFF1A1D23), RoundedCornerShape(20.dp))
+                .padding(10.dp)
+        ) {
+            Column {
+                for (r in 0..2) {
+                    Row(modifier = Modifier.weight(1f)) {
+                        for (c in 0..2) {
+                            val idx = r * 3 + c
+                            val isWinCell = idx in winningCells
+                            val cellScale by animateFloatAsState(
+                                targetValue = if (isWinCell) winPulse else 1f,
+                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                                label = "cellScale$idx"
+                            )
+                            val cellBg by animateColorAsState(
+                                targetValue = when {
+                                    isWinCell && board[idx] == "X" -> Color(0xFF1A3A5C)
+                                    isWinCell && board[idx] == "O" -> Color(0xFF1A3C1A)
+                                    isBotThinking && board[idx].isEmpty() -> Color(0xFF252830)
+                                    else -> Color(0xFF22252E)
+                                },
+                                animationSpec = tween(300),
+                                label = "cellBg$idx"
+                            )
+                            val cellBorder by animateColorAsState(
+                                targetValue = when {
+                                    isWinCell && board[idx] == "X" -> Color(0xFF40C4FF)
+                                    isWinCell && board[idx] == "O" -> Color(0xFF58CC02)
+                                    else -> Color(0xFF2E323D)
+                                },
+                                animationSpec = tween(300),
+                                label = "cellBorder$idx"
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .padding(4.dp)
+                                    .scale(cellScale)
+                                    .border(
+                                        width = if (isWinCell) 2.dp else 1.dp,
+                                        color = cellBorder,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .background(cellBg, RoundedCornerShape(12.dp))
+                                    .clickable(
+                                        enabled = gameStatus == "PLAYING" && !isBotTurn && board[idx].isEmpty()
+                                    ) {
+                                        val newBoard = board.toMutableList()
+                                        newBoard[idx] = "X"
+                                        board = newBoard
+                                        moveCounter++
+                                        isBotTurn = true
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                when (board[idx]) {
+                                    "X" -> AnimatedDrawX(isWinning = isWinCell)
+                                    "O" -> AnimatedDrawO(isWinning = isWinCell)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "Juega mientras se generan tus preguntas ✨",
+            color = Color(0xFF666666),
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+// ── Animated X with entrance & glow ─────────────────────────────
+@Composable
+fun AnimatedDrawX(isWinning: Boolean = false) {
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        progress.animateTo(
+            1f,
+            animationSpec = tween(350, easing = FastOutSlowInEasing)
+        )
+    }
+    val scaleAnim by animateFloatAsState(
+        targetValue = if (isWinning) 1.2f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "xScale"
+    )
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (isWinning) 0.5f else 0f,
+        animationSpec = tween(400),
+        label = "xGlow"
+    )
+
+    Box(contentAlignment = Alignment.Center) {
+        // Glow layer
+        if (glowAlpha > 0f) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.size(52.dp)) {
+                drawCircle(
+                    color = Color(0xFF40C4FF).copy(alpha = glowAlpha),
+                    radius = size.minDimension / 2
+                )
+            }
+        }
+        androidx.compose.foundation.Canvas(
+            modifier = Modifier
+                .size(44.dp)
+                .scale(scaleAnim)
+        ) {
+            val stroke = 7f
+            val pad = 12f
+            val p = progress.value
+            // First line
+            val end1X = pad + (size.width - pad * 2) * minOf(p * 2, 1f)
+            val end1Y = pad + (size.height - pad * 2) * minOf(p * 2, 1f)
+            drawLine(
+                color = Color(0xFF40C4FF),
+                start = androidx.compose.ui.geometry.Offset(pad, pad),
+                end = androidx.compose.ui.geometry.Offset(end1X, end1Y),
+                strokeWidth = stroke,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
+            // Second line
+            if (p > 0.5f) {
+                val p2 = (p - 0.5f) * 2
+                val end2X = (size.width - pad) - (size.width - pad * 2) * p2
+                val end2Y = pad + (size.height - pad * 2) * p2
+                drawLine(
+                    color = Color(0xFF40C4FF),
+                    start = androidx.compose.ui.geometry.Offset(size.width - pad, pad),
+                    end = androidx.compose.ui.geometry.Offset(end2X, end2Y),
+                    strokeWidth = stroke,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round
+                )
+            }
+        }
+    }
+}
+
+// ── Animated O with entrance & glow ─────────────────────────────
+@Composable
+fun AnimatedDrawO(isWinning: Boolean = false) {
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        progress.animateTo(
+            1f,
+            animationSpec = tween(400, easing = FastOutSlowInEasing)
+        )
+    }
+    val scaleAnim by animateFloatAsState(
+        targetValue = if (isWinning) 1.2f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "oScale"
+    )
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (isWinning) 0.5f else 0f,
+        animationSpec = tween(400),
+        label = "oGlow"
+    )
+
+    Box(contentAlignment = Alignment.Center) {
+        // Glow layer
+        if (glowAlpha > 0f) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.size(52.dp)) {
+                drawCircle(
+                    color = Color(0xFF58CC02).copy(alpha = glowAlpha),
+                    radius = size.minDimension / 2
+                )
+            }
+        }
+        androidx.compose.foundation.Canvas(
+            modifier = Modifier
+                .size(44.dp)
+                .scale(scaleAnim)
+        ) {
+            val pad = 12f
+            val sweepAngle = 360f * progress.value
+            drawArc(
+                color = Color(0xFF58CC02),
+                startAngle = -90f,
+                sweepAngle = sweepAngle,
+                useCenter = false,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                    width = 7f,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round
+                ),
+                topLeft = androidx.compose.ui.geometry.Offset(pad, pad),
+                size = androidx.compose.ui.geometry.Size(
+                    size.width - pad * 2,
+                    size.height - pad * 2
+                )
+            )
+        }
+    }
+}
+

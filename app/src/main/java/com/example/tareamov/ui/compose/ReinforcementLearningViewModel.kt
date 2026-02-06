@@ -318,7 +318,8 @@ class ReinforcementLearningViewModel(
                     mapOf(
                         "name" to (it.name ?: "Sin nombre"),
                         "uri" to (it.uriString ?: ""),
-                        "type" to (it.contentType ?: "application/octet-stream")
+                        "type" to (it.contentType ?: "application/octet-stream"),
+                        "id" to it.id
                     )
                 }
                 val jsonContentString = Gson().toJson(contentList)
@@ -399,6 +400,11 @@ class ReinforcementLearningViewModel(
                             put("jsonContent", jsonContent)
                             put("ollamaUrl", ollamaUrl)
                             put("model", model)
+                            // Pass context IDs so RAG ingestion/filtering works correctly
+                            if (taskId > -1L) put("taskId", taskId)
+                            if (topicId > -1L) put("topicId", topicId)
+                            if (courseId > 0) put("courseId", courseId)
+                            // contentItemId not currently tracked in this scope, but generic RAG works with task/topic
                         }.toString()
 
                         for (base in candidates) {
@@ -437,7 +443,7 @@ class ReinforcementLearningViewModel(
 
                 // 1) Quick local try
                 try {
-                    val local = tryLocalQuick(prompt, jsonContentString, OLLAMA_URL, "deepseek-chat")
+                    val local = tryLocalQuick(prompt, jsonContentString, OLLAMA_URL, "qwen/qwen3-embedding-8b")
                     if (!local.isNullOrBlank()) {
                         jsonText = local
                         Log.d("ReinforcementVM", "Local quick endpoint returned result")
@@ -453,7 +459,7 @@ class ReinforcementLearningViewModel(
                             prompt = prompt,
                             jsonContent = jsonContentString,
                             ollamaUrl = OLLAMA_URL,
-                            model = "deepseek-chat",
+                            model = "qwen/qwen3-embedding-8b",
                             userId = if (userId > 0) userId else null,
                             courseId = if (courseId > 0) courseId else null,
                             topicId = if (topicId > -1L) topicId else null,
