@@ -408,11 +408,6 @@ class ChatBotFragment : Fragment() {
 
     private var isUpdatingTextSpans: Boolean = false
 
-    /**
-     * Analiza la entrega y distribuye la carga entre modelos según el tipo de pregunta.
-     * Si la pregunta es sobre nota/calificación/tarea/feedback, gemma3n da veredicto y nota, llama3 da feedback.
-     * Si no, llama3 responde directamente.
-     */
     private suspend fun analizarEntregaYFeedback(userMessage: String, fileContext: FileContext?): String {
         val taskDescription = fileContext?.contentSummary ?: ""
         val fileContent = fileContext?.fileContent ?: ""
@@ -423,144 +418,23 @@ class ChatBotFragment : Fragment() {
             // Obtener el ID del usuario autenticado para notificaciones
             val currentUserId = sessionManager.getUserId()
 
-            if (!esPreguntaNota) {
-                // Solo llama3 responde
-                val request = com.example.tareamov.network.MicroservicioPromptRequest(
-                    prompt = userMessage,
-                    ollamaUrl = ollamaUrl,
-                    taskDescription = taskDescription,
-                    fileContent = fileContent,
-                    userId = currentUserId
-                )
-                // Try local Docker MCP quickly first; if no result, fall back to cloud Retrofit call
-                val local = tryLocalProcesarPrompt(request)
-                if (local != null) {
-                    local.respuesta_texto ?: local.error ?: "No se pudo obtener respuesta."
-                } else {
-                    val response = microservicioApi.procesarPrompt(request)
-                    response.respuesta_texto ?: "No se pudo obtener respuesta."
-                }
-            } else {
-                // gemma3n analiza y da veredicto, llama3 da feedback
-                val request = com.example.tareamov.network.MicroservicioPromptRequest(
-                    prompt = userMessage,
-                    ollamaUrl = ollamaUrl,
-                    taskDescription = taskDescription,
-                    fileContent = fileContent,
-                    userId = currentUserId
-                )
-                val local = tryLocalProcesarPrompt(request)
-                if (local != null) {
-                    local.respuesta_texto ?: local.error ?: "No se pudo obtener respuesta."
-                } else {
-                    val response = microservicioApi.procesarPrompt(request)
-                    response.respuesta_texto ?: "No se pudo obtener respuesta."
-                }
-            }
+            // Utilizar el microservicio directamente, sin lógica local
+            val request = com.example.tareamov.network.MicroservicioPromptRequest(
+                prompt = userMessage,
+                ollamaUrl = ollamaUrl,
+                taskDescription = taskDescription,
+                fileContent = fileContent,
+                userId = currentUserId
+            )
+            val response = microservicioApi.procesarPrompt(request)
+            response.respuesta_texto ?: "No se pudo obtener respuesta."
+
         } catch (e: Exception) {
             "Error al procesar la entrega: ${e.message}"
         }
     }
 
-    // Fast local attempt to POST /procesar-prompt on candidate local hosts.
-    private suspend fun tryLocalProcesarPrompt(request: com.example.tareamov.network.MicroservicioPromptRequest): com.example.tareamov.network.MicroservicioPromptResponse? {
-        return withContext(Dispatchers.IO) {
-            try {
-                // Ask resolver for the fastest candidate (parallel, short timeout)
-                val resolved = try {
-                    ServerEndpointResolver.fastResolveMcpBaseUrl()
-                } catch (e: Exception) {
-                    Log.d("ChatBotFragment", "fastResolve failed: ${e.message}")
-                    null
-                }
 
-                // If resolver immediately returned the cloud URL, short-circuit to cloud
-                if (resolved == null || resolved == ServerEndpointResolver.RAILWAY_MCP_URL) {
-                    Log.d("ChatBotFragment", "fastResolve indicates cloud or none; skipping local attempts and using cloud immediately")
-                    // Build a Retrofit call directly to cloud to return result quickly
-                    try {
-                        val ok = okhttp3.OkHttpClient.Builder()
-                            .connectTimeout(800, java.util.concurrent.TimeUnit.MILLISECONDS)
-                            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                            .writeTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                            .build()
-
-                        val retrofit = Retrofit.Builder()
-                            .baseUrl(if (ServerEndpointResolver.RAILWAY_MCP_URL.endsWith("/")) ServerEndpointResolver.RAILWAY_MCP_URL else ServerEndpointResolver.RAILWAY_MCP_URL + "/")
-                            .addConverterFactory(GsonConverterFactory.create())
-                            .client(ok)
-                            .build()
-
-                        val api = retrofit.create(com.example.tareamov.network.MicroservicioApi::class.java)
-                        return@withContext api.procesarPrompt(request)
-                    } catch (e: Exception) {
-                        Log.d("ChatBotFragment", "Cloud immediate call failed: ${e.message}")
-                        return@withContext null
-                    }
-                }
-
-                // Otherwise, try the resolved local host quickly with tight timeouts
-                val localBase = resolved.trimEnd('/')
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(80, java.util.concurrent.TimeUnit.MILLISECONDS)
-                    .readTimeout(1200, java.util.concurrent.TimeUnit.MILLISECONDS)
-                    .build()
-
-                val mediaType = "application/json; charset=utf-8".toMediaType()
-                val payload = Gson().toJson(request)
-                val url = if (localBase.endsWith("/")) localBase + "procesar-prompt" else "$localBase/procesar-prompt"
-
-                try {
-                    val req = Request.Builder()
-                        .url(url)
-                        .post(payload.toRequestBody(mediaType))
-                        .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
-                        .header("Connection", "close")
-                        .build()
-
-                    client.newCall(req).execute().use { resp ->
-                        val body = resp.body?.string() ?: ""
-                        if (resp.isSuccessful && body.isNotBlank()) {
-                            try {
-                                val gson = Gson()
-                                return@withContext gson.fromJson(body, com.example.tareamov.network.MicroservicioPromptResponse::class.java)
-                            } catch (e: Exception) {
-                                return@withContext com.example.tareamov.network.MicroservicioPromptResponse(respuesta_texto = body)
-                            }
-                        } else {
-                            Log.d("ChatBotFragment", "Local host responded non-success: ${resp.code}")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.d("ChatBotFragment", "Local quick attempt error for $localBase: ${e.message}")
-                }
-
-                // If local attempt failed, immediately call cloud (fast fallback)
-                try {
-                    val ok = okhttp3.OkHttpClient.Builder()
-                        .connectTimeout(800, java.util.concurrent.TimeUnit.MILLISECONDS)
-                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                        .writeTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                        .build()
-
-                    val retrofit = Retrofit.Builder()
-                        .baseUrl(if (ServerEndpointResolver.RAILWAY_MCP_URL.endsWith("/")) ServerEndpointResolver.RAILWAY_MCP_URL else ServerEndpointResolver.RAILWAY_MCP_URL + "/")
-                        .addConverterFactory(GsonConverterFactory.create())
-                        .client(ok)
-                        .build()
-
-                    val api = retrofit.create(com.example.tareamov.network.MicroservicioApi::class.java)
-                    return@withContext api.procesarPrompt(request)
-                } catch (e: Exception) {
-                    Log.d("ChatBotFragment", "Cloud fallback call failed: ${e.message}")
-                    return@withContext null
-                }
-            } catch (e: Exception) {
-                Log.d("ChatBotFragment", "tryLocalProcesarPrompt error: ${e.message}")
-            }
-            null
-        }
-    }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -1214,7 +1088,7 @@ class ChatBotFragment : Fragment() {
     /**
      * Envía el mensaje del usuario y el contexto completo del archivo al microservicio.
      * El backend orquesta dos modelos:
-     * 1. gemma3n:latest: analiza si la tarea cumple con la descripción (veredicto).
+     * 1. Analiza si la tarea cumple con la descripción (veredicto).
      * 2. llama3:latest: califica (1-10) y da retroalimentación al usuario en base al veredicto.
      * El cliente solo envía el mensaje del usuario y el contenido completo del archivo (descripcionTarea).
      */
