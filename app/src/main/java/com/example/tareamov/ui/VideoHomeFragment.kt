@@ -39,6 +39,7 @@ import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.Subscription
 // Import SessionManager
 import com.example.tareamov.util.SessionManager
+import com.example.tareamov.util.TimeUtils
 import android.graphics.Color
 import android.graphics.PorterDuff
 import android.graphics.drawable.GradientDrawable
@@ -2873,7 +2874,7 @@ class VideoHomeFragment : Fragment() {
             fun bind(comment: com.example.tareamov.data.entity.VideoComment, replies: List<com.example.tareamov.data.entity.VideoComment>) {
                 commentText.text = comment.comment
                 // Simple timestamp formatting
-                timestampText.text = "Hace un momento" // Placeholder, ideally parse createdAt
+                timestampText.text = TimeUtils.getTimeAgo(comment.createdAt)
 
                 // Initialize local state if not present
                 if (!likeCounts.containsKey(comment.id)) {
@@ -3055,7 +3056,7 @@ class VideoHomeFragment : Fragment() {
 
                     // Bind data
                     commentText.text = reply.comment
-                    timestampText.text = "Hace un momento"
+                    timestampText.text = TimeUtils.getTimeAgo(reply.createdAt)
 
                     // Local state for reply likes
                     if (!likeCounts.containsKey(reply.id)) {
