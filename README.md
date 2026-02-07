@@ -5,6 +5,7 @@
 [![Android](https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://developer.android.com/)
 [![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![DeepSeek](https://img.shields.io/badge/AI-DeepSeek_V3.2-blue?style=for-the-badge)](https://deepseek.com)
+[![Qwen](https://img.shields.io/badge/Embeddings-Qwen3_Embedding_8B-violet?style=for-the-badge)](https://huggingface.co/Qwen)
 [![Cloud](https://img.shields.io/badge/Backend-Cloud_Native-blueviolet?style=for-the-badge)](https://railway.app)
 
 [Comenzar](#-comenzar) • [Zoológico de Agentes](#-zoológico-de-agentes) • [Arquitectura](#-arquitectura) • [Documentación](#-documentación)
@@ -33,7 +34,7 @@ La aplicación se conecta a un **Backend MCP en Node.js** basado en la nube (`in
 Esta característica analiza el tema específico del curso y el contexto de la tarea para generar evaluaciones que se adaptan al progreso del usuario.
 
 - **Lógica**: Genera **10 Preguntas de Evaluación** adaptadas al contenido.
-- **Cero Duplicación**: El backend (`index.js`) mantiene un historial de hashes de cada pregunta realizada. Si el LLM genera una pregunta similar, es rechazada y regenerada. Las siguientes 10 preguntas están garantizadas para ser completamente diferentes de las 10 anteriores.
+- **Cero Duplicación**: El backend (`index.js`) implementa un filtro de unicidad de doble capa. Mientras DeepSeek genera, **Qwen3 Embedding 8B** analiza semánticamente cada pregunta. Si el sistema detecta que una nueva pregunta es conceptualmente idéntica a una anterior (incluso con diferentes palabras), es rechazada y regenerada, garantizando novedad constante.
 
 #### 📝 Agente de Calificación Basado en la Nube
 *Ubicado en `ChatBotFragment.kt`*
@@ -58,7 +59,8 @@ Empleamos agentes especializados para diferentes dominios dentro de la aplicaci�
 | Nombre del Agente | Modelo Primario | Archivo Fuente | Función |
 |:----------:|:-------------:|:-----------:|:---------|
 | **Tutor** | DeepSeek-V3.2 | `ReinforcementLearningFragment.kt` | Genera cuestionarios únicos y no repetitivos. |
-| **Evaluador** | DeepSeek/Gemma | `ChatBotFragment.kt` | Califica entregas con retroalimentación detallada. |
+| **Auditor Semántico** | Qwen3 Embedding 8B | `MCPService.js` | Garantiza unicidad conceptual mediante análisis vectorial. |
+| **Evaluador** | DeepSeek | `ChatBotFragment.kt` | Califica entregas con retroalimentación detallada. |
 | **Analista** | DeepSeek-V3.2 | `DatabaseQueryFragment.kt` | Convierte Inglés/Español a SQL y visualiza datos. |
 
 ## 🏗 Arquitectura
