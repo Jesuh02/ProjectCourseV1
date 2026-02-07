@@ -503,7 +503,10 @@ class ChatBotFragment : Fragment() {
                 val username = sessionManager.getUsername()
                 if (!username.isNullOrBlank()) {
                     val avatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(username)
-                    avatar?.let { chatAdapter.setUserAvatarUrl(it) }
+                    if (!avatar.isNullOrBlank()) {
+                        sessionManager.saveUserAvatar(avatar) // Persist so getUserAvatar() works next time
+                        chatAdapter.setUserAvatarUrl(avatar)
+                    }
                 }
             } catch (_: Exception) {
             }
@@ -970,7 +973,10 @@ class ChatBotFragment : Fragment() {
                     try {
                         if (!newUser.isNullOrBlank()) {
                             val avatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(newUser)
-                            avatar?.let { chatAdapter.setUserAvatarUrl(it) }
+                            if (!avatar.isNullOrBlank()) {
+                                com.example.tareamov.util.SessionManager.getInstance(requireContext()).saveUserAvatar(avatar)
+                                chatAdapter.setUserAvatarUrl(avatar)
+                            }
                         }
                     } catch (_: Exception) {}
                 }

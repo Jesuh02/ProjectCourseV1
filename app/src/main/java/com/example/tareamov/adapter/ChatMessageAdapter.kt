@@ -28,6 +28,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.ChatMessage
 import com.bumptech.glide.Glide
+import androidx.core.widget.ImageViewCompat
 import com.example.tareamov.util.SessionManager
 import java.text.SimpleDateFormat
 import java.util.*
@@ -181,7 +182,8 @@ class ChatMessageAdapter(
                     val avatarUri = message.senderAvatar ?: currentUserAvatarUrl ?: sess.getUserAvatar()
                     userAvatarImageView?.let { iv ->
                         if (!avatarUri.isNullOrEmpty()) {
-                            iv.clearColorFilter() // Clear tint for user image
+                            iv.clearColorFilter()
+                            ImageViewCompat.setImageTintList(iv, null) // Clear XML tint so avatar shows properly
                             Glide.with(itemView.context)
                                 .load(avatarUri)
                                 .placeholder(R.drawable.ic_profile_avatars)
@@ -208,18 +210,26 @@ class ChatMessageAdapter(
                 userMessageContainer.visibility = View.GONE
                 botMessageContainer.visibility = View.VISIBLE
 
-                // Load bot avatar (fallback to default)
+                // Load bot avatar - DeepSeek logo
                 try {
-                    if (!botAvatarUrl.isNullOrBlank()) {
+                    botAvatarImageView?.let { biv ->
+                        biv.clearColorFilter()
+                        ImageViewCompat.setImageTintList(biv, null)
+                        // Clear parent container background/tint so image is not colored
+                        (biv.parent as? View)?.let { parent ->
+                            parent.background = null
+                            parent.backgroundTintList = null
+                        }
+                        val url = botAvatarUrl ?: "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                         Glide.with(itemView.context)
-                            .load(botAvatarUrl)
+                            .load(url)
+                            .placeholder(R.drawable.ic_cpu)
+                            .error(R.drawable.ic_cpu)
                             .circleCrop()
-                            .into(botAvatarImageView!!)
-                    } else {
-                        botAvatarImageView?.setImageResource(android.R.drawable.sym_def_app_icon)
+                            .into(biv)
                     }
                 } catch (e: Exception) {
-                    botAvatarImageView?.setImageResource(android.R.drawable.sym_def_app_icon)
+                    botAvatarImageView?.setImageResource(R.drawable.ic_cpu)
                 }
                 
                 // Enhanced bot message formatting

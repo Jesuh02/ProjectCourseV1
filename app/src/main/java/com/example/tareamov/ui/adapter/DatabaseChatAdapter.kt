@@ -22,6 +22,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
+import androidx.core.widget.ImageViewCompat
 import com.example.tareamov.R
 import com.example.tareamov.ui.ChatMessage
 import java.text.SimpleDateFormat
@@ -222,7 +223,8 @@ class DatabaseChatAdapter(
                 userAvatarImageView?.let { iv ->
                     val avatarUri = message.senderAvatar.takeUnless { it.isNullOrEmpty() } ?: currentUserAvatarUrl
                     if (!avatarUri.isNullOrEmpty()) {
-                        iv.clearColorFilter() // Clear tint for user image
+                        iv.clearColorFilter()
+                        ImageViewCompat.setImageTintList(iv, null) // Clear XML tint so avatar shows properly
                         Glide.with(itemView.context)
                             .load(avatarUri)
                             .placeholder(R.drawable.ic_profile_avatars)
@@ -241,11 +243,17 @@ class DatabaseChatAdapter(
                 userMessageContainer.visibility = View.GONE
                 botMessageContainer.visibility = View.VISIBLE
                 
-                // Load bot avatar
+                // Load bot avatar - DeepSeek logo
                 botAvatarImageView?.let { iv ->
-                    iv.clearColorFilter() // Clear tint for bot image
+                    iv.clearColorFilter()
+                    ImageViewCompat.setImageTintList(iv, null)
+                    // Clear parent container background/tint so image is not colored
+                    (iv.parent as? View)?.let { parent ->
+                        parent.background = null
+                        parent.backgroundTintList = null
+                    }
                     Glide.with(itemView.context)
-                        .load("https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png")
+                        .load(message.senderAvatar ?: "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png")
                         .placeholder(R.drawable.ic_cpu)
                         .error(R.drawable.ic_cpu)
                         .circleCrop()

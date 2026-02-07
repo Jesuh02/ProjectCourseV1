@@ -107,7 +107,7 @@ data class ChatMessage(
         /**
          * Crea un mensaje de sistema con formato estándar
          */
-        fun createSystemMessage(text: String, isError: Boolean = false, isGraphResponse: Boolean = false, attachedFileUrl: String? = null, attachedFileName: String? = null, attachedFileType: String? = null): ChatMessage {
+        fun createSystemMessage(text: String, isError: Boolean = false, isGraphResponse: Boolean = false, attachedFileUrl: String? = null, attachedFileName: String? = null, attachedFileType: String? = null, senderAvatar: String? = null): ChatMessage {
             return ChatMessage(
                 text = text,
                 isUser = false,
@@ -115,7 +115,8 @@ data class ChatMessage(
                 isGraphResponse = isGraphResponse,
                 attachedFileUrl = attachedFileUrl,
                 attachedFileName = attachedFileName,
-                attachedFileType = attachedFileType
+                attachedFileType = attachedFileType,
+                senderAvatar = senderAvatar
             )
         }
         

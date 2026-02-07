@@ -572,9 +572,10 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 try {
                     currentUser?.let { username ->
                         val avatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(username)
-                        avatar?.let { 
-                            currentUserAvatar = it
-                            chatAdapter.setUserAvatarUrl(it) 
+                        if (!avatar.isNullOrBlank()) {
+                            currentUserAvatar = avatar
+                            sessionManager.saveUserAvatar(avatar) // Persist so getUserAvatar() works next time
+                            chatAdapter.setUserAvatarUrl(avatar)
                         }
                     }
                 } catch (_: Exception) {
@@ -963,7 +964,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 text,
                 attachedFileUrl = attachedFile?.remoteUrl ?: attachedFile?.uri?.toString(),
                 attachedFileName = attachedFile?.name,
-                attachedFileType = attachedFile?.type
+                attachedFileType = attachedFile?.type,
+                senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
             )
         }
         
@@ -2557,9 +2559,10 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             try {
                 currentUser?.let { username ->
                     val avatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(username)
-                    avatar?.let { 
-                        currentUserAvatar = it
-                        chatAdapter.setUserAvatarUrl(it) 
+                    if (!avatar.isNullOrBlank()) {
+                        currentUserAvatar = avatar
+                        sessionManager.saveUserAvatar(avatar)
+                        chatAdapter.setUserAvatarUrl(avatar)
                     }
                 }
             } catch (_: Exception) {
@@ -2580,6 +2583,8 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         chatAdapter.clear()
         totalMessageCount = 0
         currentUser = null
+        currentUserAvatar = null
+        chatAdapter.setUserAvatarUrl(null)
         
         // Update user indicator
         updateUserIndicator()
