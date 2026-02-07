@@ -65,6 +65,11 @@ class TaskSubmissionsFragment : Fragment() {
     private var topicName: String = ""
     private var courseTitle: String = ""
     private var courseDescription: String = ""
+    
+    // 🔥 Datos de la submission actual para pasar al ChatBotFragment
+    private var currentSubmissionTaskId: Long = -1L
+    private var currentSubmissionStudentId: Long = -1L
+    private var currentSubmissionFileUri: String = ""
 
     // Progress UI elements removed from layout; access via safe findViewById when needed
 
@@ -1669,6 +1674,11 @@ class TaskSubmissionsFragment : Fragment() {
     }
 
     private fun createFileContextAndNavigateToChat(submission: TaskSubmission) {
+        // 🔥 Guardar datos de la submission para pasar al ChatBotFragment
+        currentSubmissionTaskId = submission.taskId
+        currentSubmissionStudentId = submission.studentId
+        currentSubmissionFileUri = submission.fileUri
+        
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 Log.d("TaskSubmissionsFragment", "🔄 Iniciando análisis de archivo: ${submission.fileName}")
@@ -1993,6 +2003,13 @@ class TaskSubmissionsFragment : Fragment() {
                     putString("fileName", fileContext.fileName)
                     putString("taskName", taskName)
                     putString("taskDescription", taskDescription)
+                    // 🔥 CRÍTICO: Pasar taskId, studentId, fileUri para que el backend pueda buscar el contenido
+                    if (currentSubmissionTaskId > 0) putLong("taskId", currentSubmissionTaskId)
+                    if (currentSubmissionStudentId > 0) putLong("studentId", currentSubmissionStudentId)
+                    if (currentSubmissionFileUri.isNotEmpty()) {
+                        putString("fileUri", currentSubmissionFileUri)
+                        Log.d("TaskSubmissionsFragment", "🔥 Pasando fileUri al chat: ${currentSubmissionFileUri.take(60)}")
+                    }
                 }
                 
                 // Navegar al chat solo si no estamos ya ahí

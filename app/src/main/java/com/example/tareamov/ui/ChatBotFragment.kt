@@ -379,6 +379,12 @@ class ChatBotFragment : Fragment() {
     private var deliveryDate: String = ""
     private var courseId: Long = -1L // ID del curso actual para obtener tareas
 
+    // 🔥 Variables de respaldo del TaskItem seleccionado (no dependen de FileContext)
+    private var selectedTaskSubmissionId: Long? = null
+    private var selectedTaskStudentId: Long? = null
+    private var selectedTaskFileUri: String? = null
+    private var selectedTaskRemoteTaskId: Long? = null
+
     // UI Components for task overlay
     private lateinit var taskListOverlay: androidx.cardview.widget.CardView
     private lateinit var taskListOverlayBackground: View
@@ -710,6 +716,18 @@ class ChatBotFragment : Fragment() {
             Log.d("ChatBotFragment", "fileName: $fileName")
             Log.d("ChatBotFragment", "==============================================")
 
+            // 🔥 CRÍTICO: Recuperar taskId, studentId, fileUri para backup vars
+            val argTaskId = if (args.containsKey("taskId")) args.getLong("taskId", -1L) else -1L
+            val argStudentId = if (args.containsKey("studentId")) args.getLong("studentId", -1L) else -1L
+            val argFileUri = args.getString("fileUri")
+
+            if (argTaskId > 0) selectedTaskRemoteTaskId = argTaskId
+            if (argStudentId > 0) selectedTaskStudentId = argStudentId
+            if (!argFileUri.isNullOrEmpty()) selectedTaskFileUri = argFileUri
+            if (submissionId > 0) selectedTaskSubmissionId = submissionId
+
+            Log.d("ChatBotFragment", "🔥 Backup vars from args: taskId=$argTaskId, studentId=$argStudentId, fileUri=${argFileUri?.take(60)}, submissionId=$submissionId")
+
             // Retrieve task info from arguments to update UI immediately
             val argTaskName = args.getString("taskName")
             val argTaskDescription = args.getString("taskDescription")
@@ -817,6 +835,30 @@ class ChatBotFragment : Fragment() {
 
             // Cargar información de la tarea, tema y curso
             updateCourseInfo(submissionId)
+
+            // 🔥 CRÍTICO: Poblar backup vars desde la submission si aún no están establecidas
+            if (selectedTaskSubmissionId == null) selectedTaskSubmissionId = submissionId
+            if (selectedTaskStudentId == null || selectedTaskFileUri == null || selectedTaskRemoteTaskId == null) {
+                try {
+                    val sub = withContext(Dispatchers.IO) {
+                        val supabaseClient = com.example.tareamov.service.SupabaseClient
+                        if (supabaseClient.isConfigured()) {
+                            // Buscar submission por ID filtrando la lista completa
+                            supabaseClient.fetchTaskSubmissions().firstOrNull { it.id == submissionId }
+                        } else {
+                            database.taskSubmissionDao().getSubmissionById(submissionId)
+                        }
+                    }
+                    if (sub != null) {
+                        if (selectedTaskStudentId == null) selectedTaskStudentId = sub.studentId
+                        if (selectedTaskFileUri == null && sub.fileUri.isNotEmpty()) selectedTaskFileUri = sub.fileUri
+                        if (selectedTaskRemoteTaskId == null) selectedTaskRemoteTaskId = sub.taskId
+                        Log.d("ChatBotFragment", "🔥 Backup vars from submission lookup: taskId=${sub.taskId}, studentId=${sub.studentId}, fileUri=${sub.fileUri.take(60)}")
+                    }
+                } catch (e: Exception) {
+                    Log.w("ChatBotFragment", "⚠️ Error populating backup vars from submission: ${e.message}")
+                }
+            }
 
             // Logging mínimo
             Log.d("ChatBotFragment", "🔍 FileContext cargado - submissionId: $submissionId, presente: ${currentFileContext != null}")
@@ -1944,13 +1986,13 @@ class ChatBotFragment : Fragment() {
             try {
                 val llmResponse = withContext(Dispatchers.IO) {
                     try {
-                        // Obtener información de la submission para que el backend pueda buscar el contenido desde R2
-                        val currentSubmissionId = currentFileContext?.submissionId
-                        // 🔥 IMPORTANTE: Extraer el taskId real del contexto del archivo
-                        // El submissionId en FileContext está asociado a un task_id en task_submissions
-                        // Si no tenemos submissionId, podemos intentar buscar por userId
-                        val currentTaskIdForRequest = currentSubmissionId // El backend usará submissionId para encontrar taskId
-                        val currentStudentId = sessionManager.getUserId()
+                        // 🔥 FIX: Usar datos reales del TaskItem seleccionado (fallback chain)
+                        val currentSubmissionId = currentFileContext?.submissionId ?: selectedTaskSubmissionId
+                        val currentTaskIdForRequest = selectedTaskRemoteTaskId // taskId real de la tarea, NO submissionId
+                        val currentStudentIdForRequest = selectedTaskStudentId // ID del estudiante, NO del profesor
+                        val currentFileUriForRequest = selectedTaskFileUri // URL del archivo en R2
+
+                        Log.d("ChatBotFragment", "🔥 sendMessage datos finales: submId=$currentSubmissionId, taskId=$currentTaskIdForRequest, studentId=$currentStudentIdForRequest, fileUri=${currentFileUriForRequest?.take(60)}")
 
                         val body = com.example.tareamov.network.MicroservicioPromptRequest(
                             prompt = messageText,
@@ -1961,11 +2003,11 @@ class ChatBotFragment : Fragment() {
                             jsonContent = if (effectiveJsonContent.isNotEmpty()) effectiveJsonContent else null,
                             metadata = if (effectiveMetadata.isNotEmpty()) effectiveMetadata else null,
                             userId = sessionManager.getUserId(),
-                            // 🔥 NUEVO: Enviar información para que el backend obtenga contenido desde R2/Supabase
+                            // 🔥 FIX: Enviar datos REALES del TaskItem seleccionado
                             submissionId = currentSubmissionId,
                             taskId = currentTaskIdForRequest,
-                            studentId = currentStudentId,
-                            fileUri = null // El backend lo obtiene de task_submissions si es necesario
+                            studentId = currentStudentIdForRequest,
+                            fileUri = currentFileUriForRequest // URL directa del archivo en R2
                         )
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📤 ENVIANDO AL MICROSERVICIO:")
@@ -1978,7 +2020,8 @@ class ChatBotFragment : Fragment() {
                         Log.d("ChatBotFragment", "metadata (metadatos): ${effectiveMetadata.length} caracteres")
                         Log.d("ChatBotFragment", "submissionId: $currentSubmissionId")
                         Log.d("ChatBotFragment", "taskId: $currentTaskIdForRequest")
-                        Log.d("ChatBotFragment", "studentId: $currentStudentId")
+                        Log.d("ChatBotFragment", "studentId: $currentStudentIdForRequest")
+                        Log.d("ChatBotFragment", "fileUri: ${currentFileUriForRequest?.take(80)}")
                         Log.d("ChatBotFragment", "==============================================")
 
                         // Usar suspend function en lugar de .execute() para mejor manejo de timeouts
@@ -3406,10 +3449,13 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 taskId = (sub["task_id"] as? Number)?.toLong() ?: 0L,
                                 taskName = taskTitle,
                                 taskDescription = "$gradeInfo • Promedio: $formattedAvg",
-                                topicName = username, // Use the resolved username here for display in overlay
+                                topicName = username,
                                 index = index++,
                                 studentUsername = username,
-                                averageGrade = formattedAvg
+                                averageGrade = formattedAvg,
+                                submissionId = (sub["submission_id"] as? Number)?.toLong(),
+                                studentId = (sub["student_id"] as? Number)?.toLong(),
+                                fileUri = sub["file_uri"] as? String
                             )
                         )
                     }
@@ -3604,6 +3650,13 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 // ✅ CRÍTICO: Actualizar SIEMPRE las variables de instancia para que sendMessage las use
                 taskName = task.taskName
                 taskDescription = task.taskDescription ?: ""
+
+                // 🔥 CRÍTICO: Guardar datos del TaskItem como respaldo inmediato
+                selectedTaskSubmissionId = task.submissionId
+                selectedTaskStudentId = task.studentId
+                selectedTaskFileUri = task.fileUri
+                selectedTaskRemoteTaskId = task.taskId
+                Log.d("ChatBotFragment", "🔒 Backup guardado: submId=${task.submissionId}, studentId=${task.studentId}, fileUri=${task.fileUri?.take(60)}, taskId=${task.taskId}")
 
                 // Actualizar UI del contexto activo
                 if (::activeContextValue.isInitialized) {
@@ -3819,17 +3872,37 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                         var actualFileContent: String? = null
 
-                        // Intentar leer el contenido real del archivo si el URI aún es accesible
+                        // Intentar leer el contenido real del archivo
                         try {
-                            val fileUri = android.net.Uri.parse(submission!!.fileUri)
-                            Log.d("ChatBotFragment", "🔍 Intentando leer archivo desde URI: $fileUri")
+                            val rawFileUri = submission!!.fileUri ?: ""
+                            Log.d("ChatBotFragment", "🔍 Intentando leer archivo desde URI: $rawFileUri")
 
-                            requireContext().contentResolver.openInputStream(fileUri)?.use { inputStream ->
-                                actualFileContent = inputStream.bufferedReader().use { it.readText() }
-                                Log.d("ChatBotFragment", "✅ Archivo leído exitosamente: ${actualFileContent!!.length} caracteres")
+                            if (rawFileUri.startsWith("http")) {
+                                // 🔥 FIX: Usar OkHttp para URLs HTTP (R2, etc.) en lugar de ContentResolver
+                                Log.d("ChatBotFragment", "🌐 URL HTTP detectada, usando OkHttp para descargar...")
+                                val httpClient = okhttp3.OkHttpClient.Builder()
+                                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                                    .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                                    .build()
+                                val httpRequest = okhttp3.Request.Builder().url(rawFileUri).get().build()
+                                val httpResponse = httpClient.newCall(httpRequest).execute()
+                                if (httpResponse.isSuccessful) {
+                                    actualFileContent = httpResponse.body?.string()
+                                    Log.d("ChatBotFragment", "✅ Archivo descargado vía OkHttp: ${actualFileContent?.length ?: 0} caracteres")
+                                } else {
+                                    Log.w("ChatBotFragment", "⚠️ OkHttp respuesta no exitosa: ${httpResponse.code}")
+                                }
+                                httpResponse.close()
+                            } else if (rawFileUri.isNotEmpty()) {
+                                // URI local — usar ContentResolver
+                                val fileUri = android.net.Uri.parse(rawFileUri)
+                                requireContext().contentResolver.openInputStream(fileUri)?.use { inputStream ->
+                                    actualFileContent = inputStream.bufferedReader().use { it.readText() }
+                                    Log.d("ChatBotFragment", "✅ Archivo leído desde URI local: ${actualFileContent!!.length} caracteres")
+                                }
                             }
                         } catch (e: Exception) {
-                            Log.w("ChatBotFragment", "⚠️ No se pudo leer el archivo desde URI: ${e.message}")
+                            Log.w("ChatBotFragment", "⚠️ No se pudo leer el archivo: ${e.message}")
                         }
 
                         val fallbackContent = if (actualFileContent != null) {

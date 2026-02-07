@@ -18,7 +18,10 @@ data class TaskItem(
     val topicName: String,
     val index: Int,
     val studentUsername: String? = null,
-    val averageGrade: String? = null
+    val averageGrade: String? = null,
+    val submissionId: Long? = null,
+    val studentId: Long? = null,
+    val fileUri: String? = null
 )
 
 class TaskOverlayAdapter(
