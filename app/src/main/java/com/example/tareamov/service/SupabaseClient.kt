@@ -335,6 +335,39 @@ object SupabaseClient {
         return result
     }
 
+    suspend fun insertUsuarioRole(userId: Long, roleId: Int): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val payload = mapOf(
+                "usuario_id" to userId,
+                "rol_id" to roleId
+            )
+            val body = gson.toJson(payload).toRequestBody(jsonMedia)
+            val url = "$baseUrl/rest/v1/usuarios_roles"
+            val key = effectiveApiKey()
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .addHeader("apikey", key)
+                .addHeader("Authorization", "Bearer $key")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Prefer", "return=minimal")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val bodyStr = resp.body?.string() ?: ""
+                    Log.e("SupabaseClient", "insertUsuarioRole failed: ${resp.code} ${resp.message} body=$bodyStr")
+                    return@withContext false
+                }
+                true
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "insertUsuarioRole Exception", e)
+            false
+        }
+    }
+
     /**
      * @deprecated Video insertion should be handled by the backend API.
      * Use the backend endpoint POST /video/insert instead.

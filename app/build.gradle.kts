@@ -96,9 +96,6 @@ android {
         renderscriptTargetApi = 31
         renderscriptSupportModeEnabled = true
 
-        // Provide a single authority string for FileProvider usage
-        manifestPlaceholders["fileProviderAuthority"] = "${applicationId}.fileprovider"
-
     // Exponer variables de Supabase y HOST_IP como BuildConfig
     buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
     // Expose only the anon/public key to the client. If empty, the app must obtain a key at runtime or use backend endpoints.
@@ -124,11 +121,38 @@ android {
     buildConfigField("String", "R2_BUCKET_NAME", "\"$r2BucketName\"")
     buildConfigField("String", "R2_ENDPOINT", "\"$r2Endpoint\"")
 
+    // Backend & shared URLs (defaults = QA; production flavor overrides Supabase only)
+    buildConfigField("String", "BACKEND_URL", "\"https://mcp-backenddeploy-production-4ed0.up.railway.app\"")
+    buildConfigField("String", "MCP_API_KEY", "\"tareamov-mcp-api-key-2025-secure\"")
+    buildConfigField("String", "R2_PUBLIC_URL", "\"https://pub-9f393625246c4018b5613be60b01bda1.r2.dev\"")
+
         // Add Room schema location
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
             arg("room.incremental", "true")
             arg("room.expandProjection", "true")
+        }
+    }
+
+    // ============================================================
+    // Product Flavors: QA vs Production
+    // ============================================================
+    flavorDimensions += "environment"
+
+    productFlavors {
+        create("qa") {
+            dimension = "environment"
+            applicationIdSuffix = ".qa"
+            versionNameSuffix = "-qa"
+            // QA → uses Supabase credentials from local.properties (set in defaultConfig)
+            // QA → same backend & R2 as production (single Railway deployment)
+        }
+
+        create("production") {
+            dimension = "environment"
+            // Production Supabase project (overrides defaultConfig values)
+            buildConfigField("String", "SUPABASE_URL", "\"https://ucywimgofjuxkuoyarvf.supabase.co\"")
+            buildConfigField("String", "SUPABASE_ANON_KEY", "\"sb_publishable_AuOX-s7MSwsNDDWjynTOeA_Ed4XxmoG\"")
         }
     }
 

@@ -45,9 +45,9 @@ object ServerEndpointResolver {
     private const val PREF_KEY_FORCED_FULL = "mcp_forced_base_url_full"
     private const val MAX_SCAN_HOSTS = 48 // Slightly increased to allow more candidates
     
-    // Railway Cloud URLs (Production)
-    const val RAILWAY_MCP_URL = "https://mcp-backenddeploy-production.up.railway.app"
-    const val RAILWAY_API_URL = "https://mcp-backenddeploy-production.up.railway.app"  // Same service, different port internally
+    // Railway Cloud URLs — resolved from BuildConfig per flavor (QA / Production)
+    val RAILWAY_MCP_URL = com.example.tareamov.BuildConfig.BACKEND_URL
+    val RAILWAY_API_URL = com.example.tareamov.BuildConfig.BACKEND_URL
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()
@@ -82,6 +82,11 @@ object ServerEndpointResolver {
     }
 
     suspend fun getMcpBaseUrl(forceDiscovery: Boolean = false): String {
+        if (appContext == null) {
+            Log.w(TAG, "ServerEndpointResolver not initialised. Falling back to Railway cloud: $RAILWAY_MCP_URL")
+            return RAILWAY_MCP_URL
+        }
+
         // 1. Try local discovery first
         val localUrl = getBaseUrlForPort(MCP_PORT, "/health", forceDiscovery)
         if (localUrl != null) {
@@ -155,6 +160,11 @@ object ServerEndpointResolver {
      * otherwise return the Railway cloud URL.
      */
     suspend fun fastResolveMcpBaseUrl(): String = withContext(Dispatchers.IO) {
+        if (appContext == null) {
+            Log.w(TAG, "fastResolve: ServerEndpointResolver not initialised. Falling back to Railway URL.")
+            return@withContext RAILWAY_MCP_URL
+        }
+
         // 0. Honor an explicit forced full URL set via preferences (useful for testing with Docker host)
         try {
             val ctx = appContext

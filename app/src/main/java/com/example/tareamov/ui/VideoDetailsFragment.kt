@@ -53,6 +53,9 @@ class VideoDetailsFragment : Fragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Initialize ServerEndpointResolver to ensure backend connectivity
+        com.example.tareamov.service.ServerEndpointResolver.initialize(requireContext())
+
         arguments?.let {
             videoUri = it.getParcelable("videoUri") ?: Uri.EMPTY
             videoId = it.getLong("videoId", 0L) // Get the video ID
@@ -908,7 +911,7 @@ class VideoDetailsFragment : Fragment() {
                 .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
                 .build()
             
-            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_API_URL
+            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.getMcpBaseUrl()
             val url = "$baseUrl/video/insert"
             
             // Build JSON payload

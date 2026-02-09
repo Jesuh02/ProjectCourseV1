@@ -1,29 +1,43 @@
 {
-  "project_info": {
-    "project_number": "311619101029",
-    "project_id": "movil-77c19",
-    "storage_bucket": "movil-77c19.firebasestorage.app"
-  },
-  "client": [
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:311619101029:android:ce22f5739655ee4dc1c18c",
-        "android_client_info": {
-          "package_name": "com.tareamov.app"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
+    "project_info": {
+        "project_number": "311619101029",
+        "project_id": "movil-77c19",
+        "storage_bucket": "movil-77c19.firebasestorage.app"
+    },
+    "client": [{
+            "client_info": {
+                "mobilesdk_app_id": "1:311619101029:android:ce22f5739655ee4dc1c18c",
+                "android_client_info": {
+                    "package_name": "com.tareamov.app"
+                }
+            },
+            "oauth_client": [],
+            "api_key": [{
+                "current_key": "AIzaSyDml6OrZPaY6E9jrciuHUminPcoUwIH3gQ"
+            }],
+            "services": {
+                "appinvite_service": {
+                    "other_platform_oauth_client": []
+                }
+            }
+        },
         {
-          "current_key": "AIzaSyDml6OrZPaY6E9jrciuHUminPcoUwIH3gQ"
+            "client_info": {
+                "mobilesdk_app_id": "1:311619101029:android:ce22f5739655ee4dc1c18c",
+                "android_client_info": {
+                    "package_name": "com.tareamov.app.qa"
+                }
+            },
+            "oauth_client": [],
+            "api_key": [{
+                "current_key": "AIzaSyDml6OrZPaY6E9jrciuHUminPcoUwIH3gQ"
+            }],
+            "services": {
+                "appinvite_service": {
+                    "other_platform_oauth_client": []
+                }
+            }
         }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    }
-  ],
-  "configuration_version": "1"
+    ],
+    "configuration_version": "1"
 }

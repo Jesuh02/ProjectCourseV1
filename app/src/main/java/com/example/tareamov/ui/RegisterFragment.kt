@@ -943,6 +943,16 @@ class RegisterFragment : Fragment() {
                             
                             if (remoteUserId != null) {
                                 Log.d("RegisterFragment", "Usuario sincronizado con Supabase exitosamente, id: $remoteUserId")
+                                
+                                // Asignar rol por defecto (Rol 1)
+                                val roleAssigned = withContext(Dispatchers.IO) {
+                                    SupabaseClient.insertUsuarioRole(remoteUserId, 1)
+                                }
+                                if (roleAssigned) {
+                                    Log.d("RegisterFragment", "Rol asignado correctamente")
+                                } else {
+                                    Log.w("RegisterFragment", "No se pudo asignar el rol por defecto")
+                                }
                             } else {
                                 Log.e("RegisterFragment", "Error: insertUsuario returned null")
                                 withContext(Dispatchers.Main) {
