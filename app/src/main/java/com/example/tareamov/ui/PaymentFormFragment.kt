@@ -76,7 +76,7 @@ class PaymentFormFragment : Fragment() {
 
     // Payment API
     private val paymentApi by lazy {
-        val baseUrl = "https://mcp-backenddeploy-production.up.railway.app/"
+        val baseUrl = com.example.tareamov.BuildConfig.BACKEND_URL.let { if (it.endsWith("/")) it else "$it/" }
         PaymentApi.create(baseUrl)
     }
 

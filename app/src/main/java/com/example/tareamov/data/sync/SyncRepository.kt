@@ -120,11 +120,10 @@ class SyncRepository(
 
     suspend fun isUserAdmin(userId: Long): Boolean {
         // User requirement: Check ONLY usuarios_roles table for role 3 (Admin)
-        // Ignoring local legacy column and remote legacy column as per instruction.
+        // Using SupabaseClient standard REST to avoid 'execute_sql' RPC issues in production.
         return try {
-            val sql = "SELECT 1 FROM usuarios_roles WHERE usuario_id = $userId AND rol_id = 3"
-            val res = supabaseRepo.executeRawQuery(sql)
-            res.isNotEmpty()
+            val roleIds = supabaseClient.fetchUserRoleIds(userId)
+            roleIds.contains(3)
         } catch (e: Exception) {
             android.util.Log.e("SyncRepository", "Error checking admin role for user $userId", e)
             false
@@ -139,16 +138,13 @@ class SyncRepository(
         try {
             if (userId <= 0) return false
 
-            // 1. Check usuarios_roles table (Explicit assignments)
-            val sqlRoles = "SELECT 1 FROM usuarios_roles WHERE usuario_id = $userId AND rol_id = $roleId"
-            val resRoles = supabaseRepo.executeRawQuery(sqlRoles)
-            if (resRoles.isNotEmpty()) return true
+            // 1. Check usuarios_roles using standard REST
+            val roleIds = supabaseClient.fetchUserRoleIds(userId)
+            if (roleIds.contains(roleId.toInt())) return true
 
-            // 2. Check usuarios table (Primary role)
-            val sqlPrimary = "SELECT 1 FROM usuarios WHERE id = $userId AND rol_id = $roleId"
-            val resPrimary = supabaseRepo.executeRawQuery(sqlPrimary)
-            return resPrimary.isNotEmpty()
-
+            // 2. Check usuarios table (Primary role) using fetchUsuarioById
+            val user = supabaseClient.fetchUsuarioById(userId)
+            return user?.rol_id == roleId
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error checking user role $roleId for user $userId", e)
             return false
@@ -164,7 +160,7 @@ class SyncRepository(
             try {
                 withContext(Dispatchers.IO) { supabaseClient.fetchRolById(id) }
             } catch (e: Exception) {
-                Log.w("SyncRepository", "fetchRolByIdFromSupabase failed for id=$id: ${e.message}")
+                 Log.w("SyncRepository", "fetchRolByIdFromSupabase failed for id=$id: ${e.message}")
                 null
             }
         } catch (e: Exception) {
@@ -818,7 +814,7 @@ class SyncRepository(
                 
                 val body = jsonBody.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
                 val request = Request.Builder()
-                    .url("https://mcp-backenddeploy-production.up.railway.app/api/payment/initiate")
+                    .url("${com.example.tareamov.BuildConfig.BACKEND_URL}/api/payment/initiate")
                     .post(body)
                     .build()
                 

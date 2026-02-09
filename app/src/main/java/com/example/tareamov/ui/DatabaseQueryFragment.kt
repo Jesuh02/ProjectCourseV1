@@ -1085,6 +1085,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
                 val request = okhttp3.Request.Builder()
                     .url("$baseUrl/excel/generate-excel")
+                    .header("X-Supabase-Url", com.example.tareamov.BuildConfig.SUPABASE_URL)
+                    .header("X-Supabase-Key", com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY)
                     .post(body)
                     .build()
                 
@@ -2389,6 +2391,8 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
                         .post(payload.toRequestBody(mediaType))
                         .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
                         .header("Connection", "close")
+                        .header("X-Supabase-Url", com.example.tareamov.BuildConfig.SUPABASE_URL)
+                        .header("X-Supabase-Key", com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY)
                         .build()
 
                     client.newCall(req).execute().use { resp ->

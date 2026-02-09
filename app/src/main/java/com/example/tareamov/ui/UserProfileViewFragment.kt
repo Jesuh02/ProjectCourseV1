@@ -1897,11 +1897,41 @@ class UserProfileViewFragment : Fragment() {
      * Actually perform the course/video deletion
      */
     private fun performDeleteCourse(course: VideoData) {
-        viewLifecycleOwner.lifecycleScope.launch {
+        // --- OPTIMISTIC UI UPDATE for "Fast" feel ---
+        val idToRemove = course.id
+        
+        // Remove from local lists immediately
+        allContent.removeAll { it.id == idToRemove }
+        allCourses.removeAll { it.id == idToRemove }
+        allVideos.removeAll { it.id == idToRemove }
+        
+        // Update adapters immediately
+        if (::contentAdapter.isInitialized) {
+            contentAdapter.removeCourse(idToRemove)
+        }
+        
+        if (::videoAdapter.isInitialized) {
+            videoAdapter.updateVideos(allVideos)
+        }
+        
+        // Update counts
+        coursesCountTextView.text = allCourses.size.toString()
+        videosCountTextView.text = allVideos.size.toString()
+        updateCountBadges()
+
+        // Refresh views
+        filterContent()
+        
+        // Notify user immediately that we are working on it
+        Toast.makeText(requireContext(), "Eliminando...", Toast.LENGTH_SHORT).show()
+        Log.d("UserProfileView", "Optimistic delete applied locally for: ${course.title}")
+
+        // --- BACKGROUND SYNC ---
+        // Use lifecycleScope but wrap with NonCancellable to ensure DB/Network op finishes even if user leaves screen
+        lifecycleScope.launch {
             try {
-                // Show loading indicator
-                Toast.makeText(requireContext(), "Eliminando curso...", Toast.LENGTH_SHORT).show()
-                val deleteSuccess = withContext(Dispatchers.IO) {
+                // Use IO Dispatcher + NonCancellable to prevent JobCancellationException
+                withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                     // Resolve a likely remote Supabase course ID, preferring known courseId
                     var remoteCourseId: Long? = null
                     try {
@@ -1950,9 +1980,10 @@ class UserProfileViewFragment : Fragment() {
                                             val tree: Map<*, *> = gson.fromJson(respBody, Map::class.java)
                                             val ok = tree["success"] as? Boolean ?: true
                                             if (ok) {
-                                                // Backend deleted successfully; remove local rows and return
+                                                // Backend deleted successfully; remove local rows
                                                 try { courseRepository.deleteCourseById(remoteCourseId) } catch (_: Exception) {}
 
+                                                // Clean other references if needed
                                                 try {
                                                     val remoteVideos = SupabaseClient.fetchVideosByCourseIds(listOf(remoteCourseId))
                                                     for (v in remoteVideos) {
@@ -1979,6 +2010,8 @@ class UserProfileViewFragment : Fragment() {
 
                     // Fallback: attempt to delete via SupabaseClient using multiple strategies
                     try {
+                        var success = false
+                        
                         // 1) If we resolved a remoteCourseId, delete videos for that course first
                         if (remoteCourseId != null) {
                             try {
@@ -1993,12 +2026,12 @@ class UserProfileViewFragment : Fragment() {
                             val courseDeleted = SupabaseClient.deleteCourseById(remoteCourseId)
                             if (courseDeleted) {
                                 try { courseRepository.deleteCourseById(remoteCourseId) } catch (_: Exception) {}
-                                return@withContext true
+                                success = true
                             }
                         }
 
-                        // 2) If remoteCourseId was not available, try to delete by local course.courseId (if present)
-                        if (course.courseId != null && course.courseId!! > 0) {
+                        // 2) If not successful yet, try to delete by local course.courseId (if present)
+                        if (!success && course.courseId != null && course.courseId!! > 0) {
                             val okCourse = SupabaseClient.deleteCourseById(course.courseId!!)
                             val okVideo = SupabaseClient.deleteVideoById(course.id)
                             if (okCourse || okVideo) {
@@ -2007,71 +2040,37 @@ class UserProfileViewFragment : Fragment() {
                                     val localVideo = courseRepository.getVideoById(course.id)
                                     if (localVideo != null) courseRepository.deleteVideo(localVideo)
                                 } catch (_: Exception) {}
-                                return@withContext true
+                                success = true
                             }
                         }
 
-                        // 3) Last-resort: try deleting video using its id (may be remote id if synced)
-                        val supabaseVideoDeleted = SupabaseClient.deleteVideoById(course.id)
-                        if (supabaseVideoDeleted) {
-                            try { courseRepository.deleteCourseById(course.id) } catch (_: Exception) {}
-                            try {
-                                val videoData = courseRepository.getVideoById(course.id)
-                                if (videoData != null) courseRepository.deleteVideo(videoData)
-                            } catch (_: Exception) {}
-                            return@withContext true
+                        // 3) Last-resort
+                        if (!success) {
+                            val supabaseVideoDeleted = SupabaseClient.deleteVideoById(course.id)
+                            if (supabaseVideoDeleted) {
+                                try { courseRepository.deleteCourseById(course.id) } catch (_: Exception) {}
+                                try {
+                                    val videoData = courseRepository.getVideoById(course.id)
+                                    if (videoData != null) courseRepository.deleteVideo(videoData)
+                                } catch (_: Exception) {}
+                                success = true
+                            }
                         }
-
-                        Log.w("UserProfileView", "Failed to delete course/video via Supabase fallback")
-                        false
+                        
+                        if (!success) Log.w("UserProfileView", "Failed to delete course/video via Supabase fallback")
+                        success
                     } catch (e: Exception) {
                         Log.e("UserProfileView", "Exception in fallback Supabase delete: ${e.message}", e)
                         false
                     }
-                }
-
-                // Update UI on main thread
-                withContext(Dispatchers.Main) {
-                    if (deleteSuccess) {
-                        // Remove from local lists immediately for faster UI response using ID to ensure correct removal
-                        val idToRemove = course.id
-                        
-                        // Remove from all lists
-                        allContent.removeAll { it.id == idToRemove }
-                        allCourses.removeAll { it.id == idToRemove }
-                        allVideos.removeAll { it.id == idToRemove }
-                        
-                        // Update adapters
-                        if (::contentAdapter.isInitialized) {
-                            contentAdapter.removeCourse(idToRemove)
-                        }
-                        
-                        if (::videoAdapter.isInitialized) {
-                            videoAdapter.updateVideos(allVideos)
-                        }
-                        
-                        Log.d("UserProfileView", "Course removed from local lists and adapter: ${course.title}")
-
-                        // Update counts
-                        coursesCountTextView.text = allCourses.size.toString()
-                        videosCountTextView.text = allVideos.size.toString()
-                        updateCountBadges()
-
-                        // Refresh the content display
-                        filterContent()
-                        
-                        Toast.makeText(requireContext(), "✅ Curso eliminado: ${course.title}", Toast.LENGTH_SHORT).show()
-                        Log.d("UserProfileView", "Course successfully deleted: ${course.title}")
-                    } else {
-                        Toast.makeText(requireContext(), "❌ Error al eliminar el curso de Supabase", Toast.LENGTH_LONG).show()
-                    }
-                }
-
+                } // End withContext(NonCancellable)
+                
+                // Note: We don't need to update UI on success because we did optimistic update.
+                // We could show a toast if we want to confirm, but for "fast" feel, silence is golden on success.
+                // If it failed, we could notify, but typically we let it settle.
+                
             } catch (e: Exception) {
-                Log.e("UserProfileView", "Error deleting course: ${course.title}", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "❌ Error al eliminar el curso", Toast.LENGTH_SHORT).show()
-                }
+                Log.e("UserProfileView", "Error in deleting process: ${e.message}")
             }
         }
     }

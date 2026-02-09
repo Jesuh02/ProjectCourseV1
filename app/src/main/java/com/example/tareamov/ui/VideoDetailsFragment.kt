@@ -391,8 +391,35 @@ class VideoDetailsFragment : Fragment() {
             return
         }
 
-        // Proceed with video save, default to creating a course
-        proceedWithVideoSave(title, description, currentUsername, createCourse = true)
+        // Show create course dialog to let user decide
+        showCreateCourseDialog(title, description, currentUsername)
+    }
+
+    /**
+     * Muestra un diálogo preguntando si se desea crear un curso o solo guardar el video
+     */
+    private fun showCreateCourseDialog(title: String, description: String, currentUsername: String) {
+        val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_create_course_minimal, null)
+        
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .create()
+            
+        // Set transparent background for rounded corners
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        
+        // Setup buttons
+        dialogView.findViewById<View>(R.id.confirmCreateCourseButton).setOnClickListener {
+            dialog.dismiss()
+            proceedWithVideoSave(title, description, currentUsername, createCourse = true)
+        }
+        
+        dialogView.findViewById<View>(R.id.cancelCreateCourseButton).setOnClickListener {
+            dialog.dismiss()
+            proceedWithVideoSave(title, description, currentUsername, createCourse = false)
+        }
+        
+        dialog.show()
     }
 
     /**
@@ -945,8 +972,8 @@ class VideoDetailsFragment : Fragment() {
             Log.e("VideoDetailsFragment", "❌ Error inserting video via backend", e)
         }
         
-        // Backend failed - log error and return null (no fallback to direct Supabase)
-        Log.e("VideoDetailsFragment", "❌ Backend video insert failed - no fallback available")
+        // Backend failed - log error and return null (caller will handle fallback)
+        Log.w("VideoDetailsFragment", "⚠️ Backend video insert failed - returning null to trigger fallback")
         return@withContext null
     }
     

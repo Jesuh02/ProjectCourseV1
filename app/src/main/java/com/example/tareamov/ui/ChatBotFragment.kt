@@ -310,17 +310,19 @@ class ChatBotFragment : Fragment() {
             if (!fast.isNullOrBlank()) {
                 if (fast.endsWith("/")) fast else "$fast/"
             } else {
-                // Fallback to Railway Cloud in production
-                "https://mcp-backenddeploy-production.up.railway.app/"
+                // Fallback to Railway Cloud per build variant
+                val url = com.example.tareamov.BuildConfig.BACKEND_URL
+                if (url.endsWith("/")) url else "$url/"
             }
         } catch (e: Exception) {
-            "https://mcp-backenddeploy-production.up.railway.app/"
+            val url = com.example.tareamov.BuildConfig.BACKEND_URL
+            if (url.endsWith("/")) url else "$url/"
         }
     }
 
     private fun getOllamaUrl(): String {
         // Ollama is now replaced by DeepSeek in the cloud backend
-        return "https://mcp-backenddeploy-production.up.railway.app"
+        return com.example.tareamov.BuildConfig.BACKEND_URL
     }
     // Build a MicroservicioApi instance on demand using the currently resolved base URL.
     private fun buildMicroservicioApi(): MicroservicioApi {
@@ -330,12 +332,16 @@ class ChatBotFragment : Fragment() {
             .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val originalRequest = chain.request()
-                val requestWithApiKey = originalRequest.newBuilder()
+                val builder = originalRequest.newBuilder()
                     .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
                     .header("Content-Type", "application/json")
                     .header("Connection", "close")
-                    .build()
-                chain.proceed(requestWithApiKey)
+                // Per-request Supabase routing for production build variant
+                val supaUrl = com.example.tareamov.BuildConfig.SUPABASE_URL
+                val supaKey = com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY
+                if (supaUrl.isNotBlank()) builder.header("X-Supabase-Url", supaUrl)
+                if (supaKey.isNotBlank()) builder.header("X-Supabase-Key", supaKey)
+                chain.proceed(builder.build())
             }
             .build()
 
@@ -706,6 +712,23 @@ class ChatBotFragment : Fragment() {
 
     private fun loadFileContextFromArguments() {
         arguments?.let { args ->
+            if (args.getBoolean("clearContext", false)) {
+                Log.d("ChatBotFragment", "🧹 Clearing context as requested")
+                taskName = ""
+                taskDescription = ""
+                courseTitle = ""
+                
+                selectedTaskSubmissionId = null
+                selectedTaskStudentId = null
+                selectedTaskFileUri = null
+                selectedTaskRemoteTaskId = null
+                
+                if (::activeContextValue.isInitialized) {
+                    activeContextValue.text = ""
+                }
+                return@let
+            }
+
             val submissionId = args.getLong("submissionId", -1L)
             val errorMessage = args.getString("errorMessage")
             val fileName = args.getString("fileName")
@@ -1225,7 +1248,7 @@ class ChatBotFragment : Fragment() {
             pendingTaskId = currentTaskIdForRequest
 
             // Data class local para capturar tanto el texto como la nota del backend
-            data class LLMResponse(val text: String, val nota: Float?)
+            data class LLMResponse(val text: String, val nota: Float?, val esCalificacion: Boolean = false)
 
             try {
                 val llmResponse = withContext(Dispatchers.IO) {
@@ -1252,15 +1275,15 @@ class ChatBotFragment : Fragment() {
 
                         if (res.respuesta_texto.isNullOrBlank()) {
                             if (effectiveFileContent.isBlank() || effectiveFileContent.length < 50) {
-                                LLMResponse("El archivo enviado está vacío o no se pudo leer su contenido.", 0f)
+                                LLMResponse("El archivo enviado está vacío o no se pudo leer su contenido.", 0f, true)
                             } else {
-                                LLMResponse("Hubo un problema al procesar tu solicitud.", null)
+                                LLMResponse("Hubo un problema al procesar tu solicitud.", null, false)
                             }
                         } else {
-                            LLMResponse(res.respuesta_texto, res.nota)
+                            LLMResponse(res.respuesta_texto, res.nota, res.esCalificacion == true)
                         }
                     } catch (e: Exception) {
-                        LLMResponse("Error al procesar la solicitud: ${e.message}", null)
+                        LLMResponse("Error al procesar la solicitud: ${e.message}", null, false)
                     }
                 }
 
@@ -1269,12 +1292,19 @@ class ChatBotFragment : Fragment() {
 
                 val response = llmResponse.text.replace("#", "").replace("**", "")
 
-                val hasCalification = detectCalification(messageText, response) || llmResponse.nota != null
-                val calificationValue = if (llmResponse.nota != null) {
+                // 🎯 SEMANTIC: Solo el LLM decide si mostrar botones de calificación (via esCalificacion del backend)
+                val hasCalification = llmResponse.esCalificacion
+                // Solo extraer valor de calificación si el LLM señalizó que es calificación
+                val calificationValue = if (hasCalification && llmResponse.nota != null) {
                     val notaValue = llmResponse.nota
+                    Log.d("ChatBotFragment", "📊 Usando nota del backend: $notaValue (esCalificacion=true)")
                     if (notaValue % 1 == 0f) "${notaValue.toInt()}/10" else String.format("%.1f/10", notaValue)
-                } else {
+                } else if (hasCalification) {
+                    // Fallback: extraer del texto solo si el LLM marcó como calificación
                     extractCalificationValue(response)
+                } else {
+                    // No es calificación - no extraer nota del texto para evitar falsos positivos
+                    null
                 }
 
                 val botMessage = ChatMessage(
@@ -1506,21 +1536,17 @@ class ChatBotFragment : Fragment() {
                         append("\n   El sistema solo puede proporcionar información basada en la descripción de la tarea y el resumen.")
                     }
 
-                    // 🔥 LOGIC TO CONTROL GRADING VS Q&A
-                    val lowerMessage = messageText.lowercase()
-                    val isGradingRequest = lowerMessage.contains("calific") ||
-                            lowerMessage.contains("nota") ||
-                            lowerMessage.contains("evalu") ||
-                            lowerMessage.contains("puntaje") ||
-                            lowerMessage.contains("grade") ||
-                            lowerMessage.contains("score") ||
-                            lowerMessage.contains("rate")
+                    // 🔥 LOGIC TO CONTROL GRADING VS Q&A (uses word-boundary detection)
+                    // REMOVED STATIC INJECTION: Let backend decide via LLM signal
+                    /*
+                    val isGradingRequest = isGradingIntent(messageText)
 
                     if (isGradingRequest) {
                         append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
                     } else {
                         append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
                     }
+                    */
                 }
 
                 // También cargar jsonContent y metadata si están disponibles
@@ -1546,21 +1572,17 @@ class ChatBotFragment : Fragment() {
                     // Indicar que no hay archivo del estudiante disponible
                     append("\n⚠️ NOTA: No se encontró archivo del estudiante para esta tarea")
 
-                    // 🔥 LOGIC TO CONTROL GRADING VS Q&A
-                    val lowerMessage = messageText.lowercase()
-                    val isGradingRequest = lowerMessage.contains("calific") ||
-                            lowerMessage.contains("nota") ||
-                            lowerMessage.contains("evalu") ||
-                            lowerMessage.contains("puntaje") ||
-                            lowerMessage.contains("grade") ||
-                            lowerMessage.contains("score") ||
-                            lowerMessage.contains("rate")
+                    // 🔥 LOGIC TO CONTROL GRADING VS Q&A (uses word-boundary detection)
+                    // REMOVED STATIC INJECTION: Let backend decide via LLM signal
+                    /*
+                    val isGradingRequest = isGradingIntent(messageText)
 
                     if (isGradingRequest) {
                         append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
                     } else {
                         append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
                     }
+                    */
                 }
 
                 Log.d("ChatBotFragment", "✅ taskDescription construido: ${effectiveTaskDescription.length} caracteres")
@@ -1647,21 +1669,17 @@ class ChatBotFragment : Fragment() {
                                                     append("\n⚠️ NOTA: El contenido del archivo no está disponible para análisis detallado")
                                                 }
 
-                                                // 🔥 LOGIC TO CONTROL GRADING VS Q&A
-                                                val lowerMessage = messageText.lowercase()
-                                                val isGradingRequest = lowerMessage.contains("calific") ||
-                                                        lowerMessage.contains("nota") ||
-                                                        lowerMessage.contains("evalu") ||
-                                                        lowerMessage.contains("puntaje") ||
-                                                        lowerMessage.contains("grade") ||
-                                                        lowerMessage.contains("score") ||
-                                                        lowerMessage.contains("rate")
+                                                // 🔥 LOGIC TO CONTROL GRADING VS Q&A (uses word-boundary detection)
+                                                // REMOVED STATIC INJECTION: Let backend decide via LLM signal
+                                                /*
+                                                val isGradingRequest = isGradingIntent(messageText)
 
                                                 if (isGradingRequest) {
                                                     append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
                                                 } else {
                                                     append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
                                                 }
+                                                */
                                             }
                                             Log.d("ChatBotFragment", "📄 Contexto de archivo cargado para tarea seleccionada: ${fc.fileName}")
                                             Log.d("ChatBotFragment", "📋 effectiveTaskDescription: ${effectiveTaskDescription.take(300)}...")
@@ -1705,21 +1723,17 @@ class ChatBotFragment : Fragment() {
                                 append("📝 DESCRIPCIÓN DEL PROFESOR:\n$taskDescFromProf\n")
                             }
 
-                            // 🔥 LOGIC TO CONTROL GRADING VS Q&A
-                            val lowerMessage = messageText.lowercase()
-                            val isGradingRequest = lowerMessage.contains("calific") ||
-                                    lowerMessage.contains("nota") ||
-                                    lowerMessage.contains("evalu") ||
-                                    lowerMessage.contains("puntaje") ||
-                                    lowerMessage.contains("grade") ||
-                                    lowerMessage.contains("score") ||
-                                    lowerMessage.contains("rate")
+                            // 🔥 LOGIC TO CONTROL GRADING VS Q&A (uses word-boundary detection)
+                            // REMOVED STATIC INJECTION: Let backend decide via LLM signal
+                            /*
+                            val isGradingRequest = isGradingIntent(messageText)
 
                             if (isGradingRequest) {
                                 append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
                             } else {
                                 append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
                             }
+                            */
                         }
                         effectiveTaskDescription = baseTaskContext
 
@@ -1791,21 +1805,17 @@ class ChatBotFragment : Fragment() {
                                                     append("\n📄 RESUMEN DEL CONTENIDO:\n${currentFc.contentSummary}")
                                                 }
 
-                                                // 🔥 LOGIC TO CONTROL GRADING VS Q&A
-                                                val lowerMessage = messageText.lowercase()
-                                                val isGradingRequest = lowerMessage.contains("calific") ||
-                                                        lowerMessage.contains("nota") ||
-                                                        lowerMessage.contains("evalu") ||
-                                                        lowerMessage.contains("puntaje") ||
-                                                        lowerMessage.contains("grade") ||
-                                                        lowerMessage.contains("score") ||
-                                                        lowerMessage.contains("rate")
+                                                // 🔥 LOGIC TO CONTROL GRADING VS Q&A (uses word-boundary detection)
+                                                // REMOVED STATIC INJECTION: Let backend decide via LLM signal
+                                                /*
+                                                val isGradingRequest = isGradingIntent(messageText)
 
                                                 if (isGradingRequest) {
                                                     append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
                                                 } else {
                                                     append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
                                                 }
+                                                */
                                             }
                                             currentFileContext = currentFc
                                             Log.d("ChatBotFragment", "✅ FileContext cargado con contexto completo para #$idx")
@@ -1857,21 +1867,17 @@ class ChatBotFragment : Fragment() {
                             append("📝 DESCRIPCIÓN DEL PROFESOR:\n$taskDescFromProf\n")
                         }
 
-                        // 🔥 LOGIC TO CONTROL GRADING VS Q&A
-                        val lowerMessage = messageText.lowercase()
-                        val isGradingRequest = lowerMessage.contains("calific") ||
-                                lowerMessage.contains("nota") ||
-                                lowerMessage.contains("evalu") ||
-                                lowerMessage.contains("puntaje") ||
-                                lowerMessage.contains("grade") ||
-                                lowerMessage.contains("score") ||
-                                lowerMessage.contains("rate")
+                        // 🔥 LOGIC TO CONTROL GRADING VS Q&A (uses word-boundary detection)
+                        // REMOVED STATIC INJECTION: Let backend decide via LLM signal
+                        /*
+                        val isGradingRequest = isGradingIntent(messageText)
 
                         if (isGradingRequest) {
                             append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario ha solicitado explícitamente una calificación. Por favor evalúa la entrega (1-10) y da retroalimentación formal basada en los requisitos.")
                         } else {
                             append("\n\n⚠️ INSTRUCCIÓN DEL SISTEMA: El usuario es un DOCENTE revisando la entrega de un estudiante. El usuario está haciendo una pregunta general o de contexto. NO proporciones una calificación numérica (1-10) ni una evaluación formal en esta respuesta. Responde a la duda del usuario de manera útil basándote en el contexto provisto.")
                         }
+                        */
                     }
 
                     effectiveTaskDescription = baseTaskContext
@@ -1987,7 +1993,7 @@ class ChatBotFragment : Fragment() {
             }
 
             // Data class local para capturar tanto el texto como la nota del backend
-            data class LLMResponse(val text: String, val nota: Float?)
+            data class LLMResponse(val text: String, val nota: Float?, val esCalificacion: Boolean = false)
 
             try {
                 val llmResponse = withContext(Dispatchers.IO) {
@@ -2065,13 +2071,13 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 3. Si usaste un formato especial, conviértelo a PDF o TXT
 4. Vuelve a subir la tarea con el contenido completo
 
-📝 **Feedback:** Una entrega vacía siempre recibe nota 0.""", 0f)
+📝 **Feedback:** Una entrega vacía siempre recibe nota 0.""", 0f, true)
                             } else {
-                                LLMResponse("Hubo un problema al procesar tu solicitud. Por favor, intenta nuevamente.", null)
+                                LLMResponse("Hubo un problema al procesar tu solicitud. Por favor, intenta nuevamente.", null, false)
                             }
                         } else {
-                            // Capturar la nota del backend directamente
-                            LLMResponse(res.respuesta_texto, res.nota)
+                            // Capturar la nota y señal de calificación del backend directamente
+                            LLMResponse(res.respuesta_texto, res.nota, res.esCalificacion == true)
                         }
                     } catch (e: HttpException) {
                         Log.e("ChatBotFragment", "❌ HttpException: ${e.message()}")
@@ -2093,6 +2099,16 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 .connectTimeout(800, java.util.concurrent.TimeUnit.MILLISECONDS)
                                 .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                                 .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                                .addInterceptor { chain ->
+                                    val orig = chain.request()
+                                    val b = orig.newBuilder()
+                                        .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
+                                    val sUrl = com.example.tareamov.BuildConfig.SUPABASE_URL
+                                    val sKey = com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY
+                                    if (sUrl.isNotBlank()) b.header("X-Supabase-Url", sUrl)
+                                    if (sKey.isNotBlank()) b.header("X-Supabase-Key", sKey)
+                                    chain.proceed(b.build())
+                                }
                                 .build()
 
                             val retrofit = Retrofit.Builder()
@@ -2122,7 +2138,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                             val cloudRes = api.procesarPrompt(fallbackBody)
                             if (!cloudRes.respuesta_texto.isNullOrBlank()) {
-                                LLMResponse(cloudRes.respuesta_texto, cloudRes.nota)
+                                LLMResponse(cloudRes.respuesta_texto, cloudRes.nota, cloudRes.esCalificacion == true)
                             } else {
                                 LLMResponse("El modelo en la nube no devolvió respuesta válida.", null)
                             }
@@ -2143,16 +2159,22 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                 val response = llmResponse.text.replace("#", "").replace("**", "")
 
-                // Usar la nota del backend si está disponible, sino extraerla del texto
-                val hasCalification = detectCalification(messageText, response) || llmResponse.nota != null
-                val calificationValue = if (llmResponse.nota != null) {
-                    // Usar la nota del backend directamente
+                // 🎯 SEMANTIC: Solo el LLM decide si mostrar botones de calificación (via esCalificacion del backend)
+                // NO usamos heurísticas locales que causan falsos positivos (ej: "que se nota al hablar de Marie Curie?")
+                val hasCalification = llmResponse.esCalificacion
+                
+                // 🎯 Solo extraer valor de calificación si el LLM señalizó que es calificación
+                val calificationValue = if (hasCalification && llmResponse.nota != null) {
+                    // Usar la nota del backend directamente (solo cuando esCalificacion=true)
                     val notaValue = llmResponse.nota
-                    Log.d("ChatBotFragment", "📊 Usando nota del backend: $notaValue")
+                    Log.d("ChatBotFragment", "📊 Usando nota del backend: $notaValue (esCalificacion=true)")
                     if (notaValue % 1 == 0f) "${notaValue.toInt()}/10" else String.format("%.1f/10", notaValue)
-                } else {
-                    // Fallback: extraer del texto
+                } else if (hasCalification) {
+                    // Fallback: extraer del texto solo si el LLM marcó como calificación
                     extractCalificationValue(response)
+                } else {
+                    // No es calificación - no extraer nota del texto para evitar falsos positivos
+                    null
                 }
 
                 val botMessage = ChatMessage(
@@ -2253,7 +2275,41 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
 
     /**
+     * Detecta si el mensaje del usuario solicita una calificación/evaluación formal.
+     * Usa word-boundary regex para evitar falsos positivos como "se nota al hablar de Marie Curie".
+     * La palabra "nota" solo se detecta en contextos de calificación ("mi nota", "dame nota", "la nota", etc.)
+     */
+    private fun isGradingIntent(message: String): Boolean {
+        // 🔥 STATIC REGEX DISABLED: Let LLM decide contextually
+        return false
+        /*
+        val lower = message.lowercase()
+        // Explicit negation: user says "don't grade"
+        if (lower.contains("no quiero nota") || lower.contains("sin nota") || lower.contains("no califiques")) return false
+        // Strong grading keywords (word boundaries to avoid substring matches)
+        val gradingPatterns = listOf(
+            Regex("\\bcalifi[ck]a"),          // califica, calificar, calificación
+            Regex("\\bpuntaje\\b"),
+            Regex("\\bevalua"),               // evalua, evaluar, evaluación 
+            Regex("\\bgrade\\b"),
+            Regex("\\bscore\\b"),
+            // "nota" solo en contexto de calificación, NO como verbo "se nota"
+            Regex("\\bmi nota\\b"),
+            Regex("\\bla nota\\b"),
+            Regex("\\bdame.*nota"),
+            Regex("\\bpon(er|ga|le)?.*nota"),
+            Regex("\\bnota\\s*:?\\s*\\d"),   // "nota: 8" or "nota 8" 
+            Regex("\\bcuánto saq"),
+            Regex("\\brevisar entrega")
+        )
+        return gradingPatterns.any { it.containsMatchIn(lower) }
+        */
+    }
+
+    /**
      * Detecta si el mensaje del usuario solicita calificación y si la respuesta del bot contiene una calificación
+     * NOTA: Este método legacy no controla los botones de calificación.
+     * Los botones son controlados por esCalificacion del backend (señal del LLM).
      */
     private fun detectCalification(userMessage: String, botResponse: String): Boolean {
         val userMessageLower = userMessage.lowercase()
@@ -2269,31 +2325,43 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             botResponseLower.contains("**calificacion:") ||
             botResponseLower.contains("📊 **calificación:") ||
             botResponseLower.contains("**nota:") ||
-            botResponseLower.contains("📊 **nota:") ||
-            botResponseLower.contains("nota:") && Regex("nota:\\s*\\d+").containsMatchIn(botResponseLower)) {
+            botResponseLower.contains("📊 **nota:")) {
             return true
         }
 
         // Palabras clave que indican solicitud de calificación
-        val calificationKeywords = listOf(
-            "calificación", "calificacion", "nota", "puntaje", "puntuación", "puntuacion",
-            "nota", "score", "rating", "evaluación", "evaluacion", "qué nota", "que nota",
-            "cuánto saqué", "cuanto saque", "mi nota", "mi calificación", "mi calificacion",
-            "revisar", "corregir", "feedback", "retroalimentación", "retroalimentacion"
+        // SE ELIMINARON términos genéricos como "feedback", "revisar", "retroalimentación" para evitar falsos positivos
+        val calificationPatterns = listOf(
+            Regex("\\bcalifi[ck]aci[óo]n\\b"),
+            Regex("\\bnota\\b"),
+            Regex("\\bpuntaje\\b"),
+            Regex("\\bpuntuaci[óo]n\\b"),
+            Regex("\\bscore\\b"),
+            Regex("\\brating\\b"),
+            Regex("\\bevaluaci[óo]n\\b"),
+            Regex("\\bcu[áa]nto saqu[ée]\\b"),
+            Regex("\\bmi nota\\b")
         )
 
         // Verificar si el usuario pidió calificación
-        val userAskedForCalification = calificationKeywords.any { keyword ->
-            userMessageLower.contains(keyword)
+        val userAskedForCalification = calificationPatterns.any { pattern ->
+            pattern.containsMatchIn(userMessageLower)
+        }
+        
+        // Si el usuario pide explícitamente NO calificar, respetamos
+        if (userMessageLower.contains("no quiero nota") || userMessageLower.contains("sin nota")) {
+            return false
         }
 
         // Verificar si la respuesta contiene formato de calificación
-        val botHasCalification = botResponseLower.contains("calificación:") ||
-                botResponseLower.contains("calificacion:") ||
-                Regex("\\d+/\\d+").containsMatchIn(botResponse) ||
-                Regex("calificación.*\\d+").containsMatchIn(botResponseLower) ||
-                Regex("nota.*\\d+").containsMatchIn(botResponseLower)
+        val botHasCalification = 
+                Regex("califi[ck]aci[óo]n.*:?\\s*\\d+").containsMatchIn(botResponseLower) ||
+                Regex("nota.*:?\\s*\\d+").containsMatchIn(botResponseLower) ||
+                Regex("puntaje.*:?\\s*\\d+").containsMatchIn(botResponseLower)
 
+        // IMPORTANTE: userAskedForCalification es OBLIGATORIO. El bot no debe mostrar botones
+        // solo porque menciona una nota en su respuesta (semántica), a menos que el usuario lo haya pedido.
+        // O si la detección "FUERTE" arriba (backend format) ya retornó true.
         return userAskedForCalification && botHasCalification
     }
 

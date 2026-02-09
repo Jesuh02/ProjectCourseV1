@@ -3910,6 +3910,43 @@ object SupabaseClient {
     }
 
     /**
+     * Fetch ALL role IDs for a user from the usuarios_roles junction table.
+     * This is the authoritative source for multi-role assignments.
+     */
+    suspend fun fetchUserRoleIds(userId: Long): List<Int> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/rest/v1/usuarios_roles?usuario_id=eq.$userId&select=rol_id"
+            
+            val request = Request.Builder()
+                .url(url)
+                .header("apikey", effectiveApiKey())
+                .header("Authorization", "Bearer ${effectiveApiKey()}")
+                .get()
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: "[]"
+                    val items = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                    val roleIds = mutableListOf<Int>()
+                    for (item in items) {
+                        val rolId = item.asJsonObject?.get("rol_id")?.asInt
+                        if (rolId != null) roleIds.add(rolId)
+                    }
+                    Log.d("SupabaseClient", "fetchUserRoleIds for userId=$userId: $roleIds")
+                    return@withContext roleIds
+                } else {
+                    Log.w("SupabaseClient", "Error fetching user roles: ${response.code}")
+                    emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseClient", "Error in fetchUserRoleIds", e)
+            emptyList()
+        }
+    }
+
+    /**
      * Fetch max updated_at for a table
      */
     suspend fun fetchTableMaxUpdatedAt(table: String, field: String = "updated_at"): String? = withContext(Dispatchers.IO) {
@@ -6844,8 +6881,9 @@ object SupabaseClient {
         }
     }
 
-    // Backend URL for sending push notifications and emails
-    private const val BACKEND_URL = "https://mcp-backenddeploy-production.up.railway.app"
+    // Backend URL for sending push notifications and emails — resolved from BuildConfig per flavor
+    private val BACKEND_URL: String
+        get() = com.example.tareamov.BuildConfig.BACKEND_URL.ifBlank { "https://mcp-backenddeploy-production.up.railway.app" }
 
     /**
      * Insert a notification into Supabase

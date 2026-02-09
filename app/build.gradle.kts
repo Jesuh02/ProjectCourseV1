@@ -121,7 +121,7 @@ android {
     buildConfigField("String", "R2_BUCKET_NAME", "\"$r2BucketName\"")
     buildConfigField("String", "R2_ENDPOINT", "\"$r2Endpoint\"")
 
-    // Backend & shared URLs (defaults = QA; production flavor overrides Supabase only)
+    // Backend & shared URLs (default; each flavor overrides BACKEND_URL to its own Railway deployment)
     buildConfigField("String", "BACKEND_URL", "\"https://mcp-backenddeploy-production-4ed0.up.railway.app\"")
     buildConfigField("String", "MCP_API_KEY", "\"tareamov-mcp-api-key-2025-secure\"")
     buildConfigField("String", "R2_PUBLIC_URL", "\"https://pub-9f393625246c4018b5613be60b01bda1.r2.dev\"")
@@ -145,7 +145,8 @@ android {
             applicationIdSuffix = ".qa"
             versionNameSuffix = "-qa"
             // QA → uses Supabase credentials from local.properties (set in defaultConfig)
-            // QA → same backend & R2 as production (single Railway deployment)
+            // QA → dedicated Railway deployment
+            buildConfigField("String", "BACKEND_URL", "\"https://mcp-backenddeploy-production-4ed0.up.railway.app\"")
         }
 
         create("production") {
@@ -153,6 +154,8 @@ android {
             // Production Supabase project (overrides defaultConfig values)
             buildConfigField("String", "SUPABASE_URL", "\"https://ucywimgofjuxkuoyarvf.supabase.co\"")
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"sb_publishable_AuOX-s7MSwsNDDWjynTOeA_Ed4XxmoG\"")
+            // Production → dedicated Railway deployment
+            buildConfigField("String", "BACKEND_URL", "\"https://mcp-backenddeploy-production.up.railway.app\"")
         }
     }
 

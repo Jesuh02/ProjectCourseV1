@@ -181,7 +181,8 @@ class SessionManager private constructor(private val context: Context) {
     suspend fun refreshFromSupabase(): Boolean {
         val current = getUsername() ?: return false
         try {
-            val (u, r) = com.example.tareamov.service.SupabaseClient.fetchUsuarioWithRoleByUsername(current)
+            val supabase = com.example.tareamov.service.SupabaseClient
+            val (u, r) = supabase.fetchUsuarioWithRoleByUsername(current)
             if (u == null) return false
             val roleName = r?.nombre ?: getUserRole() ?: ""
             val avatar = u.avatar
@@ -191,6 +192,23 @@ class SessionManager private constructor(private val context: Context) {
             editor.putString(KEY_USER_ROLE, roleName)
             if (avatar != null) editor.putString(KEY_USER_AVATAR, avatar)
             editor.apply()
+
+            // Fetch ALL roles from usuarios_roles junction table (authoritative source)
+            // This ensures roles 2, 3, etc. are loaded consistently in both QA and Production
+            try {
+                val allRoleIds = supabase.fetchUserRoleIds(u.id)
+                android.util.Log.d("SessionManager", "refreshFromSupabase: all roles for userId=${u.id}: $allRoleIds")
+                for (rid in allRoleIds) {
+                    addRole(rid)
+                }
+                // If role 3 is present, ensure admin status is set
+                if (allRoleIds.contains(3)) {
+                    setAdminStatus(true)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SessionManager", "Could not fetch roles from usuarios_roles: ${e.message}")
+            }
+
             notifyUserChanged(getLastActiveUser(), u.usuario)
             return true
         } catch (e: Exception) {

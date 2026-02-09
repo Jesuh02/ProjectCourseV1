@@ -44,7 +44,7 @@ private val paymentApi by lazy {
     val baseUrl = if (USE_LOCAL_ENV) {
         "http://10.0.2.2:3001/"
     } else {
-        "https://mcp-backenddeploy-production.up.railway.app/" 
+        com.example.tareamov.BuildConfig.BACKEND_URL.let { if (it.endsWith("/")) it else "$it/" } 
     }
     android.util.Log.d("PaymentSetup", "Payment API initialized with URL: $baseUrl")
     PaymentApi.create(baseUrl)

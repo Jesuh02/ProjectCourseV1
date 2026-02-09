@@ -92,6 +92,18 @@ class MCPHttpClient(private val context: Context) {
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
+    /**
+     * Attach Supabase credentials from BuildConfig as custom headers so the MCP backend
+     * can route queries to the correct Supabase project (QA vs Production).
+     */
+    private fun Request.Builder.withSupabaseHeaders(): Request.Builder {
+        val url = com.example.tareamov.BuildConfig.SUPABASE_URL
+        val key = com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY
+        if (url.isNotBlank()) header("X-Supabase-Url", url)
+        if (key.isNotBlank()) header("X-Supabase-Key", key)
+        return this
+    }
+
     private suspend fun <T> withMcpBase(action: suspend (String) -> T?): T? {
         val tried = HashSet<String>()
         var lastException: Exception? = null
@@ -275,6 +287,7 @@ class MCPHttpClient(private val context: Context) {
                 .header("Connection", "close") // Forzar cierre de conexión
                 .header("X-MCP-Client", "android")
                 .header("X-MCP-Request-Id", payload.optString("id", "-1"))
+                .withSupabaseHeaders()
                 .post(payload.toString().toRequestBody(jsonMediaType))
                 .build()
 
@@ -329,6 +342,7 @@ class MCPHttpClient(private val context: Context) {
                 
                 val request = Request.Builder()
                     .url(buildUrl(base, "/upload"))
+                    .withSupabaseHeaders()
                     .post(requestBody)
                     .build()
                 
@@ -374,6 +388,7 @@ class MCPHttpClient(private val context: Context) {
                 
                 val request = Request.Builder()
                     .url(buildUrl(base, "/procesar-prompt"))
+                    .withSupabaseHeaders()
                     .post(payload.toString().toRequestBody(jsonMediaType))
                     .build()
                 
@@ -468,6 +483,7 @@ class MCPHttpClient(private val context: Context) {
             val healthRequest = Request.Builder()
                 .url(buildUrl(base, "/health"))
                 .header("Connection", "close") // Forzar cierre de conexión
+                .withSupabaseHeaders()
                 .get()
                 .build()
 
@@ -483,6 +499,7 @@ class MCPHttpClient(private val context: Context) {
             val initRequest = Request.Builder()
                 .url(buildUrl(base, "/initialize"))
                 .header("Connection", "close") // Forzar cierre de conexión
+                .withSupabaseHeaders()
                 .post(initPayload.toString().toRequestBody(jsonMediaType))
                 .build()
 

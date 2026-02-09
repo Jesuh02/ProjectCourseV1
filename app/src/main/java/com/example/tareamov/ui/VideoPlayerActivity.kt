@@ -209,7 +209,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             val streamUri = withContext(Dispatchers.IO) {
                 try {
                     val client = OkHttpClient()
-                    val baseUrl = "https://mcp-backenddeploy-production.up.railway.app"
+                    val baseUrl = com.example.tareamov.BuildConfig.BACKEND_URL
                     val url = "$baseUrl/video/stream-info?username=$username&videoId=$videoId&directUrl=${originalUri}"
                     
                     Log.d("VideoPlayerActivity", "Fetching stream info from: $url")

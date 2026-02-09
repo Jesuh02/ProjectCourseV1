@@ -102,13 +102,30 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             avatarUri
                         )
                         
-                        // Add role ID to session for hasRole() checks
+                        // Add legacy role ID from usuarios table
                         val roleId = fullUser?.rol_id?.toInt() ?: 1
                         sessionManager.addRole(roleId)
                         
                         // Ensure admin role (3) is set if the role name is 'admin'
                         if (usuarioWithRole.rolNombre.equals("admin", ignoreCase = true)) {
                             sessionManager.addRole(3)
+                        }
+
+                        // Fetch ALL roles from usuarios_roles junction table (authoritative source)
+                        // This ensures roles 2, 3, etc. are loaded consistently in both QA and Production
+                        try {
+                            val supabase = com.example.tareamov.service.SupabaseClient
+                            if (supabase.isConfigured()) {
+                                val allRoleIds = withContext(Dispatchers.IO) {
+                                    supabase.fetchUserRoleIds(usuarioWithRole.id)
+                                }
+                                Log.d("AuthViewModel", "All roles from usuarios_roles for userId=${usuarioWithRole.id}: $allRoleIds")
+                                for (rid in allRoleIds) {
+                                    sessionManager.addRole(rid)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("AuthViewModel", "Could not fetch roles from usuarios_roles: ${e.message}")
                         }
 
                         _loginResult.value = LoginResult(
@@ -177,14 +194,26 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                                         avatarUri
                                     )
                                     
-                                    // Save role ID to session for hasRole(id) checks
-                                    // If role ID is not present in remoteUsuario or fetch fails, default to 0
-                                    // Assuming remoteUsuario.rol_id is available and correct
+                                    // Add legacy role ID from usuarios table
                                     sessionManager.addRole(remoteUsuario.rol_id.toInt())
                                     
                                     // Ensure admin role (3) is set if the role name is 'admin' or ID is 3
                                     if (roleName.equals("admin", ignoreCase = true) || remoteUsuario.rol_id == 3L) {
                                         sessionManager.addRole(3)
+                                    }
+
+                                    // Fetch ALL roles from usuarios_roles junction table (authoritative source)
+                                    // This ensures roles 2, 3, etc. are loaded consistently in both QA and Production
+                                    try {
+                                        val allRoleIds = withContext(Dispatchers.IO) {
+                                            supabaseClient.fetchUserRoleIds(remoteUsuario.id)
+                                        }
+                                        Log.d("AuthViewModel", "All roles from usuarios_roles for remote userId=${remoteUsuario.id}: $allRoleIds")
+                                        for (rid in allRoleIds) {
+                                            sessionManager.addRole(rid)
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.w("AuthViewModel", "Could not fetch roles from usuarios_roles (remote): ${e.message}")
                                     }
 
                                     _loginResult.value = LoginResult(success = true, userId = remoteUsuario.id, userRole = roleName)

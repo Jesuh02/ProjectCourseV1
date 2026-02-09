@@ -2197,7 +2197,8 @@ class CourseDetailFragment : Fragment() {
                     for (contentItem in uniqueContentItems) {
                         Log.d("CourseDetailFragment", "Adding content item: name=${contentItem.name}, type=${contentItem.contentType}, uri=${contentItem.uriString}, isR2=${CloudflareR2Service.isR2Url(contentItem.uriString)}")
                         
-                        val contentItemView = LayoutInflater.from(context).inflate(
+                        val ctx = context ?: break
+                        val contentItemView = LayoutInflater.from(ctx).inflate(
                             R.layout.item_content_mini,
                             taskContentContainer,
                             false
@@ -2247,25 +2248,29 @@ class CourseDetailFragment : Fragment() {
                     }
                 } else {
                     // Show a message when no content is available
-                    val noContentView = TextView(context).apply {
-                        text = "No hay archivos adjuntos"
-                        setTextColor(resources.getColor(android.R.color.darker_gray, null))
-                        setPadding(16, 16, 16, 16)
-                        textSize = 13f
+                    context?.let { ctx ->
+                        val noContentView = TextView(ctx).apply {
+                            text = "No hay archivos adjuntos"
+                            setTextColor(ctx.resources.getColor(android.R.color.darker_gray, null))
+                            setPadding(16, 16, 16, 16)
+                            textSize = 13f
+                        }
+                        taskContentContainer?.addView(noContentView)
                     }
-                    taskContentContainer?.addView(noContentView)
                 }
             } catch (e: Exception) {
                 android.util.Log.e("CourseDetailFragment", "Error loading content items for taskId=${task.id}", e)
                 // Show error message in container
                 taskContentContainer?.removeAllViews()
-                val errorView = TextView(context).apply {
-                    text = "Error al cargar archivos"
-                    setTextColor(resources.getColor(android.R.color.holo_red_light, null))
-                    setPadding(16, 16, 16, 16)
-                    textSize = 13f
+                context?.let { ctx ->
+                    val errorView = TextView(ctx).apply {
+                        text = "Error al cargar archivos"
+                        setTextColor(ctx.resources.getColor(android.R.color.holo_red_light, null))
+                        setPadding(16, 16, 16, 16)
+                        textSize = 13f
+                    }
+                    taskContentContainer?.addView(errorView)
                 }
-                taskContentContainer?.addView(errorView)
             }
         }
 
