@@ -395,8 +395,10 @@ object SupabaseClient {
                 map["course_id"] = video.courseId
             }
             
-            // Do NOT include id - let database auto-generate it
-            // if (video.id > 0) { map["id"] = video.id }
+            // Include id if provided (calculated via getNextVideoId)
+            if (video.id > 0) {
+                map["id"] = video.id
+            }
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)
             

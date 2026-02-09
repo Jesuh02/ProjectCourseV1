@@ -391,37 +391,8 @@ class VideoDetailsFragment : Fragment() {
             return
         }
 
-        // Show dialog asking if user wants to create a course
-        showCreateCourseDialog(title, description, currentUsername)
-    }
-
-    /**
-     * Shows a dialog asking if the user wants to create a course with this video
-     */
-    private fun showCreateCourseDialog(title: String, description: String, currentUsername: String) {
-        val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_create_course_minimal, null)
-        
-        val dialog = android.app.AlertDialog.Builder(requireContext())
-            .setView(dialogView)
-            .setCancelable(false)
-            .create()
-        
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        
-        val confirmButton = dialogView.findViewById<android.widget.TextView>(R.id.confirmCreateCourseButton)
-        val cancelButton = dialogView.findViewById<android.widget.TextView>(R.id.cancelCreateCourseButton)
-        
-        confirmButton.setOnClickListener {
-            dialog.dismiss()
-            proceedWithVideoSave(title, description, currentUsername, createCourse = true)
-        }
-        
-        cancelButton.setOnClickListener {
-            dialog.dismiss()
-            proceedWithVideoSave(title, description, currentUsername, createCourse = false)
-        }
-        
-        dialog.show()
+        // Proceed with video save, default to creating a course
+        proceedWithVideoSave(title, description, currentUsername, createCourse = true)
     }
 
     /**
@@ -856,8 +827,18 @@ class VideoDetailsFragment : Fragment() {
                     Log.d("VideoDetailsFragment", "Attempting to insert video via backend with courseId: ${courseRemoteId ?: "null (standalone video)"}")
                     
                     // Use backend endpoint to insert video (better reliability and centralized logic)
-                    val remoteId = withContext(Dispatchers.IO) {
+                    var remoteId = withContext(Dispatchers.IO) {
                         insertVideoViaBackend(videoData)
+                    }
+                    
+                    // FALLBACK: If backend fails (e.g. env mismatch between QA app and Prod backend),
+                    // try inserting directly via SupabaseClient.
+                    if (remoteId == null || remoteId <= 0) {
+                        Log.w("VideoDetailsFragment", "⚠️ Backend insert failed, attempting direct Supabase insert fallback...")
+                        updateLoadingProgress(97, "Usando conexión directa (fallback)...", false)
+                        remoteId = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.SupabaseClient.insertVideo(videoData)
+                        }
                     }
                     
                     if (remoteId != null && remoteId > 0) {

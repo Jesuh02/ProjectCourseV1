@@ -72,26 +72,9 @@ class ContentUploadFragment : Fragment() {
         // Set up publication upload button
         val publicationUploadOption = view.findViewById<LinearLayout>(R.id.publicationUploadOption)
         publicationUploadOption.setOnClickListener {
-            // Offer choice: simple publication or didactic course
-            val options = arrayOf("Publicación simple", "Crear curso didáctico")
-            AlertDialog.Builder(requireContext())
-                .setTitle("¿Qué deseas crear?")
-                .setItems(options) { _, which ->
-                    when (which) {
-                        0 -> {
-                            // Publicación simple - reuse existing course creation flow with flag=false
-                            val bundle = Bundle().apply { putBoolean("isDidacticCourse", false) }
-                            findNavController().navigate(R.id.action_contentUploadFragment_to_courseCreationFragment, bundle)
-                        }
-                        1 -> {
-                            // Crear curso didáctico - navigate with flag=true
-                            val bundle = Bundle().apply { putBoolean("isDidacticCourse", true) }
-                            findNavController().navigate(R.id.action_contentUploadFragment_to_courseCreationFragment, bundle)
-                        }
-                    }
-                }
-                .setNegativeButton("Cancelar", null)
-                .show()
+            // Ir directamente a creación de curso simple (sin diálogo)
+            val bundle = Bundle().apply { putBoolean("isDidacticCourse", false) }
+            findNavController().navigate(R.id.action_contentUploadFragment_to_courseCreationFragment, bundle)
         }
     }
 
