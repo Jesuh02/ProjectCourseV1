@@ -23,12 +23,10 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
 import com.example.tareamov.adapter.TopicSelectionAdapter
-import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Topic
-import kotlinx.coroutines.Dispatchers
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import com.example.tareamov.data.sync.SyncRepository
 
 class SelectTopicFragment : Fragment() {
 
@@ -138,45 +136,40 @@ class SelectTopicFragment : Fragment() {
         // Fetch topics: prefer Supabase remote topics when configured, otherwise fall back to ViewModel/local DB
         lifecycleScope.launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val syncRepo = SyncRepository(
-                    db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
-                    db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-                    db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
-                )
-
-                if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                    // Try fetching topics remotely for the courseId
-                    val remoteTopics = withContext(Dispatchers.IO) { syncRepo.fetchTopicsByCourseFromSupabase(courseId) }
-                    if (!remoteTopics.isNullOrEmpty()) {
-                        Log.d("SelectTopicFragment", "Loaded ${remoteTopics.size} remote topics for course $courseId")
-                        topicSelectionAdapter.submitList(remoteTopics)
-                        animateFadeIn(topicsRecyclerView)
-                        emptyStateLayout.visibility = View.GONE
-                        // Auto-open tasks if requested
-                        if (autoOpenTasks && !autoOpenedTasks && remoteTopics.isNotEmpty()) {
-                            val firstTopic = remoteTopics[0]
-                            val bundle = Bundle().apply {
-                                putLong("courseId", courseId)
-                                putString("courseName", courseName)
-                                putLong("topicId", firstTopic.id)
-                                putLong("taskId", -1L)
+                BackendApiService.initialize(requireContext())
+                when (val result = BackendApiService.getTopicsByCourse(courseId)) {
+                    is ApiResult.Success -> {
+                        val remoteTopics = result.data
+                        if (remoteTopics.isNotEmpty()) {
+                            Log.d("SelectTopicFragment", "Loaded ${remoteTopics.size} topics from BackendApiService for course $courseId")
+                            topicSelectionAdapter.submitList(remoteTopics)
+                            animateFadeIn(topicsRecyclerView)
+                            emptyStateLayout.visibility = View.GONE
+                            // Auto-open tasks if requested
+                            if (autoOpenTasks && !autoOpenedTasks) {
+                                val firstTopic = remoteTopics[0]
+                                val bundle = Bundle().apply {
+                                    putLong("courseId", courseId)
+                                    putString("courseName", courseName)
+                                    putLong("topicId", firstTopic.id)
+                                    putLong("taskId", -1L)
+                                }
+                                autoOpenedTasks = true
+                                findNavController().navigate(R.id.action_selectTopicFragment_to_selectTaskFragment, bundle)
+                                return@launch
                             }
-                            autoOpenedTasks = true
-                            findNavController().navigate(R.id.action_selectTopicFragment_to_selectTaskFragment, bundle)
-                            return@launch
+                        } else {
+                            Log.d("SelectTopicFragment", "No topics from BackendApiService for course $courseId, falling back to ViewModel")
+                            viewModel.fetchTopicsForCourse(courseId)
                         }
-                    } else {
-                        // Fallback to local DB via ViewModel
-                        Log.d("SelectTopicFragment", "No remote topics for course $courseId, falling back to local DB")
+                    }
+                    is ApiResult.Error -> {
+                        Log.w("SelectTopicFragment", "BackendApiService error: ${result.message}, falling back to ViewModel")
                         viewModel.fetchTopicsForCourse(courseId)
                     }
-                } else {
-                    // Supabase not configured: use local DB through ViewModel
-                    viewModel.fetchTopicsForCourse(courseId)
                 }
             } catch (e: Exception) {
-                // On error, fall back to local
+                // On error, fall back to ViewModel
                 viewModel.fetchTopicsForCourse(courseId)
             }
         }

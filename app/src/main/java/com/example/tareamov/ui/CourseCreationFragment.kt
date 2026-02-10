@@ -16,14 +16,14 @@ import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import com.bumptech.glide.Glide
 import com.example.tareamov.R
-import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Topic
 import com.example.tareamov.data.entity.Task
 import com.example.tareamov.data.entity.ContentItem
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.data.entity.Course
-import com.example.tareamov.MainActivity
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.CloudflareR2Service
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -201,33 +201,34 @@ class CourseCreationFragment : Fragment() {
     private fun loadCourseData(courseId: Long) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val activity = requireActivity()
-                if (activity is MainActivity) {
-                    val course = withContext(Dispatchers.IO) {
-                        activity.syncRepository.fetchCourseById(courseId)
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getCourseById(courseId)
+                }
+                if (result is ApiResult.Success) {
+                    val course = result.data
+                    
+                    view?.findViewById<EditText>(R.id.courseNameEditText)?.setText(course.title)
+                    view?.findViewById<EditText>(R.id.courseCategoryEditText)?.setText(course.category)
+                    view?.findViewById<EditText>(R.id.courseDescriptionEditText)?.setText(course.description)
+                    
+                    updateToggleState(course.isPremium)
+                    if (course.isPremium) {
+                        view?.findViewById<EditText>(R.id.coursePriceEditText)?.setText(course.price.toString())
                     }
                     
-                    if (course != null) {
-                        view?.findViewById<EditText>(R.id.courseNameEditText)?.setText(course.title)
-                        view?.findViewById<EditText>(R.id.courseCategoryEditText)?.setText(course.category)
-                        view?.findViewById<EditText>(R.id.courseDescriptionEditText)?.setText(course.description)
-                        
-                        updateToggleState(course.isPremium)
-                        if (course.isPremium) {
-                            view?.findViewById<EditText>(R.id.coursePriceEditText)?.setText(course.price.toString())
-                        }
-                        
-                        if (!course.thumbnailUri.isNullOrEmpty()) {
-                            selectedThumbnailUri = Uri.parse(course.thumbnailUri)
-                            val imageView = view?.findViewById<ImageView>(R.id.courseThumbnailImageView)
-                            if (imageView != null) {
-                                Glide.with(this@CourseCreationFragment)
-                                    .load(course.thumbnailUri)
-                                    .placeholder(R.drawable.ic_image_placeholder) // Updated placeholder
-                                    .into(imageView)
-                            }
+                    if (!course.thumbnailUri.isNullOrEmpty()) {
+                        selectedThumbnailUri = Uri.parse(course.thumbnailUri)
+                        val imageView = view?.findViewById<ImageView>(R.id.courseThumbnailImageView)
+                        if (imageView != null) {
+                            Glide.with(this@CourseCreationFragment)
+                                .load(course.thumbnailUri)
+                                .placeholder(R.drawable.ic_image_placeholder)
+                                .into(imageView)
                         }
                     }
+                } else if (result is ApiResult.Error) {
+                    Log.e("CourseCreationFragment", "Error loading course: ${result.message}")
+                    Toast.makeText(context, "Error al cargar datos del curso", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 Log.e("CourseCreationFragment", "Error loading course data", e)
@@ -260,11 +261,12 @@ class CourseCreationFragment : Fragment() {
 
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val userId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername)
+                val userResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByUsername(currentUsername)
                 }
 
-                if (userId == null || userId <= 0) {
+                val userId = (userResult as? ApiResult.Success)?.data?.id ?: 0L
+                if (userId <= 0) {
                     Toast.makeText(context, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show()
                     return@launch
                 }
@@ -292,41 +294,30 @@ class CourseCreationFragment : Fragment() {
                         }
                     }
                 }
-                
-                val activity = requireActivity()
-                if (activity !is MainActivity) {
-                    Toast.makeText(context, "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
 
                 if (isEditing) {
-                    val originalCourse = withContext(Dispatchers.IO) {
-                        activity.syncRepository.fetchCourseById(currentCourseId)
+                    val updates = mapOf<String, Any?>(
+                        "title" to courseName,
+                        "description" to courseDescription,
+                        "category" to courseCategory,
+                        "price" to coursePrice,
+                        "is_premium" to isPaidCourse,
+                        "thumbnail_uri" to (thumbnailUriString),
+                        "last_modified_date" to System.currentTimeMillis().toString()
+                    )
+                    
+                    val updateResult = withContext(Dispatchers.IO) {
+                        BackendApiService.updateCourse(currentCourseId, updates)
                     }
                     
-                    if (originalCourse != null) {
-                        val updatedCourse = originalCourse.copy(
-                            title = courseName,
-                            description = courseDescription,
-                            category = courseCategory,
-                            price = coursePrice,
-                            isPremium = isPaidCourse,
-                            thumbnailUri = thumbnailUriString ?: originalCourse.thumbnailUri,
-                            lastModifiedDate = System.currentTimeMillis().toString()
-                        )
-                        
-                        val success = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.updateCourseById(currentCourseId, updatedCourse)
-                        }
-                        
-                        if (success) {
+                    when (updateResult) {
+                        is ApiResult.Success -> {
                             Toast.makeText(context, "Curso actualizado exitosamente", Toast.LENGTH_SHORT).show()
                             findNavController().navigateUp()
-                        } else {
-                            Toast.makeText(context, "Error al actualizar el curso", Toast.LENGTH_SHORT).show()
                         }
-                    } else {
-                        Toast.makeText(context, "Error: No se encontró el curso original", Toast.LENGTH_SHORT).show()
+                        is ApiResult.Error -> {
+                            Toast.makeText(context, "Error al actualizar el curso: ${updateResult.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 } else {
                     val courseData = Course(
@@ -350,40 +341,44 @@ class CourseCreationFragment : Fragment() {
                         timestamp = System.currentTimeMillis()
                     )
             
-                    val titleExists = withContext(Dispatchers.IO) {
-                        activity.syncRepository.isTitleExistsInSupabase(courseName)
+                    // Check if title already exists via search
+                    val searchResult = withContext(Dispatchers.IO) {
+                        BackendApiService.searchCourses(courseName)
                     }
+                    val titleExists = (searchResult as? ApiResult.Success)?.data?.any {
+                        it.title.equals(courseName, ignoreCase = true)
+                    } == true
 
                     if (titleExists) {
                         Toast.makeText(context, "Ya existe un curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
                         return@launch
                     }
 
-                    val remoteId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.insertCourse(courseData)
+                    val createResult = withContext(Dispatchers.IO) {
+                        BackendApiService.createCourse(courseData)
                     }
 
-                    if (remoteId != null && remoteId > 0) {
-                        currentCourseId = remoteId
-                        courseSaved = true
-                        Toast.makeText(context, "Curso guardado exitosamente", Toast.LENGTH_SHORT).show()
-                        
-                        // Notify subscribers about the new course
-                        val createdCourse = courseData.copy(id = remoteId)
-                        // Trigger async remote notification
-                        activity.syncRepository.notifySubscribersOfNewCourseAsync(createdCourse)
-                        
-                        val bundle = Bundle().apply {
-                            putLong("courseId", remoteId)
-                            putString("courseName", courseName)
+                    when (createResult) {
+                        is ApiResult.Success -> {
+                            val createdCourse = createResult.data
+                            val remoteId = createdCourse.id
+                            currentCourseId = remoteId
+                            courseSaved = true
+                            Toast.makeText(context, "Curso guardado exitosamente", Toast.LENGTH_SHORT).show()
+                            
+                            val bundle = Bundle().apply {
+                                putLong("courseId", remoteId)
+                                putString("courseName", courseName)
+                            }
+                            findNavController().navigate(R.id.action_courseCreationFragment_to_courseDetailFragment, bundle)
                         }
-                        findNavController().navigate(R.id.action_courseCreationFragment_to_courseDetailFragment, bundle)
-                    } else {
-                        Toast.makeText(context, "Error al guardar el curso en Supabase", Toast.LENGTH_SHORT).show()
+                        is ApiResult.Error -> {
+                            Toast.makeText(context, "Error al guardar el curso: ${createResult.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
             } catch (e: Exception) {
-                Log.e("CourseCreationFragment", "Error saving course to Supabase", e)
+                Log.e("CourseCreationFragment", "Error saving course", e)
                 Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
@@ -415,11 +410,12 @@ class CourseCreationFragment : Fragment() {
         
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val userId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                val userResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByUsername(currentUserUsername)
                 }
 
-                if (userId == null || userId <= 0) {
+                val userId = (userResult as? ApiResult.Success)?.data?.id ?: 0L
+                if (userId <= 0) {
                     Toast.makeText(context, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show()
                     return@launch
                 }
@@ -470,46 +466,45 @@ class CourseCreationFragment : Fragment() {
                 )
 
                 try {
-                    val activity = requireActivity()
-                    if (activity !is MainActivity) {
-                        Toast.makeText(context, "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
-                        return@launch
+                    // Check if title already exists via search
+                    val searchResult = withContext(Dispatchers.IO) {
+                        BackendApiService.searchCourses(courseName)
                     }
-
-                    val titleExists = withContext(Dispatchers.IO) {
-                        activity.syncRepository.isTitleExistsInSupabase(courseName)
-                    }
+                    val titleExists = (searchResult as? ApiResult.Success)?.data?.any {
+                        it.title.equals(courseName, ignoreCase = true)
+                    } == true
 
                     if (titleExists) {
                         Toast.makeText(context, "Ya existe un curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
                         return@launch
                     }
 
-                    val savedCourseId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.insertCourse(courseData)
+                    val createResult = withContext(Dispatchers.IO) {
+                        BackendApiService.createCourse(courseData)
                     }
 
-                    if (savedCourseId != null && savedCourseId > 0) {
-                        currentCourseId = savedCourseId
-                        courseSaved = true
-                        topicCount++
+                    when (createResult) {
+                        is ApiResult.Success -> {
+                            val createdCourse = createResult.data
+                            val savedCourseId = createdCourse.id
+                            currentCourseId = savedCourseId
+                            courseSaved = true
+                            topicCount++
 
-                        // Notify subscribers about the new course
-                        val createdCourse = courseData.copy(id = savedCourseId)
-                        activity.syncRepository.notifySubscribersOfNewCourseAsync(createdCourse)
+                            // Ensure the creator has the correct role (Docente)
+                            withContext(Dispatchers.IO) {
+                                BackendApiService.promoteToDocente(userId)
+                            }
 
-                        // Ensure the creator has the correct role (Role 2)
-                        withContext(Dispatchers.IO) {
-                            activity.syncRepository.ensureCreatorRole(userId)
+                            val bundle = Bundle()
+                            bundle.putInt("topicNumber", topicCount)
+                            bundle.putLong("courseId", savedCourseId)
+                            bundle.putString("courseName", courseName)
+                            findNavController().navigate(R.id.action_courseCreationFragment_to_courseTopicFragment, bundle)
                         }
-
-                        val bundle = Bundle()
-                        bundle.putInt("topicNumber", topicCount)
-                        bundle.putLong("courseId", savedCourseId)
-                        bundle.putString("courseName", courseName)
-                        findNavController().navigate(R.id.action_courseCreationFragment_to_courseTopicFragment, bundle)
-                    } else {
-                        Toast.makeText(context, "Error al guardar el curso en Supabase", Toast.LENGTH_SHORT).show()
+                        is ApiResult.Error -> {
+                            Toast.makeText(context, "Error al guardar el curso: ${createResult.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 
                 } catch (e: Exception) {

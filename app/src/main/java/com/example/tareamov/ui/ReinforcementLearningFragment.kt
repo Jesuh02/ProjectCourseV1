@@ -14,8 +14,6 @@ import androidx.compose.runtime.produceState
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.fragment.findNavController
-import com.example.tareamov.data.AppDatabase
-import com.example.tareamov.data.sync.SyncRepository
 import com.example.tareamov.ui.compose.ReinforcementLearningScreen
 import com.example.tareamov.ui.compose.ReinforcementLearningViewModel
 import com.example.tareamov.ui.compose.ReinforcementLearningViewModelFactory
@@ -65,32 +63,8 @@ class ReinforcementLearningFragment : Fragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        // Initialize dependencies manually for simplicity
-        val db = AppDatabase.getDatabase(requireContext())
-        val syncRepository = SyncRepository(
-            usuarioDao = db.usuarioDao(),
-            personaDao = db.personaDao(),
-            topicDao = db.topicDao(),
-            contentItemDao = db.contentItemDao(),
-            taskDao = db.taskDao(),
-            subscriptionDao = db.subscriptionDao(),
-            taskSubmissionDao = db.taskSubmissionDao(),
-            videoDao = db.videoDao(),
-            courseDao = db.courseDao(),
-            rolDao = db.rolDao(),
-            recursoDao = db.recursoDao(),
-            rolRecursoDao = db.rolRecursoDao(),
-            chatMessageDao = db.chatMessageDao(),
-            fileContextDao = db.fileContextDao(),
-            progresoEstudianteDao = db.progresoEstudianteDao(),
-            likeDao = db.likeDao(),
-            videoCommentDao = db.videoCommentDao()
-        )
-        // Init cache if needed
-        syncRepository.initWithContext(requireContext())
-
-        // Create ViewModel
-        val factory = ReinforcementLearningViewModelFactory(requireActivity().application, syncRepository)
+        // Create ViewModel using BackendApiService (no local DB needed)
+        val factory = ReinforcementLearningViewModelFactory(requireActivity().application)
         viewModel = ViewModelProvider(this, factory).get(ReinforcementLearningViewModel::class.java)
 
         // Get navigation arguments
@@ -128,22 +102,28 @@ class ReinforcementLearningFragment : Fragment() {
 
                     if ((resolvedUsername.isNullOrBlank() || resolvedUsername == "Docente no especificado") && courseId > 0) {
                         try {
-                            // Try new method: fetch by course ID directly
-                            val username = syncRepository.fetchCreatorUsernameByCourseId(courseId)
-                            if (username != null) {
-                                resolvedUsername = username
-                            } else {
-                                resolvedUsername = syncRepository.fetchCreatorNameByCourseTitle(courseName)
+                            // Fetch course from backend to get creator user ID, then fetch user
+                            com.example.tareamov.service.BackendApiService.initialize(requireContext())
+                            val courseResult = com.example.tareamov.service.BackendApiService.getCourseById(courseId)
+                            if (courseResult is com.example.tareamov.service.ApiResult.Success && courseResult.data != null) {
+                                val creatorId = courseResult.data.creatorUserId
+                                val userResult = com.example.tareamov.service.BackendApiService.getUserById(creatorId)
+                                if (userResult is com.example.tareamov.service.ApiResult.Success && userResult.data != null) {
+                                    resolvedUsername = userResult.data.usuario
+                                    avatarUrl = userResult.data.avatar
+                                }
                             }
                         } catch (e: Exception) {
                             android.util.Log.w("ReinforceFrag", "couldn't fetch creator name: ${e.message}")
                         }
                     }
 
-                    if (!resolvedUsername.isNullOrBlank()) {
+                    if (avatarUrl == null && !resolvedUsername.isNullOrBlank()) {
                         try {
-                            val usuario = com.example.tareamov.service.SupabaseClient.fetchUsuarioByUsername(resolvedUsername)
-                            avatarUrl = usuario?.avatar
+                            val userResult = com.example.tareamov.service.BackendApiService.getUserByUsername(resolvedUsername)
+                            if (userResult is com.example.tareamov.service.ApiResult.Success) {
+                                avatarUrl = userResult.data?.avatar
+                            }
                         } catch (e: Exception) {
                             android.util.Log.w("ReinforceFrag", "couldn't fetch usuario: ${e.message}")
                         }

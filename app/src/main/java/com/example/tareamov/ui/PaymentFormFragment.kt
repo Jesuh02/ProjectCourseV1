@@ -18,7 +18,8 @@ import androidx.navigation.fragment.findNavController
 import com.example.tareamov.R
 import com.example.tareamov.network.PaymentApi
 import com.example.tareamov.network.PaymentInitiationRequest
-import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.TextInputEditText
@@ -369,8 +370,13 @@ class PaymentFormFragment : Fragment() {
     private fun initiatePSEPayment(bankCode: String, docType: String, docNumber: String) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // Get user data
-                val user = SupabaseClient.fetchUsuarioByUsername(argUsername)
+                // Get user data via BackendApiService
+                BackendApiService.initialize(requireContext())
+                val userResult = BackendApiService.getUserByUsername(argUsername)
+                val user = when (userResult) {
+                    is ApiResult.Success -> userResult.data
+                    is ApiResult.Error -> null
+                }
                 val userId = user?.id ?: -1L
                 val userEmail = user?.email ?: ""
                 

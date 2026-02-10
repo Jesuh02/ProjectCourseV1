@@ -47,9 +47,10 @@ class StudentProgressFragment : Fragment() {
         if (username != null && courseId != -1L) {
             // Only show if not the course creator
             CoroutineScope(Dispatchers.Main).launch {
-                val db = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
-                val course = withContext(Dispatchers.IO) { db.videoDao().getVideoById(courseId) }
-                if (course?.username != username) {
+                com.example.tareamov.service.BackendApiService.initialize(requireContext())
+                val course = withContext(Dispatchers.IO) { com.example.tareamov.service.BackendApiService.getCourseById(courseId).getOrNull() }
+                val currentUserId = sessionManager.getUserId()
+                if (course?.creatorUserId != currentUserId) {
                     Log.d("StudentProgressFragment", "Loading student progress for username=$username courseId=$courseId")
                     progressManager.loadStudentProgress(
                         courseId,

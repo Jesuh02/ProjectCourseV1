@@ -4,9 +4,10 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.tareamov.data.sync.SyncRepository
 import com.example.tareamov.network.MicroservicioApi
 import com.example.tareamov.network.MicroservicioPromptRequest
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ServerEndpointResolver
 import com.example.tareamov.work.BackgroundTaskManager
 import com.google.gson.Gson
@@ -20,7 +21,6 @@ import kotlinx.coroutines.Dispatchers
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
-import com.example.tareamov.service.SupabaseClient
 import okhttp3.OkHttpClient
 
 data class QuizQuestion(
@@ -61,8 +61,7 @@ sealed class ReinforcementState {
 }
 
 class ReinforcementLearningViewModel(
-    application: Application,
-    private val syncRepository: SyncRepository
+    application: Application
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow<ReinforcementState>(ReinforcementState.Initial)
@@ -97,11 +96,10 @@ class ReinforcementLearningViewModel(
     private val OLLAMA_URL = BASE_URL.trimEnd('/')
 
     init {
-        // Initialize the ServerEndpointResolver with the application context
+        // Initialize BackendApiService and ServerEndpointResolver
+        BackendApiService.initialize(application.applicationContext)
         ServerEndpointResolver.initialize(application)
         // STRICT BUILD VARIANT ROUTING: Always use BuildConfig.BACKEND_URL
-        // QA build → QA server only, Production build → Production server only
-        // No local network scanning to prevent cross-environment contamination
         Log.i("ReinforcementVM", "Build variant backend URL: ${com.example.tareamov.BuildConfig.BACKEND_URL}")
         Log.i("ReinforcementVM", "Using strict build variant routing (no local discovery)")
     }
@@ -172,10 +170,13 @@ class ReinforcementLearningViewModel(
                 val sessionManager = com.example.tareamov.util.SessionManager.getInstance(getApplication())
                 val userId = sessionManager.getUserId()
 
-                // 2. Fetch Context from Repository
-                // Use IO dispatcher explicitly for DB operations
+                // 2. Fetch Context from BackendApiService
+                // Use IO dispatcher explicitly for network operations
                 val (topics, tasks, contentItems) = withContext(Dispatchers.IO) {
-                    var t = syncRepository.fetchTopicsByCourseFromSupabase(courseId)
+                    var t = when (val result = BackendApiService.getTopicsByCourse(courseId)) {
+                        is ApiResult.Success -> result.data ?: emptyList()
+                        is ApiResult.Error -> emptyList()
+                    }
 
                     // Filter by Topic if selected
                     if (topicId != -1L) {
@@ -184,7 +185,13 @@ class ReinforcementLearningViewModel(
 
                     val tIds = t.map { it.id }
                     var k = if (tIds.isNotEmpty()) {
-                        syncRepository.fetchTasksByTopicIdsFromSupabase(tIds)
+                        // Fetch tasks for each topic
+                        tIds.flatMap { tid ->
+                            when (val result = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> result.data ?: emptyList()
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                     } else {
                         emptyList()
                     }
@@ -194,21 +201,39 @@ class ReinforcementLearningViewModel(
                         k = k.filter { it.id == taskId }
                     }
 
-                    // Fetch Content Items (Files)
-                    // If taskId is selected, prioritize Task files + Topic general files.
-                    // If only topicId is selected, use all Topic files.
+                    // Fetch Content Items (Files) from backend
                     val c = if (taskId != -1L) {
-                        val taskItems = syncRepository.fetchContentItemsByTaskIdFromSupabase(taskId)
-                        val topicItems = if (tIds.isNotEmpty()) syncRepository.fetchContentItemsByTopicIdsFromSupabase(tIds) else emptyList()
-
-                        // Merge: Task Items + (Topic Items where taskId is null/0/same)
-                        // Note: If topicItems contains the same task items, distinctBy will handle duplicates.
-                        // We filter topicItems to avoid including files from OTHER tasks.
+                        val taskItems = when (val result = BackendApiService.getContentItemsByTask(taskId)) {
+                            is ApiResult.Success -> result.data ?: emptyList()
+                            is ApiResult.Error -> emptyList()
+                        }
+                        // Also get topic-level items
+                        val topicItems = tIds.flatMap { tid ->
+                            // Get tasks for this topic, then content items
+                            when (val tResult = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> (tResult.data ?: emptyList()).flatMap { task ->
+                                    when (val ciResult = BackendApiService.getContentItemsByTask(task.id)) {
+                                        is ApiResult.Success -> ciResult.data ?: emptyList()
+                                        is ApiResult.Error -> emptyList()
+                                    }
+                                }
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                         val relevantTopicItems = topicItems.filter { it.taskId == null || it.taskId == 0L || it.taskId == taskId }
-
                         (taskItems + relevantTopicItems).distinctBy { it.id }
                     } else if (tIds.isNotEmpty()) {
-                        syncRepository.fetchContentItemsByTopicIdsFromSupabase(tIds)
+                        tIds.flatMap { tid ->
+                            when (val tResult = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> (tResult.data ?: emptyList()).flatMap { task ->
+                                    when (val ciResult = BackendApiService.getContentItemsByTask(task.id)) {
+                                        is ApiResult.Success -> ciResult.data ?: emptyList()
+                                        is ApiResult.Error -> emptyList()
+                                    }
+                                }
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                     } else {
                         emptyList()
                     }
@@ -231,9 +256,18 @@ class ReinforcementLearningViewModel(
                     return@launch
                 }
 
-                // Fetch History to avoid repetition
+                // Fetch History to avoid repetition via backend
                 val historyQuestions = if (userId > 0) {
-                    SupabaseClient.fetchReinforcementHistory(userId, courseId, topicId, taskId)
+                    try {
+                        val histResult = BackendApiService.getReinforcementHistory(courseId)
+                        when (histResult) {
+                            is ApiResult.Success -> (histResult.data ?: emptyList()).mapNotNull { it.get("question")?.asString }
+                            is ApiResult.Error -> emptyList()
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ReinforcementVM", "Error fetching history: ${e.message}")
+                        emptyList()
+                    }
                 } else emptyList()
 
                 // 3. Build Prompt (Concise)
@@ -483,9 +517,25 @@ class ReinforcementLearningViewModel(
 
                     _uiState.value = ReinforcementState.Success(finalQuestions)
 
-                    // Save to Supabase History via SyncRepository
+                    // Save to backend history via BackendApiService
                     if (userId > 0) {
-                        syncRepository.saveReinforcementHistory(userId, courseId, topicId, taskId, finalQuestions)
+                        try {
+                            withContext(Dispatchers.IO) {
+                                BackendApiService.saveReinforcementSession(
+                                    courseId,
+                                    finalQuestions.map { q ->
+                                        mapOf(
+                                            "question" to q.question,
+                                            "options" to q.options,
+                                            "correctIndex" to q.correctIndex,
+                                            "explanation" to (q.explanation ?: "")
+                                        )
+                                    }
+                                )
+                            }
+                        } catch (e: Exception) {
+                            Log.w("ReinforcementVM", "Error saving history: ${e.message}")
+                        }
                     }
                 }
                 
@@ -643,9 +693,12 @@ class ReinforcementLearningViewModel(
     fun loadContextInfo(courseId: Long, topicId: Long = -1L, taskId: Long = -1L) {
         viewModelScope.launch {
             try {
-                // Fetch Context from Repository
+                // Fetch Context from BackendApiService
                 val (topics, tasks, contentItems) = withContext(Dispatchers.IO) {
-                    var t = syncRepository.fetchTopicsByCourseFromSupabase(courseId)
+                    var t = when (val result = BackendApiService.getTopicsByCourse(courseId)) {
+                        is ApiResult.Success -> result.data ?: emptyList()
+                        is ApiResult.Error -> emptyList()
+                    }
 
                     // Filter by Topic if selected
                     if (topicId != -1L) {
@@ -654,7 +707,12 @@ class ReinforcementLearningViewModel(
 
                     val tIds = t.map { it.id }
                     var k = if (tIds.isNotEmpty()) {
-                        syncRepository.fetchTasksByTopicIdsFromSupabase(tIds)
+                        tIds.flatMap { tid ->
+                            when (val result = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> result.data ?: emptyList()
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                     } else {
                         emptyList()
                     }
@@ -664,14 +722,37 @@ class ReinforcementLearningViewModel(
                         k = k.filter { it.id == taskId }
                     }
 
-                    // Fetch Content Items (Files)
+                    // Fetch Content Items (Files) from backend
                     val c = if (taskId != -1L) {
-                        val taskItems = syncRepository.fetchContentItemsByTaskIdFromSupabase(taskId)
-                        val topicItems = if (tIds.isNotEmpty()) syncRepository.fetchContentItemsByTopicIdsFromSupabase(tIds) else emptyList()
+                        val taskItems = when (val result = BackendApiService.getContentItemsByTask(taskId)) {
+                            is ApiResult.Success -> result.data ?: emptyList()
+                            is ApiResult.Error -> emptyList()
+                        }
+                        val topicItems = tIds.flatMap { tid ->
+                            when (val tResult = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> (tResult.data ?: emptyList()).flatMap { task ->
+                                    when (val ciResult = BackendApiService.getContentItemsByTask(task.id)) {
+                                        is ApiResult.Success -> ciResult.data ?: emptyList()
+                                        is ApiResult.Error -> emptyList()
+                                    }
+                                }
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                         val relevantTopicItems = topicItems.filter { it.taskId == null || it.taskId == 0L || it.taskId == taskId }
                         (taskItems + relevantTopicItems).distinctBy { it.id }
                     } else if (tIds.isNotEmpty()) {
-                        syncRepository.fetchContentItemsByTopicIdsFromSupabase(tIds)
+                        tIds.flatMap { tid ->
+                            when (val tResult = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> (tResult.data ?: emptyList()).flatMap { task ->
+                                    when (val ciResult = BackendApiService.getContentItemsByTask(task.id)) {
+                                        is ApiResult.Success -> ciResult.data ?: emptyList()
+                                        is ApiResult.Error -> emptyList()
+                                    }
+                                }
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                     } else {
                         emptyList()
                     }

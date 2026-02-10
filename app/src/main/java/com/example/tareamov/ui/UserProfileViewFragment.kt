@@ -31,9 +31,6 @@ import com.bumptech.glide.Glide
 import com.example.tareamov.R
 import com.example.tareamov.adapter.CreatedCourseAdapter
 import com.example.tareamov.adapter.YouTubeStyleVideoAdapter
-import com.example.tareamov.data.AppDatabase
-import com.example.tareamov.data.dao.PersonaDao
-import com.example.tareamov.data.dao.SubscriptionDao
 import com.example.tareamov.data.entity.ContentType
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Subscription
@@ -43,8 +40,9 @@ import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.CloudflareR2Service
-import com.example.tareamov.service.SupabaseClient
 import com.example.tareamov.service.ServerEndpointResolver
 import de.hdodenhof.circleimageview.CircleImageView
 import android.view.ViewOutlineProvider
@@ -90,7 +88,6 @@ class UserProfileViewFragment : Fragment() {
     private lateinit var videoAdapter: YouTubeStyleVideoAdapter
     private lateinit var videoManager: VideoManager
     private lateinit var courseRepository: com.example.tareamov.repository.CourseRepository
-    private lateinit var syncRepository: com.example.tareamov.data.sync.SyncRepository
     private lateinit var sessionManager: SessionManager
     private lateinit var bottomNavBinding: ComponentBottomNavigationBinding
 
@@ -138,29 +135,6 @@ class UserProfileViewFragment : Fragment() {
             // Inicializar VideoManager y CourseRepository
             videoManager = VideoManager(requireContext())
             courseRepository = com.example.tareamov.repository.CourseRepository(requireContext())
-            
-            // Initialize SyncRepository
-            val db = AppDatabase.getDatabase(requireContext())
-            syncRepository = com.example.tareamov.data.sync.SyncRepository(
-                db.usuarioDao(),
-                db.personaDao(),
-                db.topicDao(),
-                db.contentItemDao(),
-                db.taskDao(),
-                db.subscriptionDao(),
-                db.taskSubmissionDao(),
-                db.videoDao(),
-                db.courseDao(),
-                db.rolDao(),
-                db.recursoDao(),
-                db.rolRecursoDao(),
-                db.chatMessageDao(),
-                db.fileContextDao(),
-                db.progresoEstudianteDao(),
-                db.likeDao(),
-                db.videoCommentDao()
-            )
-            syncRepository.initWithContext(requireContext())
             
             // Obtener el nombre de usuario pasado como argumento (perfil que se está viendo)
             username = arguments?.getString("username")
@@ -413,9 +387,10 @@ class UserProfileViewFragment : Fragment() {
                     
                     // We need to resolve creatorUserId first
                     viewLifecycleOwner.lifecycleScope.launch {
-                        val creatorId = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                        val creatorIdResult = withContext(Dispatchers.IO) {
+                            BackendApiService.getUserByUsername(course.username)
                         }
+                        val creatorId = creatorIdResult.getOrNull()?.id
                         if (creatorId != null) {
                             val updatedCourse = courseEntity.copy(creatorUserId = creatorId)
                             handleSubscriptionClick(updatedCourse, isSubscribed)
@@ -444,9 +419,10 @@ class UserProfileViewFragment : Fragment() {
                     
                     // We need to resolve creatorUserId first
                     viewLifecycleOwner.lifecycleScope.launch {
-                        val creatorId = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                        val creatorIdResult = withContext(Dispatchers.IO) {
+                            BackendApiService.getUserByUsername(course.username)
                         }
+                        val creatorId = creatorIdResult.getOrNull()?.id
                         if (creatorId != null) {
                             val updatedCourse = courseEntity.copy(creatorUserId = creatorId)
                             handleEnrollmentClick(updatedCourse)
@@ -739,50 +715,42 @@ class UserProfileViewFragment : Fragment() {
     }private fun loadUserData(username: String) {
         lifecycleScope.launch {
             try {
-                val database = AppDatabase.getDatabase(requireContext())
-
                 // Use async to load user data, avatar and subscribers count in parallel
                 val userDeferred = async(Dispatchers.IO) {
-                    // Try Supabase first for fresh data (avatar, etc.)
                     var user: Usuario? = null
                     try {
-                        if (SupabaseClient.isConfigured()) {
-                            user = SupabaseClient.fetchUsuarioByUsername(username)
-                        }
+                        val result = BackendApiService.getUserByUsername(username)
+                        user = result.getOrNull()
                     } catch (e: Exception) {
-                        Log.e("UserProfileView", "Error fetching user from Supabase", e)
-                    }
-                    
-                    // Fallback to local if Supabase failed or returned null
-                    if (user == null) {
-                        user = database.usuarioDao().getUsuarioByUsername(username)
+                        Log.e("UserProfileView", "Error fetching user from backend", e)
                     }
                     user
                 }
                 
-                // Fetch avatar URL directly from Supabase as a fallback
+                // Fetch avatar URL from user profile
                 val avatarDeferred = async(Dispatchers.IO) {
                     try {
-                        SupabaseClient.fetchUsuarioAvatarByUsername(username)
+                        val result = BackendApiService.getUserByUsername(username)
+                        result.getOrNull()?.avatar
                     } catch (e: Exception) {
-                        Log.e("UserProfileView", "Error fetching avatar from Supabase", e)
+                        Log.e("UserProfileView", "Error fetching avatar from backend", e)
                         null
                     }
                 }
                 
                 val subscribersDeferred = async(Dispatchers.IO) {
                     try {
-                        // Get userId from Supabase directly
-                        val userId = SupabaseClient.getUserIdFromUsername(username)
+                        val userResult = BackendApiService.getUserByUsername(username)
+                        val userId = userResult.getOrNull()?.id
                         if (userId != null) {
-                            // Get subscriber count from Supabase only
-                            SupabaseClient.fetchSubscriberCount(userId)
+                            val countResult = BackendApiService.getSubscriberCount(userId)
+                            countResult.getOrNull()?.toLong() ?: 0L
                         } else {
                             Log.w("UserProfileView", "Could not find userId for username: $username")
                             0L
                         }
                     } catch (e: Exception) {
-                        Log.e("UserProfileView", "Error fetching subscriber count from Supabase", e)
+                        Log.e("UserProfileView", "Error fetching subscriber count", e)
                         0L
                     }
                 }
@@ -793,8 +761,8 @@ class UserProfileViewFragment : Fragment() {
                 
                 Log.d("UserProfileView", "Loaded data for username: $username")
                 Log.d("UserProfileView", "User found: ${user != null}, avatar from user: ${user?.avatar}")
-                Log.d("UserProfileView", "Avatar URL from Supabase: $avatarUrl")
-                Log.d("UserProfileView", "Subscribers count from Supabase: $subscribersCount")
+                Log.d("UserProfileView", "Avatar URL from backend: $avatarUrl")
+                Log.d("UserProfileView", "Subscribers count from backend: $subscribersCount")
 
                 // Actualizar UI con información del usuario
                 withContext(Dispatchers.Main) {
@@ -920,60 +888,36 @@ class UserProfileViewFragment : Fragment() {
         }
     }    private suspend fun loadUserContent(username: String, userId: Long? = null) {
         try {
-            // Prefer Supabase server-side filtered fetch for this specific user
-            val act = activity as? com.example.tareamov.MainActivity
             var userCoursesList: List<com.example.tareamov.data.entity.Course> = emptyList()
             var userVideosList: List<VideoData> = emptyList()
 
-            // Use async to fetch courses and videos in parallel
-            if (act != null) {
-                try {
-                    withContext(Dispatchers.IO) {
-                        val coursesDeferred = async {
-                            act.syncRepository.fetchCoursesByCreatorFromSupabase(username)
-                        }
-                        
-                        val videosDeferred = async {
-                            // Two ways: by remote_id (userId) AND by username. Merge results and dedupe.
-                            val targetUserId = userId ?: com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
-
-                            try {
-                                if (targetUserId != null) {
-                                    val byIdDeferred = async { act.syncRepository.fetchVideosByCreatorUserIdFromSupabase(targetUserId) }
-                                    val byUsernameDeferred = async { act.syncRepository.fetchVideosByUsernameFromSupabase(username) }
-
-                                    val byId = byIdDeferred.await()
-                                    val byUsername = byUsernameDeferred.await()
-
-                                    // Merge, deduplicate by id and prefer the provided username for display
-                                    val merged = (byId + byUsername)
-                                        .distinctBy { it.id }
-                                        .map { it.copy(username = username) }
-                                        .sortedByDescending { it.timestamp }
-
-                                    merged
-                                } else {
-                                    act.syncRepository.fetchVideosByUsernameFromSupabase(username)
-                                }
-                            } catch (e: Exception) {
-                                Log.w("UserProfileView", "Error fetching videos by both remote_id and username, falling back to username-only", e)
-                                act.syncRepository.fetchVideosByUsernameFromSupabase(username)
-                            }
-                        }
-
-                        val remoteCourses = coursesDeferred.await()
-                        if (!remoteCourses.isNullOrEmpty()) {
-                            userCoursesList = remoteCourses
-                        }
-
-                        val remoteVideos = videosDeferred.await()
-                        if (!remoteVideos.isNullOrEmpty()) {
-                            userVideosList = remoteVideos
-                        }
+            // Use BackendApiService to fetch courses and videos in parallel
+            try {
+                withContext(Dispatchers.IO) {
+                    val coursesDeferred = async {
+                        val result = BackendApiService.getCoursesByCreator(username)
+                        result.getOrNull() ?: emptyList()
                     }
-                } catch (e: Exception) {
-                    android.util.Log.w("UserProfileView", "Supabase fetch by creator/username failed, will fallback to local DB", e)
+                    
+                    val videosDeferred = async {
+                        val result = BackendApiService.getVideosByCreator(username)
+                        val videos = result.getOrNull() ?: emptyList()
+                        videos.map { it.copy(username = username) }
+                            .sortedByDescending { it.timestamp }
+                    }
+
+                    val remoteCourses = coursesDeferred.await()
+                    if (remoteCourses.isNotEmpty()) {
+                        userCoursesList = remoteCourses
+                    }
+
+                    val remoteVideos = videosDeferred.await()
+                    if (remoteVideos.isNotEmpty()) {
+                        userVideosList = remoteVideos
+                    }
                 }
+            } catch (e: Exception) {
+                android.util.Log.w("UserProfileView", "Backend fetch by creator/username failed, will fallback to local", e)
             }
 
             // If Supabase didn't return results for one of the lists, fallback to local DB for that list
@@ -1106,9 +1050,10 @@ class UserProfileViewFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 // Get current user ID
-                val currentUserId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                val userResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByUsername(currentUserUsername)
                 }
+                val currentUserId = userResult.getOrNull()?.id
 
                 if (currentUserId == null) {
                     showDarkToast("❌ Error: No se pudo obtener tu ID de usuario")
@@ -1122,23 +1067,19 @@ class UserProfileViewFragment : Fragment() {
                     return@launch
                 }
                 
-                val db = AppDatabase.getDatabase(requireContext())
-                
                 if (isCurrentlySubscribed) {
-                    // Unsubscribe
-                    db.subscriptionDao().unsubscribeFromCreator(currentUserId, creatorUserId)
-                    
-                    // Also sync to Supabase
-                    syncUnsubscriptionToSupabase(currentUserId, creatorUserId)
+                    // Unsubscribe via backend
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.unsubscribe(creatorUserId)
+                    }
                     
                     showDarkToast("✅ Te has desuscrito")
                     Log.d("UserProfileView", "User $currentUserId unsubscribed from $creatorUserId")
                 } else {
-                    // Subscribe
-                    db.subscriptionDao().subscribeToCreator(currentUserId, creatorUserId)
-                    
-                    // Also sync to Supabase
-                    syncSubscriptionToSupabase(currentUserId, creatorUserId)
+                    // Subscribe via backend
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.subscribe(creatorUserId)
+                    }
                     
                     showDarkToast("🎉 Te has suscrito")
                     Log.d("UserProfileView", "User $currentUserId subscribed to $creatorUserId")
@@ -1171,7 +1112,8 @@ class UserProfileViewFragment : Fragment() {
             try {
                 // Get creator username from user_id
                 val creatorUsername = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
+                    val result = BackendApiService.getUserById(course.creatorUserId)
+                    result.getOrNull()?.usuario
                 }
                 
                 if (creatorUsername == null) {
@@ -1190,11 +1132,10 @@ class UserProfileViewFragment : Fragment() {
                     return@launch
                 }
         
-                val db = AppDatabase.getDatabase(requireContext())
-                
                 // Get user ID from username
                 val userId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                    val result = BackendApiService.getUserByUsername(currentUserUsername)
+                    result.getOrNull()?.id
                 }
                 
                 if (userId == null) {
@@ -1204,75 +1145,55 @@ class UserProfileViewFragment : Fragment() {
                 }
                 
                 // Check if already enrolled
-                val existingProgreso = withContext(Dispatchers.IO) {
-                    db.progresoEstudianteDao().getProgreso(userId, course.id)
+                val isAlreadyEnrolled = withContext(Dispatchers.IO) {
+                    val result = BackendApiService.isEnrolled(course.id)
+                    result.getOrNull() == true
                 }
                 
-                if (existingProgreso != null) {
+                if (isAlreadyEnrolled) {
                     showDarkToast("Ya estás inscrito en este curso")
                     return@launch
                 }
                 
-                // Ensure course exists in local DB before creating progress
-                withContext(Dispatchers.IO) {
-                    val existingCourse = db.courseDao().getCourseById(course.id)
-                    if (existingCourse == null) {
-                        Log.d("UserProfileView", "Course not in local DB, inserting: ${course.title}")
-                        db.courseDao().insertCourse(course)
-                    }
-                }
-                
                 // Get total tasks for this course
                 val topics = withContext(Dispatchers.IO) {
-                    db.topicDao().getTopicsByCourse(course.id)
+                    val result = BackendApiService.getTopicsByCourse(course.id)
+                    result.getOrNull() ?: emptyList()
                 }
                 
-                val topicIds = topics.map { it.id }
-                val totalTasks = if (topicIds.isNotEmpty()) {
-                    withContext(Dispatchers.IO) {
-                        db.taskDao().getTasksByTopicIds(topicIds).size
+                var totalTasks = 0
+                for (topic in topics) {
+                    val tasksResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getTasksByTopic(topic.id)
                     }
-                } else {
-                    0
+                    totalTasks += tasksResult.getOrNull()?.size ?: 0
                 }
                 
-                // Create initial progress record
-                val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                    usuarioEstudiante = userId,
-                    cursoId = course.id,
-                    tareasCompletadas = 0,
-                    tareasTotales = totalTasks,
-                    porcentajeProgreso = 0f,
-                    calificacionPonderada = 0f,
-                    promedio = 0f,
-                    estado = "Pendiente",
-                    ultimaCalculadaEn = System.currentTimeMillis(),
-                    certificadoEmitidoEn = null,
-                    creadoEn = System.currentTimeMillis()
+                // Create progress via backend
+                val progressData = mapOf<String, Any?>(
+                    "usuarioEstudiante" to userId,
+                    "cursoId" to course.id,
+                    "tareasCompletadas" to 0,
+                    "tareasTotales" to totalTasks,
+                    "porcentajeProgreso" to 0f,
+                    "calificacionPonderada" to 0f,
+                    "promedio" to 0f,
+                    "estado" to "Pendiente"
                 )
                 
-                // Save locally
-                withContext(Dispatchers.IO) {
-                    db.progresoEstudianteDao().insertProgreso(progreso)
+                val upsertResult = withContext(Dispatchers.IO) {
+                    BackendApiService.upsertProgress(progressData)
                 }
                 
-                Log.d("UserProfileView", "✅ Progress record created locally for $currentUserUsername in course ${course.id}")
-                
-                // Sync to Supabase
-                val syncRepo = getSyncRepository()
-                val syncSuccess = withContext(Dispatchers.IO) {
-                    syncRepo.syncProgresoToSupabase(progreso)
-                }
-                
-                if (syncSuccess) {
+                if (upsertResult.isSuccess) {
                     showDarkToast("✅ Inscripción exitosa. ¡Comienza tu aprendizaje!")
-                    Log.d("UserProfileView", "✅ Progress synced to Supabase for user $userId in course ${course.id}")
+                    Log.d("UserProfileView", "✅ Progress created for user $userId in course ${course.id}")
                     
                     // Refresh content to show enrollment status
                     username?.let { loadUserData(it) }
                 } else {
-                    showDarkToast("✅ Inscrito localmente. Se sincronizará con el servidor más tarde.")
-                    Log.w("UserProfileView", "⚠️ Progress created locally but not synced to Supabase")
+                    showDarkToast("❌ Error al inscribirse: ${upsertResult.errorMessage()}")
+                    Log.w("UserProfileView", "⚠️ Progress creation failed: ${upsertResult.errorMessage()}")
                 }
                 
             } catch (e: Exception) {
@@ -1283,54 +1204,27 @@ class UserProfileViewFragment : Fragment() {
     }
 
     /**
-     * Sync subscription to Supabase (from ExploreFragment)
+     * Sync subscription to backend (from ExploreFragment)
      */
     private suspend fun syncSubscriptionToSupabase(subscriberId: Long, creatorId: Long) {
         try {
-            val sub = com.example.tareamov.data.entity.Subscription(
-                subscriberId = subscriberId,
-                creatorId = creatorId,
-                subscriptionDate = System.currentTimeMillis()
-            )
-            com.example.tareamov.service.SupabaseClient.insertSubscriptionToSupabase(sub)
-            Log.d("UserProfileView", "Subscription synced to Supabase: $subscriberId -> $creatorId")
+            BackendApiService.subscribe(creatorId)
+            Log.d("UserProfileView", "Subscription synced to backend: $subscriberId -> $creatorId")
         } catch (e: Exception) {
-            Log.e("UserProfileView", "Error syncing subscription to Supabase", e)
+            Log.e("UserProfileView", "Error syncing subscription to backend", e)
         }
     }
 
     /**
-     * Sync unsubscription to Supabase (from ExploreFragment)
+     * Sync unsubscription to backend (from ExploreFragment)
      */
     private suspend fun syncUnsubscriptionToSupabase(subscriberId: Long, creatorId: Long) {
         try {
-            com.example.tareamov.service.SupabaseClient.deleteSubscriptionFromSupabase(subscriberId, creatorId)
-            Log.d("UserProfileView", "Unsubscription synced to Supabase: $subscriberId -> $creatorId")
+            BackendApiService.unsubscribe(creatorId)
+            Log.d("UserProfileView", "Unsubscription synced to backend: $subscriberId -> $creatorId")
         } catch (e: Exception) {
-            Log.e("UserProfileView", "Error syncing unsubscription to Supabase", e)
+            Log.e("UserProfileView", "Error syncing unsubscription to backend", e)
         }
-    }
-
-    // Helper to obtain a SyncRepository instance (from ExploreFragment)
-    private fun getSyncRepository(): com.example.tareamov.data.sync.SyncRepository {
-        val db = AppDatabase.getDatabase(requireContext())
-        return com.example.tareamov.data.sync.SyncRepository(
-            usuarioDao = db.usuarioDao(),
-            personaDao = db.personaDao(),
-            topicDao = db.topicDao(),
-            contentItemDao = db.contentItemDao(),
-            taskDao = db.taskDao(),
-            subscriptionDao = db.subscriptionDao(),
-            taskSubmissionDao = db.taskSubmissionDao(),
-            videoDao = db.videoDao(),
-            courseDao = db.courseDao(),
-            rolDao = db.rolDao(),
-            recursoDao = db.recursoDao(),
-            rolRecursoDao = db.rolRecursoDao(),
-            chatMessageDao = db.chatMessageDao(),
-            fileContextDao = db.fileContextDao(),
-            progresoEstudianteDao = db.progresoEstudianteDao()
-        )
     }
 
     private fun handleCourseClickWithEnrollment(course: VideoData) {
@@ -1348,12 +1242,14 @@ class UserProfileViewFragment : Fragment() {
                 val isCreator = if (currentUserUsername == course.username) {
                     true
                 } else {
-                    val currentUserId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                    val currentUserResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getUserByUsername(currentUserUsername)
                     }
-                    val creatorUserId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                    val creatorUserResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getUserByUsername(course.username)
                     }
+                    val currentUserId = currentUserResult.getOrNull()?.id
+                    val creatorUserId = creatorUserResult.getOrNull()?.id
                     currentUserId != null && currentUserId == creatorUserId
                 }
 
@@ -1365,14 +1261,15 @@ class UserProfileViewFragment : Fragment() {
                 // Check if paid
                 if (course.isPaid && (course.price ?: 0.0) > 0) {
                     // Check if enrolled
-                     val db = AppDatabase.getDatabase(requireContext())
-                     val currentUserId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                     val currentUserResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getUserByUsername(currentUserUsername)
                     }
+                     val currentUserId = currentUserResult.getOrNull()?.id
                     
                     if (currentUserId != null) {
                         val isEnrolled = withContext(Dispatchers.IO) {
-                            db.progresoEstudianteDao().estaInscrito(currentUserId, course.id)
+                            val result = BackendApiService.isEnrolled(course.id)
+                            result.getOrNull() == true
                         }
                         
                         if (isEnrolled) {
@@ -1401,17 +1298,17 @@ class UserProfileViewFragment : Fragment() {
                 }
 
                 // Free course: Auto-enroll if needed
-                val db = AppDatabase.getDatabase(requireContext())
-                val currentUserId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                val currentUserResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByUsername(currentUserUsername)
                 }
+                val currentUserId = currentUserResult.getOrNull()?.id
 
                 if (currentUserId != null) {
                     // CRITICAL: Prevent course creator from enrolling in their own course
-                    // Get actual Course entity to check creatorUserId
-                    val actualCourse = withContext(Dispatchers.IO) {
-                        db.courseDao().getCourseById(course.id)
+                    val actualCourseResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getCourseById(course.id)
                     }
+                    val actualCourse = actualCourseResult.getOrNull()
                     
                     if (actualCourse != null && currentUserId == actualCourse.creatorUserId) {
                         Log.d("UserProfileView", "⚠️ Creator cannot enroll in own course ${course.id}")
@@ -1420,7 +1317,8 @@ class UserProfileViewFragment : Fragment() {
                     }
                     
                     val isEnrolled = withContext(Dispatchers.IO) {
-                        db.progresoEstudianteDao().estaInscrito(currentUserId, course.id)
+                        val result = BackendApiService.isEnrolled(course.id)
+                        result.getOrNull() == true
                     }
 
                     if (!isEnrolled) {
@@ -1428,41 +1326,31 @@ class UserProfileViewFragment : Fragment() {
                         
                         // Get total tasks
                         val topics = withContext(Dispatchers.IO) {
-                            db.topicDao().getTopicsByCourse(course.id)
+                            val result = BackendApiService.getTopicsByCourse(course.id)
+                            result.getOrNull() ?: emptyList()
                         }
-                        val topicIds = topics.map { it.id }
-                        val totalTasks = if (topicIds.isNotEmpty()) {
-                            withContext(Dispatchers.IO) {
-                                db.taskDao().getTasksByTopicIds(topicIds).size
+                        var totalTasks = 0
+                        for (topic in topics) {
+                            val tasksResult = withContext(Dispatchers.IO) {
+                                BackendApiService.getTasksByTopic(topic.id)
                             }
-                        } else {
-                            0
+                            totalTasks += tasksResult.getOrNull()?.size ?: 0
                         }
 
-                        // Create progress
-                        val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                            usuarioEstudiante = currentUserId,
-                            cursoId = course.id,
-                            tareasCompletadas = 0,
-                            tareasTotales = totalTasks,
-                            porcentajeProgreso = 0f,
-                            calificacionPonderada = 0f,
-                            promedio = 0f,
-                            estado = "Pendiente",
-                            ultimaCalculadaEn = System.currentTimeMillis(),
-                            certificadoEmitidoEn = null,
-                            creadoEn = System.currentTimeMillis()
+                        // Create progress via backend
+                        val progressData = mapOf<String, Any?>(
+                            "usuarioEstudiante" to currentUserId,
+                            "cursoId" to course.id,
+                            "tareasCompletadas" to 0,
+                            "tareasTotales" to totalTasks,
+                            "porcentajeProgreso" to 0f,
+                            "calificacionPonderada" to 0f,
+                            "promedio" to 0f,
+                            "estado" to "Pendiente"
                         )
 
-                        // Save locally
                         withContext(Dispatchers.IO) {
-                            db.progresoEstudianteDao().insertProgreso(progreso)
-                        }
-
-                        // Sync
-                        val syncRepo = getSyncRepository()
-                        withContext(Dispatchers.IO) {
-                            syncRepo.syncProgresoToSupabase(progreso)
+                            BackendApiService.upsertProgress(progressData)
                         }
                         
                         showDarkToast("✅ ¡Inscrito automáticamente en ${course.title}!")
@@ -1527,12 +1415,14 @@ class UserProfileViewFragment : Fragment() {
             // Check if current user is the course creator by comparing user IDs
             val currentUserUsername = getCurrentUsername()
             val isCreator = if (currentUserUsername != null) {
-                val currentUserId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUserUsername)
+                val currentUserResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByUsername(currentUserUsername)
                 }
-                val creatorUserId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(course.username)
+                val creatorUserResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByUsername(course.username)
                 }
+                val currentUserId = currentUserResult.getOrNull()?.id
+                val creatorUserId = creatorUserResult.getOrNull()?.id
                 currentUserId != null && currentUserId == creatorUserId
             } else {
                 false
@@ -1625,9 +1515,8 @@ class UserProfileViewFragment : Fragment() {
     // Método auxiliar que replica la lógica de ExploreFragment para obtener contenido
     private suspend fun getAllContentLikeExploreFragment(): List<VideoData> {
         return withContext(Dispatchers.IO) {
-            val database = AppDatabase.getDatabase(requireContext())
-            // Usar exactamente el mismo método que ExploreFragment
-            database.videoDao().getAllVideos()
+            val result = BackendApiService.getVideos(limit = 500)
+            if (result is ApiResult.Success) result.data ?: emptyList() else emptyList()
         }
     }
     
@@ -1932,136 +1821,40 @@ class UserProfileViewFragment : Fragment() {
             try {
                 // Use IO Dispatcher + NonCancellable to prevent JobCancellationException
                 withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
-                    // Resolve a likely remote Supabase course ID, preferring known courseId
+                    // Resolve the remote course ID
                     var remoteCourseId: Long? = null
-                    try {
-                        if (course.courseId != null && course.courseId!! > 0) {
-                            remoteCourseId = course.courseId
-                        }
-
-                        // If we don't have a good remoteCourseId yet, try to find it by title
-                        if (remoteCourseId == null) {
-                            try {
-                                val found = com.example.tareamov.service.SupabaseClient.fetchCourseByTitle(course.title)
-                                if (found != null) remoteCourseId = found.id
-                            } catch (e: Exception) {
-                                Log.w("UserProfileView", "Could not resolve remote course id by title: ${e.message}")
-                            }
-                        }
-
-                        // Prefer calling backend to perform cascade deletion securely when we have a remote id
-                        if (remoteCourseId != null) {
-                            try {
-                                val base = try {
-                                    ServerEndpointResolver.getMcpBaseUrl()
-                                } catch (e: Exception) {
-                                    ServerEndpointResolver.fastResolveMcpBaseUrl()
-                                }
-
-                                val client = OkHttpClient()
-                                val gson = Gson()
-                                val jsonMedia = "application/json; charset=utf-8".toMediaType()
-
-                                val payload = mapOf("courseId" to remoteCourseId)
-                                val body = gson.toJson(payload).toRequestBody(jsonMedia)
-                                val url = "${base.trimEnd('/')}/course/delete"
-
-                                val req = Request.Builder()
-                                    .url(url)
-                                    .post(body)
-                                    .addHeader("X-API-Key", "tareamov-mcp-api-key-2025-secure")
-                                    .addHeader("Content-Type", "application/json")
-                                    .build()
-
-                                client.newCall(req).execute().use { resp ->
-                                    val respBody = resp.body?.string() ?: ""
-                                    if (resp.isSuccessful) {
-                                        try {
-                                            val tree: Map<*, *> = gson.fromJson(respBody, Map::class.java)
-                                            val ok = tree["success"] as? Boolean ?: true
-                                            if (ok) {
-                                                // Backend deleted successfully; remove local rows
-                                                try { courseRepository.deleteCourseById(remoteCourseId) } catch (_: Exception) {}
-
-                                                // Clean other references if needed
-                                                try {
-                                                    val remoteVideos = SupabaseClient.fetchVideosByCourseIds(listOf(remoteCourseId))
-                                                    for (v in remoteVideos) {
-                                                        try { SupabaseClient.deleteVideoById(v.id) } catch (_: Exception) {}
-                                                    }
-                                                } catch (_: Exception) {}
-
-                                                return@withContext true
-                                            }
-                                        } catch (e: Exception) {
-                                            Log.w("UserProfileView", "Could not parse backend response: $respBody")
-                                        }
-                                    }
-                                    Log.w("UserProfileView", "Backend /course/delete failed: code=${resp.code} body=$respBody")
-                                    // Fall through to Supabase fallback below
-                                }
-                            } catch (e: Exception) {
-                                Log.w("UserProfileView", "Backend delete attempt failed: ${e.message}")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w("UserProfileView", "Error resolving remote course id: ${e.message}")
+                    if (course.courseId != null && course.courseId!! > 0) {
+                        remoteCourseId = course.courseId
                     }
 
-                    // Fallback: attempt to delete via SupabaseClient using multiple strategies
-                    try {
-                        var success = false
-                        
-                        // 1) If we resolved a remoteCourseId, delete videos for that course first
-                        if (remoteCourseId != null) {
-                            try {
-                                val remoteVideos = SupabaseClient.fetchVideosByCourseIds(listOf(remoteCourseId))
-                                for (v in remoteVideos) {
-                                    try { SupabaseClient.deleteVideoById(v.id) } catch (_: Exception) {}
-                                }
-                            } catch (e: Exception) {
-                                Log.w("UserProfileView", "Error deleting videos by remote course id: ${e.message}")
+                    // If we don't have a remoteCourseId, try to find by title via search
+                    if (remoteCourseId == null) {
+                        try {
+                            val searchResult = BackendApiService.searchCourses(course.title)
+                            if (searchResult is ApiResult.Success) {
+                                remoteCourseId = searchResult.data?.firstOrNull { it.title == course.title }?.id
                             }
-
-                            val courseDeleted = SupabaseClient.deleteCourseById(remoteCourseId)
-                            if (courseDeleted) {
-                                try { courseRepository.deleteCourseById(remoteCourseId) } catch (_: Exception) {}
-                                success = true
-                            }
+                        } catch (e: Exception) {
+                            Log.w("UserProfileView", "Could not resolve remote course id by title: ${e.message}")
                         }
+                    }
 
-                        // 2) If not successful yet, try to delete by local course.courseId (if present)
-                        if (!success && course.courseId != null && course.courseId!! > 0) {
-                            val okCourse = SupabaseClient.deleteCourseById(course.courseId!!)
-                            val okVideo = SupabaseClient.deleteVideoById(course.id)
-                            if (okCourse || okVideo) {
-                                try { courseRepository.deleteCourseById(course.courseId!!) } catch (_: Exception) {}
-                                try {
-                                    val localVideo = courseRepository.getVideoById(course.id)
-                                    if (localVideo != null) courseRepository.deleteVideo(localVideo)
-                                } catch (_: Exception) {}
-                                success = true
-                            }
+                    // Delete via backend (handles cascade deletion of videos, topics, tasks, etc.)
+                    if (remoteCourseId != null) {
+                        val deleteResult = BackendApiService.deleteCourse(remoteCourseId)
+                        if (deleteResult is ApiResult.Success) {
+                            Log.i("UserProfileView", "✅ Course $remoteCourseId deleted successfully via backend")
+                        } else {
+                            Log.w("UserProfileView", "Failed to delete course $remoteCourseId: ${(deleteResult as? ApiResult.Error)?.message}")
                         }
-
-                        // 3) Last-resort
-                        if (!success) {
-                            val supabaseVideoDeleted = SupabaseClient.deleteVideoById(course.id)
-                            if (supabaseVideoDeleted) {
-                                try { courseRepository.deleteCourseById(course.id) } catch (_: Exception) {}
-                                try {
-                                    val videoData = courseRepository.getVideoById(course.id)
-                                    if (videoData != null) courseRepository.deleteVideo(videoData)
-                                } catch (_: Exception) {}
-                                success = true
-                            }
+                    } else {
+                        // Try deleting the video directly if no course ID
+                        val deleteResult = BackendApiService.deleteVideo(course.id)
+                        if (deleteResult is ApiResult.Success) {
+                            Log.i("UserProfileView", "✅ Video ${course.id} deleted successfully via backend")
+                        } else {
+                            Log.w("UserProfileView", "Failed to delete video ${course.id}")
                         }
-                        
-                        if (!success) Log.w("UserProfileView", "Failed to delete course/video via Supabase fallback")
-                        success
-                    } catch (e: Exception) {
-                        Log.e("UserProfileView", "Exception in fallback Supabase delete: ${e.message}", e)
-                        false
                     }
                 } // End withContext(NonCancellable)
                 
@@ -2291,13 +2084,12 @@ class UserProfileViewFragment : Fragment() {
 
         lifecycleScope.launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val usuarioWithRole = withContext(Dispatchers.IO) {
-                    db.usuarioDao().getUsuarioWithRoleByUsername(username)
-                }
+                val db_unused = true // checkAdminStatus uses BackendApiService
+                val userResult = withContext(Dispatchers.IO) { BackendApiService.getMyProfile() }
+                val usuarioWithRole = if (userResult is ApiResult.Success) userResult.data else null
                 
-                val isAdmin = usuarioWithRole?.isAdmin == true
-                Log.d("UserProfileViewFragment", "User $username is admin: $isAdmin (role: ${usuarioWithRole?.rolNombre})")
+                val isAdmin = usuarioWithRole?.rol_id == 3L // admin role id
+                Log.d("UserProfileViewFragment", "User $username is admin: $isAdmin (rol_id: ${usuarioWithRole?.rol_id})")
                 
                 // Ensure UI update happens on main thread
                 withContext(Dispatchers.Main) {
@@ -2335,16 +2127,17 @@ class UserProfileViewFragment : Fragment() {
                     Log.d("UserProfileView", "📝 Updating video - ID: $updatedVideoId, title: $updatedTitle")
                     
                     if (updatedVideoId > 0) {
-                        Log.d("UserProfileView", "🚀 Starting Supabase fetch for video ID: $updatedVideoId")
-                        // Fetch updated data from Supabase as requested
+                        Log.d("UserProfileView", "🚀 Starting backend fetch for video ID: $updatedVideoId")
+                        // Fetch updated data from backend
                         viewLifecycleOwner.lifecycleScope.launch {
                             try {
-                                val updatedVideo = syncRepository.fetchVideoByIdFromSupabase(updatedVideoId)
+                                val videoResult = withContext(Dispatchers.IO) { BackendApiService.getVideoById(updatedVideoId) }
+                                val updatedVideo = if (videoResult is ApiResult.Success) videoResult.data else null
                                 if (updatedVideo != null) {
-                                    Log.d("UserProfileView", "✅ Fetched updated video from Supabase: ${updatedVideo.title}")
+                                    Log.d("UserProfileView", "✅ Fetched updated video from backend: ${updatedVideo.title}")
                                     updateLocalVideoWithData(updatedVideo)
                                 } else {
-                                    Log.w("UserProfileView", "⚠️ Failed to fetch updated video from Supabase, using local data")
+                                    Log.w("UserProfileView", "⚠️ Failed to fetch updated video from backend, using local data")
                                     updateLocalVideoData(updatedVideoId, updatedTitle, updatedDescription, updatedIsPaid, updatedThumbnailUri)
                                 }
                             } catch (e: Exception) {
@@ -2389,15 +2182,16 @@ class UserProfileViewFragment : Fragment() {
                 if (updatedVideoId > 0) {
                     Log.d("UserProfileView", "✅ Updating local data for video ID: $updatedVideoId")
                     
-                    // Fetch updated data from Supabase as requested
+                    // Fetch updated data from backend
                     viewLifecycleOwner.lifecycleScope.launch {
                         try {
-                            val updatedVideo = syncRepository.fetchVideoByIdFromSupabase(updatedVideoId)
+                            val videoResult = withContext(Dispatchers.IO) { BackendApiService.getVideoById(updatedVideoId) }
+                            val updatedVideo = if (videoResult is ApiResult.Success) videoResult.data else null
                             if (updatedVideo != null) {
-                                Log.d("UserProfileView", "✅ Fetched updated video from Supabase: ${updatedVideo.title}")
+                                Log.d("UserProfileView", "✅ Fetched updated video from backend: ${updatedVideo.title}")
                                 updateLocalVideoWithData(updatedVideo)
                             } else {
-                                Log.w("UserProfileView", "⚠️ Failed to fetch updated video from Supabase, using local data")
+                                Log.w("UserProfileView", "⚠️ Failed to fetch updated video from backend, using local data")
                                 updateLocalVideoData(updatedVideoId, updatedTitle, updatedDescription, updatedIsPaid, updatedThumbnailUri)
                             }
                         } catch (e: Exception) {

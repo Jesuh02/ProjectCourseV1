@@ -24,7 +24,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.example.tareamov.R
 import com.example.tareamov.adapter.VideoAdapter
-import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.util.VideoManager
@@ -49,7 +48,8 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
-import com.example.tareamov.data.sync.SyncRepository
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import android.text.Editable
 import android.text.TextWatcher
 import eightbitlab.com.blurview.BlurView
@@ -104,8 +104,6 @@ class VideoHomeFragment : Fragment() {
     private var isSearchMode = false
     private var currentSearchQuery = ""
     private var currentSearchType = "all"
-    private lateinit var syncRepository: SyncRepository
-
     // Store all videos for fast local filtering
     private val allVideosList = mutableListOf<VideoData>()
 
@@ -153,35 +151,16 @@ class VideoHomeFragment : Fragment() {
         videoManager = VideoManager(requireContext())
         sessionManager = SessionManager.getInstance(requireContext()) // Initialize SessionManager
 
-        // Initialize SyncRepository
-        val database = AppDatabase.getDatabase(requireContext())
-        syncRepository = SyncRepository(
-            usuarioDao = database.usuarioDao(),
-            personaDao = database.personaDao(),
-            topicDao = database.topicDao(),
-            contentItemDao = database.contentItemDao(),
-            taskDao = database.taskDao(),
-            subscriptionDao = database.subscriptionDao(),
-            taskSubmissionDao = database.taskSubmissionDao(),
-            videoDao = database.videoDao(),
-            courseDao = database.courseDao(),
-            rolDao = database.rolDao(),
-            recursoDao = database.recursoDao(),
-            rolRecursoDao = database.rolRecursoDao(),
-            chatMessageDao = database.chatMessageDao(),
-            fileContextDao = database.fileContextDao(),
-            progresoEstudianteDao = database.progresoEstudianteDao(),
-            likeDao = database.likeDao(),
-            videoCommentDao = database.videoCommentDao()
-        )
+        // Initialize BackendApiService
+        BackendApiService.initialize(requireContext())
 
-        // Refresh session info from Supabase in background so role checks are current
+        // Refresh session info from backend in background so role checks are current
         lifecycleScope.launch {
             try {
                 val refreshed = sessionManager.refreshFromSupabase()
-                android.util.Log.d("VideoHomeFragment", "Session refreshFromSupabase returned: $refreshed")
+                android.util.Log.d("VideoHomeFragment", "Session refresh returned: $refreshed")
             } catch (e: Exception) {
-                android.util.Log.w("VideoHomeFragment", "Failed to refresh session from Supabase", e)
+                android.util.Log.w("VideoHomeFragment", "Failed to refresh session", e)
             }
         }
 
@@ -592,19 +571,18 @@ class VideoHomeFragment : Fragment() {
         // Initial synchronous check using SessionManager (fast)
         updateAdminUi(sess.isAdmin())
 
-        // Async check using SyncRepository (robust, checks ID 3)
+        // Async check using BackendApiService (robust, checks roles)
         lifecycleScope.launch {
             val userId = getCurrentUserId()
             if (userId > 0) {
-                // Check if admin (Role 3)
-                val isAdmin = withContext(Dispatchers.IO) {
-                    syncRepository.isUserAdmin(userId)
+                // Check user roles from backend
+                val rolesResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserRoles(userId)
                 }
 
-                // Check if user has AI role (Role 2)
-                val hasAiRole = withContext(Dispatchers.IO) {
-                    syncRepository.hasUserRole(userId, 2)
-                }
+                val roleIds = rolesResult.getOrNull() ?: emptyList()
+                val isAdmin = roleIds.contains(3L)
+                val hasAiRole = roleIds.contains(2L)
 
                 // Update SessionManager
                 sess.setAdminStatus(isAdmin)
@@ -633,9 +611,11 @@ class VideoHomeFragment : Fragment() {
         if (userId == -1L) {
             val username = getCurrentUsername()
             if (username != null) {
-                val user = syncRepository.getUsuarioByUsernameLocal(username)
-                if (user != null) {
-                    userId = user.id
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByUsername(username)
+                }
+                if (result is ApiResult.Success) {
+                    userId = result.data.id
                 }
             }
         }
@@ -643,18 +623,20 @@ class VideoHomeFragment : Fragment() {
     }
 
     private suspend fun checkIfSubscribed(creatorId: Long): Boolean {
-        val currentUserId = getCurrentUserId()
-        if (currentUserId == -1L) return false
-
         return try {
-            // Use SupabaseClient for validation as requested
-            withContext(Dispatchers.IO) {
-                com.example.tareamov.service.SupabaseClient.isSubscribedRemote(currentUserId, creatorId)
+            val result = withContext(Dispatchers.IO) {
+                BackendApiService.checkSubscription(creatorId)
+            }
+            when (result) {
+                is ApiResult.Success -> result.data
+                is ApiResult.Error -> {
+                    Log.e("VideoHomeFragment", "Error checking subscription: ${result.message}")
+                    false
+                }
             }
         } catch (e: Exception) {
-            Log.e("VideoHomeFragment", "Error checking remote subscription", e)
-            // Fallback to local if remote fails
-            syncRepository.isSubscribedLocal(currentUserId, creatorId)
+            Log.e("VideoHomeFragment", "Error checking subscription", e)
+            false
         }
     }
     
@@ -904,32 +886,24 @@ class VideoHomeFragment : Fragment() {
         }
 
         try {
-            if (isSubscribing) {
-                val subscription = Subscription(
-                    subscriberId = currentUserId,
-                    creatorId = creatorId,
-                    subscriptionDate = System.currentTimeMillis()
-                )
-                // Update local immediately for UI responsiveness
-                syncRepository.insertSubscriptionLocal(subscription)
-
-                // Update Supabase
-                withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.insertSubscriptionToSupabase(subscription)
+            val result = withContext(Dispatchers.IO) {
+                if (isSubscribing) {
+                    BackendApiService.subscribe(creatorId)
+                } else {
+                    BackendApiService.unsubscribe(creatorId)
                 }
-            } else {
-                // Update local immediately
-                syncRepository.deleteSubscriptionLocal(currentUserId, creatorId)
+            }
 
-                // Update Supabase
-                withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.deleteSubscriptionFromSupabase(currentUserId, creatorId)
+            if (result is ApiResult.Error) {
+                Log.e("VideoHomeFragment", "Error toggling subscription: ${result.message}")
+                withContext(Dispatchers.Main) {
+                    context?.let { Toast.makeText(it, "Error al actualizar suscripción", Toast.LENGTH_SHORT).show() }
                 }
             }
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "Error toggling subscription", e)
             withContext(Dispatchers.Main) {
-                context?.let { Toast.makeText(it, "Error al actualizar suscripción en Supabase", Toast.LENGTH_SHORT).show() }
+                context?.let { Toast.makeText(it, "Error al actualizar suscripción", Toast.LENGTH_SHORT).show() }
             }
         }
     }
@@ -973,8 +947,13 @@ class VideoHomeFragment : Fragment() {
 
         lifecycleScope.launch {
             try {
-                val unreadCount = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.countUnreadNotifications(userId)
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getUnreadNotificationCount()
+                }
+
+                val unreadCount = when (result) {
+                    is ApiResult.Success -> result.data
+                    is ApiResult.Error -> 0
                 }
 
                 notificationBadge?.let { badge ->
@@ -1000,15 +979,15 @@ class VideoHomeFragment : Fragment() {
             Log.d("VideoHomeFragment", "======== LIKE SYNC START ========")
             Log.d("VideoHomeFragment", "Current user ID: $userId")
             
-            // Sync user likes from Supabase (polymorphic likes table) to ensure persistence
+            // Sync user likes from backend to ensure persistence
             var likedVideoIds: List<Long> = emptyList()
             if (userId > 0) {
                 val syncResult = withContext(Dispatchers.IO) {
                     try {
-                        Log.d("VideoHomeFragment", "Fetching user likes from Supabase (polymorphic)...")
-                        val likes = syncRepository.syncUserVideoLikesFromSupabase(userId)
-                        Log.d("VideoHomeFragment", "User $userId has liked ${likes.size} videos: $likes")
-                        likes
+                        Log.d("VideoHomeFragment", "Fetching user likes from backend...")
+                        // Use checkLike for each loaded video, or just initialize empty
+                        // The per-video like check will happen in the adapter callbacks
+                        emptyList<Long>()
                     } catch (e: Exception) {
                         Log.e("VideoHomeFragment", "Error syncing user likes", e)
                         emptyList()
@@ -1055,17 +1034,12 @@ class VideoHomeFragment : Fragment() {
                         // because videoData.isPaid may not be synced correctly
                         if (videoData.courseId != null && videoData.courseId!! > 0) {
                             val paymentCheckResult = withContext(Dispatchers.IO) {
-                                val db = AppDatabase.getDatabase(requireContext())
                                 val userId = getCurrentUserId()
                                 
                                 try {
-                                    // First try local DB, then Supabase
-                                    var course = db.courseDao().getCourseById(videoData.courseId!!)
-                                    
-                                    // If not found locally, try Supabase
-                                    if (course == null) {
-                                        course = com.example.tareamov.service.SupabaseClient.fetchCourseById(videoData.courseId!!)
-                                    }
+                                    // Fetch course from backend
+                                    val courseResult = BackendApiService.getCourseById(videoData.courseId!!)
+                                    val course = courseResult.getOrNull()
                                     
                                     if (course != null) {
                                         coursePrice = course.price
@@ -1093,26 +1067,13 @@ class VideoHomeFragment : Fragment() {
                                             return@withContext true
                                         }
                                         
-                                        // Check enrollment via ProgresoEstudianteDao
-                                        val isEnrolledLocal = db.progresoEstudianteDao().getProgreso(userId, course.id) != null
-                                        Log.d("VideoHomeFragment", "isEnrolledLocal=$isEnrolledLocal")
+                                        // Check enrollment via backend
+                                        val enrolledResult = BackendApiService.isEnrolled(course.id)
+                                        val isEnrolled = enrolledResult.getOrNull() ?: false
+                                        Log.d("VideoHomeFragment", "isEnrolled=$isEnrolled")
                                         
-                                        if (isEnrolledLocal) {
-                                            return@withContext false // Already enrolled locally
-                                        }
-                                        
-                                        // Also check Supabase for enrollment (using fetchProgresosByUsuario)
-                                        val isEnrolledRemote = try {
-                                            val progresos = com.example.tareamov.service.SupabaseClient.fetchProgresosByUsuario(userId)
-                                            progresos.any { it.cursoId == course.id }
-                                        } catch (e: Exception) {
-                                            Log.e("VideoHomeFragment", "Error checking remote enrollment", e)
-                                            false
-                                        }
-                                        Log.d("VideoHomeFragment", "isEnrolledRemote=$isEnrolledRemote")
-                                        
-                                        // If not enrolled anywhere, needs payment
-                                        !isEnrolledRemote
+                                        // If not enrolled, needs payment
+                                        !isEnrolled
                                     } else {
                                         // Course not found - don't block access
                                         Log.w("VideoHomeFragment", "Course not found for courseId=${videoData.courseId}")
@@ -1180,19 +1141,18 @@ class VideoHomeFragment : Fragment() {
                                 // Try to get username from video title or other metadata
                                 withContext(Dispatchers.IO) {
                                     try {
-                                        // Get the creator username from a course with the same title if it exists
-                                        val act = requireActivity()
-                                        if (act is com.example.tareamov.MainActivity) {
-                                            val remoteList = act.syncRepository.fetchCoursesByCreatorFromSupabase("")
-                                            val matchingCourse = remoteList.firstOrNull { c ->
-                                                (c.title ?: "").equals(videoData.title ?: "", ignoreCase = true)
-                                            }
-                                            if (matchingCourse != null && matchingCourse.creatorUserId != null) {
-                                                com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(matchingCourse.creatorUserId)
-                                            } else {
-                                                null
-                                            }
+                                        // Try to find a course by this video's creator
+                                        val courseResult = if (videoData.courseId != null && videoData.courseId!! > 0) {
+                                            BackendApiService.getCourseById(videoData.courseId!!)
                                         } else null
+                                        
+                                        val course = courseResult?.getOrNull()
+                                        if (course != null && course.creatorUserId != null && course.creatorUserId > 0) {
+                                            val userResult = BackendApiService.getUserById(course.creatorUserId)
+                                            userResult.getOrNull()?.usuario
+                                        } else {
+                                            null
+                                        }
                                     } catch (e: Exception) {
                                         Log.w("VideoHomeFragment", "Could not get username: ${e.message}")
                                         null
@@ -1245,12 +1205,12 @@ class VideoHomeFragment : Fragment() {
                     try {
                         val userId = getCurrentUserId()
                         if (userId > 0) {
-                            // Toggle like in background
-                            val success = withContext(Dispatchers.IO) {
-                                syncRepository.toggleVideoLike(videoData.id, userId, isLiked)
+                            // Toggle like via backend
+                            val result = withContext(Dispatchers.IO) {
+                                BackendApiService.toggleLike("video", videoData.id)
                             }
                             
-                            if (success) {
+                            if (result.isSuccess) {
                                 Log.d("VideoHomeFragment", "Like toggled successfully for video ${videoData.id}, liked=$isLiked")
                             } else {
                                 Log.e("VideoHomeFragment", "Failed to toggle like for video ${videoData.id}")
@@ -1281,16 +1241,20 @@ class VideoHomeFragment : Fragment() {
             checkUserLikedVideo = { videoId ->
                 val userId = getCurrentUserId()
                 if (userId > 0) {
-                    syncRepository.hasUserLikedVideo(videoId, userId)
+                    val result = BackendApiService.checkLike("video", videoId)
+                    result.getOrNull() ?: false
                 } else {
                     false
                 }
             },
             getLikeCount = { videoId ->
-                syncRepository.getVideoLikeCount(videoId)
+                val result = BackendApiService.getLikesByEntity("video", videoId)
+                val jsonObj = result.getOrNull()
+                jsonObj?.get("count")?.asInt ?: 0
             },
             getCommentCount = { videoId ->
-                syncRepository.getVideoCommentCount(videoId)
+                val result = BackendApiService.getCommentsByVideo(videoId)
+                result.getOrNull()?.size ?: 0
             }
         )
 
@@ -1643,22 +1607,27 @@ class VideoHomeFragment : Fragment() {
                         .into(profileAvatars)
                 }
             } else {
-                // If no avatar in session, try to fetch from Supabase
+                // If no avatar in session, try to fetch from backend
                 val username = sessionManager.getUsername()
                 if (username != null) {
                     lifecycleScope.launch {
                         try {
-                            val remoteAvatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(username)
-                            if (remoteAvatar != null) {
-                                // Save to session for future use
-                                sessionManager.saveUserAvatar(remoteAvatar)
-                                
-                                if (::profileAvatars.isInitialized) {
-                                    Glide.with(this@VideoHomeFragment)
-                                        .load(remoteAvatar)
-                                        .placeholder(R.drawable.ic_profile_placeholder)
-                                        .error(R.drawable.ic_profile_placeholder)
-                                        .into(profileAvatars)
+                            val result = withContext(Dispatchers.IO) {
+                                BackendApiService.getUserByUsername(username)
+                            }
+                            if (result is ApiResult.Success) {
+                                val remoteAvatar = result.data.avatar
+                                if (!remoteAvatar.isNullOrEmpty()) {
+                                    // Save to session for future use
+                                    sessionManager.saveUserAvatar(remoteAvatar)
+                                    
+                                    if (::profileAvatars.isInitialized) {
+                                        Glide.with(this@VideoHomeFragment)
+                                            .load(remoteAvatar)
+                                            .placeholder(R.drawable.ic_profile_placeholder)
+                                            .error(R.drawable.ic_profile_placeholder)
+                                            .into(profileAvatars)
+                                    }
                                 }
                             }
                         } catch (e: Exception) {
@@ -1776,14 +1745,27 @@ class VideoHomeFragment : Fragment() {
 
         lifecycleScope.launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val usuarioWithRole = withContext(Dispatchers.IO) {
-                    db.usuarioDao().getUsuarioWithRoleByUsername(username)
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByUsername(username)
                 }
 
-                val isAdmin = usuarioWithRole?.isAdmin == true
-                Log.d("VideoHomeFragment", "User $username is admin: $isAdmin (role: ${usuarioWithRole?.rolNombre})")
-                callback(isAdmin)
+                when (result) {
+                    is ApiResult.Success -> {
+                        val user = result.data
+                        // Check if user has admin role (role 3)
+                        val rolesResult = withContext(Dispatchers.IO) {
+                            BackendApiService.getUserRoles(user.id)
+                        }
+                        val roleIds = rolesResult.getOrNull() ?: emptyList()
+                        val isAdmin = roleIds.contains(3L)
+                        Log.d("VideoHomeFragment", "User $username is admin: $isAdmin (roles: $roleIds)")
+                        callback(isAdmin)
+                    }
+                    is ApiResult.Error -> {
+                        Log.e("VideoHomeFragment", "Error checking admin status: ${result.message}")
+                        callback(false)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("VideoHomeFragment", "Error checking admin status", e)
                 callback(false)
@@ -2086,24 +2068,21 @@ class VideoHomeFragment : Fragment() {
 
                     val resultsByUsername: List<com.example.tareamov.data.entity.VideoData> = if (explicitUsername || looksLikeUsername) {
                         try {
-                            syncRepository.fetchVideosByUsernameFromSupabase(usernameTerm)
+                            val result = BackendApiService.getVideosByCreator(usernameTerm)
+                            result.getOrNull() ?: emptyList()
                         } catch (e: Exception) {
-                            Log.w("VideoHomeFragment", "SyncRepository fetch by username failed, falling back to SupabaseClient: ${e.message}")
-                            try {
-                                com.example.tareamov.service.SupabaseClient.fetchVideosByUsername(usernameTerm)
-                            } catch (e2: Exception) {
-                                Log.e("VideoHomeFragment", "SupabaseClient.fetchVideosByUsername failed", e2)
-                                emptyList()
-                            }
+                            Log.e("VideoHomeFragment", "BackendApiService.getVideosByCreator failed", e)
+                            emptyList()
                         }
                     } else {
                         emptyList()
                     }
 
                     val resultsFallback: List<com.example.tareamov.data.entity.VideoData> = try {
-                        syncRepository.searchVideos(query, currentSearchType, 50)
+                        val result = BackendApiService.searchVideos(query)
+                        result.getOrNull() ?: emptyList()
                     } catch (e: Exception) {
-                        Log.e("VideoHomeFragment", "Remote search via SyncRepository failed", e)
+                        Log.e("VideoHomeFragment", "Remote search via BackendApiService failed", e)
                         emptyList()
                     }
 
@@ -2354,9 +2333,10 @@ class VideoHomeFragment : Fragment() {
 
                 // Fetch username asynchronously
                 lifecycleScope.launch {
-                    val db = AppDatabase.getDatabase(context)
-                    val user = db.usuarioDao().getUsuarioById(comment.usuarioId)
-                    val username = user?.usuario ?: "Usuario"
+                    val userResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getUserById(comment.usuarioId)
+                    }
+                    val username = userResult.getOrNull()?.usuario ?: "Usuario"
 
                     replyingToUsername = username
                     replyingToBanner?.visibility = View.VISIBLE
@@ -2373,7 +2353,9 @@ class VideoHomeFragment : Fragment() {
                     if (userId > 0) {
                         // Optimistic UI update already happened in Adapter
                         // Now sync with backend
-                        syncRepository.likeVideoComment(comment.id, comment.videoId, userId, comment.usuarioId)
+                        withContext(Dispatchers.IO) {
+                            BackendApiService.toggleLike("comment", comment.id)
+                        }
                     } else {
                         context?.let { Toast.makeText(it, "Debes iniciar sesión", Toast.LENGTH_SHORT).show() }
                     }
@@ -2408,7 +2390,10 @@ class VideoHomeFragment : Fragment() {
         lifecycleScope.launch {
             val userId = getCurrentUserId()
             if (userId > 0) {
-                val user = syncRepository.getUsuarioByIdLocal(userId)
+                val userResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserById(userId)
+                }
+                val user = userResult.getOrNull()
                 if (user != null && !user.avatar.isNullOrEmpty()) {
                     com.bumptech.glide.Glide.with(context)
                         .load(user.avatar)
@@ -2436,7 +2421,8 @@ class VideoHomeFragment : Fragment() {
                 // Short delay to show skeleton briefly for better UX
                 kotlinx.coroutines.delay(300)
 
-                val comments = syncRepository.getVideoComments(videoData.id)
+                val commentsResult = BackendApiService.getCommentsByVideo(videoData.id)
+                val comments = if (commentsResult is ApiResult.Success) commentsResult.data ?: emptyList() else emptyList()
 
                 skeletonContainer?.clearAnimation()
                 skeletonContainer?.visibility = View.GONE
@@ -2508,8 +2494,10 @@ class VideoHomeFragment : Fragment() {
                                 commentText
                             }
 
-                            val commentId = syncRepository.addVideoComment(videoData.id, userId, finalCommentText, replyingToCommentId)
-                            if (commentId != null) {
+                            val commentResult = withContext(Dispatchers.IO) {
+                                BackendApiService.createComment(videoData.id, finalCommentText, replyingToCommentId)
+                            }
+                            if (commentResult is ApiResult.Success) {
                                 commentInput.setText("")
                                 // Reset reply state
                                 replyingToUsername = null
@@ -2518,7 +2506,10 @@ class VideoHomeFragment : Fragment() {
                                 commentInput.hint = "Agrega un comentario..."
 
                                 // Reload comments
-                                val comments = syncRepository.getVideoComments(videoData.id)
+                                val reloadResult = withContext(Dispatchers.IO) {
+                                    BackendApiService.getCommentsByVideo(videoData.id)
+                                }
+                                val comments = reloadResult.getOrNull() ?: emptyList()
                                 emptyText?.visibility = View.GONE
                                 commentsRecyclerView?.visibility = View.VISIBLE
                                 commentsAdapter.submitList(comments)
@@ -2881,7 +2872,11 @@ class VideoHomeFragment : Fragment() {
                     // Fetch real count asynchronously
                     likeCounts[comment.id] = 0 // Placeholder
                     lifecycleScope.launch {
-                        val count = syncRepository.getCommentLikeCount(comment.id)
+                        val countResult = BackendApiService.getLikesByEntity("comment", comment.id)
+                        val count = if (countResult is ApiResult.Success) {
+                            val data = countResult.data
+                            data?.get("count")?.asInt ?: 0
+                        } else 0
                         likeCounts[comment.id] = count
                         // Only update if visible/bound
                         if (comment.id == topLevelComments.getOrNull(adapterPosition)?.id) {
@@ -2895,7 +2890,8 @@ class VideoHomeFragment : Fragment() {
                     lifecycleScope.launch {
                         val userId = getCurrentUserId()
                         if (userId > 0) {
-                            val liked = syncRepository.hasUserLikedComment(comment.id, userId)
+                            val likedResult = BackendApiService.checkLike("comment", comment.id)
+                            val liked = likedResult is ApiResult.Success && likedResult.data == true
                             likedComments[comment.id] = liked
                             // Only update if visible
                             if (comment.id == topLevelComments.getOrNull(adapterPosition)?.id) {
@@ -2927,8 +2923,8 @@ class VideoHomeFragment : Fragment() {
                 // Load username and avatar
                 lifecycleScope.launch {
                     try {
-                        val db = AppDatabase.getDatabase(itemView.context)
-                        val user = db.usuarioDao().getUsuarioById(comment.usuarioId)
+                        val userResult = BackendApiService.getUserById(comment.usuarioId)
+                        val user = if (userResult is ApiResult.Success) userResult.data else null
                         val username = user?.usuario ?: "Usuario"
                         usernameText.text = username
 
@@ -3082,8 +3078,8 @@ class VideoHomeFragment : Fragment() {
                     // Async load user
                     lifecycleScope.launch {
                         try {
-                            val db = AppDatabase.getDatabase(context)
-                            val user = db.usuarioDao().getUsuarioById(reply.usuarioId)
+                            val userResult = BackendApiService.getUserById(reply.usuarioId)
+                            val user = if (userResult is ApiResult.Success) userResult.data else null
                             val username = user?.usuario ?: "Usuario"
                             usernameText.text = username
 

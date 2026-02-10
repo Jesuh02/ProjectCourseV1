@@ -23,11 +23,10 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.bumptech.glide.Glide
 import com.example.tareamov.R
-import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Usuario
-import com.example.tareamov.repository.PersonaRepository
-import com.example.tareamov.repository.UsuarioRepository
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import de.hdodenhof.circleimageview.CircleImageView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -121,11 +120,12 @@ class EditProfileFragment : Fragment() {
                 // Prefer SessionManager to find current user
                 val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
                 val sessionUsername = sessionManager.getUsername()
-                val db = AppDatabase.getDatabase(requireContext())
-
                 if (!sessionUsername.isNullOrEmpty()) {
-                    currentUser = withContext(Dispatchers.IO) {
-                        db.usuarioDao().getUsuarioByUsername(sessionUsername)
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.getUserByUsername(sessionUsername)
+                    }
+                    if (result is ApiResult.Success) {
+                        currentUser = result.data
                     }
                 }
 
@@ -134,14 +134,20 @@ class EditProfileFragment : Fragment() {
                     val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                     val currentUserId = sharedPrefs.getLong("current_user_id", -1L)
                     if (currentUserId != -1L) {
-                        currentUser = withContext(Dispatchers.IO) { db.usuarioDao().getUsuarioById(currentUserId) }
+                        val result = withContext(Dispatchers.IO) { BackendApiService.getUserById(currentUserId) }
+                        if (result is ApiResult.Success) {
+                            currentUser = result.data
+                        }
                     }
                 }
 
                 if (currentUser != null) {
                     // Get persona data
-                    currentPersona = withContext(Dispatchers.IO) {
-                        db.personaDao().getPersonaById(currentUser!!.persona_id)
+                    val personaResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getPersonaById(currentUser!!.persona_id)
+                    }
+                    if (personaResult is ApiResult.Success) {
+                        currentPersona = personaResult.data
                     }
 
                     // Update UI with current data
@@ -227,42 +233,13 @@ class EditProfileFragment : Fragment() {
 
         lifecycleScope.launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val usuarioDao = db.usuarioDao()
-                val personaDao = db.personaDao()
-
-                // Create repositories
-                val usuarioRepository = UsuarioRepository(usuarioDao)
-                val personaRepository = PersonaRepository(personaDao, usuarioDao)
-                
-                // Create SyncRepository for remote updates
-                val syncRepository = com.example.tareamov.data.sync.SyncRepository(
-                    usuarioDao,
-                    personaDao,
-                    db.topicDao(),
-                    db.contentItemDao(),
-                    db.taskDao(),
-                    db.subscriptionDao(),
-                    db.taskSubmissionDao(),
-                    db.videoDao(),
-                    db.courseDao(),
-                    db.rolDao(),
-                    db.recursoDao(),
-                    db.rolRecursoDao(),
-                    db.chatMessageDao(),
-                    db.fileContextDao(),
-                    db.progresoEstudianteDao(),
-                    db.likeDao(),
-                    db.videoCommentDao()
-                )
-
                 // Check if username is already taken (if changed)
                 if (newUsername != currentUser?.usuario) {
-                    val existingUser = withContext(Dispatchers.IO) {
-                        usuarioRepository.getUsuarioByUsername(newUsername)
+                    val existingResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getUserByUsername(newUsername)
                     }
 
-                    if (existingUser != null && existingUser.id != currentUser?.id) {
+                    if (existingResult is ApiResult.Success && existingResult.data.id != currentUser?.id) {
                         Toast.makeText(requireContext(), "Este nombre de usuario ya está en uso", Toast.LENGTH_SHORT).show()
                         return@launch
                     }
@@ -281,61 +258,38 @@ class EditProfileFragment : Fragment() {
                 // Update persona with new information
                 if (currentPersona != null) {
                     withContext(Dispatchers.IO) {
-                        personaRepository.updateProfile(
-                            currentPersona!!.id,
-                            displayName, // Use display name for nombres
-                            currentPersona!!.apellidos // Keep existing apellidos
-                        )
-                        // Also try to update remote Persona in Supabase
                         try {
-                            val remotePersona = com.example.tareamov.data.entity.Persona(
-                                id = currentPersona!!.id,
-                                identificacion = currentPersona!!.identificacion,
-                                nombres = displayName,
-                                apellidos = currentPersona!!.apellidos,
-                                telefono = currentPersona!!.telefono,
-                                direccion = currentPersona!!.direccion,
-                                fechaNacimiento = currentPersona!!.fechaNacimiento
+                            val personaUpdates = mapOf<String, Any?>(
+                                "nombres" to displayName,
+                                "apellidos" to currentPersona!!.apellidos
                             )
-                            val updated = syncRepository.updatePersonaRemote(remotePersona)
-                            Log.d("EditProfileFragment", "SyncRepository updatePersonaRemote result: $updated")
+                            val personaResult = BackendApiService.updatePersona(currentPersona!!.id, personaUpdates)
+                            when (personaResult) {
+                                is ApiResult.Success -> Log.d("EditProfileFragment", "Persona updated successfully")
+                                is ApiResult.Error -> Log.w("EditProfileFragment", "Failed to update persona: ${personaResult.message}")
+                            }
                         } catch (e: Exception) {
-                            Log.w("EditProfileFragment", "Failed to update persona on Supabase", e)
+                            Log.w("EditProfileFragment", "Failed to update persona", e)
                         }
-                        Unit
                     }
                 }
 
                 // Update usuario with new username and avatar URL
                 if (currentUser != null) {
                     withContext(Dispatchers.IO) {
-                        // First, try to update remote Usuario in Supabase with avatar URL
-                        var remoteUpdateSuccess = false
                         try {
-                            // Use the new profile update method to avoid issues with other fields
-                            remoteUpdateSuccess = syncRepository.updateUsuarioProfileRemote(
-                                userId = currentUser!!.id,
-                                username = newUsername,
-                                avatarUrl = avatarUrl
+                            val profileUpdates = mapOf<String, Any?>(
+                                "usuario" to newUsername,
+                                "avatar" to avatarUrl
                             )
-                            Log.d("EditProfileFragment", "SyncRepository updateUsuarioProfileRemote result: $remoteUpdateSuccess, avatar: $avatarUrl")
-                            
-                            // Small delay to ensure Supabase has processed the update
-                            if (remoteUpdateSuccess) {
-                                kotlinx.coroutines.delay(500)
+                            val profileResult = BackendApiService.updateMyProfile(profileUpdates)
+                            when (profileResult) {
+                                is ApiResult.Success -> Log.d("EditProfileFragment", "Profile updated successfully, avatar: $avatarUrl")
+                                is ApiResult.Error -> Log.w("EditProfileFragment", "Failed to update profile: ${profileResult.message}")
                             }
                         } catch (e: Exception) {
-                            Log.w("EditProfileFragment", "Failed to update usuario on Supabase", e)
+                            Log.w("EditProfileFragment", "Failed to update usuario", e)
                         }
-                        
-                        // Always update local Room database with avatar URL
-                        val updatedUsuario = currentUser!!.copy(
-                            usuario = newUsername,
-                            avatar = avatarUrl
-                        )
-                        usuarioDao.updateUsuario(updatedUsuario)
-                        Log.d("EditProfileFragment", "Updated local user with avatar: $avatarUrl")
-                        Unit
                     }
                 }
 

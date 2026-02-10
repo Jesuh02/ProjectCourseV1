@@ -23,9 +23,10 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.bumptech.glide.Glide
 import com.example.tareamov.R
-import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Usuario
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import de.hdodenhof.circleimageview.CircleImageView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -171,38 +172,30 @@ class ProfileFragment : Fragment() {
                     val publicUrl = uploadResult.url
                     Log.d("ProfileFragment", "Avatar uploaded to R2: $publicUrl")
                     
-                    // 2. Update Supabase
-                    val userId = sessionManager.getUserId()
-                    if (userId != -1L) {
-                        val currentUser = com.example.tareamov.service.SupabaseClient.fetchUsuarioById(userId)
-                        
-                        if (currentUser != null) {
-                            val updatedUser = currentUser.copy(avatar = publicUrl)
-                            val success = com.example.tareamov.service.SupabaseClient.updateUsuario(updatedUser)
+                    // 2. Update profile via BackendApiService
+                    BackendApiService.initialize(context)
+                    val updateResult = BackendApiService.updateMyProfile(mapOf("avatar" to publicUrl))
+                    
+                    when (updateResult) {
+                        is ApiResult.Success -> {
+                            // 3. Update Local Session
+                            sessionManager.saveUserAvatar(publicUrl)
                             
-                            if (success) {
-                                // 3. Update Local Session
-                                sessionManager.saveUserAvatar(publicUrl)
+                            // 4. Update UI
+                            Glide.with(this@ProfileFragment)
+                                .load(publicUrl)
+                                .circleCrop()
+                                .into(profileImage)
                                 
-                                // 4. Update UI
-                                Glide.with(this@ProfileFragment)
-                                    .load(publicUrl)
-                                    .circleCrop()
-                                    .into(profileImage)
-                                    
-                                Toast.makeText(context, "Avatar actualizado correctamente", Toast.LENGTH_SHORT).show()
-                                
-                                // Notify other components
-                                requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                                    .edit().putBoolean("profile_updated", true).apply()
-                            } else {
-                                Toast.makeText(context, "Error actualizando base de datos", Toast.LENGTH_SHORT).show()
-                            }
-                        } else {
-                             Toast.makeText(context, "Usuario no encontrado", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Avatar actualizado correctamente", Toast.LENGTH_SHORT).show()
+                            
+                            // Notify other components
+                            requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                                .edit().putBoolean("profile_updated", true).apply()
                         }
-                    } else {
-                        Toast.makeText(context, "Error: Sesión inválida", Toast.LENGTH_SHORT).show()
+                        is ApiResult.Error -> {
+                            Toast.makeText(context, "Error actualizando perfil: ${updateResult.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 } else {
                     val errorMsg = (uploadResult as? com.example.tareamov.service.CloudflareR2Service.UploadResult.Error)?.message ?: "Error desconocido"
@@ -354,7 +347,8 @@ class ProfileFragment : Fragment() {
         startSkeletonAnimation()
         lifecycleScope.launch {
             try {
-                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                val context = requireContext()
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
                 val currentUsername = sessionManager.getUsername()
                 
                 if (currentUsername != null) {
@@ -368,28 +362,38 @@ class ProfileFragment : Fragment() {
                             .into(profileImage)
                     }
 
-                    // 2. Fetch fresh data from Supabase
-                    val usuario = com.example.tareamov.service.SupabaseClient.fetchUsuarioByUsername(currentUsername)
+                    // 2. Fetch fresh data from BackendApiService
+                    BackendApiService.initialize(context)
+                    val profileResult = BackendApiService.getMyProfile()
                     
-                    if (usuario != null) {
-                        // Update UI with user data
-                        usernameTextView.text = usuario.usuario
-                        
-                        // Load avatar from Supabase result (fresher than session)
-                        if (!usuario.avatar.isNullOrEmpty()) {
-                            Glide.with(this@ProfileFragment)
-                                .load(usuario.avatar)
-                                .placeholder(R.drawable.ic_profile_placeholder)
-                                .error(R.drawable.ic_profile_placeholder)
-                                .into(profileImage)
+                    when (profileResult) {
+                        is ApiResult.Success -> {
+                            val usuario = profileResult.data
+                            // Update UI with user data
+                            usernameTextView.text = usuario.usuario
+                            
+                            // Load avatar from API result (fresher than session)
+                            if (!usuario.avatar.isNullOrEmpty()) {
+                                Glide.with(this@ProfileFragment)
+                                    .load(usuario.avatar)
+                                    .placeholder(R.drawable.ic_profile_placeholder)
+                                    .error(R.drawable.ic_profile_placeholder)
+                                    .into(profileImage)
+                            }
+                            
+                            // Fetch subscriber count
+                            val countResult = BackendApiService.getSubscriberCount(usuario.id)
+                            val subscriberCount = when (countResult) {
+                                is ApiResult.Success -> countResult.data.toLong()
+                                is ApiResult.Error -> 0L
+                            }
+                            updateUI(usuario, null, subscriberCount)
                         }
-                        
-                        // Fetch subscriber count
-                        val subscriberCount = com.example.tareamov.service.SupabaseClient.fetchSubscriberCount(usuario.id)
-                        updateUI(usuario, null, subscriberCount)
-                    } else {
-                        // Fallback to local DB if offline
-                        loadLocalUserData(currentUsername)
+                        is ApiResult.Error -> {
+                            Log.w("ProfileFragment", "API error: ${profileResult.message}")
+                            stopSkeletonAnimation()
+                            Toast.makeText(context, "Error cargando perfil", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 } else {
                     stopSkeletonAnimation()
@@ -402,23 +406,7 @@ class ProfileFragment : Fragment() {
         }
     }
 
-    private suspend fun loadLocalUserData(username: String) {
-        try {
-            val database = AppDatabase.getDatabase(requireContext())
-            val usuario = database.usuarioDao().getUsuarioByUsername(username)
-            
-            if (usuario != null) {
-                val persona = database.personaDao().getPersonaById(usuario.persona_id)
-                updateUI(usuario, persona, 0)
-            } else {
-                stopSkeletonAnimation()
-                Toast.makeText(context, "Usuario no encontrado", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Log.e("ProfileFragment", "Error loading local user data", e)
-            stopSkeletonAnimation()
-        }
-    }
+    // loadLocalUserData removed — all data now fetched via BackendApiService
 
     private fun updateUI(usuario: Usuario?, persona: Persona?, subscriberCount: Long) {
         if (usuario == null && !isNetworkAvailable(requireContext())) {
@@ -621,18 +609,27 @@ class ProfileFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val unreadCount = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.countUnreadNotifications(userId)
+                BackendApiService.initialize(requireContext())
+                val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    BackendApiService.getUnreadNotificationCount()
                 }
                 
-                if (unreadCount > 0) {
-                    bottomNavBinding.notificationBadge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
-                    bottomNavBinding.notificationBadge.visibility = View.VISIBLE
-                } else {
-                    bottomNavBinding.notificationBadge.visibility = View.GONE
+                when (result) {
+                    is ApiResult.Success -> {
+                        val unreadCount = result.data
+                        if (unreadCount > 0) {
+                            bottomNavBinding.notificationBadge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
+                            bottomNavBinding.notificationBadge.visibility = View.VISIBLE
+                        } else {
+                            bottomNavBinding.notificationBadge.visibility = View.GONE
+                        }
+                    }
+                    is ApiResult.Error -> {
+                        bottomNavBinding.notificationBadge.visibility = View.GONE
+                    }
                 }
             } catch (e: Exception) {
-                android.util.Log.w("ProfileFragment", "Error updating notification badge", e)
+                Log.w("ProfileFragment", "Error updating notification badge", e)
                 bottomNavBinding.notificationBadge.visibility = View.GONE
             }
         }

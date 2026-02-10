@@ -22,7 +22,8 @@ import eightbitlab.com.blurview.BlurView
 import eightbitlab.com.blurview.RenderScriptBlur
 import android.view.ViewOutlineProvider
 import com.example.tareamov.R
-import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
@@ -437,7 +438,7 @@ class VideoDetailsFragment : Fragment() {
             try {
                 // Get user ID for foreign key
                 val userId = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername)
+                    BackendApiService.getUserByUsername(currentUsername).getOrNull()?.id
                 }
 
                 if (userId == null || userId <= 0) {
@@ -460,7 +461,8 @@ class VideoDetailsFragment : Fragment() {
                     // Only check for duplicates if title changed
                     if (title != initialTitle) {
                         val duplicateNew = withContext(Dispatchers.IO) {
-                            activity.syncRepository.isTitleExistsInSupabase(title)
+                            val existingCourses = BackendApiService.searchCourses(title).getOrNull() ?: emptyList()
+                            existingCourses.any { it.title.equals(title, ignoreCase = true) }
                         }
                         if (duplicateNew) {
                             hideProfessionalLoading()
@@ -503,31 +505,31 @@ class VideoDetailsFragment : Fragment() {
                     
                     val success = withContext(Dispatchers.IO) {
                         // Fetch current video to get courseId
-                        val currentVideo = com.example.tareamov.service.SupabaseClient.fetchVideoById(videoId)
+                        val currentVideo = BackendApiService.getVideoById(videoId).getOrNull()
                         if (currentVideo != null) {
                             // Update Video
-                            val updatedVideo = currentVideo.copy(
-                                title = title,
-                                description = description,
-                                isPaid = isPaidCourse,
-                                price = if (isPaidCourse) 9.99 else null,
-                                thumbnailUri = thumbnailUrl ?: currentVideo.thumbnailUri
+                            val videoUpdates = mapOf<String, Any?>(
+                                "title" to title,
+                                "description" to description,
+                                "is_paid" to isPaidCourse,
+                                "price" to if (isPaidCourse) 9.99 else null,
+                                "thumbnail_uri" to (thumbnailUrl ?: currentVideo.thumbnailUri)
                             )
-                            val videoUpdateSuccess = com.example.tareamov.service.SupabaseClient.updateVideo(updatedVideo)
+                            val videoUpdateSuccess = BackendApiService.updateVideo(videoId, videoUpdates).getOrNull() != null
                             
                             // Update Course
                             val courseId = currentVideo.courseId
                             if (courseId != null && courseId > 0) {
-                                val currentCourse = com.example.tareamov.service.SupabaseClient.fetchCourseById(courseId)
+                                val currentCourse = BackendApiService.getCourseById(courseId).getOrNull()
                                 if (currentCourse != null) {
-                                    val updatedCourse = currentCourse.copy(
-                                        title = title,
-                                        description = description,
-                                        isPremium = isPaidCourse,
-                                        price = if (isPaidCourse) 9.99 else 0.0,
-                                        thumbnailUri = thumbnailUrl ?: currentCourse.thumbnailUri
+                                    val courseUpdates = mapOf<String, Any?>(
+                                        "title" to title,
+                                        "description" to description,
+                                        "is_premium" to isPaidCourse,
+                                        "price" to if (isPaidCourse) 9.99 else 0.0,
+                                        "thumbnail_uri" to (thumbnailUrl ?: currentCourse.thumbnailUri)
                                     )
-                                    com.example.tareamov.service.SupabaseClient.updateCourseById(updatedCourse.id, updatedCourse)
+                                    BackendApiService.updateCourse(courseId, courseUpdates)
                                 }
                             }
                             videoUpdateSuccess
@@ -592,7 +594,8 @@ class VideoDetailsFragment : Fragment() {
                     // Verificar título único
                     updateLoadingProgress(5, "Verificando título...", false)
                     val duplicateNew = withContext(Dispatchers.IO) {
-                        activity.syncRepository.isTitleExistsInSupabase(title)
+                        val existingCourses = BackendApiService.searchCourses(title).getOrNull() ?: emptyList()
+                        existingCourses.any { it.title.equals(title, ignoreCase = true) }
                     }
 
                     if (duplicateNew) {
@@ -791,9 +794,7 @@ class VideoDetailsFragment : Fragment() {
                     
                     // Get next available video ID (> 82)
                     updateLoadingProgress(87, "Generando identificadores...", false)
-                    val nextVideoId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.getNextVideoId()
-                    }
+                    val nextVideoId = 0L // Backend auto-assigns the real ID on creation
                     
                     Log.d("VideoDetailsFragment", "Creating new video with ID: $nextVideoId")
 
@@ -819,7 +820,7 @@ class VideoDetailsFragment : Fragment() {
                         Log.d("VideoDetailsFragment", "Creating course with creatorUserId: $userId, title: $title")
                         
                         courseRemoteId = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.insertCourse(newCourse)
+                            BackendApiService.createCourse(newCourse).getOrNull()?.id
                         }
                         
                         if (courseRemoteId == null || courseRemoteId <= 0) {
@@ -858,13 +859,12 @@ class VideoDetailsFragment : Fragment() {
                         insertVideoViaBackend(videoData)
                     }
                     
-                    // FALLBACK: If backend fails (e.g. env mismatch between QA app and Prod backend),
-                    // try inserting directly via SupabaseClient.
+                    // FALLBACK: If insertVideoViaBackend fails, try via BackendApiService
                     if (remoteId == null || remoteId <= 0) {
-                        Log.w("VideoDetailsFragment", "⚠️ Backend insert failed, attempting direct Supabase insert fallback...")
-                        updateLoadingProgress(97, "Usando conexión directa (fallback)...", false)
+                        Log.w("VideoDetailsFragment", "⚠️ Backend insert failed, retrying via BackendApiService...")
+                        updateLoadingProgress(97, "Reintentando creación de video...", false)
                         remoteId = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.insertVideo(videoData)
+                            BackendApiService.createVideo(videoData).getOrNull()?.id
                         }
                     }
                     

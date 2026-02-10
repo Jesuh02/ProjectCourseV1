@@ -16,7 +16,7 @@ import com.bumptech.glide.load.resource.bitmap.RoundedCorners
 import com.bumptech.glide.request.RequestOptions
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.Notification
-import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.BackendApiService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -147,7 +147,10 @@ class NotificationAdapter(
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     // Get task -> topic -> course -> thumbnail
-                    val courseThumbnail = SupabaseClient.getCourseThumbnailForTask(taskId)
+                    val task = BackendApiService.getTaskById(taskId).getOrNull()
+                    val topic = task?.let { BackendApiService.getTopicById(it.topicId).getOrNull() }
+                    val course = topic?.let { BackendApiService.getCourseById(it.courseId).getOrNull() }
+                    val courseThumbnail = course?.thumbnailUri
                     
                     // Cache the result (even if null)
                     thumbnailCache[taskId] = courseThumbnail

@@ -21,15 +21,13 @@ import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
-import com.example.tareamov.data.repository.SupabaseRepository
 import com.example.tareamov.data.entity.TaskSubmission
 import com.example.tareamov.data.entity.FileContext
 import com.example.tareamov.data.entity.Notification
-import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.FileAnalysisService
 import com.example.tareamov.service.FileConverterService
-
-import com.example.tareamov.service.SupabaseClient
 import com.example.tareamov.util.CalificationManager
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -48,8 +46,6 @@ class TaskSubmissionsFragment : Fragment() {
     private lateinit var fileAnalysisService: FileAnalysisService
     private lateinit var fileConverterService: FileConverterService
 
-    private lateinit var database: com.example.tareamov.data.AppDatabase
-    private lateinit var syncRepository: com.example.tareamov.data.sync.SyncRepository
     private var taskId: Long = -1
     private var taskName: String = ""
     private var courseCreatorUsername: String? = null
@@ -130,28 +126,6 @@ class TaskSubmissionsFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View? {
         val view = inflater.inflate(R.layout.fragment_task_submissions, container, false)
-
-        // Initialize database
-        database = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
-
-        // Initialize SyncRepository with database DAOs
-        syncRepository = com.example.tareamov.data.sync.SyncRepository(
-            usuarioDao = database.usuarioDao(),
-            personaDao = database.personaDao(),
-            topicDao = database.topicDao(),
-            contentItemDao = database.contentItemDao(),
-            taskDao = database.taskDao(),
-            subscriptionDao = database.subscriptionDao(),
-            taskSubmissionDao = database.taskSubmissionDao(),
-            videoDao = database.videoDao(),
-            courseDao = database.courseDao(),
-            rolDao = database.rolDao(),
-            recursoDao = database.recursoDao(),
-            rolRecursoDao = database.rolRecursoDao(),
-            chatMessageDao = database.chatMessageDao(),
-            fileContextDao = database.fileContextDao(),
-            progresoEstudianteDao = database.progresoEstudianteDao()
-        )
 
         val titleTextView = view.findViewById<TextView>(R.id.taskTitleTextView)
         titleTextView.text = taskName
@@ -281,13 +255,13 @@ class TaskSubmissionsFragment : Fragment() {
                 }
 
                 val userSubmission = withContext(Dispatchers.IO) {
-                    // Fetch submissions from Supabase and find the user's submission for this task
-                    val all = try {
-                        SupabaseClient.fetchTaskSubmissions()
+                    // Fetch user's submission for this task from backend
+                    try {
+                        val result = BackendApiService.getSubmissionByUserAndTask(taskId, currentUserId)
+                        if (result is ApiResult.Success) result.data else null
                     } catch (e: Exception) {
-                        emptyList<com.example.tareamov.data.entity.TaskSubmission>()
+                        null
                     }
-                    all.firstOrNull { it.taskId == taskId && it.studentId == currentUserId }
                 }
 
                 if (userSubmission != null) {
@@ -334,10 +308,13 @@ class TaskSubmissionsFragment : Fragment() {
                 // Fetchtask, topic and course info from Supabase (remote-first)
                 val taskInfo = withContext(Dispatchers.IO) {
                     try {
-                        val task = SupabaseClient.fetchTaskById(taskId)
+                        val taskResult = BackendApiService.getTaskById(taskId)
+                        val task = (taskResult as? ApiResult.Success)?.data
                         if (task != null) {
-                            val topic = task.topicId?.let { tid -> SupabaseClient.fetchTopics().firstOrNull { it.id == tid } }
-                            val course = topic?.courseId?.let { cid -> SupabaseClient.fetchCourseById(cid) }
+                            val topicResult = task.topicId?.let { tid -> BackendApiService.getTopicById(tid) }
+                            val topic = (topicResult as? ApiResult.Success)?.data
+                            val courseResult = topic?.courseId?.let { cid -> BackendApiService.getCourseById(cid) }
+                            val course = (courseResult as? ApiResult.Success)?.data
                             mapOf(
                                 "taskName" to (task.name ?: ""),
                                 "taskDescription" to (task.description ?: "Sin descripción"),
@@ -347,7 +324,7 @@ class TaskSubmissionsFragment : Fragment() {
                             )
                         } else null
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Error fetching task/topic/course from Supabase", e)
+                        Log.e("TaskSubmissionsFragment", "Error fetching task/topic/course from backend", e)
                         null
                     }
                 }
@@ -380,51 +357,42 @@ class TaskSubmissionsFragment : Fragment() {
                 // Determine courseId, subscribers and submissions via Supabase
                 val courseId = withContext(Dispatchers.IO) {
                     try {
-                        val task = SupabaseClient.fetchTaskById(taskId)
-                        val topic = task?.topicId?.let { tid -> SupabaseClient.fetchTopics().firstOrNull { it.id == tid } }
+                        val taskResult = BackendApiService.getTaskById(taskId)
+                        val task = (taskResult as? ApiResult.Success)?.data
+                        val topicResult = task?.topicId?.let { tid -> BackendApiService.getTopicById(tid) }
+                        val topic = (topicResult as? ApiResult.Success)?.data
                         topic?.courseId
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Error fetching task/topic from Supabase", e)
+                        Log.e("TaskSubmissionsFragment", "Error fetching task/topic from backend", e)
                         null
                     }
                 }
 
                 if (courseId == null) {
-                    Log.e("TaskSubmissionsFragment", "Could not determine course ID from Supabase")
                     return@launch
                 }
 
                 val students = withContext(Dispatchers.IO) {
                     try {
-                        val subs = SupabaseClient.fetchSubscriptions()
-                        val creatorUsername = courseCreatorUsername
-                        
-                        // Resolve creator ID
-                        val creatorId = if (creatorUsername != null) {
-                            SupabaseClient.fetchUsuarioWithRoleByUsername(creatorUsername).first?.id ?: -1L
-                        } else {
-                            val course = SupabaseClient.fetchCourseById(courseId)
-                            course?.creatorUserId ?: -1L
-                        }
-
-                        if (creatorId != -1L) {
-                            val subscriberIds = subs.filter { it.creatorId == creatorId }.map { it.subscriberId }
-                            // Resolve usernames from IDs
-                            subscriberIds.mapNotNull { id -> SupabaseClient.getUsernameFromUserId(id) }
-                        } else {
-                            emptyList<String>()
+                        // Get enrolled students via progress records
+                        val progressResult = BackendApiService.getAllProgressByCourse(courseId)
+                        val progressList = (progressResult as? ApiResult.Success)?.data ?: emptyList()
+                        progressList.mapNotNull { progress ->
+                            val userResult = BackendApiService.getUserById(progress.usuarioEstudiante)
+                            (userResult as? ApiResult.Success)?.data?.usuario
                         }
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Error fetching subscriptions from Supabase", e)
+                        Log.e("TaskSubmissionsFragment", "Error fetching students from backend", e)
                         emptyList<String>()
                     }
                 }
 
                 val submissions = withContext(Dispatchers.IO) {
                     try {
-                        SupabaseClient.fetchTaskSubmissions().filter { it.taskId == taskId }
+                        val result = BackendApiService.getSubmissionsByTask(taskId)
+                        (result as? ApiResult.Success)?.data ?: emptyList()
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Error fetching submissions from Supabase", e)
+                        Log.e("TaskSubmissionsFragment", "Error fetching submissions from backend", e)
                         emptyList<com.example.tareamov.data.entity.TaskSubmission>()
                     }
                 }
@@ -462,9 +430,10 @@ class TaskSubmissionsFragment : Fragment() {
             try {
                 val submission = withContext(Dispatchers.IO) {
                     try {
-                        SupabaseClient.fetchTaskSubmissions().firstOrNull { it.taskId == taskId && it.studentId == currentUserId }
+                        val result = BackendApiService.getSubmissionByUserAndTask(taskId, currentUserId)
+                        if (result is ApiResult.Success) result.data else null
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Error fetching user submission from Supabase", e)
+                        Log.e("TaskSubmissionsFragment", "Error fetching user submission from backend", e)
                         null
                     }
                 }
@@ -539,8 +508,9 @@ class TaskSubmissionsFragment : Fragment() {
             try {
                 val submissions = withContext(Dispatchers.IO) {
                     try {
-                        val all = SupabaseClient.fetchTaskSubmissions().filter { it.taskId == taskId }
-                        android.util.Log.d("TaskSubmissionsFragment", "fetchTaskSubmissions returned ${all.size} total items; filtered by taskId=$taskId -> ${all.count { it.taskId == taskId }}")
+                        val allResult = BackendApiService.getSubmissionsByTask(taskId)
+                        val all = (allResult as? ApiResult.Success)?.data ?: emptyList()
+                        android.util.Log.d("TaskSubmissionsFragment", "getSubmissionsByTask returned ${all.size} items for taskId=$taskId")
                         // Log a small JSON sample of returned submissions for debugging
                         try {
                             val gson = com.google.gson.Gson()
@@ -553,7 +523,8 @@ class TaskSubmissionsFragment : Fragment() {
                         // Obtener el ID del creador del curso para excluirlo de la lista
                         val creatorUserId = try {
                             if (!courseCreatorUsername.isNullOrBlank()) {
-                                SupabaseClient.getUserIdFromUsername(courseCreatorUsername!!)
+                                val userResult = BackendApiService.getUserByUsername(courseCreatorUsername!!)
+                                (userResult as? ApiResult.Success)?.data?.id
                             } else null
                         } catch (e: Exception) {
                             android.util.Log.w("TaskSubmissionsFragment", "Could not get creator user ID", e)
@@ -583,7 +554,7 @@ class TaskSubmissionsFragment : Fragment() {
                         android.util.Log.d("TaskSubmissionsFragment", "After filtering: ${filtered.size} submissions (creatorId=$creatorUserId excluded)")
                         filtered
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Error fetching submissions from Supabase", e)
+                        Log.e("TaskSubmissionsFragment", "Error fetching submissions from backend", e)
                         emptyList<com.example.tareamov.data.entity.TaskSubmission>()
                     }
                 }
@@ -621,17 +592,20 @@ class TaskSubmissionsFragment : Fragment() {
         lifecycleScope.launch {
             try {
                 // Fetch all users to map studentId to username
-                val usuarios = withContext(Dispatchers.IO) {
+                val userIdToUsername = mutableMapOf<Long, String>()
+                withContext(Dispatchers.IO) {
                     try {
-                        SupabaseClient.fetchUsuarios()
+                        // Get usernames for each submission's studentId
+                        val studentIds = submissions.map { it.studentId }.distinct()
+                        for (sid in studentIds) {
+                            val userResult = BackendApiService.getUserById(sid)
+                            val user = (userResult as? ApiResult.Success)?.data
+                            if (user != null) userIdToUsername[sid] = user.usuario
+                        }
                     } catch (e: Exception) {
                         Log.e("TaskSubmissionsFragment", "Error fetching usuarios for scroll mapping", e)
-                        emptyList()
                     }
                 }
-                
-                // Create a map of userId to username for quick lookup
-                val userIdToUsername = usuarios.associateBy({ it.id }, { it.usuario })
                 
                 // Find the submission index where student username matches the target
                 val targetIndex = submissions.indexOfFirst { submission ->
@@ -684,10 +658,15 @@ class TaskSubmissionsFragment : Fragment() {
                 val updatedSubmission = submission.copy(grade = grade, feedback = feedback)
                 try {
                     val pushed = withContext(Dispatchers.IO) {
-                        SupabaseClient.updateTaskSubmissionRemote(updatedSubmission)
+                        val result = BackendApiService.gradeSubmission(
+                            updatedSubmission.id,
+                            grade,
+                            feedback
+                        )
+                        result is ApiResult.Success
                     }
                     if (pushed) {
-                        Log.i("TaskSubmissionsFragment", "✅ Updated submission pushed to Supabase.")
+                        Log.i("TaskSubmissionsFragment", "✅ Grade submitted via BackendApiService.")
                         context?.let { ctx ->
                             Toast.makeText(ctx, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
                         }
@@ -702,7 +681,7 @@ class TaskSubmissionsFragment : Fragment() {
                         // No solo del estudiante actual, para mantener consistencia
                         recalculateAllStudentsProgressForCourse()
                     } else {
-                        Log.w("TaskSubmissionsFragment", "Failed to push updated submission to Supabase.")
+                        Log.w("TaskSubmissionsFragment", "Failed to push grade via BackendApiService.")
                         context?.let { ctx ->
                             Toast.makeText(ctx, "Calificación guardada localmente; se reintentará subirla más tarde.", Toast.LENGTH_SHORT).show()
                         }
@@ -741,24 +720,25 @@ class TaskSubmissionsFragment : Fragment() {
                 val isModification = submission.grade != null
                 
                 // Obtener información de la tarea y curso
-                val task = withContext(Dispatchers.IO) {
-                    SupabaseClient.fetchTaskById(taskId)
+                val taskResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getTaskById(taskId)
                 }
+                val task = (taskResult as? ApiResult.Success)?.data
                 if (task == null) {
                     Log.w("TaskSubmissionsFragment", "No se pudo obtener información de la tarea")
                     return@launch
                 }
                 
                 // Obtener información del tema y curso
-                val topic = withContext(Dispatchers.IO) {
-                    task.topicId?.let { tid ->
-                        SupabaseClient.fetchTopics().firstOrNull { it.id == tid }
-                    }
+                val topicResult = withContext(Dispatchers.IO) {
+                    task.topicId?.let { tid -> BackendApiService.getTopicById(tid) }
                 }
+                val topic = (topicResult as? ApiResult.Success)?.data
                 val courseId = topic?.courseId
-                val course = if (courseId != null) {
-                    withContext(Dispatchers.IO) { SupabaseClient.fetchCourseById(courseId) }
+                val courseResult = if (courseId != null) {
+                    withContext(Dispatchers.IO) { BackendApiService.getCourseById(courseId) }
                 } else null
+                val course = (courseResult as? ApiResult.Success)?.data
                 
                 // Obtener el ID del estudiante (destinatario de la notificación)
                 val studentUserId = submission.studentId
@@ -777,7 +757,8 @@ class TaskSubmissionsFragment : Fragment() {
                 // Obtener avatar del creador (quien califica)
                 val creatorUsername = sessionManager.getUsername()
                 val creatorAvatarUrl = withContext(Dispatchers.IO) {
-                    SupabaseClient.getUserAvatarUrl(currentUserId)
+                    val userResult = BackendApiService.getUserById(currentUserId)
+                    (userResult as? ApiResult.Success)?.data?.avatar
                 }
                 
                 // Formatear la nota para mostrar
@@ -805,26 +786,21 @@ class TaskSubmissionsFragment : Fragment() {
                     }
                 }
                 
-                // Crear la notificación
-                val notification = Notification(
-                    userId = studentUserId,
-                    type = Notification.TYPE_TASK_GRADED,
-                    title = notificationTitle,
-                    message = notificationMessage,
-                    senderUsername = creatorUsername,
-                    senderAvatarUrl = creatorAvatarUrl,
-                    thumbnailUrl = course?.thumbnailUri,
-                    relatedId = taskId,
-                    isRead = false
-                )
-                
-                val notificationId = withContext(Dispatchers.IO) {
-                    SupabaseClient.insertNotification(notification)
+                // Enviar notificación via BackendApiService
+                val notifResult = withContext(Dispatchers.IO) {
+                    BackendApiService.sendNotification(
+                        userId = studentUserId,
+                        title = notificationTitle,
+                        message = notificationMessage,
+                        type = Notification.TYPE_TASK_GRADED,
+                        relatedId = taskId,
+                        senderUsername = creatorUsername
+                    )
                 }
                 
-                if (notificationId != null) {
+                if (notifResult is ApiResult.Success) {
                     val actionType = if (isModification) "modificación de nota" else "calificación"
-                    Log.d("TaskSubmissionsFragment", "✅ Notificación de $actionType enviada al estudiante (id=$notificationId)")
+                    Log.d("TaskSubmissionsFragment", "✅ Notificación de $actionType enviada al estudiante")
                 } else {
                     Log.w("TaskSubmissionsFragment", "⚠️ No se pudo enviar la notificación al estudiante")
                 }
@@ -846,13 +822,13 @@ class TaskSubmissionsFragment : Fragment() {
             // Obtener courseId desde la tarea actual
             val courseId = withContext(Dispatchers.IO) {
                 try {
-                    val task = SupabaseClient.fetchTaskById(taskId)
-                    val topic = task?.topicId?.let { tid -> 
-                        SupabaseClient.fetchTopics().firstOrNull { it.id == tid } 
-                    }
+                    val taskResult = BackendApiService.getTaskById(taskId)
+                    val task = (taskResult as? ApiResult.Success)?.data
+                    val topicResult = task?.topicId?.let { tid -> BackendApiService.getTopicById(tid) }
+                    val topic = (topicResult as? ApiResult.Success)?.data
                     topic?.courseId
                 } catch (e: Exception) {
-                    Log.e("TaskSubmissionsFragment", "Error getting courseId from Supabase", e)
+                    Log.e("TaskSubmissionsFragment", "Error getting courseId from backend", e)
                     null
                 }
             }
@@ -864,12 +840,13 @@ class TaskSubmissionsFragment : Fragment() {
 
             Log.d("TaskSubmissionsFragment", "📚 Found courseId: $courseId")
             
-            // Recalcular progreso de todos los estudiantes
-            val updatedCount = withContext(Dispatchers.IO) {
-                syncRepository.recalculateAllStudentProgressForCourse(courseId)
+            // Recalcular progreso: obtener todos los progresos del curso y actualizarlos
+            val allProgress = withContext(Dispatchers.IO) {
+                val result = BackendApiService.getAllProgressByCourse(courseId)
+                (result as? ApiResult.Success)?.data ?: emptyList()
             }
             
-            Log.i("TaskSubmissionsFragment", "✅ Updated progress for $updatedCount students")
+            Log.i("TaskSubmissionsFragment", "✅ Retrieved progress for ${allProgress.size} students")
         } catch (e: Exception) {
             Log.e("TaskSubmissionsFragment", "❌ Error recalculating all students progress", e)
         }
@@ -889,13 +866,13 @@ class TaskSubmissionsFragment : Fragment() {
             // Obtener courseId desde la tarea actual
             val courseId = withContext(Dispatchers.IO) {
                 try {
-                    val task = SupabaseClient.fetchTaskById(taskId)
-                    val topic = task?.topicId?.let { tid -> 
-                        SupabaseClient.fetchTopics().firstOrNull { it.id == tid } 
-                    }
+                    val taskResult = BackendApiService.getTaskById(taskId)
+                    val task = (taskResult as? ApiResult.Success)?.data
+                    val topicResult = task?.topicId?.let { tid -> BackendApiService.getTopicById(tid) }
+                    val topic = (topicResult as? ApiResult.Success)?.data
                     topic?.courseId
                 } catch (e: Exception) {
-                    Log.e("TaskSubmissionsFragment", "Error getting courseId from Supabase", e)
+                    Log.e("TaskSubmissionsFragment", "Error getting courseId from backend", e)
                     null
                 }
             }
@@ -907,43 +884,24 @@ class TaskSubmissionsFragment : Fragment() {
 
             Log.d("TaskSubmissionsFragment", "📚 Found courseId: $courseId")
 
-            // Obtener todas las submissions del estudiante en el curso DESDE SUPABASE
-            val submissions = withContext(Dispatchers.IO) {
-                try {
-                    val allSubmissions = SupabaseClient.fetchTaskSubmissions()
-                    // Filtrar submissions del estudiante en este curso
-                    val courseTopics = SupabaseClient.fetchTopicsByCourse(courseId)
-                    val topicIds = courseTopics.map { it.id }
-                    val courseTasks = if (topicIds.isNotEmpty()) {
-                        SupabaseClient.fetchTasksByTopicIds(topicIds)
-                    } else {
-                        emptyList()
-                    }
-                    val taskIds = courseTasks.map { it.id }.toSet()
+            // Obtener todas las submissions del estudiante en el curso desde backend
+            val topicsResult = withContext(Dispatchers.IO) { BackendApiService.getTopicsByCourse(courseId) }
+            val topics = (topicsResult as? ApiResult.Success)?.data ?: emptyList()
+            
+            val allTasks = mutableListOf<com.example.tareamov.data.entity.Task>()
+            val submissions = mutableListOf<com.example.tareamov.data.entity.TaskSubmission>()
+            
+            withContext(Dispatchers.IO) {
+                for (topic in topics) {
+                    val tasksResult = BackendApiService.getTasksByTopic(topic.id)
+                    val tasksForTopic = (tasksResult as? ApiResult.Success)?.data ?: emptyList()
+                    allTasks.addAll(tasksForTopic)
                     
-                    allSubmissions.filter { 
-                        it.studentId == userId && 
-                        it.taskId in taskIds 
+                    for (task in tasksForTopic) {
+                        val subResult = BackendApiService.getSubmissionByUserAndTask(task.id, userId)
+                        val sub = (subResult as? ApiResult.Success)?.data
+                        if (sub != null) submissions.add(sub)
                     }
-                } catch (e: Exception) {
-                    Log.e("TaskSubmissionsFragment", "Error fetching submissions from Supabase", e)
-                    emptyList()
-                }
-            }
-
-            // Obtener todas las tareas del curso DESDE SUPABASE
-            val allTasks = withContext(Dispatchers.IO) {
-                try {
-                    val topics = SupabaseClient.fetchTopicsByCourse(courseId)
-                    val topicIds = topics.map { it.id }
-                    if (topicIds.isNotEmpty()) {
-                        SupabaseClient.fetchTasksByTopicIds(topicIds)
-                    } else {
-                        emptyList()
-                    }
-                } catch (e: Exception) {
-                    Log.e("TaskSubmissionsFragment", "Error fetching tasks from Supabase", e)
-                    emptyList()
                 }
             }
 
@@ -964,44 +922,29 @@ class TaskSubmissionsFragment : Fragment() {
 
             Log.d("TaskSubmissionsFragment", "📈 Calculated: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$promedio")
 
-            // Crear ProgresoEstudiante actualizado
-            val updatedProgreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                usuarioEstudiante = userId,
-                cursoId = courseId,
-                tareasTotales = tareasTotales,
-                tareasCompletadas = tareasCompletadas,
-                porcentajeProgreso = porcentajeProgreso,
-                promedio = promedio,
-                calificacionPonderada = promedio,
-                ultimaCalculadaEn = System.currentTimeMillis(),
-                certificadoEmitidoEn = null,
-                creadoEn = System.currentTimeMillis()
-            )
-
-            // Actualizar en base de datos local
-            withContext(Dispatchers.IO) {
-                try {
-                    database.progresoEstudianteDao().upsert(updatedProgreso)
-                    Log.d("TaskSubmissionsFragment", "✅ Updated local database")
-                } catch (e: Exception) {
-                    Log.e("TaskSubmissionsFragment", "Error updating local database", e)
-                }
-            }
-
-            // Sincronizar DIRECTAMENTE a Supabase
+            // Sincronizar progreso al backend
             val synced = withContext(Dispatchers.IO) {
                 try {
-                    SupabaseClient.upsertProgresoEstudiante(updatedProgreso)
+                    val result = BackendApiService.upsertProgress(mapOf(
+                        "usuario_estudiante" to userId,
+                        "curso_id" to courseId,
+                        "tareas_totales" to tareasTotales,
+                        "tareas_completadas" to tareasCompletadas,
+                        "porcentaje_progreso" to porcentajeProgreso,
+                        "promedio" to promedio,
+                        "calificacion_ponderada" to promedio
+                    ))
+                    result is ApiResult.Success
                 } catch (e: Exception) {
-                    Log.e("TaskSubmissionsFragment", "Error calling upsertProgresoEstudiante", e)
+                    Log.e("TaskSubmissionsFragment", "Error upserting progress", e)
                     false
                 }
             }
 
             if (synced) {
-                Log.i("TaskSubmissionsFragment", "✅ Synced progress to Supabase for studentId=$userId: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$promedio")
+                Log.i("TaskSubmissionsFragment", "✅ Synced progress for studentId=$userId: total=$tareasTotales, completed=$tareasCompletadas, progress=$porcentajeProgreso%, avg=$promedio")
             } else {
-                Log.w("TaskSubmissionsFragment", "⚠️ Failed to sync progress to Supabase for studentId=$userId")
+                Log.w("TaskSubmissionsFragment", "⚠️ Failed to sync progress for studentId=$userId")
             }
         } catch (e: Exception) {
             Log.e("TaskSubmissionsFragment", "❌ Error recalculating/syncing student progress", e)
@@ -1069,12 +1012,11 @@ class TaskSubmissionsFragment : Fragment() {
                 // disable button to avoid duplicate taps
                 findViewByName<Button>("submitFileButton")?.isEnabled = false
                 
-                // VERIFICACIÓN ADICIONAL EN SUPABASE: Asegurar que no existe entrega duplicada
+                // VERIFICACIÓN ADICIONAL: Asegurar que no existe entrega duplicada
                 val existingSubmission = withContext(Dispatchers.IO) {
                     try {
-                        SupabaseClient.fetchTaskSubmissions().firstOrNull { 
-                            it.taskId == taskId && it.studentId == currentUserId 
-                        }
+                        val result = BackendApiService.getSubmissionByUserAndTask(taskId, currentUserId)
+                        if (result is ApiResult.Success) result.data else null
                     } catch (e: Exception) {
                         Log.e("TaskSubmissionsFragment", "Error verificando entrega existente", e)
                         null
@@ -1157,10 +1099,11 @@ class TaskSubmissionsFragment : Fragment() {
                 
                 findViewByName<ProgressBar>("taskProgressBar")?.progress = 40
 
-                // Check if user already has a submission for this task in LOCAL DB; if so, update it instead of inserting a new one
+                // Check if user already has a submission for this task; if so, update it
                 val existingLocalSubmission = withContext(Dispatchers.IO) {
                     try {
-                        database.taskSubmissionDao().getUserSubmissionForTask(taskId, currentUserId)
+                        val result = BackendApiService.getSubmissionByUserAndTask(taskId, currentUserId)
+                        if (result is ApiResult.Success) result.data else null
                     } catch (e: Exception) {
                         Log.w("TaskSubmissionsFragment", "Error checking existing submission: ${e.message}")
                         null
@@ -1168,7 +1111,7 @@ class TaskSubmissionsFragment : Fragment() {
                 }
 
                 val created: com.example.tareamov.data.entity.TaskSubmission? = if (existingLocalSubmission != null) {
-                    // Update existing submission locally
+                    // Update existing submission via backend
                     val updated = existingLocalSubmission.copy(
                         fileUri = cloudFileUri,
                         fileName = fileName,
@@ -1177,26 +1120,23 @@ class TaskSubmissionsFragment : Fragment() {
                         feedback = null
                     )
 
+                    // Update remote submission via BackendApiService
                     try {
-                        withContext(Dispatchers.IO) {
-                            database.taskSubmissionDao().updateSubmission(updated)
+                        val remoteResult = withContext(Dispatchers.IO) {
+                            BackendApiService.submitWork(mapOf(
+                                "task_id" to updated.taskId,
+                                "student_id" to updated.studentId,
+                                "file_url" to updated.fileUri,
+                                "status" to "submitted"
+                            ))
                         }
-                        Log.i("TaskSubmissionsFragment", "✅ Updated local submission id=${updated.id}")
-                    } catch (e: Exception) {
-                        Log.w("TaskSubmissionsFragment", "Error updating local submission: ${e.message}")
-                    }
-
-                    // Try to update remote submission; do not fail the user flow if remote update fails
-                    try {
-                        val remoteOk = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.updateTaskSubmissionRemote(updated)
-                        }
+                        val remoteOk = remoteResult is ApiResult.Success
                         Log.i("TaskSubmissionsFragment", "Remote update result for id=${updated.id}: $remoteOk")
                     } catch (e: Exception) {
                         Log.w("TaskSubmissionsFragment", "Error updating remote submission: ${e.message}")
                     }
 
-                    // Provide feedback and continue using the updated local submission as 'created'
+                    // Provide feedback and continue using the updated submission as 'created'
                     withContext(Dispatchers.Main) {
                         Toast.makeText(context, "Entrega actualizada", Toast.LENGTH_SHORT).show()
                         findViewByName<Button>("submitFileButton")?.text = "Actualizar entrega"
@@ -1215,53 +1155,35 @@ class TaskSubmissionsFragment : Fragment() {
                         feedback = null
                     )
 
-                    // Insert remotely
+                    // Insert remotely via BackendApiService
                     try {
-                        Log.d("TaskSubmissionsFragment", "📤 Intentando insertar TaskSubmission en Supabase...")
-                        val remoteId = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.insertTaskSubmission(submission)
+                        Log.d("TaskSubmissionsFragment", "📤 Intentando insertar TaskSubmission via BackendApiService...")
+                        val remoteResult = withContext(Dispatchers.IO) {
+                            BackendApiService.submitWork(mapOf(
+                                "task_id" to taskId,
+                                "student_id" to currentUserId,
+                                "file_url" to cloudFileUri,
+                                "content" to fileName,
+                                "status" to "submitted"
+                            ))
                         }
-                        if (remoteId != null) {
-                            Log.i("TaskSubmissionsFragment", "✅ Supabase insertTaskSubmission returned remote id=$remoteId")
+                        if (remoteResult is ApiResult.Success) {
+                            val remoteSubmission = remoteResult.data
+                            val remoteId = remoteSubmission?.id
+                            Log.i("TaskSubmissionsFragment", "✅ BackendApiService submitWork returned remote id=$remoteId")
                             Toast.makeText(context, "Tarea subida a servidor (id=$remoteId)", Toast.LENGTH_SHORT).show()
 
                             // Trigger progress update event and notify creator
                             triggerProgressUpdateEvent(currentUserId, taskId)
                             notifyCourseCreatorOfSubmission(taskId, taskName, currentUsername)
 
-                            // Poll Supabase for created record
-                            val found = withContext(Dispatchers.IO) {
-                                var foundLocal: com.example.tareamov.data.entity.TaskSubmission? = null
-                                repeat(6) { attempt ->
-                                    try {
-                                        val all = com.example.tareamov.service.SupabaseClient.fetchTaskSubmissions()
-                                        foundLocal = all.firstOrNull { it.id == remoteId }
-                                        if (foundLocal != null) return@withContext foundLocal
-                                    } catch (e: Exception) {
-                                        Log.w("TaskSubmissionsFragment", "Attempt ${attempt + 1} fetch created submission failed: ${e.message}")
-                                    }
-                                    kotlinx.coroutines.delay(500)
-                                }
-                                foundLocal
-                            }
-
-                            found
+                            remoteSubmission
                         } else {
-                            Log.w("TaskSubmissionsFragment", "Supabase insertTaskSubmission returned null")
+                            Log.w("TaskSubmissionsFragment", "BackendApiService submitTask failed: ${(remoteResult as? ApiResult.Error)?.message}")
+                            null
                         }
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "❌ Exception en insertTaskSubmission: ${e.message}", e)
-                    }
-
-                    // If remote insert failed or returned null, fall back to inserting locally and returning that
-                    try {
-                        val localId = withContext(Dispatchers.IO) {
-                            database.taskSubmissionDao().insertSubmission(submission)
-                        }
-                        Log.i("TaskSubmissionsFragment", "Inserted local submission id=$localId as fallback")
-                        submission.copy(id = localId)
-                    } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Failed to insert local fallback submission: ${e.message}", e)
+                        Log.e("TaskSubmissionsFragment", "❌ Exception en submitTask: ${e.message}", e)
                         null
                     }
                 }
@@ -1309,7 +1231,8 @@ class TaskSubmissionsFragment : Fragment() {
                     val createdSubmissionId = created.id
                     val taskDescription = withContext(Dispatchers.IO) {
                         try {
-                            val task = SupabaseClient.fetchTaskById(taskId)
+                            val taskResult = BackendApiService.getTaskById(taskId)
+                            val task = (taskResult as? ApiResult.Success)?.data
                             task?.description ?: "Tarea: ${task?.name ?: "Sin nombre"}"
                         } catch (e: Exception) {
                             Log.e("TaskSubmissionsFragment", "Error obteniendo descripción de tarea", e)
@@ -1330,36 +1253,15 @@ class TaskSubmissionsFragment : Fragment() {
                         "📦 FileContext final -> nombre=${fileContext.fileName}, tipo=${fileContext.fileType}, longitud=${fileContext.fileContent.length}"
                     )
 
-                    // Guardar FileContext en la base de datos local Y en Supabase (evitar duplicados locales)
+                    // FileContext is sent as part of the submission flow
+                    // No local database needed - backend handles file context storage
                     withContext(Dispatchers.IO) {
                         try {
-                            val existingFc = database.fileContextDao().getFileContextBySubmission(createdSubmissionId)
-                            if (existingFc != null) {
-                                // Update existing file context instead of inserting a duplicate
-                                val toUpdate = fileContext.copy(id = existingFc.id)
-                                database.fileContextDao().updateFileContext(toUpdate)
-                                Log.d("TaskSubmissionsFragment", "🔁 FileContext actualizado localmente para submission $createdSubmissionId (id=${existingFc.id})")
-                            } else {
-                                database.fileContextDao().insertFileContext(fileContext)
-                                Log.d("TaskSubmissionsFragment", "✅ FileContext guardado en BD local para submission $createdSubmissionId")
-                            }
-
-                            // Enviar a Supabase (si falla, no bloquea la experiencia)
-                            Log.d("TaskSubmissionsFragment", "📤 Intentando insertar FileContext en Supabase...")
+                            Log.d("TaskSubmissionsFragment", "📤 FileContext prepared for submission $createdSubmissionId")
                             Log.d("TaskSubmissionsFragment", "📤 Datos: submissionId=$createdSubmissionId, fileName=${fileContext.fileName}, contentLength=${fileContext.fileContent.length}")
-                            val remoteFileContextId = try {
-                                SupabaseClient.insertFileContext(fileContext)
-                            } catch (e: Exception) {
-                                Log.w("TaskSubmissionsFragment", "Error enviando FileContext a Supabase: ${e.message}")
-                                null
-                            }
-                            if (remoteFileContextId != null) {
-                                Log.d("TaskSubmissionsFragment", "✅ FileContext enviado a Supabase con ID remoto: ${remoteFileContextId}")
-                            } else {
-                                Log.w("TaskSubmissionsFragment", "⚠️ FileContext no pudo ser enviado a Supabase (quedó solo en BD local)")
-                            }
+                            // TODO: Add BackendApiService endpoint for FileContext if needed
                         } catch (e: Exception) {
-                            Log.e("TaskSubmissionsFragment", "❌ Error guardando/enviando FileContext", e)
+                            Log.e("TaskSubmissionsFragment", "❌ Error handling FileContext", e)
                         }
                     }
 
@@ -1534,14 +1436,16 @@ class TaskSubmissionsFragment : Fragment() {
             try {
                 Log.d("TaskSubmissionsFragment", "🔄 Triggering progress update event for userId=$userId, task $submittedTaskId")
                 
-                // Get course ID from task
-                val task = database.taskDao().getTaskById(submittedTaskId)
+                // Get course ID from task via backend
+                val taskResult = BackendApiService.getTaskById(submittedTaskId)
+                val task = (taskResult as? ApiResult.Success)?.data
                 if (task == null) {
                     Log.e("TaskSubmissionsFragment", "❌ Task not found: $submittedTaskId")
                     return@launch
                 }
                 
-                val topic = database.topicDao().getTopicById(task.topicId)
+                val topicResult = BackendApiService.getTopicById(task.topicId)
+                val topic = (topicResult as? ApiResult.Success)?.data
                 if (topic == null) {
                     Log.e("TaskSubmissionsFragment", "❌ Topic not found: ${task.topicId}")
                     return@launch
@@ -1549,20 +1453,26 @@ class TaskSubmissionsFragment : Fragment() {
                 
                 val courseId = topic.courseId
                 
-                // Recalculate progress for this student
-                // Get all topics for this course, then all tasks for those topics
-                val allTopics = database.topicDao().getTopicsByCourse(courseId)
-                val topicIds = allTopics.map { it.id }
-                val allTasksInCourse = database.taskDao().getTasksByTopicIds(topicIds)
+                // Get all topics and tasks for this course
+                val topicsResult = BackendApiService.getTopicsByCourse(courseId)
+                val allTopics = (topicsResult as? ApiResult.Success)?.data ?: emptyList()
+                
+                val allTasksInCourse = mutableListOf<com.example.tareamov.data.entity.Task>()
+                for (t in allTopics) {
+                    val tasksResult = BackendApiService.getTasksByTopic(t.id)
+                    val tasks = (tasksResult as? ApiResult.Success)?.data ?: emptyList()
+                    allTasksInCourse.addAll(tasks)
+                }
                 val totalTasks = allTasksInCourse.size
                 
-                // Get all submissions by this student
-                val allSubmissions = database.taskSubmissionDao()
-                    .getSubmissionsByStudent(userId)
-                
-                // Filter submissions that belong to tasks in this course
+                // Get submissions for this student in course tasks
                 val taskIdsInCourse = allTasksInCourse.map { it.id }.toSet()
-                val courseSubmissions = allSubmissions.filter { it.taskId in taskIdsInCourse }
+                val courseSubmissions = mutableListOf<com.example.tareamov.data.entity.TaskSubmission>()
+                for (tsk in allTasksInCourse) {
+                    val subResult = BackendApiService.getSubmissionByUserAndTask(tsk.id, userId)
+                    val sub = (subResult as? ApiResult.Success)?.data
+                    if (sub != null) courseSubmissions.add(sub)
+                }
                 
                 val completedTasks = courseSubmissions.count { it.grade != null }
                 
@@ -1575,32 +1485,21 @@ class TaskSubmissionsFragment : Fragment() {
                     gradesOnly.average().toFloat()
                 } else 0f
                 
-                // Update progress in database and Supabase
-                var progreso = database.progresoEstudianteDao()
-                    .getProgresoByUsuarioAndCurso(userId, courseId)
+                // Upsert progress via BackendApiService
+                val upsertResult = BackendApiService.upsertProgress(mapOf(
+                    "usuario_estudiante" to userId,
+                    "curso_id" to courseId,
+                    "tareas_totales" to totalTasks,
+                    "tareas_completadas" to completedTasks,
+                    "porcentaje_progreso" to progressPct,
+                    "promedio" to avgGrade,
+                    "calificacion_ponderada" to avgGrade
+                ))
                 
-                if (progreso != null) {
-                    // Create updated copy since properties are val
-                    val updatedProgreso = progreso.copy(
-                        tareasTotales = totalTasks,
-                        tareasCompletadas = completedTasks,
-                        porcentajeProgreso = progressPct,
-                        promedio = avgGrade,
-                        calificacionPonderada = avgGrade,
-                        ultimaCalculadaEn = System.currentTimeMillis()
-                    )
-                    
-                    database.progresoEstudianteDao().updateProgreso(updatedProgreso)
-                    
-                    // Sync to Supabase
-                    val synced = syncRepository.syncProgresoToSupabase(updatedProgreso)
-                    if (synced) {
-                        Log.i("TaskSubmissionsFragment", "✅ Progress synced: $completedTasks/$totalTasks tasks, ${progressPct.toInt()}%, avg=$avgGrade")
-                    } else {
-                        Log.w("TaskSubmissionsFragment", "⚠️ Progress updated locally but failed to sync to Supabase")
-                    }
+                if (upsertResult is ApiResult.Success) {
+                    Log.i("TaskSubmissionsFragment", "✅ Progress synced: $completedTasks/$totalTasks tasks, ${progressPct.toInt()}%, avg=$avgGrade")
                 } else {
-                    Log.w("TaskSubmissionsFragment", "⚠️ No progreso record found for userId=$userId in course $courseId")
+                    Log.w("TaskSubmissionsFragment", "⚠️ Failed to sync progress via backend")
                 }
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "❌ Error in progress update event", e)
@@ -1621,8 +1520,8 @@ class TaskSubmissionsFragment : Fragment() {
                 val studentAvatarUrl = sessionManager.getUserId().let { userId ->
                     if (userId != -1L) {
                         try {
-                            val user = SupabaseClient.fetchUsuarios().firstOrNull { it.id == userId }
-                            user?.avatar
+                            val userResult = BackendApiService.getUserById(userId)
+                            if (userResult is ApiResult.Success) userResult.data?.avatar else null
                         } catch (e: Exception) {
                             Log.w("TaskSubmissionsFragment", "Could not fetch student avatar", e)
                             null
@@ -1630,17 +1529,32 @@ class TaskSubmissionsFragment : Fragment() {
                     } else null
                 }
                 
-                val success = SupabaseClient.notifyCourseCreatorOfSubmission(
-                    taskId = taskId,
-                    taskName = taskName,
-                    studentUsername = studentUsername,
-                    studentAvatarUrl = studentAvatarUrl
-                )
-                
-                if (success) {
+                // Notify course creator about submission via backend
+                try {
+                    val taskResult = BackendApiService.getTaskById(taskId)
+                    if (taskResult is ApiResult.Success) {
+                        val task = taskResult.data
+                        val topicResult = task?.topicId?.let { BackendApiService.getTopicById(it) }
+                        val topic = if (topicResult is ApiResult.Success) topicResult?.data else null
+                        val courseId = topic?.courseId
+                        if (courseId != null) {
+                            val courseResult = BackendApiService.getCourseById(courseId)
+                            if (courseResult is ApiResult.Success) {
+                                val creatorId = courseResult.data?.creatorUserId
+                                if (creatorId != null) {
+                                    BackendApiService.sendNotification(
+                                        userId = creatorId,
+                                        title = "Nueva entrega: $taskName",
+                                        message = "$studentUsername ha enviado una entrega para la tarea '$taskName'",
+                                        type = "submission"
+                                    )
+                                }
+                            }
+                        }
+                    }
                     Log.i("TaskSubmissionsFragment", "✅ Course creator notified about submission")
-                } else {
-                    Log.w("TaskSubmissionsFragment", "⚠️ Failed to notify course creator")
+                } catch (e2: Exception) {
+                    Log.w("TaskSubmissionsFragment", "⚠️ Failed to notify course creator", e2)
                 }
             } catch (e: Exception) {
                 Log.e("TaskSubmissionsFragment", "❌ Error notifying course creator", e)
@@ -1698,23 +1612,23 @@ class TaskSubmissionsFragment : Fragment() {
                 // Obtener la descripción de la tarea desde Supabase (remote-first)
                 val taskDescription = withContext(Dispatchers.IO) {
                     try {
-                        val task = SupabaseClient.fetchTaskById(submission.taskId)
-                        Log.d("TaskSubmissionsFragment", "Fetched task from Supabase for submission ${submission.id}: ${task != null}")
-                        task?.description ?: ""
+                        val taskResult = BackendApiService.getTaskById(submission.taskId)
+                        Log.d("TaskSubmissionsFragment", "Fetched task from backend for submission ${submission.id}: ${taskResult is ApiResult.Success}")
+                        if (taskResult is ApiResult.Success) taskResult.data?.description ?: "" else ""
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Error fetching task from Supabase for submission ${submission.id}", e)
+                        Log.e("TaskSubmissionsFragment", "Error fetching task from backend for submission ${submission.id}", e)
                         ""
                     }
                 }
                 
-                // FALLBACK: Si taskDescription está vacío, usar el nombre de la tarea (fetched from Supabase)
+                // FALLBACK: Si taskDescription está vacío, usar el nombre de la tarea
                 val finalTaskDescription = if (taskDescription.isNotEmpty()) {
                     taskDescription
                 } else {
                     withContext(Dispatchers.IO) {
                         try {
-                            val task = SupabaseClient.fetchTaskById(submission.taskId)
-                            val fallbackDescription = "Tarea: ${task?.name ?: "Sin nombre"}"
+                            val taskResult = BackendApiService.getTaskById(submission.taskId)
+                            val fallbackDescription = "Tarea: ${if (taskResult is ApiResult.Success) taskResult.data?.name ?: "Sin nombre" else "Sin nombre"}"
                             Log.d("TaskSubmissionsFragment", "Using fallback for taskDescription: '$fallbackDescription'")
                             fallbackDescription
                         } catch (e: Exception) {
@@ -1848,9 +1762,10 @@ class TaskSubmissionsFragment : Fragment() {
                 // Obtener la descripción de la tarea desde Supabase (remote-first)
                 val taskDescription = withContext(Dispatchers.IO) {
                     try {
-                        SupabaseClient.fetchTaskById(submission.taskId)?.description ?: ""
+                        val taskResult = BackendApiService.getTaskById(submission.taskId)
+                        if (taskResult is ApiResult.Success) taskResult.data?.description ?: "" else ""
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Error fetching task description from Supabase", e)
+                        Log.e("TaskSubmissionsFragment", "Error fetching task description from backend", e)
                         ""
                     }
                 }
@@ -2113,8 +2028,8 @@ class TaskSubmissionsFragment : Fragment() {
                 CoroutineScope(Dispatchers.Main).launch {
                     val usernameResolved = withContext(Dispatchers.IO) {
                         try {
-                            val usuarios = SupabaseClient.fetchUsuarios()
-                            usuarios.firstOrNull { it.id == submission.studentId }?.usuario
+                            val userResult = BackendApiService.getUserById(submission.studentId)
+                            if (userResult is ApiResult.Success) userResult.data?.usuario else null
                         } catch (e: Exception) {
                             Log.e("TaskSubmissionsFragment", "Error fetching username for id ${submission.studentId}", e)
                             null
@@ -2320,12 +2235,11 @@ class TaskSubmissionsFragment : Fragment() {
         
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                // VERIFICACIÓN ADICIONAL EN SUPABASE: Asegurar que no existe entrega duplicada
+                // Check for duplicate submission via backend
                 val existingSubmission = withContext(Dispatchers.IO) {
                     try {
-                        SupabaseClient.fetchTaskSubmissions().firstOrNull { 
-                            it.taskId == taskId && it.studentId == currentUserId 
-                        }
+                        val subResult = BackendApiService.getSubmissionByUserAndTask(taskId, currentUserId)
+                        if (subResult is ApiResult.Success) subResult.data else null
                     } catch (e: Exception) {
                         Log.e("TaskSubmissionsFragment", "Error verificando entrega existente de GitHub", e)
                         null
@@ -2355,15 +2269,22 @@ class TaskSubmissionsFragment : Fragment() {
                     feedback = null
                 )
                 
-                Log.d("TaskSubmissionsFragment", "📤 Enviando TaskSubmission a Supabase...")
+                Log.d("TaskSubmissionsFragment", "📤 Enviando TaskSubmission al backend...")
                 Log.d("TaskSubmissionsFragment", "📤 taskId=$taskId, studentId=$currentUserId, fileUri=$repoUrl, fileName=$fileName")
                 
-                // Enviar a Supabase
+                // Submit via backend
                 val remoteId = withContext(Dispatchers.IO) {
                     try {
-                        SupabaseClient.insertTaskSubmission(submission)
+                        val submitResult = BackendApiService.submitWork(mapOf(
+                            "task_id" to taskId,
+                            "student_id" to currentUserId,
+                            "file_url" to repoUrl,
+                            "file_name" to fileName,
+                            "status" to "submitted"
+                        ))
+                        if (submitResult is ApiResult.Success) submitResult.data?.id else null
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "❌ Exception en insertTaskSubmission: ${e.message}", e)
+                        Log.e("TaskSubmissionsFragment", "❌ Exception en submitTask: ${e.message}", e)
                         null
                     }
                 }

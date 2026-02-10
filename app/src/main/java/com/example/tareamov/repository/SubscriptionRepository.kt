@@ -1,29 +1,44 @@
 package com.example.tareamov.repository
 
-import com.example.tareamov.data.AppDatabase
+import android.content.Context
+import android.util.Log
 import com.example.tareamov.data.entity.Subscription
-import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-class SubscriptionRepository(private val database: AppDatabase) {
-    private val subscriptionDao = database.subscriptionDao()
+/**
+ * Repository for handling subscription operations via BackendApiService.
+ */
+class SubscriptionRepository(context: Context) {
+
+    init {
+        BackendApiService.initialize(context)
+    }
 
     suspend fun toggleSubscription(subscriberId: Long, creatorId: Long): Boolean {
         return withContext(Dispatchers.IO) {
-            val isSubscribed = subscriptionDao.isSubscribed(subscriberId, creatorId)
+            // Check current subscription status
+            val checkResult = BackendApiService.checkSubscription(creatorId)
+            val isSubscribed = when (checkResult) {
+                is ApiResult.Success -> checkResult.data == true
+                is ApiResult.Error -> false
+            }
 
             if (isSubscribed) {
-                // Desuscribir
-                subscriptionDao.deleteSubscription(subscriberId, creatorId)
+                // Unsubscribe
+                val result = BackendApiService.unsubscribe(creatorId)
+                if (result is ApiResult.Error) {
+                    Log.e("SubscriptionRepository", "Error unsubscribing: ${result.message}")
+                }
                 false
             } else {
-                // Suscribir
-                val subscription = Subscription(
-                    subscriberId = subscriberId,
-                    creatorId = creatorId
-                )
-                subscriptionDao.insertSubscription(subscription)
+                // Subscribe
+                val result = BackendApiService.subscribe(creatorId)
+                if (result is ApiResult.Error) {
+                    Log.e("SubscriptionRepository", "Error subscribing: ${result.message}")
+                }
                 true
             }
         }
@@ -32,10 +47,15 @@ class SubscriptionRepository(private val database: AppDatabase) {
     suspend fun getSubscriberCount(creatorId: Long): Int {
         return withContext(Dispatchers.IO) {
             try {
-                // Fetch from Supabase only
-                SupabaseClient.fetchSubscriberCount(creatorId).toInt()
+                when (val result = BackendApiService.getSubscriberCount(creatorId)) {
+                    is ApiResult.Success -> (result.data as? Number)?.toInt() ?: 0
+                    is ApiResult.Error -> {
+                        Log.e("SubscriptionRepository", "Error fetching subscriber count: ${result.message}")
+                        0
+                    }
+                }
             } catch (e: Exception) {
-                android.util.Log.e("SubscriptionRepository", "Error fetching subscriber count from Supabase for creatorId=$creatorId", e)
+                Log.e("SubscriptionRepository", "Error fetching subscriber count for creatorId=$creatorId", e)
                 0
             }
         }
@@ -44,10 +64,15 @@ class SubscriptionRepository(private val database: AppDatabase) {
     suspend fun getSubscriptionCount(subscriberId: Long): Int {
         return withContext(Dispatchers.IO) {
             try {
-                // Fetch from Supabase only
-                SupabaseClient.fetchSubscriptionCount(subscriberId).toInt()
+                when (val result = BackendApiService.getMySubscriptions()) {
+                    is ApiResult.Success -> (result.data as? List<*>)?.size ?: 0
+                    is ApiResult.Error -> {
+                        Log.e("SubscriptionRepository", "Error fetching subscription count: ${result.message}")
+                        0
+                    }
+                }
             } catch (e: Exception) {
-                android.util.Log.e("SubscriptionRepository", "Error fetching subscription count from Supabase for subscriberId=$subscriberId", e)
+                Log.e("SubscriptionRepository", "Error fetching subscription count for subscriberId=$subscriberId", e)
                 0
             }
         }
@@ -55,20 +80,39 @@ class SubscriptionRepository(private val database: AppDatabase) {
 
     suspend fun isUserSubscribed(subscriberId: Long, creatorId: Long): Boolean {
         return withContext(Dispatchers.IO) {
-            subscriptionDao.isSubscribed(subscriberId, creatorId)
+            when (val result = BackendApiService.checkSubscription(creatorId)) {
+                is ApiResult.Success -> result.data == true
+                is ApiResult.Error -> {
+                    Log.e("SubscriptionRepository", "Error checking subscription: ${result.message}")
+                    false
+                }
+            }
         }
     }
 
     suspend fun getSubscriptionsByUser(subscriberId: Long): List<Subscription> {
         return withContext(Dispatchers.IO) {
-            subscriptionDao.getSubscriptionsBySubscriber(subscriberId)
+            when (val result = BackendApiService.getMySubscriptions()) {
+                is ApiResult.Success -> result.data ?: emptyList()
+                is ApiResult.Error -> {
+                    Log.e("SubscriptionRepository", "Error fetching subscriptions: ${result.message}")
+                    emptyList()
+                }
+            }
         }
     }
 
-    // Fix the method that's causing type mismatch errors
     suspend fun getSubscribersByCreator(creatorId: Long): List<Subscription> {
         return withContext(Dispatchers.IO) {
-            subscriptionDao.getSubscribersByCreator(creatorId)
+            val result = BackendApiService.getMySubscribers()
+            when (result) {
+                is ApiResult.Success -> result.data ?: emptyList()
+                is ApiResult.Error -> {
+                    Log.e("SubscriptionRepository", "Error fetching subscribers: ${result.message}")
+                    emptyList()
+                }
+                else -> emptyList()
+            }
         }
     }
 }

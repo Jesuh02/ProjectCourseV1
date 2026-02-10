@@ -39,10 +39,9 @@ import de.hdodenhof.circleimageview.CircleImageView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import at.favre.lib.crypto.bcrypt.BCrypt
-import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.util.SessionManager
-import com.example.tareamov.data.AppDatabase
 import android.content.Context
 import java.io.File
 import java.io.IOException
@@ -838,210 +837,116 @@ class RegisterFragment : Fragment() {
         // Proceder con el registro
         lifecycleScope.launch {
             try {
-                // Verificar si el nombre de usuario ya existe localmente
-                val usernameExistsLocal = viewModel.checkUsernameExists(username)
-                if (usernameExistsLocal) {
+                // Verificar si el username ya existe en el backend
+                val usernameCheck = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByUsername(username)
+                }
+                if (usernameCheck is ApiResult.Success) {
                     withContext(Dispatchers.Main) {
                         usernameLayout.error = "El nombre de usuario ya existe"
                     }
                     return@launch
                 }
 
-                // Verificar en Supabase si está configurado
-                if (SupabaseClient.isConfigured()) {
-                    // Verificar si el username ya existe en Supabase
-                    val remoteUserByUsername = withContext(Dispatchers.IO) {
-                        try {
-                            SupabaseClient.fetchUsuarioByUsername(username)
-                        } catch (e: Exception) {
-                            Log.w("RegisterFragment", "Error checking username in Supabase: ${e.message}")
-                            null
-                        }
+                // Verificar si el email ya existe en el backend
+                val emailCheck = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByEmail(email)
+                }
+                if (emailCheck is ApiResult.Success) {
+                    withContext(Dispatchers.Main) {
+                        emailLayout.error = "Este correo electrónico ya está registrado"
+                        Toast.makeText(requireContext(), "El correo electrónico ya está en uso. Por favor usa otro.", Toast.LENGTH_LONG).show()
                     }
-                    if (remoteUserByUsername != null) {
-                        withContext(Dispatchers.Main) {
-                            usernameLayout.error = "El nombre de usuario ya existe en el servidor"
-                        }
-                        return@launch
-                    }
+                    return@launch
+                }
 
-                    // Verificar si el email ya existe en Supabase
-                    val remoteUserByEmail = withContext(Dispatchers.IO) {
-                        try {
-                            SupabaseClient.fetchUsuarioByEmail(email)
-                        } catch (e: Exception) {
-                            Log.w("RegisterFragment", "Error checking email in Supabase: ${e.message}")
-                            null
-                        }
-                    }
-                    if (remoteUserByEmail != null) {
+                // Crear persona en el backend
+                val persona = Persona(
+                    identificacion = username,
+                    nombres = nombres,
+                    apellidos = apellidos,
+                    telefono = telefono,
+                    direccion = "",
+                    fechaNacimiento = fechaNacimiento
+                )
+
+                val personaResult = withContext(Dispatchers.IO) {
+                    BackendApiService.createPersona(persona)
+                }
+
+                val createdPersona = when (personaResult) {
+                    is ApiResult.Success -> personaResult.data
+                    is ApiResult.Error -> {
                         withContext(Dispatchers.Main) {
-                            emailLayout.error = "Este correo electrónico ya está registrado"
-                            Toast.makeText(requireContext(), "El correo electrónico ya está en uso. Por favor usa otro.", Toast.LENGTH_LONG).show()
+                            Toast.makeText(requireContext(), "Error al crear persona: ${personaResult.message}", Toast.LENGTH_LONG).show()
                         }
                         return@launch
                     }
                 }
 
-                // Crear entidad Persona con el avatar
-                val persona = Persona(
-                    identificacion = username, // Usar username como identificacion
-                    nombres = nombres,
-                    apellidos = apellidos,
-                    // email removed from Persona
-                    telefono = telefono,
-                    direccion = "", // Campo no requerido
-                    fechaNacimiento = fechaNacimiento // Ya es String, no necesita parsear
-                    // avatar removed from Persona
-                    // esUsuario removed from Persona
-                )
+                // Registrar usuario en el backend (password hashing is handled server-side)
+                val registerResult = withContext(Dispatchers.IO) {
+                    BackendApiService.register(
+                        username = username,
+                        password = password,
+                        email = email,
+                        personaId = createdPersona.id
+                    )
+                }
 
-                // Hash the password once for both local and remote
-                val hashedPassword = BCrypt.withDefaults().hashToString(12, password.toCharArray())
+                when (registerResult) {
+                    is ApiResult.Success -> {
+                        val authResponse = registerResult.data
+                        Log.d("RegisterFragment", "Usuario registrado exitosamente")
 
-                // First, try to sync with Supabase to get remote IDs
-                var remotePersonaId: Long? = null
-                var remoteUserId: Long? = null
-                
-                if (SupabaseClient.isConfigured()) {
-                    try {
-                        // Check if a persona with this identificacion already exists
-                        val existingPersona = withContext(Dispatchers.IO) {
-                            try {
-                                SupabaseClient.fetchPersonaByIdentificacion(username)
-                            } catch (e: Exception) {
-                                Log.w("RegisterFragment", "Error checking existing persona: ${e.message}")
-                                null
-                            }
-                        }
-                        
-                        if (existingPersona != null) {
-                            // Persona already exists, use the existing ID
-                            remotePersonaId = existingPersona.id
-                            Log.d("RegisterFragment", "Persona ya existe en Supabase con id: $remotePersonaId, reutilizando...")
-                        } else {
-                            // Insert persona to Supabase
-                            remotePersonaId = withContext(Dispatchers.IO) { 
-                                SupabaseClient.insertPersona(persona) 
-                            }
-                            Log.d("RegisterFragment", "Persona insertada en Supabase con id: $remotePersonaId")
-                        }
+                        // Token is automatically stored by BackendApiService.register()
 
-                        if (remotePersonaId != null) {
-                            // Create usuario with the remote persona_id
-                            val usuarioForSupabase = Usuario(
-                                usuario = username,
-                                contrasena = hashedPassword,
-                                persona_id = remotePersonaId,
-                                email = email,
-                                avatar = avatarUri
-                            )
-                            
-                            remoteUserId = withContext(Dispatchers.IO) { 
-                                SupabaseClient.insertUsuario(usuarioForSupabase) 
-                            }
-                            
-                            if (remoteUserId != null) {
-                                Log.d("RegisterFragment", "Usuario sincronizado con Supabase exitosamente, id: $remoteUserId")
-                                
-                                // Asignar rol por defecto (Rol 1)
-                                val roleAssigned = withContext(Dispatchers.IO) {
-                                    SupabaseClient.insertUsuarioRole(remoteUserId, 1)
-                                }
-                                if (roleAssigned) {
+                        // Assign default role (Rol 1)
+                        if (BackendApiService.currentUserId > 0) {
+                            withContext(Dispatchers.IO) {
+                                val roleResult = BackendApiService.assignRole(BackendApiService.currentUserId, 1)
+                                if (roleResult is ApiResult.Success) {
                                     Log.d("RegisterFragment", "Rol asignado correctamente")
                                 } else {
                                     Log.w("RegisterFragment", "No se pudo asignar el rol por defecto")
                                 }
-                            } else {
-                                Log.e("RegisterFragment", "Error: insertUsuario returned null")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(requireContext(), "Error al crear usuario en el servidor", Toast.LENGTH_LONG).show()
-                                }
-                                return@launch
                             }
-                        } else {
-                            Log.e("RegisterFragment", "Error: insertPersona returned null")
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(requireContext(), "Error al crear persona en el servidor", Toast.LENGTH_LONG).show()
-                            }
-                            return@launch
                         }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        Log.e("RegisterFragment", "Error al sincronizar con Supabase", e)
+
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "Error al sincronizar con Supabase: ${e.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(requireContext(), "¡Cuenta creada exitosamente!", Toast.LENGTH_SHORT).show()
+
+                            if (isGoogleSignIn) {
+                                // Create session from backend data
+                                val userId = BackendApiService.currentUserId
+                                val sessionManager = SessionManager.getInstance(requireContext())
+                                sessionManager.createLoginSession(
+                                    username = username,
+                                    userId = userId,
+                                    personaId = createdPersona.id,
+                                    roleName = "user",
+                                    avatarUri = avatarUri
+                                )
+
+                                val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                                sharedPrefs.edit().putLong("current_user_id", userId).apply()
+
+                                findNavController().navigate(R.id.action_registerFragment_to_videoHomeFragment)
+                            } else {
+                                findNavController().navigate(R.id.action_registerFragment_to_loginFragment)
+                            }
                         }
-                        return@launch
                     }
-                }
-
-                // Now insert locally with the same IDs if available, or generate new ones
-                val localPersonaId = withContext(Dispatchers.IO) {
-                    val personaToInsert = if (remotePersonaId != null) {
-                        persona.copy(id = remotePersonaId)
-                    } else {
-                        persona
-                    }
-                    viewModel.insertAndGetId(personaToInsert)
-                }
-
-                // Create usuario for local database
-                val usuarioLocal = Usuario(
-                    id = remoteUserId ?: 0, // Use remote ID if available
-                    usuario = username,
-                    contrasena = hashedPassword, // Already hashed
-                    persona_id = remotePersonaId ?: localPersonaId,
-                    email = email,
-                    avatar = avatarUri
-                )
-
-                withContext(Dispatchers.IO) {
-                    // Insert directly without re-hashing
-                    val db = AppDatabase.getDatabase(requireContext())
-                    db.usuarioDao().insertUsuario(usuarioLocal)
-                }
-
-                // Navegar según el modo de registro
-                withContext(Dispatchers.Main) {
-                    // Show success message
-                    Toast.makeText(requireContext(), "¡Cuenta creada exitosamente!", Toast.LENGTH_SHORT).show()
-
-                    if (isGoogleSignIn) {
-                        // Si es Google Sign-In, obtener el usuario creado y crear sesión
-                        val db = AppDatabase.getDatabase(requireContext())
-                        val createdUser = withContext(Dispatchers.IO) {
-                            db.usuarioDao().getUsuarioByUsername(username)
+                    is ApiResult.Error -> {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "Error al registrar usuario: ${registerResult.message}", Toast.LENGTH_LONG).show()
                         }
-                        
-                        createdUser?.let { user ->
-                            // Crear sesión
-                            val sessionManager = SessionManager.getInstance(requireContext())
-                            sessionManager.createLoginSession(
-                                username = user.usuario,
-                                userId = user.id,
-                                personaId = user.persona_id,
-                                roleName = "user",
-                                avatarUri = user.avatar
-                            )
-                            
-                            // Guardar userId en SharedPreferences
-                            val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                            sharedPrefs.edit().putLong("current_user_id", user.id).apply()
-                        }
-                        
-                        // Navegar directamente a videoHomeFragment
-                        findNavController().navigate(R.id.action_registerFragment_to_videoHomeFragment)
-                    } else {
-                        // Registro normal - navegar a login
-                        findNavController().navigate(R.id.action_registerFragment_to_loginFragment)
                     }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(requireContext(), "Error al registrar: ${e.message}", Toast.LENGTH_SHORT).show()
-                    e.printStackTrace() // Log the full stack trace for debugging
+                    e.printStackTrace()
                 }
             }
         }
@@ -1146,39 +1051,43 @@ class RegisterFragment : Fragment() {
                 val apellidos = apellidosEditText.text.toString().trim()
                 val email = emailEditText.text.toString().trim()
                 val telefono = telefonoEditText.text.toString().trim()
-                val fechaNacimiento = fechaNacimientoEditText.text.toString() // Keep as String
-                val avatarUri = selectedAvatarUri?.toString() ?: usuarioToEdit?.avatar // Avatar from Usuario
+                val fechaNacimiento = fechaNacimientoEditText.text.toString()
+                val avatarUri = selectedAvatarUri?.toString() ?: usuarioToEdit?.avatar
 
-                // Update persona
+                // Update persona via backend
                 personaToEdit?.let { currentPersona ->
-                    val updatedPersona = currentPersona.copy(
-                        nombres = nombres,
-                        apellidos = apellidos,
-                        // email removed
-                        telefono = telefono,
-                        fechaNacimiento = fechaNacimiento
-                        // avatar removed
+                    val personaUpdates = mapOf<String, Any?>(
+                        "nombres" to nombres,
+                        "apellidos" to apellidos,
+                        "telefono" to telefono,
+                        "fechaNacimiento" to fechaNacimiento
                     )
 
-                    withContext(Dispatchers.IO) {
-                        viewModel.updatePersona(updatedPersona)
+                    val personaResult = withContext(Dispatchers.IO) {
+                        BackendApiService.updatePersona(currentPersona.id, personaUpdates)
+                    }
+                    if (personaResult is ApiResult.Error) {
+                        Log.w("RegisterFragment", "Error updating persona: ${personaResult.message}")
                     }
                 }
 
-                // Update usuario
+                // Update usuario via backend
                 if (usuarioToEdit != null) {
-                    val newPassword = passwordEditText.text.toString().trim()
-                    var updatedUsuario = usuarioToEdit!!.copy(
-                        email = email,
-                        avatar = avatarUri
+                    val userUpdates = mutableMapOf<String, Any?>(
+                        "email" to email,
+                        "avatar" to avatarUri
                     )
-                    
+
+                    val newPassword = passwordEditText.text.toString().trim()
                     if (newPassword.isNotEmpty()) {
-                        updatedUsuario = updatedUsuario.copy(contrasena = newPassword)
+                        userUpdates["contrasena"] = newPassword
                     }
-                    
-                    withContext(Dispatchers.IO) {
-                        viewModel.updateUsuario(updatedUsuario)
+
+                    val userResult = withContext(Dispatchers.IO) {
+                        BackendApiService.updateMyProfile(userUpdates)
+                    }
+                    if (userResult is ApiResult.Error) {
+                        Log.w("RegisterFragment", "Error updating user: ${userResult.message}")
                     }
                 }
 

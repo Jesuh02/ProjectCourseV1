@@ -13,7 +13,8 @@ import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
-import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.Dispatchers
@@ -54,7 +55,6 @@ import kotlinx.coroutines.withContext
 class AdminDashboardFragment : Fragment() {
 
     private lateinit var sessionManager: SessionManager
-    private lateinit var database: AppDatabase
     private lateinit var bottomNavBinding: ComponentBottomNavigationBinding
     
     // Views principales
@@ -92,7 +92,7 @@ class AdminDashboardFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         
         sessionManager = SessionManager.getInstance(requireContext())
-        database = AppDatabase.getDatabase(requireContext())
+        BackendApiService.initialize(requireContext())
         
         initializeViews(view)
         setupBottomNavigation(view)
@@ -210,26 +210,39 @@ class AdminDashboardFragment : Fragment() {
                             return@withContext GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0)
                         }
                         
-                        // Fetch creator's courses
-                        val creatorCourses = com.example.tareamov.service.SupabaseClient.fetchCoursesByCreator(currentUsername)
+                        // Fetch creator's courses via BackendApiService
+                        val creatorCourses = BackendApiService.getCoursesByCreator(currentUsername).getOrNull() ?: emptyList()
                         val courseIds = creatorCourses.map { it.id }
                         
                         if (courseIds.isEmpty()) {
                             return@withContext GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0)
                         }
 
-                        // SUPER OPTIMIZACIÓN: Obtener todas las métricas en una sola llamada batch
-                        val aggregatedMetrics = com.example.tareamov.service.SupabaseClient.fetchAggregatedMetrics(courseIds)
+                        // Compute aggregated metrics from BackendApiService
+                        var uniqueUsers = 0
+                        var totalSubmissions = 0
+                        var certifications = 0
+
+                        for (courseId in courseIds) {
+                            val enrolled = BackendApiService.getEnrolledCount(courseId).getOrNull() ?: 0
+                            uniqueUsers += enrolled
+
+                            val subs = BackendApiService.getSubmissionsByCourse(courseId).getOrNull() ?: emptyList()
+                            totalSubmissions += subs.size
+
+                            val progress = BackendApiService.getAllProgressByCourse(courseId).getOrNull() ?: emptyList()
+                            certifications += progress.count { !it.certificadoUrl.isNullOrBlank() }
+                        }
 
                         GlobalMetrics(
-                            totalUsers = aggregatedMetrics.uniqueUsers, // Usuarios únicos inscritos
-                            activeUsers = aggregatedMetrics.uniqueUsers, // Mismos usuarios únicos
+                            totalUsers = uniqueUsers,
+                            activeUsers = uniqueUsers,
                             totalCourses = creatorCourses.size,
                             publishedCourses = creatorCourses.count { it.isPublished },
-                            totalSubmissions = aggregatedMetrics.submissions,
+                            totalSubmissions = totalSubmissions,
                             totalNotifications = 0,
                             totalChatMessages = 0,
-                            certificatesIssued = aggregatedMetrics.certifications
+                            certificatesIssued = certifications
                         )
                     } catch (e: Exception) {
                         Log.w("AdminDashboard", "Error loading analytics: ${e.message}", e)
@@ -381,16 +394,24 @@ class AdminDashboardFragment : Fragment() {
             try {
                 val creators = withContext(Dispatchers.IO) {
                     try {
-                        val topCreators = com.example.tareamov.service.SupabaseClient.fetchTopCreators()
-                        topCreators.map { 
+                        // Get all courses and group by creator to compute top creators
+                        val allCourses = BackendApiService.getCourses().getOrNull() ?: emptyList()
+                        val coursesByCreator = allCourses.groupBy { it.creatorUserId }.filter { it.key > 0L }
+                        
+                        coursesByCreator.map { (creatorUserId, courses) ->
+                            val creatorUser = BackendApiService.getUserById(creatorUserId).getOrNull()
+                            val creatorUsername = creatorUser?.usuario ?: ""
+                            val subscriberCount = if (creatorUser != null) {
+                                BackendApiService.getSubscriberCount(creatorUser.id).getOrNull() ?: 0
+                            } else 0
                             CreatorStats(
-                                username = it.username,
-                                coursesCount = it.coursesCount,
-                                subscribersCount = it.subscribers,
-                                certificationsCount = it.certifications,
-                                avatarUrl = it.avatarUrl
+                                username = creatorUsername,
+                                coursesCount = courses.size,
+                                subscribersCount = subscriberCount,
+                                certificationsCount = 0,
+                                avatarUrl = creatorUser?.avatar
                             )
-                        }
+                        }.sortedByDescending { it.coursesCount }.take(5)
                     } catch (e: Exception) {
                         Log.e("AdminDashboard", "Error loading top creators", e)
                         emptyList<CreatorStats>()
@@ -445,11 +466,15 @@ class AdminDashboardFragment : Fragment() {
             try {
                 val topCourses = withContext(Dispatchers.IO) {
                     try {
-                        // Fetch top popular courses directly from Supabase with real enrollment counts
-                        // This uses the global data from progreso_estudiante table instead of local cache
-                        val popularCoursesWithCounts = com.example.tareamov.service.SupabaseClient.fetchTopPopularCoursesWithCounts(5)
+                        // Fetch courses via BackendApiService and compute enrollment counts
+                        val allCourses = BackendApiService.getCourses().getOrNull() ?: emptyList()
                         
-                        popularCoursesWithCounts.map { (course, count) ->
+                        val coursesWithCounts = allCourses.map { course ->
+                            val enrolledCount = BackendApiService.getEnrolledCount(course.id).getOrNull() ?: 0
+                            course to enrolledCount
+                        }.sortedByDescending { it.second }.take(5)
+                        
+                        coursesWithCounts.map { (course, count) ->
                             CourseStats(
                                 id = course.id,
                                 title = course.title,
@@ -515,26 +540,19 @@ class AdminDashboardFragment : Fragment() {
     private fun loadTopStudents(parentView: View) {
         lifecycleScope.launch {
             try {
-                // First, debug the progreso_estudiante table
-                val debugInfo = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.debugProgresoEstudiante()
-                }
-                Log.d("AdminDashboard", "Debug progreso_estudiante:\n$debugInfo")
-                
                 val topStudents = withContext(Dispatchers.IO) {
                     try {
-                        Log.d("AdminDashboard", "Loading global top students")
+                        Log.d("AdminDashboard", "Loading global top students via BackendApiService")
                         
-                        // Fetch top students globally (ignoring creator filter to show all top students)
-                        val topStudentsData = com.example.tareamov.service.SupabaseClient.fetchTopStudentsGlobal(5)
+                        val topStudentsData = BackendApiService.getTopStudents(5).getOrNull() ?: emptyList()
 
-                        Log.d("AdminDashboard", "Retrieved ${topStudentsData.size} top students from SupabaseClient")
+                        Log.d("AdminDashboard", "Retrieved ${topStudentsData.size} top students from BackendApiService")
 
                         topStudentsData.mapIndexed { index, studentData ->
-                            val avgGrade = (studentData["avg_grade"] as? Number)?.toDouble()?.toFloat() ?: 0f
-                            val username = (studentData["username"] as? String)?.takeIf { it.isNotBlank() }
-                                ?: "Usuario ${studentData["user_id"]}"
-                            val coursesCount = (studentData["courses_count"] as? Number)?.toInt() ?: 0
+                            val avgGrade = studentData.get("avg_grade")?.asDouble?.toFloat() ?: 0f
+                            val username = studentData.get("username")?.asString?.takeIf { it.isNotBlank() }
+                                ?: "Usuario ${studentData.get("user_id")?.asLong ?: 0}"
+                            val coursesCount = studentData.get("courses_count")?.asInt ?: 0
 
                             Log.d("AdminDashboard", "Mapping student #${index + 1}: $username - Grade: $avgGrade - Courses: $coursesCount")
 
@@ -625,7 +643,7 @@ class AdminDashboardFragment : Fragment() {
         
         lifecycleScope.launch {
             val users = withContext(Dispatchers.IO) {
-                database.usuarioDao().getAllUsuarios()
+                BackendApiService.searchUsers("").getOrNull() ?: emptyList()
             }
             
             val recyclerView = userManagementView.findViewById<RecyclerView>(R.id.usersRecyclerView)
@@ -648,7 +666,7 @@ class AdminDashboardFragment : Fragment() {
     private fun showUserDetails(user: com.example.tareamov.data.entity.Usuario) {
         lifecycleScope.launch {
             val persona = withContext(Dispatchers.IO) {
-                user.persona_id?.let { database.personaDao().getPersonaById(it) }
+                user.persona_id?.let { BackendApiService.getPersonaById(it).getOrNull() }
             }
             
             val message = buildString {
@@ -675,7 +693,7 @@ class AdminDashboardFragment : Fragment() {
     private fun showRoleSelectionDialog(user: com.example.tareamov.data.entity.Usuario) {
         lifecycleScope.launch {
             val roles = withContext(Dispatchers.IO) {
-                database.rolDao().getAllRoles()
+                BackendApiService.getRoles().getOrNull() ?: emptyList()
             }
             
             val roleNames = roles.map { it.nombre }.toTypedArray()
@@ -697,12 +715,14 @@ class AdminDashboardFragment : Fragment() {
     ) {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
-                // Insertar en usuarios_roles
+                // Assign role via BackendApiService
                 try {
-                    val sql = "INSERT INTO usuarios_roles (usuario_id, rol_id) VALUES (${user.id}, ${role.id}) " +
-                            "ON CONFLICT (usuario_id, rol_id) DO NOTHING"
-                    // Aquí necesitarías ejecutar la query via SupabaseRepository o DAO
-                    Log.d("AdminDashboard", "Rol ${role.nombre} asignado a ${user.usuario}")
+                    val result = BackendApiService.assignRole(user.id, role.id)
+                    if (result.isSuccess) {
+                        Log.d("AdminDashboard", "Rol ${role.nombre} asignado a ${user.usuario}")
+                    } else {
+                        Log.e("AdminDashboard", "Error asignando rol: ${result.errorMessage()}")
+                    }
                 } catch (e: Exception) {
                     Log.e("AdminDashboard", "Error asignando rol", e)
                 }
@@ -722,8 +742,8 @@ class AdminDashboardFragment : Fragment() {
     private fun toggleUserActiveStatus(user: com.example.tareamov.data.entity.Usuario) {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
-                val updatedUser = user.copy(isActive = !user.isActive)
-                database.usuarioDao().updateUsuario(updatedUser)
+                val newStatus = !user.isActive
+                BackendApiService.updateMyProfile(mapOf("isActive" to newStatus))
             }
             
             Toast.makeText(
@@ -787,9 +807,8 @@ class AdminDashboardFragment : Fragment() {
     private fun loadPendingSubmissions(parentView: View) {
         lifecycleScope.launch {
             val pendingSubmissions = withContext(Dispatchers.IO) {
-                database.taskSubmissionDao().getAllTaskSubmissions()
-                    .filter { it.grade == null || it.grade == 0f }
-                    .take(10)
+                val allSubmissions = BackendApiService.getMySubmissions(1, 100).getOrNull() ?: emptyList()
+                allSubmissions.filter { it.grade == null || it.grade == 0f }.take(10)
             }
             
             val container = parentView.findViewById<LinearLayout>(R.id.pendingSubmissionsContainer)
@@ -800,11 +819,11 @@ class AdminDashboardFragment : Fragment() {
             
             pendingSubmissions.forEach { submission ->
                 val task = withContext(Dispatchers.IO) {
-                    database.taskDao().getTaskById(submission.taskId)
+                    BackendApiService.getTaskById(submission.taskId).getOrNull()
                 }
                 
                 val student = withContext(Dispatchers.IO) {
-                    database.usuarioDao().getUsuarioById(submission.studentId)
+                    BackendApiService.getUserById(submission.studentId).getOrNull()
                 }
                 
                 val itemView = LayoutInflater.from(requireContext())
@@ -918,7 +937,7 @@ class AdminDashboardFragment : Fragment() {
         lifecycleScope.launch {
             // Cargar roles
             val roles = withContext(Dispatchers.IO) {
-                database.rolDao().getAllRoles()
+                BackendApiService.getRoles().getOrNull() ?: emptyList()
             }
             
             val rolesContainer = permissionsView.findViewById<LinearLayout>(R.id.rolesContainer)
@@ -948,7 +967,7 @@ class AdminDashboardFragment : Fragment() {
     private fun showRolePermissions(role: com.example.tareamov.data.entity.Rol) {
         lifecycleScope.launch {
             val recursos = withContext(Dispatchers.IO) {
-                database.rolRecursoDao().getRecursosByRol(role.id)
+                BackendApiService.getRecursosByRol(role.id).getOrNull() ?: emptyList()
             }
             
             val message = if (recursos.isEmpty()) {
@@ -978,12 +997,11 @@ class AdminDashboardFragment : Fragment() {
     private fun showPermissionEditor(role: com.example.tareamov.data.entity.Rol) {
         lifecycleScope.launch {
             val allResources = withContext(Dispatchers.IO) {
-                database.recursoDao().getAllRecursos()
+                BackendApiService.getRecursos().getOrNull() ?: emptyList()
             }
             
             val assignedResources = withContext(Dispatchers.IO) {
-                database.rolRecursoDao().getRecursosByRol(role.id)
-                    .map { it.id }
+                BackendApiService.getRecursosByRol(role.id).getOrNull()?.map { it.id } ?: emptyList()
             }
             
             val resourceNames = allResources.map { it.nombre }.toTypedArray()
@@ -1011,17 +1029,11 @@ class AdminDashboardFragment : Fragment() {
     ) {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
-                // Eliminar todos los permisos actuales
-                database.rolRecursoDao().deleteRecursosByRol(role.id)
-                
-                // Insertar nuevos permisos
+                // TODO: Backend currently lacks endpoints for bulk role-resource management.
+                // When available, replace with proper API calls.
                 allResources.forEachIndexed { index, recurso ->
                     if (checkedItems[index]) {
-                        val rolRecurso = com.example.tareamov.data.entity.RolRecurso(
-                            rolId = role.id,
-                            recursoId = recurso.id
-                        )
-                        database.rolRecursoDao().insertRolRecurso(rolRecurso)
+                        Log.d("AdminDashboard", "Would assign resource ${recurso.id} to role ${role.id}")
                     }
                 }
             }
@@ -1034,7 +1046,7 @@ class AdminDashboardFragment : Fragment() {
     private fun loadResourcesTree(parentView: View) {
         lifecycleScope.launch {
             val recursos = withContext(Dispatchers.IO) {
-                database.recursoDao().getAllRecursos()
+                BackendApiService.getRecursos().getOrNull() ?: emptyList()
             }
             
             val container = parentView.findViewById<LinearLayout>(R.id.resourcesContainer)
@@ -1160,7 +1172,7 @@ class AdminDashboardFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val unreadCount = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.countUnreadNotifications(userId)
+                    BackendApiService.getUnreadNotificationCount().getOrNull() ?: 0
                 }
                 
                 if (unreadCount > 0) {
@@ -1179,45 +1191,6 @@ class AdminDashboardFragment : Fragment() {
     private fun checkAdminAccess() {
         // Permitir acceso a todos los usuarios
         Log.d("AdminDashboard", "Panel de creador accesible para todos los usuarios")
-        // Comentado: restricción de acceso solo para administradores
-        /*
-        val userId = sessionManager.getUserId()
-        
-        lifecycleScope.launch {
-            val isAdmin = withContext(Dispatchers.IO) {
-                getSyncRepository().isUserAdmin(userId)
-            }
-            
-            if (!isAdmin) {
-                Toast.makeText(
-                    requireContext(),
-                    "Acceso denegado: Se requieren permisos de administrador",
-                    Toast.LENGTH_LONG
-                ).show()
-                findNavController().navigateUp()
-            }
-        }
-        */
-    }
-
-    private fun getSyncRepository(): com.example.tareamov.data.sync.SyncRepository {
-        return com.example.tareamov.data.sync.SyncRepository(
-            database.usuarioDao(),
-            database.personaDao(),
-            database.topicDao(),
-            database.contentItemDao(),
-            database.taskDao(),
-            database.subscriptionDao(),
-            database.taskSubmissionDao(),
-            database.videoDao(),
-            database.courseDao(),
-            database.rolDao(),
-            database.recursoDao(),
-            database.rolRecursoDao(),
-            database.chatMessageDao(),
-            database.fileContextDao(),
-            database.progresoEstudianteDao()
-        )
     }
 
     // ==================== DATA CLASSES ====================

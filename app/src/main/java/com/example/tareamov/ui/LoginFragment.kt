@@ -26,9 +26,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.example.tareamov.R
-import com.example.tareamov.data.AppDatabase
-import com.example.tareamov.data.entity.Rol
+import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Usuario
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.viewmodel.AuthViewModel
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -39,16 +40,9 @@ import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.tasks.Task
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.FirebaseApp
-import com.example.tareamov.service.SupabaseClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 class LoginFragment : Fragment() {
     private lateinit var usernameEditText: EditText
@@ -181,6 +175,9 @@ class LoginFragment : Fragment() {
 
         // Initialize SessionManager
         sessionManager = SessionManager.getInstance(requireContext())
+        
+        // Initialize BackendApiService
+        BackendApiService.initialize(requireContext())
 
         return view
     }
@@ -210,39 +207,20 @@ class LoginFragment : Fragment() {
             }
 
             lifecycleScope.launch {
-                var existsOnSupabase = false
+                var userExists = false
                 try {
-                    val db = AppDatabase.getDatabase(requireContext())
-                    val syncRepo = com.example.tareamov.data.sync.SyncRepository(
-                        db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
-                        db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-                        db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
-                    )
-
-                    existsOnSupabase = withContext(Dispatchers.IO) {
-                        try {
-                            syncRepo.isUsuarioExistsInSupabase(desiredUsername)
-                        } catch (e: Exception) {
-                            false
-                        }
+                    userExists = withContext(Dispatchers.IO) {
+                        val result = BackendApiService.getUserByUsername(desiredUsername)
+                        result is ApiResult.Success && result.data != null
                     }
                 } catch (e: Exception) {
-                    existsOnSupabase = false
+                    userExists = false
                 }
 
-                if (existsOnSupabase) {
-                    Toast.makeText(requireContext(), "El usuario ya existe en Supabase. Por favor elija otro usuario.", Toast.LENGTH_SHORT).show()
+                if (userExists) {
+                    Toast.makeText(requireContext(), "El usuario ya existe. Por favor elija otro usuario.", Toast.LENGTH_SHORT).show()
                 } else {
-                    // Double-check local DB just in case
-                    val db = AppDatabase.getDatabase(requireContext())
-                    val localExists = withContext(Dispatchers.IO) {
-                        db.usuarioDao().getUsuarioByUsername(desiredUsername) != null
-                    }
-                    if (localExists) {
-                        Toast.makeText(requireContext(), "El usuario ya existe localmente. Por favor elija otro usuario.", Toast.LENGTH_SHORT).show()
-                    } else {
-                        findNavController().navigate(R.id.registerFragment)
-                    }
+                    findNavController().navigate(R.id.registerFragment)
                 }
             }
         }
@@ -271,7 +249,7 @@ class LoginFragment : Fragment() {
                                 val token = task.result
                                 lifecycleScope.launch(Dispatchers.IO) {
                                     try {
-                                        SupabaseClient.registerFcmToken(userId, token)
+                                        BackendApiService.registerFCMToken(token)
                                         Log.d("LoginFragment", "FCM Token registered for user $userId")
                                     } catch (e: Exception) {
                                         Log.e("LoginFragment", "Error registering FCM token", e)
@@ -302,10 +280,8 @@ class LoginFragment : Fragment() {
                 return@setOnClickListener
             }
 
-            // First try to check Supabase for the user; fallback to local DB if not configured or not found
+            // Use BackendApiService for login
             lifecycleScope.launch {
-                var foundOnSupabase = false
-
                 fun maskSecret(s: String?): String {
                     if (s == null) return "null"
                     val len = s.length
@@ -317,52 +293,8 @@ class LoginFragment : Fragment() {
 
                 android.util.Log.d("LoginFragment", "Login attempt for user=$username password_mask=${maskSecret(password)}")
 
-                try {
-                    val db = AppDatabase.getDatabase(requireContext())
-                    val syncRepo = com.example.tareamov.data.sync.SyncRepository(
-                        db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
-                        db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-                        db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
-                    )
-
-                    // Attempt to fetch remote user (this will try even if isConfigured() previously returned false)
-                    val remoteUserWithRole = withContext(Dispatchers.IO) {
-                        try {
-                            syncRepo.fetchUsuarioWithRoleFromSupabase(username)
-                        } catch (e: Exception) {
-                            android.util.Log.w("LoginFragment", "Remote user fetch failed: ${e.message}")
-                            null
-                        }
-                    }
-
-                    foundOnSupabase = remoteUserWithRole != null
-                    android.util.Log.d("LoginFragment", "Supabase existence check for user=$username -> $foundOnSupabase")
-                } catch (e: Exception) {
-                    android.util.Log.w("LoginFragment", "Error preparing SyncRepository: ${e.message}")
-                    foundOnSupabase = false
-                }
-
-                if (foundOnSupabase) {
-                    // Proceed to login; AuthViewModel should handle remote/local credential verification.
-                    authViewModel.login(username, password)
-                } else {
-                    // Fallback to local DB check
-                    val usuarioWithRole = withContext(Dispatchers.IO) {
-                        try {
-                            authViewModel.getUsuarioWithRoleByUsername(username)
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }
-
-                    if (usuarioWithRole == null) {
-                        android.util.Log.d("LoginFragment", "Local user not found for username=$username")
-                        Toast.makeText(requireContext(), "Usuario no encontrado", Toast.LENGTH_SHORT).show()
-                    } else {
-                        // Proceed to login (AuthViewModel will verify password/hash)
-                        authViewModel.login(username, password)
-                    }
-                }
+                // Simply delegate to AuthViewModel which uses BackendApiService
+                authViewModel.login(username, password)
             }
         }
 
@@ -471,21 +403,8 @@ class LoginFragment : Fragment() {
     }
 
     private fun checkExistingUser() {
-        lifecycleScope.launch {
-            val db = AppDatabase.getDatabase(requireContext())
-            val userCount = withContext(Dispatchers.IO) {
-                db.usuarioDao().getUserCount()
-            }
-
-            // If at least one user exists, navigate directly to home screen
-            // This navigation logic might need review based on app flow,
-            // for now, focusing on the password hashing.
-            if (userCount > 0) {
-                // Consider if this navigation is always desired or if it should
-                // depend on whether a user is already logged in via SessionManager.
-                // findNavController().navigate(R.id.action_loginFragment_to_homeFragment)
-            }
-        }
+        // With BackendApiService, session check is handled via SessionManager
+        // No need to query local DB for user count
     }
     
     // ==================== GOOGLE SIGN-IN (Legacy API) ====================
@@ -536,45 +455,28 @@ class LoginFragment : Fragment() {
             val nombres = nameParts.getOrElse(0) { email.substringBefore("@") }
             val apellidos = nameParts.getOrElse(1) { "" }
             
-            // Verificar si el usuario ya existe en Supabase antes de redirigir al registro
+            // Verificar si el usuario ya existe en el backend antes de redirigir al registro
             lifecycleScope.launch {
                 try {
-                    // OPTIMIZADO: Obtener usuario, rol y persona en paralelo con una sola llamada
-                    val (existingUser, rol, persona) = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.fetchUsuarioWithRoleByEmail(email)
+                    val existingUser = withContext(Dispatchers.IO) {
+                        BackendApiService.getUserByEmail(email).getOrNull()
                     }
                     
                     if (existingUser != null) {
-                        // Usuario ya existe en Supabase - iniciar sesión directamente con rol obtenido
-                        Log.d(TAG, "Usuario encontrado en Supabase: ${existingUser.usuario}, Rol: ${rol?.nombre}")
+                        // Usuario ya existe - iniciar sesión directamente
+                        Log.d(TAG, "Usuario encontrado en backend: ${existingUser.usuario}")
                         
-                        if (persona != null) {
-                            // Login rápido con rol ya obtenido
-                            loginExistingGoogleUserFast(existingUser, persona, rol, displayName, profilePictureUri)
-                        } else {
-                            Log.w(TAG, "Usuario encontrado pero sin persona asociada, usando login alternativo")
-                            // Fallback: login sin persona pero con rol
-                            loginExistingGoogleUserByEmailFast(existingUser, rol, displayName, profilePictureUri)
-                        }
+                        // Login fast with backend user data
+                        loginExistingGoogleUserFast(existingUser, displayName, profilePictureUri)
                     } else {
                         // Usuario no existe - redirigir al formulario de registro
-                        Log.d(TAG, "Usuario no encontrado en Supabase, redirigiendo a registro")
+                        Log.d(TAG, "Usuario no encontrado en backend, redirigiendo a registro")
                         navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error verificando usuario en Supabase: ${e.message}")
-                    // En caso de error de conexión, intentar verificar localmente
-                    val localUser = withContext(Dispatchers.IO) {
-                        AppDatabase.getDatabase(requireContext()).usuarioDao().getUsuarioByEmail(email)
-                    }
-                    
-                    if (localUser != null) {
-                        Log.d(TAG, "Usuario encontrado localmente: ${localUser.usuario}")
-                        loginExistingGoogleUserByEmail(localUser, displayName, profilePictureUri)
-                    } else {
-                        // No se pudo verificar, redirigir al registro
-                        navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
-                    }
+                    Log.e(TAG, "Error verificando usuario en backend: ${e.message}")
+                    // En caso de error de conexión, redirigir al registro
+                    navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
                 }
             }
             
@@ -591,200 +493,164 @@ class LoginFragment : Fragment() {
         }
     }
     
-    private fun authenticateWithSupabase(idToken: String, email: String, displayName: String, avatarUrl: String?) {
+    /**
+     * Authenticate Google user via BackendApiService.
+     * The backend handles Google auth and returns a JWT token + user data.
+     */
+    private fun authenticateWithBackend(email: String, displayName: String, avatarUrl: String?) {
         lifecycleScope.launch {
             try {
-                val supabaseUrl = com.example.tareamov.BuildConfig.SUPABASE_URL
-                val supabaseKey = com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY
-
-                if (supabaseUrl.isBlank() || supabaseKey.isBlank()) {
-                    Log.w(TAG, "Supabase not configured, creating local account")
-                    createOrLoginLocalUser(email, displayName, avatarUrl)
-                    return@launch
+                // Try to find existing user by email via backend
+                val existingUser = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByEmail(email).getOrNull()
                 }
                 
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(30, TimeUnit.SECONDS)
-                    .build()
-                
-                // Call Supabase auth endpoint with Google ID token
-                val jsonBody = JSONObject().apply {
-                    put("provider", "google")
-                    put("id_token", idToken)
-                }
-                
-                val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
-                
-                val request = Request.Builder()
-                    .url("$supabaseUrl/auth/v1/token?grant_type=id_token")
-                    .addHeader("apikey", supabaseKey)
-                    .addHeader("Content-Type", "application/json")
-                    .post(requestBody)
-                    .build()
-                
-                val response = withContext(Dispatchers.IO) {
-                    client.newCall(request).execute()
-                }
-                
-                val responseBody = response.body?.string()
-                
-                if (response.isSuccessful && responseBody != null) {
-                    val jsonResponse = JSONObject(responseBody)
-                    Log.d(TAG, "Supabase auth successful")
-                    
-                    // Extract user info from Supabase response
-                    val user = jsonResponse.optJSONObject("user")
-                    val supabaseUserId = user?.optString("id") ?: ""
-                    
-                    // Create or update local user and session
-                    createOrLoginLocalUser(email, displayName, avatarUrl, supabaseUserId)
-                    
+                if (existingUser != null) {
+                    // User exists, create session
+                    loginExistingGoogleUserFast(existingUser, displayName, avatarUrl)
                 } else {
-                    Log.e(TAG, "Supabase auth failed: ${response.code} - $responseBody")
-                    // Fallback to local account
-                    createOrLoginLocalUser(email, displayName, avatarUrl)
+                    // Register new user via backend
+                    val username = email.substringBefore("@")
+                    val nameParts = displayName.split(" ", limit = 2)
+                    val nombres = nameParts.getOrElse(0) { username }
+                    val apellidos = nameParts.getOrElse(1) { "" }
+                    
+                    val registerResult = withContext(Dispatchers.IO) {
+                        BackendApiService.register(username, "", email)
+                    }
+                    
+                    when (registerResult) {
+                        is ApiResult.Success -> {
+                            val authResponse = registerResult.data
+                            val userId = authResponse?.user?.get("id")?.asLong ?: -1L
+                            val personaId = authResponse?.user?.get("persona_id")?.asLong ?: -1L
+                            val roleName = authResponse?.user?.get("rolNombre")?.let {
+                                if (it.isJsonNull) "user" else it.asString
+                            } ?: "user"
+                            val roleId = authResponse?.user?.get("rol_id")?.asInt ?: 1
+                            
+                            sessionManager.createLoginSession(
+                                username = username,
+                                userId = userId,
+                                personaId = personaId,
+                                roleName = roleName,
+                                avatarUri = avatarUrl
+                            )
+                            
+                            sessionManager.addRole(roleId)
+                            if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
+                                sessionManager.setAdminStatus(true)
+                            }
+                            
+                            val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                            sharedPrefs.edit().putLong("current_user_id", userId).apply()
+                            
+                            Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
+                            findNavController().navigate(R.id.videoHomeFragment)
+                        }
+                        is ApiResult.Error -> {
+                            Log.e(TAG, "Backend register failed: ${registerResult.message}")
+                            Toast.makeText(requireContext(), "Error al crear cuenta: ${registerResult.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }
-                
             } catch (e: Exception) {
-                Log.e(TAG, "Error authenticating with Supabase", e)
-                // Fallback to local account
-                createOrLoginLocalUser(email, displayName, avatarUrl)
+                Log.e(TAG, "Error authenticating with backend", e)
+                Toast.makeText(requireContext(), "Error al crear cuenta: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
     
+    /**
+     * Creates or logs in a user via BackendApiService for Google Sign-In.
+     */
     private suspend fun createOrLoginLocalUser(email: String, displayName: String, avatarUrl: String?, supabaseUserId: String? = null) {
-        withContext(Dispatchers.IO) {
-            try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val usuarioDao = db.usuarioDao()
-                val rolDao = db.rolDao()
-                val personaDao = db.personaDao()
-                
-                // Check if user already exists by email
-                var existingUser = usuarioDao.getUsuarioByEmail(email)
-                
-                if (existingUser == null) {
-                    // Ensure default roles exist
-                    var usuarioRole = rolDao.getRolByNombre("usuario")
-                    if (usuarioRole == null) {
-                        // Initialize roles if they don't exist
-                        val usuarioRoleId = rolDao.insertRol(Rol.createUsuarioRole())
-                        val adminRoleId = rolDao.insertRol(Rol.createAdminRole())
-                        usuarioRole = rolDao.getRolById(usuarioRoleId)
-                        Log.d(TAG, "Initialized default roles: usuario=$usuarioRoleId, admin=$adminRoleId")
-                    }
-                    
-                    if (usuarioRole == null) {
-                        throw Exception("Failed to initialize default roles")
-                    }
-                    
-                    // Create Persona record first (required for foreign key constraint)
-                    val nameParts = displayName.split(" ", limit = 2)
-                    val nombres = nameParts.getOrElse(0) { email.substringBefore("@") }
-                    val apellidos = nameParts.getOrElse(1) { "" }
-                    
-                    val newPersona = com.example.tareamov.data.entity.Persona(
-                        identificacion = "",
-                        nombres = nombres,
-                        apellidos = apellidos,
-                        telefono = "",
-                        direccion = "",
-                        fechaNacimiento = ""
-                    )
-                    
-                    // Insert persona locally first
-                    val personaId = personaDao.insertPersona(newPersona)
-                    Log.d(TAG, "Created local persona with ID: $personaId")
-                    
-                    // Try to sync persona to Supabase
-                    var supabasePersonaId: Long? = null
-                    try {
-                        val personaWithId = newPersona.copy(id = personaId)
-                        supabasePersonaId = com.example.tareamov.service.SupabaseClient.insertPersona(personaWithId)
-                        Log.d(TAG, "Synced persona to Supabase with ID: $supabasePersonaId")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to sync persona to Supabase: ${e.message}")
-                    }
-                    
-                    // Create new user with valid persona_id and rol_id
-                    val username = email.substringBefore("@")
-                    val newUser = Usuario(
-                        usuario = username,
-                        email = email,
-                        contrasena = "", // No password for Google users
-                        avatar = avatarUrl,
-                        persona_id = personaId, // Use the created persona ID
-                        rol_id = usuarioRole.id // Use the actual role ID from database
-                    )
-                    
-                    // Insert user locally
-                    val userId = usuarioDao.insertUsuario(newUser)
-                    existingUser = usuarioDao.getUsuarioById(userId)
-                    Log.d(TAG, "Created local user: $username with ID: $userId")
-                    
-                    // Try to sync user to Supabase
-                    try {
-                        val userWithId = newUser.copy(id = userId)
-                        val supabaseUserId = com.example.tareamov.service.SupabaseClient.insertUsuario(userWithId)
-                        Log.d(TAG, "Synced user to Supabase with ID: $supabaseUserId")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to sync user to Supabase: ${e.message}")
-                    }
-                    
-                } else {
-                    // Update avatar if changed
-                    if (avatarUrl != null && existingUser.avatar != avatarUrl) {
-                        val updatedUser = existingUser.copy(avatar = avatarUrl)
-                        usuarioDao.updateUsuario(updatedUser)
-                        
-                        // Try to sync updated user to Supabase
-                        try {
-                            com.example.tareamov.service.SupabaseClient.updateUsuario(updatedUser)
-                            Log.d(TAG, "Updated user avatar in Supabase")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to update user in Supabase: ${e.message}")
-                        }
-                    }
-                    Log.d(TAG, "Found existing user: ${existingUser.usuario}")
-                }
-                
-                existingUser?.let { user ->
-                    // Create session
-                    withContext(Dispatchers.Main) {
-                        sessionManager.createLoginSession(
-                            username = user.usuario,
-                            userId = user.id,
-                            personaId = user.persona_id,
-                            roleName = "user",
-                            avatarUri = user.avatar
-                        )
-                        
-                        // Add role ID to session for hasRole() checks
-                        sessionManager.addRole(user.rol_id.toInt())
-                        
-                        // Ensure admin role (3) is set if applicable
-                        if (user.rol_id == 3L) {
-                            sessionManager.setAdminStatus(true)
-                        }
-                        
-                        // Store userId in SharedPreferences
-                        val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                        sharedPrefs.edit().putLong("current_user_id", user.id).apply()
-                        
-                        Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                        
-                        // Navigate to home
-                        findNavController().navigate(R.id.videoHomeFragment)
+        try {
+            // Check if user already exists by email via backend
+            val existingUser = withContext(Dispatchers.IO) {
+                BackendApiService.getUserByEmail(email).getOrNull()
+            }
+            
+            if (existingUser != null) {
+                // User exists, update avatar if needed
+                if (avatarUrl != null && existingUser.avatar != avatarUrl) {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.updateMyProfile(mapOf("avatar" to avatarUrl))
                     }
                 }
                 
-            } catch (e: Exception) {
-                Log.e(TAG, "Error creating/logging in local user", e)
+                // Fetch roles
+                val roleIds = withContext(Dispatchers.IO) {
+                    (BackendApiService.getUserRoles(existingUser.id) as? ApiResult.Success)?.data ?: emptyList()
+                }
+                val roleName = when {
+                    roleIds.contains(3L) -> "admin"
+                    roleIds.contains(2L) -> "docente"
+                    else -> "user"
+                }
+                val roleId = roleIds.firstOrNull()?.toInt() ?: 1
+                
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "Error al crear cuenta: ${e.message}", Toast.LENGTH_SHORT).show()
+                    sessionManager.createLoginSession(
+                        username = existingUser.usuario,
+                        userId = existingUser.id,
+                        personaId = existingUser.persona_id,
+                        roleName = roleName,
+                        avatarUri = avatarUrl ?: existingUser.avatar
+                    )
+                    sessionManager.addRole(roleId)
+                    if (roleName == "admin" || roleId == 3) {
+                        sessionManager.setAdminStatus(true)
+                    }
+                    
+                    val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                    sharedPrefs.edit().putLong("current_user_id", existingUser.id).apply()
+                    
+                    Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
+                    findNavController().navigate(R.id.videoHomeFragment)
                 }
+            } else {
+                // Register new user via backend
+                val username = email.substringBefore("@")
+                val registerResult = withContext(Dispatchers.IO) {
+                    BackendApiService.register(username, "", email)
+                }
+                
+                when (registerResult) {
+                    is ApiResult.Success -> {
+                        val authResponse = registerResult.data
+                        val userId = authResponse?.user?.get("id")?.asLong ?: -1L
+                        val personaId = authResponse?.user?.get("persona_id")?.asLong ?: -1L
+                        val roleId = authResponse?.user?.get("rol_id")?.asInt ?: 1
+                        
+                        withContext(Dispatchers.Main) {
+                            sessionManager.createLoginSession(
+                                username = username,
+                                userId = userId,
+                                personaId = personaId,
+                                roleName = "user",
+                                avatarUri = avatarUrl
+                            )
+                            sessionManager.addRole(roleId)
+                            
+                            val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                            sharedPrefs.edit().putLong("current_user_id", userId).apply()
+                            
+                            Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
+                            findNavController().navigate(R.id.videoHomeFragment)
+                        }
+                    }
+                    is ApiResult.Error -> {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "Error al crear cuenta: ${registerResult.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating/logging in user via backend", e)
+            withContext(Dispatchers.Main) {
+                Toast.makeText(requireContext(), "Error al crear cuenta: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -805,74 +671,38 @@ class LoginFragment : Fragment() {
     }
     
     /**
-     * OPTIMIZADO: Login rápido para usuario de Google con rol ya obtenido.
-     * Evita llamadas adicionales a Supabase para obtener el rol.
+     * Login rápido para usuario de Google existente usando BackendApiService.
      */
     private fun loginExistingGoogleUserFast(
         user: Usuario, 
-        persona: com.example.tareamov.data.entity.Persona, 
-        rol: com.example.tareamov.data.entity.Rol?,
         displayName: String, 
         avatarUrl: String?
     ) {
         lifecycleScope.launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val usuarioDao = db.usuarioDao()
-                val personaDao = db.personaDao()
-                val rolDao = db.rolDao()
-                
-                // Sincronización local en paralelo (background)
-                withContext(Dispatchers.IO) {
-                    // Asegurar rol existe localmente
-                    if (rol != null) {
-                        val localRol = rolDao.getRolById(rol.id)
-                        if (localRol == null) {
-                            try {
-                                rolDao.insertRol(rol)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Rol ya existe localmente: ${e.message}")
-                            }
+                // Update avatar if changed
+                if (avatarUrl != null && user.avatar != avatarUrl) {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            BackendApiService.updateMyProfile(mapOf("avatar" to avatarUrl))
+                        } catch (e: Exception) {
+                            Log.w(TAG, "No se pudo actualizar avatar: ${e.message}")
                         }
                     }
-                    
-                    // Sincronizar usuario local si no existe
-                    var localUser = usuarioDao.getUsuarioByEmail(user.email ?: "")
-                    if (localUser == null) {
-                        // Crear persona local
-                        val newPersona = com.example.tareamov.data.entity.Persona(
-                            id = 0,
-                            identificacion = persona.identificacion,
-                            nombres = persona.nombres,
-                            apellidos = persona.apellidos,
-                            telefono = persona.telefono,
-                            direccion = persona.direccion,
-                            fechaNacimiento = persona.fechaNacimiento
-                        )
-                        val personaId = personaDao.insertPersona(newPersona)
-                        
-                        // Crear usuario local
-                        val newLocalUser = Usuario(
-                            id = 0,
-                            usuario = user.usuario,
-                            contrasena = "",
-                            persona_id = personaId,
-                            rol_id = rol?.id ?: 1L,
-                            email = user.email,
-                            avatar = avatarUrl ?: user.avatar
-                        )
-                        usuarioDao.insertUsuario(newLocalUser)
-                    } else if (avatarUrl != null && localUser.avatar != avatarUrl) {
-                        // Actualizar avatar si cambió
-                        usuarioDao.updateUsuario(localUser.copy(avatar = avatarUrl))
-                    }
-                    Unit // Explicit return for withContext
                 }
                 
-                // Crear sesión INMEDIATAMENTE con rol ya obtenido
-                val roleName = rol?.nombre ?: "user"
-                val roleId = rol?.id?.toInt() ?: 1
+                // Fetch roles from backend
+                val roleIds = withContext(Dispatchers.IO) {
+                    (BackendApiService.getUserRoles(user.id) as? ApiResult.Success)?.data ?: emptyList()
+                }
+                val roleName = when {
+                    roleIds.contains(3L) -> "admin"
+                    roleIds.contains(2L) -> "docente"
+                    else -> "user"
+                }
+                val roleId = roleIds.firstOrNull()?.toInt() ?: 1
                 
+                // Create session immediately
                 sessionManager.createLoginSession(
                     username = user.usuario,
                     userId = user.id,
@@ -881,7 +711,6 @@ class LoginFragment : Fragment() {
                     avatarUri = avatarUrl ?: user.avatar
                 )
                 
-                // Agregar rol a la sesión inmediatamente
                 sessionManager.addRole(roleId)
                 if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
                     sessionManager.setAdminStatus(true)
@@ -902,19 +731,25 @@ class LoginFragment : Fragment() {
     }
     
     /**
-     * OPTIMIZADO: Login rápido por email con rol ya obtenido (sin persona).
+     * Login rápido por email usando BackendApiService (sin persona local).
      */
     private fun loginExistingGoogleUserByEmailFast(
         user: Usuario, 
-        rol: com.example.tareamov.data.entity.Rol?,
         displayName: String, 
         avatarUrl: String?
     ) {
         lifecycleScope.launch {
             try {
-                // Crear sesión INMEDIATAMENTE con rol ya obtenido
-                val roleName = rol?.nombre ?: "user"
-                val roleId = rol?.id?.toInt() ?: 1
+                // Fetch roles from backend
+                val roleIds = withContext(Dispatchers.IO) {
+                    (BackendApiService.getUserRoles(user.id) as? ApiResult.Success)?.data ?: emptyList()
+                }
+                val roleName = when {
+                    roleIds.contains(3L) -> "admin"
+                    roleIds.contains(2L) -> "docente"
+                    else -> "user"
+                }
+                val roleId = roleIds.firstOrNull()?.toInt() ?: 1
                 
                 sessionManager.createLoginSession(
                     username = user.usuario,
@@ -924,7 +759,6 @@ class LoginFragment : Fragment() {
                     avatarUri = avatarUrl ?: user.avatar
                 )
                 
-                // Agregar rol a la sesión inmediatamente
                 sessionManager.addRole(roleId)
                 if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
                     sessionManager.setAdminStatus(true)
@@ -933,13 +767,14 @@ class LoginFragment : Fragment() {
                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                 sharedPrefs.edit().putLong("current_user_id", user.id).apply()
                 
-                // Sincronización local en background (no bloquea navegación)
-                withContext(Dispatchers.IO) {
-                    val db = AppDatabase.getDatabase(requireContext())
-                    val usuarioDao = db.usuarioDao()
-                    var localUser = usuarioDao.getUsuarioByEmail(user.email ?: "")
-                    if (localUser != null && avatarUrl != null && localUser.avatar != avatarUrl) {
-                        usuarioDao.updateUsuario(localUser.copy(avatar = avatarUrl))
+                // Update avatar in background if changed
+                if (avatarUrl != null && user.avatar != avatarUrl) {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            BackendApiService.updateMyProfile(mapOf("avatar" to avatarUrl))
+                        } catch (e: Exception) {
+                            Log.w(TAG, "No se pudo actualizar avatar: ${e.message}")
+                        }
                     }
                 }
                 
@@ -955,331 +790,67 @@ class LoginFragment : Fragment() {
     }
     
     /**
-     * Inicia sesión para un usuario de Google que ya existe en la base de datos.
-     * Usa la información de la Persona de Supabase para sincronizar.
-     * @deprecated Use loginExistingGoogleUserFast instead for faster role loading
+     * Inicia sesión para un usuario de Google que ya existe en el backend.
+     * Usa BackendApiService para obtener datos del usuario.
      */
-    private fun loginExistingGoogleUser(user: Usuario, persona: com.example.tareamov.data.entity.Persona, displayName: String, avatarUrl: String?) {
-        lifecycleScope.launch {
-            try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val usuarioDao = db.usuarioDao()
-                val personaDao = db.personaDao()
-                val rolDao = db.rolDao()
-                
-                // Buscar usuario local por email de la persona
-                var localUser = withContext(Dispatchers.IO) {
-                    // Primero buscar persona local por email (Wait, email is now in Usuario, but we might have old data or need to check Usuario directly)
-                    // Since email moved to Usuario, we should search in Usuario table.
-                    usuarioDao.getUsuarioByEmail(user.email ?: "") 
-                    // Wait, the 'persona' object passed here is from SupabaseClient.fetchPersonas(). 
-                    // If Supabase schema changed, SupabaseClient needs update too. 
-                    // Assuming SupabaseClient returns a Persona object that still has email for now or we need to fix SupabaseClient too.
-                    // The user asked to modify tables, so Supabase schema WILL change.
-                    // If Supabase schema changes, 'persona' might not have email anymore if it was moved to 'usuario'.
-                    // However, the user said "modifica persona y usuario", implying the backend tables.
-                    // If backend tables change, SupabaseClient.fetchPersonas() will return objects without email if the column is gone.
-                    // But we are in the middle of migration.
-                    // Let's assume for this logic that we are looking for the user by email.
-                    
-                    usuarioDao.getUsuarioByEmail(user.email)
-                }
-                
-                if (localUser == null) {
-                    // El usuario existe en Supabase pero no localmente, sincronizar
-                    Log.d(TAG, "Usuario no existe localmente, sincronizando desde Supabase...")
-                    
-                    withContext(Dispatchers.IO) {
-                        // 1. Asegurar que existe el rol
-                        var usuarioRole = rolDao.getRolByNombre("usuario")
-                        if (usuarioRole == null) {
-                            val roleId = rolDao.insertRol(Rol.createUsuarioRole())
-                            rolDao.insertRol(Rol.createAdminRole())
-                            usuarioRole = rolDao.getRolById(roleId)
-                            Log.d(TAG, "Roles creados, usuarioRole id: ${usuarioRole?.id}")
-                        }
-                        
-                        val rolId = usuarioRole?.id ?: 1L
-                        
-                        // 2. Crear o sincronizar persona local desde Supabase
-                        // Note: Persona no longer has email in local DB
-                        // We need to find persona by identification or some other means, or just create new.
-                        // Since we don't have email in Persona, we can't search by it easily unless we search Usuario.
-                        // But we are creating a new user here.
-                        
-                        val newPersona = com.example.tareamov.data.entity.Persona(
-                            id = 0, // Room generará nuevo ID local
-                            identificacion = persona.identificacion,
-                            nombres = persona.nombres,
-                            apellidos = persona.apellidos,
-                            // email removed
-                            telefono = persona.telefono,
-                            direccion = persona.direccion,
-                            fechaNacimiento = persona.fechaNacimiento
-                            // avatar removed
-                            // esUsuario removed
-                        )
-                        val personaId = personaDao.insertPersona(newPersona)
-                        Log.d(TAG, "Persona creada con id: $personaId")
-                        
-                        // 3. Crear usuario local con los IDs correctos
-                        val newLocalUser = Usuario(
-                            id = 0, // Room generará el ID
-                            usuario = user.usuario,
-                            contrasena = "", // Sin contraseña para usuarios de Google
-                            persona_id = personaId,
-                            rol_id = rolId,
-                            email = user.email, // Email is now here
-                            avatar = avatarUrl ?: user.avatar // Avatar is now here
-                        )
-                        
-                        val newUserId = usuarioDao.insertUsuario(newLocalUser)
-                        Log.d(TAG, "Usuario local creado con id: $newUserId")
-                        
-                        localUser = usuarioDao.getUsuarioById(newUserId)
-                    }
-                    Log.d(TAG, "Usuario sincronizado desde Supabase a local")
-                } else {
-                    // Usuario existe localmente, actualizar avatar si cambió
-                    val currentUser = localUser
-                    if (currentUser != null && avatarUrl != null && currentUser.avatar != avatarUrl) {
-                        withContext(Dispatchers.IO) {
-                            // Create a copy with updated avatar
-                            val updatedUser = currentUser.copy(avatar = avatarUrl)
-                            usuarioDao.updateUsuario(updatedUser)
-                            
-                            // Sincronizar cambio a Supabase
-                            try {
-                                com.example.tareamov.service.SupabaseClient.updateUsuario(updatedUser)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "No se pudo actualizar avatar en Supabase: ${e.message}")
-                            }
-                        }
-                    }
-                    Log.d(TAG, "Usuario ya existe localmente: ${currentUser?.usuario}")
-                }
-                
-                // Crear sesión con el usuario local
-                localUser?.let { currentUser ->
-                    sessionManager.createLoginSession(
-                        username = currentUser.usuario,
-                        userId = currentUser.id,
-                        personaId = currentUser.persona_id,
-                        roleName = "user",
-                        avatarUri = currentUser.avatar
-                    )
-                    
-                    val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                    sharedPrefs.edit().putLong("current_user_id", currentUser.id).apply()
-                    
-                    Toast.makeText(requireContext(), "¡Bienvenido de nuevo, $displayName!", Toast.LENGTH_SHORT).show()
-                    findNavController().navigate(R.id.videoHomeFragment)
-                } ?: run {
-                    Log.e(TAG, "Error: localUser es null después de la sincronización")
-                    Toast.makeText(requireContext(), "Error al crear sesión local", Toast.LENGTH_SHORT).show()
-                }
-                
-            } catch (e: Exception) {
-                Log.e(TAG, "Error al iniciar sesión con usuario existente: ${e.message}", e)
-                Toast.makeText(requireContext(), "Error al iniciar sesión: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
+    private fun loginExistingGoogleUser(user: Usuario, displayName: String, avatarUrl: String?) {
+        // Delegate to the fast version
+        loginExistingGoogleUserFast(user, displayName, avatarUrl)
     }
     
     /**
-     * Inicia sesión para un usuario que se encontró solo por email (sin persona asociada conocida).
+     * Inicia sesión para un usuario que se encontró solo por email.
+     * Usa BackendApiService.
      */
     private fun loginExistingGoogleUserByEmail(user: Usuario, displayName: String, avatarUrl: String?) {
-        lifecycleScope.launch {
-            try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val usuarioDao = db.usuarioDao()
-                val personaDao = db.personaDao()
-                val rolDao = db.rolDao()
-                
-                var localUser = withContext(Dispatchers.IO) {
-                    usuarioDao.getUsuarioByEmail(user.email ?: "")
-                }
-                
-                if (localUser == null) {
-                    Log.d(TAG, "Usuario no existe localmente, sincronizando...")
-                    
-                    withContext(Dispatchers.IO) {
-                        var usuarioRole = rolDao.getRolByNombre("usuario")
-                        if (usuarioRole == null) {
-                            val roleId = rolDao.insertRol(Rol.createUsuarioRole())
-                            rolDao.insertRol(Rol.createAdminRole())
-                            usuarioRole = rolDao.getRolById(roleId)
-                        }
-                        
-                        val rolId = usuarioRole?.id ?: 1L
-                        
-                        val nameParts = displayName.split(" ", limit = 2)
-                        val newPersona = com.example.tareamov.data.entity.Persona(
-                            id = 0,
-                            identificacion = "",
-                            nombres = nameParts.getOrElse(0) { user.usuario },
-                            apellidos = nameParts.getOrElse(1) { "" },
-                            telefono = "",
-                            direccion = "",
-                            fechaNacimiento = ""
-                        )
-                        val personaId = personaDao.insertPersona(newPersona)
-                        
-                        val newLocalUser = Usuario(
-                            id = 0,
-                            usuario = user.usuario,
-                            contrasena = "",
-                            persona_id = personaId,
-                            rol_id = rolId,
-                            email = user.email,
-                            avatar = avatarUrl ?: user.avatar
-                        )
-                        
-                        val newUserId = usuarioDao.insertUsuario(newLocalUser)
-                        localUser = usuarioDao.getUsuarioById(newUserId)
-                    }
-                } else {
-                    val currentUser = localUser
-                    if (currentUser != null && avatarUrl != null && currentUser.avatar != avatarUrl) {
-                        val updatedUser = currentUser.copy(avatar = avatarUrl)
-                        usuarioDao.updateUsuario(updatedUser)
-                        localUser = updatedUser
-                    }
-                }
-                
-                localUser?.let { currentUser ->
-                    sessionManager.createLoginSession(
-                        username = currentUser.usuario,
-                        userId = currentUser.id,
-                        personaId = currentUser.persona_id,
-                        roleName = "user",
-                        avatarUri = currentUser.avatar
-                    )
-                    
-                    // Add role ID to session for hasRole() checks
-                    sessionManager.addRole(currentUser.rol_id.toInt())
-                    
-                    // Ensure admin role (3) is set if applicable
-                    if (currentUser.rol_id == 3L) {
-                        sessionManager.setAdminStatus(true)
-                    }
-                    
-                    val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                    sharedPrefs.edit().putLong("current_user_id", currentUser.id).apply()
-                    
-                    Toast.makeText(requireContext(), "¡Bienvenido de nuevo, $displayName!", Toast.LENGTH_SHORT).show()
-                    findNavController().navigate(R.id.videoHomeFragment)
-                } ?: run {
-                    Toast.makeText(requireContext(), "Error al crear sesión local", Toast.LENGTH_SHORT).show()
-                }
-                
-            } catch (e: Exception) {
-                Log.e(TAG, "Error al iniciar sesión: ${e.message}", e)
-                Toast.makeText(requireContext(), "Error al iniciar sesión: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
+        // Delegate to the fast version
+        loginExistingGoogleUserByEmailFast(user, displayName, avatarUrl)
     }
     
     /**
-     * Crea un usuario para una Persona que ya existe en Supabase pero no tiene Usuario asociado.
+     * Crea un usuario para una Persona que ya existe en el backend pero no tiene Usuario asociado.
+     * Usa BackendApiService.register() para crear el usuario.
      */
-    private fun createUserForExistingPersona(persona: com.example.tareamov.data.entity.Persona, email: String, displayName: String, avatarUrl: String?) {
+    private fun createUserForExistingPersona(persona: Persona, email: String, displayName: String, avatarUrl: String?) {
         lifecycleScope.launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val usuarioDao = db.usuarioDao()
-                val personaDao = db.personaDao()
-                val rolDao = db.rolDao()
+                val username = email.substringBefore("@")
                 
-                withContext(Dispatchers.IO) {
-                    // Asegurar que existe el rol
-                    var usuarioRole = rolDao.getRolByNombre("usuario")
-                    if (usuarioRole == null) {
-                        val roleId = rolDao.insertRol(Rol.createUsuarioRole())
-                        rolDao.insertRol(Rol.createAdminRole())
-                        usuarioRole = rolDao.getRolById(roleId)
-                    }
-                    
-                    val rolId = usuarioRole?.id ?: 1L
-                    
-                    // Crear persona local
-                    val newPersona = com.example.tareamov.data.entity.Persona(
-                        id = 0,
-                        identificacion = persona.identificacion,
-                        nombres = persona.nombres,
-                        apellidos = persona.apellidos,
-                        // email removed
-                        telefono = persona.telefono,
-                        direccion = persona.direccion,
-                        fechaNacimiento = persona.fechaNacimiento
-                        // avatar removed
-                    )
-                    val personaId = personaDao.insertPersona(newPersona)
-                    
-                    // Generar username basado en el email
-                    val username = email.substringBefore("@")
-                    
-                    // Crear usuario local
-                    val newLocalUser = Usuario(
-                        id = 0,
-                        usuario = username,
-                        contrasena = "",
-                        persona_id = personaId,
-                        rol_id = rolId,
-                        email = email,
-                        avatar = avatarUrl
-                    )
-                    // Wait, persona.avatar is gone from class.
-                    // We should use avatarUrl passed to function.
-                    
-                    val newUserId = usuarioDao.insertUsuario(newLocalUser)
-                    val localUser = usuarioDao.getUsuarioById(newUserId)
-                    
-                    // También crear el usuario en Supabase
-                    try {
-                        val supabaseUser = Usuario(
-                            id = 0,
-                            usuario = username,
-                            contrasena = "",
-                            persona_id = persona.id, // Usar el ID de Supabase para la persona
-                            rol_id = 1, // rol_id por defecto en Supabase
-                            email = email,
-                            avatar = avatarUrl
-                        )
-                        com.example.tareamov.service.SupabaseClient.insertUsuario(supabaseUser)
-                        Log.d(TAG, "Usuario creado en Supabase")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "No se pudo crear usuario en Supabase: ${e.message}")
-                    }
-                    
-                    localUser?.let { currentUser ->
-                        withContext(Dispatchers.Main) {
-                            sessionManager.createLoginSession(
-                                username = currentUser.usuario,
-                                userId = currentUser.id,
-                                personaId = currentUser.persona_id,
-                                roleName = "user",
-                                avatarUri = currentUser.avatar
-                            )
-                            
-                            // Add role ID to session for hasRole() checks
-                            sessionManager.addRole(currentUser.rol_id.toInt())
-                            
-                            // Ensure admin role (3) is set if applicable
-                            if (currentUser.rol_id == 3L) {
-                                sessionManager.setAdminStatus(true)
-                            }
-                            
-                            val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                            sharedPrefs.edit().putLong("current_user_id", currentUser.id).apply()
-                            
-                            Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                            findNavController().navigate(R.id.videoHomeFragment)
-                        }
-                    }
+                val registerResult = withContext(Dispatchers.IO) {
+                    BackendApiService.register(username, "", email, persona.id)
                 }
                 
+                when (registerResult) {
+                    is ApiResult.Success -> {
+                        val authResponse = registerResult.data
+                        val userId = authResponse?.user?.get("id")?.asLong ?: -1L
+                        val personaId = authResponse?.user?.get("persona_id")?.asLong ?: persona.id
+                        val roleId = authResponse?.user?.get("rol_id")?.asInt ?: 1
+                        
+                        sessionManager.createLoginSession(
+                            username = username,
+                            userId = userId,
+                            personaId = personaId,
+                            roleName = "user",
+                            avatarUri = avatarUrl
+                        )
+                        
+                        sessionManager.addRole(roleId)
+                        if (roleId == 3) {
+                            sessionManager.setAdminStatus(true)
+                        }
+                        
+                        val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                        sharedPrefs.edit().putLong("current_user_id", userId).apply()
+                        
+                        Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
+                        findNavController().navigate(R.id.videoHomeFragment)
+                    }
+                    is ApiResult.Error -> {
+                        Log.e(TAG, "Error al crear usuario: ${registerResult.message}")
+                        Toast.makeText(requireContext(), "Error: ${registerResult.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error al crear usuario para persona existente: ${e.message}", e)
                 Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()

@@ -13,7 +13,8 @@ import com.example.tareamov.R
 import com.example.tareamov.databinding.FragmentNotificacionesBinding
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import com.example.tareamov.data.entity.Notification
-import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.ui.adapter.NotificationAdapter
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.launch
@@ -105,7 +106,7 @@ class NotificacionesFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val notifications = SupabaseClient.fetchNotifications(userId)
+                val result = BackendApiService.getMyNotifications()
                 
                 // Verificar que el binding aún existe antes de actualizar la UI
                 val binding = _binding ?: return@launch
@@ -113,13 +114,23 @@ class NotificacionesFragment : Fragment() {
                 // Ocultar skeleton cuando los datos estén listos
                 hideSkeleton()
                 
-                if (notifications.isNotEmpty()) {
-                    binding.notificationsRecyclerView.visibility = View.VISIBLE
-                    binding.emptyStateLayout.visibility = View.GONE
-                    notificationAdapter.submitList(notifications)
-                } else {
-                    binding.notificationsRecyclerView.visibility = View.GONE
-                    binding.emptyStateLayout.visibility = View.VISIBLE
+                when (result) {
+                    is ApiResult.Success -> {
+                        val notifications = result.data ?: emptyList()
+                        if (notifications.isNotEmpty()) {
+                            binding.notificationsRecyclerView.visibility = View.VISIBLE
+                            binding.emptyStateLayout.visibility = View.GONE
+                            notificationAdapter.submitList(notifications)
+                        } else {
+                            binding.notificationsRecyclerView.visibility = View.GONE
+                            binding.emptyStateLayout.visibility = View.VISIBLE
+                        }
+                    }
+                    is ApiResult.Error -> {
+                        Log.e("NotificacionesFragment", "Error loading notifications: ${result.message}")
+                        binding.notificationsRecyclerView.visibility = View.GONE
+                        binding.emptyStateLayout.visibility = View.VISIBLE
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("NotificacionesFragment", "Error loading notifications", e)
@@ -133,7 +144,7 @@ class NotificacionesFragment : Fragment() {
     private fun onNotificationClick(notification: Notification) {
         if (!notification.isRead) {
             viewLifecycleOwner.lifecycleScope.launch {
-                SupabaseClient.markNotificationAsRead(notification.id)
+                BackendApiService.markNotificationAsRead(notification.id)
                 // Solo recargar si el binding aún existe (vista no destruida)
                 if (_binding != null) {
                     loadNotifications()
@@ -259,27 +270,8 @@ class NotificacionesFragment : Fragment() {
                                     Log.e("NotificacionesFragment", "❌ Error parsing metadata for comment_id", e)
                                 }
                             } else {
-                                // Metadata is NULL - query Supabase for comment_id
-                                Log.w("NotificacionesFragment", "⚠️ Metadata is NULL, querying Supabase for comment_id")
-                                
-                                // Extract sender username from notification
-                                val senderUsername = notification.senderUsername
-                                if (senderUsername != null) {
-                                    Log.d("NotificacionesFragment", "🔎 Searching comment by sender: $senderUsername on video: $videoId")
-                                    
-                                    // Query Supabase for the most recent comment by this user on this video
-                                    commentId = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                        SupabaseClient.findCommentIdByVideoAndUsername(videoId, senderUsername)
-                                    }
-                                    
-                                    if (commentId != null) {
-                                        Log.d("NotificacionesFragment", "✅ Found commentId via Supabase query: $commentId")
-                                    } else {
-                                        Log.w("NotificacionesFragment", "⚠️ Could not find comment_id via Supabase query")
-                                    }
-                                } else {
-                                    Log.w("NotificacionesFragment", "⚠️ senderUsername is null, cannot query for comment_id")
-                                }
+                                // Metadata is NULL - comment_id cannot be determined without metadata
+                                Log.w("NotificacionesFragment", "⚠️ Metadata is NULL, cannot determine comment_id")
                             }
                             
                             val bundle = Bundle().apply {
