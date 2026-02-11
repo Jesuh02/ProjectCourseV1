@@ -29,11 +29,11 @@ data class VideoData(
     @SerializedName(value = "username", alternate = ["creator_username", "user"]) val username: String = "", // This is the creator's username (may be resolved from remote_id)
     val description: String? = null,
     val title: String = "",
-    @SerializedName("video_uri_string") val videoUriString: String? = null,
-    @SerializedName("local_file_path") val localFilePath: String? = null,
+    @SerializedName(value = "video_uri_string", alternate = ["videoUriString"]) val videoUriString: String? = null,
+    @SerializedName(value = "local_file_path", alternate = ["localFilePath"]) val localFilePath: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     @SerializedName("is_paid") val isPaid: Boolean = false,
-    @SerializedName("thumbnail_uri") val thumbnailUri: String? = null,
+    @SerializedName(value = "thumbnail_uri", alternate = ["thumbnailUri"]) val thumbnailUri: String? = null,
     @SerializedName("price") val price: Double? = null,
     @SerializedName(value = "course_id", alternate = ["courseId"]) val courseId: Long? = null, // ID del curso asociado
     @SerializedName(value = "remote_id", alternate = ["remoteId"]) val remoteId: Long? = null // ID del usuario creador (según requerimiento)
@@ -88,7 +88,17 @@ data class VideoData(
         // Optimization: Avoid blocking network calls here.
         // The VideoPlayerActivity will handle fetching the streaming URL asynchronously.
         
-        // Then try the local file path (for locally created videos)
+        // 1. If videoUriString is a remote HTTP/HTTPS URL, use it directly (highest priority for cloud videos)
+        if (!videoUriString.isNullOrEmpty()) {
+            try {
+                val uri = Uri.parse(videoUriString)
+                if (uri.scheme == "http" || uri.scheme == "https") {
+                    return uri
+                }
+            } catch (_: Exception) { }
+        }
+
+        // 2. Try the local file path (for locally created videos on same device)
         if (localFilePath != null) {
             val file = File(localFilePath)
             if (file.exists() && file.canRead()) {
@@ -96,17 +106,10 @@ data class VideoData(
             }
         }
 
-        // Then try the original URI
-        // If the stored string looks like a full HTTP URL (Supabase storage public URL), parse it
+        // 3. Try videoUriString as local file if it's a file:// or content:// URI
         if (!videoUriString.isNullOrEmpty()) {
             try {
                 val uri = Uri.parse(videoUriString)
-                // Accept http(s) and file schemes
-                if (uri.scheme == "http" || uri.scheme == "https") {
-                    // R2 files are stored WITHOUT extension, use URL as-is
-                    return uri
-                }
-                // For file:// scheme, check if file exists
                 if (uri.scheme == "file" || uri.scheme == "content") {
                     val path = uri.path
                     if (path != null) {
@@ -115,17 +118,16 @@ data class VideoData(
                             return uri
                         }
                     }
-                    // File doesn't exist locally, try R2 fallback with filename
+                    // File doesn't exist locally — try R2 fallback with filename
                     val fileName = videoUriString?.substringAfterLast("/")
                     if (!fileName.isNullOrEmpty()) {
-                        // R2 fallback (uses public bucket)
-                        // Note: New videos should have extension (.mp4), old ones might not
                         val r2FallbackUrl = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/$fileName"
+                        Log.d("VideoData", "File not found locally, trying R2 fallback: $r2FallbackUrl")
                         return Uri.parse(r2FallbackUrl)
                     }
                 }
             } catch (e: Exception) {
-                // fall through to returning the parsed property if available
+                Log.e("VideoData", "Error parsing videoUriString: ${e.message}")
             }
         }
 

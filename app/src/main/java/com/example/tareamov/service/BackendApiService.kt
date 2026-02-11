@@ -13,6 +13,8 @@ import com.google.gson.reflect.TypeToken
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -51,7 +53,7 @@ object BackendApiService {
     private lateinit var prefs: SharedPreferences
 
     /** Base URL del backend (resuelto via ServerEndpointResolver o BuildConfig) */
-    private val baseUrl: String
+    val baseUrl: String
         get() {
             val url = BuildConfig.BACKEND_URL.ifBlank {
                 "https://mcp-backenddeploy-production.up.railway.app"
@@ -210,6 +212,68 @@ object BackendApiService {
         }
     }
 
+    suspend fun uploadAvatar(context: Context, fileUri: android.net.Uri): ApiResult<String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            ensureTokenLoaded(context)
+            if (jwtToken == null) return@withContext ApiResult.Error("Not logged in", 401)
+
+            val contentResolver = context.contentResolver
+            val mimeType = contentResolver.getType(fileUri) ?: "image/jpeg"
+            val inputStream = contentResolver.openInputStream(fileUri)
+                ?: return@withContext ApiResult.Error("Cannot open file", 0)
+            
+            val bytes = inputStream.readBytes()
+            inputStream.close()
+            
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart(
+                    "avatar", 
+                    "avatar.${if (mimeType.contains("png")) "png" else "jpg"}", 
+                    bytes.toRequestBody(mimeType.toMediaType())
+                )
+                .build()
+
+            val request = Request.Builder()
+                .url("$apiBase/users/me/avatar")
+                .headers(authHeaders().build())
+                .post(requestBody)
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: "{}"
+
+            if (!response.isSuccessful) {
+                 val errorMsg = try {
+                    val obj = JsonParser.parseString(responseBody).asJsonObject
+                    obj.get("error")?.asString ?: "Error ${response.code}"
+                } catch (_: Exception) { "Error HTTP ${response.code}" }
+                return@withContext ApiResult.Error(errorMsg, response.code)
+            }
+            
+            val json = JsonParser.parseString(responseBody).asJsonObject
+            if (json.has("data")) {
+                val dataObj = json.get("data").asJsonObject
+                if (dataObj.has("avatarUrl")) {
+                     return@withContext ApiResult.Success(dataObj.get("avatarUrl").asString)
+                }
+            }
+            // Fallback
+            val profile = getMyProfile()
+            if (profile is ApiResult.Success) {
+                return@withContext ApiResult.Success(profile.data.avatar ?: "")
+            }
+            return@withContext ApiResult.Success("")
+        } catch (e: Exception) {
+            Log.e(TAG, "Upload avatar error", e)
+            return@withContext ApiResult.Error("Exception: ${e.message}", 0)
+        }
+    }
+
+    private fun ensureTokenLoaded(context: Context) {
+        if (!::prefs.isInitialized) initialize(context)
+    }
+
     // ═══════════════════════════════════════════════════════════
     // AUTH
     // ═══════════════════════════════════════════════════════════
@@ -222,14 +286,18 @@ object BackendApiService {
         val personaId: Long? = null
     )
     data class AuthResponse(
-        val token: String?,
+        val accessToken: String?,
+        val token: String? = null,
         val user: JsonObject?
-    )
+    ) {
+        /** Return whichever token field the backend provides */
+        fun effectiveToken(): String? = accessToken ?: token
+    }
 
     suspend fun login(username: String, password: String): ApiResult<AuthResponse> {
         val result = execute<AuthResponse>(post("/auth/login", LoginRequest(username, password)))
-        if (result is ApiResult.Success && result.data?.token != null) {
-            jwtToken = result.data.token
+        if (result is ApiResult.Success && result.data?.effectiveToken() != null) {
+            jwtToken = result.data.effectiveToken()
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
         }
         return result
@@ -244,8 +312,8 @@ object BackendApiService {
         val result = execute<AuthResponse>(
             post("/auth/register", RegisterRequest(username, password, email, personaId))
         )
-        if (result is ApiResult.Success && result.data?.token != null) {
-            jwtToken = result.data.token
+        if (result is ApiResult.Success && result.data?.effectiveToken() != null) {
+            jwtToken = result.data.effectiveToken()
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
         }
         return result
@@ -263,8 +331,10 @@ object BackendApiService {
     suspend fun searchUsers(query: String): ApiResult<List<Usuario>> =
         executeList(get("/users/search?q=$query"))
 
-    suspend fun getUserById(id: Long): ApiResult<Usuario> =
-        execute(get("/users/$id"))
+    suspend fun getUserById(id: Long): ApiResult<Usuario> {
+        if (id <= 0) return ApiResult.Error("Invalid user ID: $id", 400)
+        return execute(get("/users/$id"))
+    }
 
     suspend fun getUserByUsername(username: String): ApiResult<Usuario> =
         execute(get("/users/by-username/$username"))
@@ -345,11 +415,27 @@ object BackendApiService {
     suspend fun getCourses(page: Int = 1, limit: Int = 50): ApiResult<List<Course>> =
         executeList(get("/courses?page=$page&pageSize=$limit"))
 
+    /**
+     * Get courses with full metadata (total, pagination) as raw JsonObject.
+     * Useful for getting total count without fetching all items.
+     */
+    suspend fun getCoursesMetadata(page: Int = 1, limit: Int = 1): ApiResult<JsonObject> =
+        execute(get("/courses/stats"))
+
     suspend fun searchCourses(query: String): ApiResult<List<Course>> =
         executeList(get("/courses/search?q=$query"))
 
     suspend fun getFreeCourses(): ApiResult<List<Course>> =
         executeList(get("/courses/free"))
+
+    suspend fun getPremiumCourses(page: Int = 1, limit: Int = 50): ApiResult<List<Course>> =
+        executeList(get("/courses/premium?page=$page&pageSize=$limit"))
+
+    suspend fun getPurchasedCourses(userId: Long? = null, page: Int = 1, limit: Int = 50): ApiResult<List<Course>> {
+       val uid = userId ?: currentUserId
+       if (uid <= 0) return ApiResult.Error("User ID required", 400)
+       return executeList(get("/courses/purchased?userId=$uid&page=$page&pageSize=$limit"))
+    }
 
     suspend fun getCoursesByIds(ids: List<Long>): ApiResult<List<Course>> =
         executeList(get("/courses/by-ids?ids=${ids.joinToString(",")}"))
@@ -363,8 +449,29 @@ object BackendApiService {
     suspend fun getCourseById(id: Long): ApiResult<Course> =
         execute(get("/courses/$id"))
 
-    suspend fun createCourse(course: Course): ApiResult<Course> =
-        execute(post("/courses", course))
+    suspend fun createCourse(courseData: Map<String, Any?>): ApiResult<Course> =
+        execute(post("/courses", courseData))
+
+    suspend fun createCourse(course: Course): ApiResult<Course> {
+        var username = "unknown"
+        if (course.creatorUserId > 0) {
+             val userResult = getUserById(course.creatorUserId)
+             if (userResult is ApiResult.Success) {
+                 username = userResult.data.usuario
+             }
+        }
+        val payload = mapOf(
+            "title" to course.title,
+            "description" to course.description,
+            "category" to course.category,
+            "thumbnailUri" to course.thumbnailUri,
+            "creatorUsername" to username,
+            "isFree" to !course.isPremium,
+            "price" to course.price,
+            "isPublished" to course.isPublished
+        )
+        return execute(post("/courses", payload))
+    }
 
     suspend fun updateCourse(id: Long, updates: Map<String, Any?>): ApiResult<Course> =
         execute(put("/courses/$id", updates))
@@ -482,7 +589,7 @@ object BackendApiService {
     suspend fun getSubmissionsByTask(taskId: Long, page: Int = 1, limit: Int = 50): ApiResult<List<TaskSubmission>> =
         executeList(get("/submissions/task/$taskId?page=$page&pageSize=$limit"))
 
-    suspend fun getSubmissionByUserAndTask(taskId: Long, studentId: Long? = null): ApiResult<TaskSubmission> {
+    suspend fun getSubmissionByUserAndTask(taskId: Long, studentId: Long? = null): ApiResult<TaskSubmission?> {
         val query = if (studentId != null) "?studentId=$studentId" else ""
         return execute(get("/submissions/task/$taskId/student$query"))
     }
@@ -518,11 +625,63 @@ object BackendApiService {
     suspend fun getMySubscribers(): ApiResult<List<Subscription>> =
         executeList(get("/subscriptions/subscribers"))
 
-    suspend fun checkSubscription(creatorId: Long): ApiResult<Boolean> =
-        execute(get("/subscriptions/check/$creatorId"))
+    suspend fun checkSubscription(creatorId: Long): ApiResult<Boolean> {
+        return try {
+            val request = get("/subscriptions/check/$creatorId")
+            val response = client.newCall(request).execute()
+            val bodyStr = response.body?.string() ?: "{}"
 
-    suspend fun getSubscriberCount(creatorId: Long): ApiResult<Int> =
-        execute(get("/subscriptions/count/$creatorId"))
+            if (!response.isSuccessful) {
+                return ApiResult.Error("Error ${response.code}", response.code)
+            }
+
+            val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+            val dataElement = jsonObj.get("data")
+
+            if (dataElement == null || dataElement.isJsonNull) {
+                return ApiResult.Success(false)
+            }
+
+            val isSubscribed = when {
+                dataElement.isJsonPrimitive -> dataElement.asBoolean
+                dataElement.isJsonObject -> dataElement.asJsonObject.get("isSubscribed")?.asBoolean ?: false
+                else -> false
+            }
+            ApiResult.Success(isSubscribed)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checkSubscription: ${e.message}", e)
+            ApiResult.Error("Error: ${e.message}", 0)
+        }
+    }
+
+    suspend fun getSubscriberCount(creatorId: Long): ApiResult<Int> {
+        return try {
+            val request = get("/subscriptions/count/$creatorId")
+            val response = client.newCall(request).execute()
+            val bodyStr = response.body?.string() ?: "{}"
+
+            if (!response.isSuccessful) {
+                return ApiResult.Error("Error ${response.code}", response.code)
+            }
+
+            val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+            val dataElement = jsonObj.get("data")
+
+            if (dataElement == null || dataElement.isJsonNull) {
+                return ApiResult.Success(0)
+            }
+
+            val count = when {
+                dataElement.isJsonPrimitive -> dataElement.asInt
+                dataElement.isJsonObject -> dataElement.asJsonObject.get("count")?.asInt ?: 0
+                else -> 0
+            }
+            ApiResult.Success(count)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getSubscriberCount: ${e.message}", e)
+            ApiResult.Error("Error: ${e.message}", 0)
+        }
+    }
 
     suspend fun subscribe(creatorId: Long): ApiResult<Subscription> =
         execute(post("/subscriptions/$creatorId", null))
@@ -549,11 +708,34 @@ object BackendApiService {
     suspend fun getAllProgressByCourse(courseId: Long): ApiResult<List<ProgresoEstudiante>> =
         executeList(get("/progress/course/$courseId/all"))
 
-    suspend fun getEnrolledCount(courseId: Long): ApiResult<Int> =
-        execute(get("/progress/course/$courseId/enrolled-count"))
+    suspend fun getEnrolledCount(courseId: Long): ApiResult<Int> {
+        return try {
+            val result = execute<JsonObject>(get("/progress/course/$courseId/enrolled-count"))
+            if (result is ApiResult.Success) {
+                val count = result.data?.get("count")?.asInt ?: 0
+                ApiResult.Success(count)
+            } else {
+                ApiResult.Error("Error fetching count", 0)
+            }
+        } catch (e: Exception) {
+            ApiResult.Error("Error parsing enrolled count", 0)
+        }
+    }
 
-    suspend fun isEnrolled(courseId: Long): ApiResult<Boolean> =
-        execute(get("/progress/course/$courseId/enrolled"))
+    suspend fun isEnrolled(courseId: Long): ApiResult<Boolean> {
+        return try {
+            val result = execute<JsonObject>(get("/progress/course/$courseId/enrolled"))
+            if (result is ApiResult.Success) {
+                // Return "isEnrolled" field, or false if missing
+                val enrolled = result.data?.get("isEnrolled")?.asBoolean ?: false
+                ApiResult.Success(enrolled)
+            } else {
+                ApiResult.Error("Error checking enrollment", 0)
+            }
+        } catch (e: Exception) {
+            ApiResult.Error("Error checking enrollment", 0)
+        }
+    }
 
     suspend fun getLeaderboard(courseId: Long, limit: Int = 10): ApiResult<List<ProgresoEstudiante>> =
         executeList(get("/progress/leaderboard/$courseId?limit=$limit"))
@@ -596,7 +778,7 @@ object BackendApiService {
         execute(get("/comments/video/$videoId/count"))
 
     suspend fun createComment(videoId: Long, comment: String, parentId: Long? = null): ApiResult<VideoComment> {
-        val body = mutableMapOf<String, Any?>("videoId" to videoId, "comment" to comment)
+        val body = mutableMapOf<String, Any?>("videoId" to videoId, "content" to comment)
         if (parentId != null) body["parentId"] = parentId
         return execute(post("/comments", body))
     }
@@ -611,11 +793,81 @@ object BackendApiService {
     // NOTIFICATIONS
     // ═══════════════════════════════════════════════════════════
 
-    suspend fun getMyNotifications(page: Int = 1, limit: Int = 50): ApiResult<List<Notification>> =
-        executeList(get("/notifications/my?page=$page&pageSize=$limit"))
+    suspend fun getMyNotifications(page: Int = 1, limit: Int = 50): ApiResult<List<Notification>> {
+        return try {
+            val request = get("/notifications/my?page=$page&pageSize=$limit")
+            val response = client.newCall(request).execute()
+            val bodyStr = response.body?.string() ?: "{}"
 
-    suspend fun getUnreadNotificationCount(): ApiResult<Int> =
-        execute(get("/notifications/unread-count"))
+            if (!response.isSuccessful) {
+                val errorMsg = try {
+                    val obj = JsonParser.parseString(bodyStr).asJsonObject
+                    obj.get("error")?.asString ?: "Error ${response.code}"
+                } catch (_: Exception) { "Error HTTP ${response.code}" }
+                return ApiResult.Error(errorMsg, response.code)
+            }
+
+            val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+            val dataElement = jsonObj.get("data")
+
+            if (dataElement == null || dataElement.isJsonNull) {
+                return ApiResult.Success(emptyList())
+            }
+
+            // Backend returns { notifications: [...], unreadCount: N } inside data
+            if (dataElement.isJsonObject) {
+                val dataObj = dataElement.asJsonObject
+                val notificationsElement = dataObj.get("notifications")
+                if (notificationsElement != null && notificationsElement.isJsonArray) {
+                    val listType = TypeToken.getParameterized(List::class.java, Notification::class.java).type
+                    val list: List<Notification> = gson.fromJson(notificationsElement, listType)
+                    return ApiResult.Success(list)
+                }
+            }
+
+            // Fallback: data is directly an array
+            if (dataElement.isJsonArray) {
+                val listType = TypeToken.getParameterized(List::class.java, Notification::class.java).type
+                val list: List<Notification> = gson.fromJson(dataElement, listType)
+                return ApiResult.Success(list)
+            }
+
+            ApiResult.Success(emptyList())
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getMyNotifications: ${e.message}", e)
+            ApiResult.Error("Error: ${e.message}", 0)
+        }
+    }
+
+    suspend fun getUnreadNotificationCount(): ApiResult<Int> {
+        return try {
+            val request = get("/notifications/unread-count")
+            val response = client.newCall(request).execute()
+            val bodyStr = response.body?.string() ?: "{}"
+
+            if (!response.isSuccessful) {
+                return ApiResult.Error("Error ${response.code}", response.code)
+            }
+
+            val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+            val dataElement = jsonObj.get("data")
+
+            if (dataElement == null || dataElement.isJsonNull) {
+                return ApiResult.Success(0)
+            }
+
+            // data can be a plain number or an object with a count field
+            val count = when {
+                dataElement.isJsonPrimitive -> dataElement.asInt
+                dataElement.isJsonObject -> dataElement.asJsonObject.get("count")?.asInt ?: 0
+                else -> 0
+            }
+            ApiResult.Success(count)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getUnreadNotificationCount: ${e.message}", e)
+            ApiResult.Error("Error: ${e.message}", 0)
+        }
+    }
 
     suspend fun markNotificationAsRead(id: Long): ApiResult<JsonObject> =
         execute(put("/notifications/$id/read", null))
@@ -629,7 +881,10 @@ object BackendApiService {
         message: String,
         type: String? = null,
         relatedId: Long? = null,
-        senderUsername: String? = null
+        senderUsername: String? = null,
+        thumbnailUrl: String? = null,
+        metadata: String? = null,
+        senderAvatarUrl: String? = null
     ): ApiResult<JsonObject> {
         val body = mutableMapOf<String, Any?>(
             "userId" to userId,
@@ -639,6 +894,9 @@ object BackendApiService {
         type?.let { body["type"] = it }
         relatedId?.let { body["relatedId"] = it }
         senderUsername?.let { body["senderUsername"] = it }
+        senderAvatarUrl?.let { body["senderAvatarUrl"] = it }
+        thumbnailUrl?.let { body["thumbnailUrl"] = it }
+        metadata?.let { body["metadata"] = it }
         return execute(post("/notifications/send", body))
     }
 
@@ -740,6 +998,77 @@ object BackendApiService {
             execute(request)
         } catch (e: Exception) {
             ApiResult.Error("Upload error: ${e.message}", 0)
+        }
+    }
+
+    /**
+     * Upload a submission file via the dedicated submissions upload endpoint.
+     * Returns only the R2 object key (relative path), never the public R2 URL.
+     */
+    suspend fun uploadSubmissionFile(
+        fileBytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+        folder: String
+    ): ApiResult<JsonObject> {
+        return try {
+            val multipartBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart(
+                    "file", fileName,
+                    fileBytes.toRequestBody(mimeType.toMediaType())
+                )
+                .addFormDataPart("folder", folder)
+                .build()
+
+            val request = Request.Builder()
+                .url("$apiBase/submissions/upload")
+                .headers(Headers.Builder().apply {
+                    jwtToken?.let { add("Authorization", "Bearer $it") }
+                }.build())
+                .post(multipartBody)
+                .build()
+
+            execute(request)
+        } catch (e: Exception) {
+            ApiResult.Error("Upload error: ${e.message}", 0)
+        }
+    }
+
+    /**
+     * Get the proxy URL for viewing a submission file without exposing the R2 bucket URL.
+     * The file is served through the backend as a proxy.
+     */
+    fun getSubmissionFileProxyUrl(submissionId: Long): String {
+        return "$apiBase/submissions/$submissionId/file"
+    }
+
+    /**
+     * Download a submission file from the backend proxy (authenticated).
+     * Returns the raw file bytes on success.
+     */
+    suspend fun downloadSubmissionFile(submissionId: Long): ApiResult<ByteArray> {
+        return try {
+            val request = Request.Builder()
+                .url("$apiBase/submissions/$submissionId/file")
+                .headers(Headers.Builder().apply {
+                    jwtToken?.let { add("Authorization", "Bearer $it") }
+                }.build())
+                .get()
+                .build()
+
+            withContext(Dispatchers.IO) {
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val bytes = response.body?.bytes() ?: ByteArray(0)
+                    ApiResult.Success(bytes)
+                } else {
+                    val errorBody = response.body?.string() ?: "Unknown error"
+                    ApiResult.Error("Download failed: $errorBody", response.code)
+                }
+            }
+        } catch (e: Exception) {
+            ApiResult.Error("Download error: ${e.message}", 0)
         }
     }
 

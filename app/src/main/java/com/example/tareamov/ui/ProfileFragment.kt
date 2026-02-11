@@ -153,53 +153,37 @@ class ProfileFragment : Fragment() {
             try {
                 val context = requireContext()
                 
-                // 1. Upload to Cloudflare R2
-                Toast.makeText(context, "Subiendo a la nube...", Toast.LENGTH_SHORT).show()
+                // 1. Upload directly via Backend API (Logic moved to backend)
+                Toast.makeText(context, "Subiendo avatar...", Toast.LENGTH_SHORT).show()
                 
-                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
-                val username = sessionManager.getUsername() ?: "user_${System.currentTimeMillis()}"
-                val timestamp = System.currentTimeMillis()
-                val customFileName = "avatar_${username}_$timestamp"
+                BackendApiService.initialize(context)
+                val result = BackendApiService.uploadAvatar(context, uri)
                 
-                // Upload image to Cloudflare R2
-                val uploadResult = com.example.tareamov.service.CloudflareR2Service.uploadImage(
-                    context = context,
-                    imageUri = uri,
-                    customFileName = customFileName
-                )
-                
-                if (uploadResult is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success) {
-                    val publicUrl = uploadResult.url
-                    Log.d("ProfileFragment", "Avatar uploaded to R2: $publicUrl")
-                    
-                    // 2. Update profile via BackendApiService
-                    BackendApiService.initialize(context)
-                    val updateResult = BackendApiService.updateMyProfile(mapOf("avatar" to publicUrl))
-                    
-                    when (updateResult) {
-                        is ApiResult.Success -> {
-                            // 3. Update Local Session
-                            sessionManager.saveUserAvatar(publicUrl)
+                when (result) {
+                    is ApiResult.Success -> {
+                        val publicUrl = result.data
+                        Log.d("ProfileFragment", "Avatar uploaded: $publicUrl")
+                        
+                        // Update Local Session
+                        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
+                        sessionManager.saveUserAvatar(publicUrl)
+                        
+                        // Update UI
+                        Glide.with(this@ProfileFragment)
+                            .load(publicUrl)
+                            .circleCrop()
+                            .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
+                            .into(profileImage)
                             
-                            // 4. Update UI
-                            Glide.with(this@ProfileFragment)
-                                .load(publicUrl)
-                                .circleCrop()
-                                .into(profileImage)
-                                
-                            Toast.makeText(context, "Avatar actualizado correctamente", Toast.LENGTH_SHORT).show()
-                            
-                            // Notify other components
-                            requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                                .edit().putBoolean("profile_updated", true).apply()
-                        }
-                        is ApiResult.Error -> {
-                            Toast.makeText(context, "Error actualizando perfil: ${updateResult.message}", Toast.LENGTH_SHORT).show()
-                        }
+                        Toast.makeText(context, "Avatar actualizado correctamente", Toast.LENGTH_SHORT).show()
+                        
+                        // Notify other components
+                        requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                            .edit().putBoolean("profile_updated", true).apply()
                     }
-                } else {
-                    val errorMsg = (uploadResult as? com.example.tareamov.service.CloudflareR2Service.UploadResult.Error)?.message ?: "Error desconocido"
-                    Toast.makeText(context, "Error subiendo imagen: $errorMsg", Toast.LENGTH_SHORT).show()
+                    is ApiResult.Error -> {
+                        Toast.makeText(context, "Error: ${result.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("ProfileFragment", "Error updating avatar", e)
@@ -349,6 +333,7 @@ class ProfileFragment : Fragment() {
             try {
                 val context = requireContext()
                 val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
+                BackendApiService.initialize(context)
                 val currentUsername = sessionManager.getUsername()
                 
                 if (currentUsername != null) {
@@ -359,33 +344,44 @@ class ProfileFragment : Fragment() {
                             .load(cachedAvatar)
                             .placeholder(R.drawable.ic_profile_placeholder)
                             .error(R.drawable.ic_profile_placeholder)
+                            .circleCrop()
                             .into(profileImage)
                     }
 
                     // 2. Fetch fresh data from BackendApiService
                     BackendApiService.initialize(context)
-                    val profileResult = BackendApiService.getMyProfile()
+                    val profileResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getMyProfile()
+                    }
                     
                     when (profileResult) {
                         is ApiResult.Success -> {
                             val usuario = profileResult.data
-                            // Update UI with user data
-                            usernameTextView.text = usuario.usuario
-                            
-                            // Load avatar from API result (fresher than session)
+                            if (usuario == null) {
+                                Log.w("ProfileFragment", "Profile data is null")
+                                stopSkeletonAnimation()
+                                return@launch
+                            }
+                            // Update cached avatar in SessionManager for other screens
                             if (!usuario.avatar.isNullOrEmpty()) {
-                                Glide.with(this@ProfileFragment)
-                                    .load(usuario.avatar)
-                                    .placeholder(R.drawable.ic_profile_placeholder)
-                                    .error(R.drawable.ic_profile_placeholder)
-                                    .into(profileImage)
+                                sessionManager.saveUserAvatar(usuario.avatar!!)
+                                Log.d("ProfileFragment", "Avatar loaded from API: ${usuario.avatar}")
                             }
                             
                             // Fetch subscriber count
-                            val countResult = BackendApiService.getSubscriberCount(usuario.id)
+                            val countResult = withContext(Dispatchers.IO) {
+                                BackendApiService.getSubscriberCount(usuario.id)
+                            }
                             val subscriberCount = when (countResult) {
-                                is ApiResult.Success -> countResult.data.toLong()
-                                is ApiResult.Error -> 0L
+                                is ApiResult.Success -> {
+                                    val count = countResult.data?.toLong() ?: 0L
+                                    Log.d("ProfileFragment", "Subscriber count loaded: $count")
+                                    count
+                                }
+                                is ApiResult.Error -> {
+                                    Log.w("ProfileFragment", "Error loading subscriber count: ${countResult.message}")
+                                    0L
+                                }
                             }
                             updateUI(usuario, null, subscriberCount)
                         }
@@ -441,87 +437,25 @@ class ProfileFragment : Fragment() {
 
         // Update profile image with usuario's avatar
         if (usuario != null && !usuario.avatar.isNullOrEmpty()) {
-            Log.d("ProfileFragment", "Loading avatar: ${usuario.avatar}")
+            val avatarUrl = usuario.avatar!!.trim()
+            Log.d("ProfileFragment", "Loading avatar: $avatarUrl")
+            
             try {
-                when {
-                    usuario.avatar.startsWith("http") -> {
-                        // Load as URL with cache disabled for fresh image
-                        Glide.with(requireContext())
-                            .load(usuario.avatar)
-                            .placeholder(R.drawable.ic_profile)
-                            .error(R.drawable.ic_profile)
-                            .skipMemoryCache(true) // Skip memory cache
-                            .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE) // Skip disk cache
-                            .circleCrop()
-                            .into(profileImage)
-                        Log.d("ProfileFragment", "Loaded avatar from URL (no cache)")
-                    }
-                    usuario.avatar.startsWith("file:") -> {
-                        // Load as file URI
-                        val fileUri = Uri.parse(usuario.avatar)
-                        Glide.with(requireContext())
-                            .load(fileUri)
-                            .placeholder(R.drawable.ic_profile)
-                            .error(R.drawable.ic_profile)
-                            .skipMemoryCache(true)
-                            .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE)
-                            .circleCrop()
-                            .into(profileImage)
-                        Log.d("ProfileFragment", "Loaded avatar from file URI (no cache)")
-                    }
-                    usuario.avatar.startsWith("/") -> {
-                        // Load as file path
-                        val file = File(usuario.avatar)
-                        Glide.with(requireContext())
-                            .load(file)
-                            .placeholder(R.drawable.ic_profile)
-                            .error(R.drawable.ic_profile)
-                            .skipMemoryCache(true)
-                            .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE)
-                            .circleCrop()
-                            .into(profileImage)
-                        Log.d("ProfileFragment", "Loaded avatar from file path (no cache)")
-                    }
-                    else -> {
-                        // Try to load as resource ID first
-                        try {
-                            val resourceId = usuario.avatar.toInt()
-                            Glide.with(requireContext())
-                                .load(resourceId)
-                                .placeholder(R.drawable.ic_profile)
-                                .error(R.drawable.ic_profile)
-                                .circleCrop()
-                                .into(profileImage)
-                            Log.d("ProfileFragment", "Loaded avatar from resource ID: $resourceId")
-                        } catch (e: NumberFormatException) {
-                            // Try to load as drawable resource name
-                            val drawableId = resources.getIdentifier(
-                                usuario.avatar, "drawable", requireContext().packageName
-                            )
-                            if (drawableId != 0) {
-                                Glide.with(requireContext())
-                                    .load(drawableId)
-                                    .placeholder(R.drawable.ic_profile)
-                                    .error(R.drawable.ic_profile)
-                                    .circleCrop()
-                                    .into(profileImage)
-                                Log.d("ProfileFragment", "Loaded avatar from drawable name: $drawableId")
-                            } else {
-                                // Default image if all else fails
-                                profileImage.setImageResource(R.drawable.ic_profile)
-                                Log.d("ProfileFragment", "Failed to load avatar, using default")
-                            }
-                        }
-                    }
-                }
+                if (!isAdded || isDetached) return
+                
+                Glide.with(this@ProfileFragment)
+                    .load(avatarUrl)
+                    .placeholder(R.drawable.ic_profile)
+                    .error(R.drawable.ic_profile)
+                    .circleCrop()
+                    .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL) 
+                    .into(profileImage)
+                Log.d("ProfileFragment", "Loaded avatar from URL: $avatarUrl")
             } catch (e: Exception) {
-                e.printStackTrace()
-                Log.e("ProfileFragment", "Error loading avatar: ${e.message}")
-                // If loading fails, use default profile image
+                Log.e("ProfileFragment", "Error loading avatar: ${e.message}", e)
                 profileImage.setImageResource(R.drawable.ic_profile)
             }
         } else {
-            // No avatar available, use default profile image
             Log.d("ProfileFragment", "No avatar available, using default")
             profileImage.setImageResource(R.drawable.ic_profile)
         }
@@ -616,7 +550,7 @@ class ProfileFragment : Fragment() {
                 
                 when (result) {
                     is ApiResult.Success -> {
-                        val unreadCount = result.data
+                        val unreadCount = result.data ?: 0
                         if (unreadCount > 0) {
                             bottomNavBinding.notificationBadge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
                             bottomNavBinding.notificationBadge.visibility = View.VISIBLE

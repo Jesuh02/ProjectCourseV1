@@ -72,7 +72,7 @@ import kotlinx.coroutines.launch
         Like::class,  // Polymorphic likes table (replaces VideoLike and UserVideoLike)
         Notification::class  // Add Notification entity
     ],
-    version = 36, // Updated version - added Notification entity with metadata field
+    version = 37, // Added dueDate field to Task entity for proper backend mapping
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

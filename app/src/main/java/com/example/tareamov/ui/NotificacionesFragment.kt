@@ -106,7 +106,9 @@ class NotificacionesFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val result = BackendApiService.getMyNotifications()
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getMyNotifications()
+                }
                 
                 // Verificar que el binding aún existe antes de actualizar la UI
                 val binding = _binding ?: return@launch
@@ -142,12 +144,18 @@ class NotificacionesFragment : Fragment() {
     }
 
     private fun onNotificationClick(notification: Notification) {
+        Log.d("NotificacionesFragment", "🔔 Notification clicked: id=${notification.id}, type='${notification.type}', relatedId=${notification.relatedId}, metadata=${notification.metadata}")
+
+        // Mark as read in background (fire-and-forget). 
+        // onResume() already calls loadNotifications() when user returns.
         if (!notification.isRead) {
             viewLifecycleOwner.lifecycleScope.launch {
-                BackendApiService.markNotificationAsRead(notification.id)
-                // Solo recargar si el binding aún existe (vista no destruida)
-                if (_binding != null) {
-                    loadNotifications()
+                try {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.markNotificationAsRead(notification.id)
+                    }
+                } catch (e: Exception) {
+                    Log.e("NotificacionesFragment", "Error marking notification as read", e)
                 }
             }
         }
@@ -156,14 +164,11 @@ class NotificacionesFragment : Fragment() {
             Notification.TYPE_NEW_COURSE -> {
                 Log.d("Notificaciones", "Course notification clicked: ${notification.relatedId}")
                 notification.relatedId?.let { courseId ->
-                    // Navigate to course detail with courseName if available in message
-                    // Message format: "User ha publicado un nuevo curso: Course Name"
                     val courseName = if (notification.message.contains(":")) {
                         notification.message.substringAfter(":").trim()
                     } else {
                         ""
                     }
-                    
                     val bundle = Bundle().apply {
                         putLong("courseId", courseId)
                         putString("courseName", courseName)
@@ -178,7 +183,6 @@ class NotificacionesFragment : Fragment() {
             Notification.TYPE_NEW_VIDEO -> {
                 Log.d("Notificaciones", "Video notification clicked: ${notification.relatedId}")
                 notification.relatedId?.let { videoId ->
-                    // Navigate to video detail
                     val bundle = Bundle().apply {
                         putLong("videoId", videoId)
                     }
@@ -192,7 +196,6 @@ class NotificacionesFragment : Fragment() {
             Notification.TYPE_NEW_TASK -> {
                 Log.d("Notificaciones", "New task notification clicked: ${notification.relatedId}")
                 notification.relatedId?.let { taskId ->
-                    // Navigate to task submissions to see/submit the new task
                     val bundle = Bundle().apply {
                         putLong("taskId", taskId)
                         putString("taskName", notification.message.substringAfter("\"").substringBefore("\""))
@@ -207,12 +210,10 @@ class NotificacionesFragment : Fragment() {
             Notification.TYPE_TASK_SUBMISSION -> {
                 Log.d("Notificaciones", "Task submission notification clicked: ${notification.relatedId}")
                 notification.relatedId?.let { taskId ->
-                    // Navigate to task submissions and highlight the specific submission from senderUsername
                     val bundle = Bundle().apply {
                         putLong("taskId", taskId)
                         putString("taskName", notification.message.substringAfter("\"").substringBefore("\""))
                         putString("courseCreatorUsername", sessionManager.getUsername())
-                        // Pass the username of who submitted the task so we can scroll to their submission
                         notification.senderUsername?.let {
                             putString("scrollToSubmissionUsername", it)
                             Log.d("NotificacionesFragment", "📍 Passing submission to scroll: $it for taskId=$taskId")
@@ -222,13 +223,19 @@ class NotificacionesFragment : Fragment() {
                         findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
                     } catch (e: Exception) {
                         Log.e("NotificacionesFragment", "Error navigating to task submissions", e)
+                        try {
+                            // Fallback: intentar navegar solo con taskId
+                             val bundleFallback = Bundle().apply { putLong("taskId", taskId) }
+                             findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundleFallback)
+                        } catch (e2: Exception) {
+                            Log.e("NotificacionesFragment", "Fatal navigation error", e2)
+                        }
                     }
                 }
             }
             Notification.TYPE_TASK_GRADED -> {
                 Log.d("Notificaciones", "Task graded notification clicked: ${notification.relatedId}")
                 notification.relatedId?.let { taskId ->
-                    // Navigate to task submissions for the student to see their grade
                     val bundle = Bundle().apply {
                         putLong("taskId", taskId)
                         putString("taskName", notification.title.substringAfter("en ").trim())
@@ -240,70 +247,76 @@ class NotificacionesFragment : Fragment() {
                     }
                 }
             }
-            Notification.TYPE_COMMENT, Notification.TYPE_LIKE -> {
-                Log.d("Notificaciones", "💬 Activity notification clicked: ${notification.relatedId}")
-                Log.d("Notificaciones", "📄 Notification type: ${notification.type}, message: ${notification.message}")
-                notification.relatedId?.let { videoId ->
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        try {
-                            // Navigate to video home to play the video and open comments
-                            // Parse metadata to extract comment_id if available
-                            var commentId: Long? = null
-                            
-                            if (notification.metadata != null) {
-                                // Metadata exists - parse it
-                                val metadataStr = notification.metadata
-                                try {
-                                    Log.d("NotificacionesFragment", "🔍 Parsing metadata: $metadataStr")
-                                    // metadata format: "comment_id:123" or JSON-like
-                                    if (metadataStr.contains("comment_id:")) {
-                                        commentId = metadataStr.substringAfter("comment_id:").substringBefore(",").trim().toLongOrNull()
-                                    } else if (metadataStr.contains("\"comment_id\"")) {
-                                        // JSON format: {"comment_id":123}
-                                        val regex = "\"comment_id\"\\s*:\\s*(\\d+)".toRegex()
-                                        regex.find(metadataStr)?.groupValues?.get(1)?.toLongOrNull()?.let { id: Long ->
-                                            commentId = id
-                                        }
-                                    }
-                                    Log.d("NotificacionesFragment", "✅ Extracted commentId: $commentId from metadata")
-                                } catch (e: Exception) {
-                                    Log.e("NotificacionesFragment", "❌ Error parsing metadata for comment_id", e)
-                                }
-                            } else {
-                                // Metadata is NULL - comment_id cannot be determined without metadata
-                                Log.w("NotificacionesFragment", "⚠️ Metadata is NULL, cannot determine comment_id")
-                            }
-                            
-                            val bundle = Bundle().apply {
-                                putLong("videoId", videoId)
-                                putBoolean("openComments", true)
-                                commentId?.let { 
-                                    putLong("targetCommentId", it)
-                                    Log.d("NotificacionesFragment", "📦 Bundle prepared with targetCommentId: $it")
-                                }
-                            }
-                            
-                            try {
-                                Log.d("NotificacionesFragment", "🚀 Navigating to VideoHomeFragment with videoId=$videoId, commentId=$commentId")
-                                findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment, bundle)
-                            } catch (e: Exception) {
-                                Log.e("NotificacionesFragment", "❌ Error navigating to video home from activity", e)
-                            }
-                        } catch (e: Exception) {
-                            Log.e("NotificacionesFragment", "❌ Error processing notification click", e)
-                            // Navigate without commentId as fallback
-                            val bundle = Bundle().apply {
-                                putLong("videoId", videoId)
-                                putBoolean("openComments", true)
-                            }
-                            try {
-                                findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment, bundle)
-                            } catch (navError: Exception) {
-                                Log.e("NotificacionesFragment", "❌ Error navigating (fallback)", navError)
-                            }
-                        }
+            Notification.TYPE_COMMENT, Notification.TYPE_LIKE,
+            Notification.TYPE_VIDEO_COMMENT, Notification.TYPE_COMMENT_REPLY,
+            Notification.TYPE_VIDEO_LIKE, Notification.TYPE_COMMENT_LIKE -> {
+                // Navigate SYNCHRONOUSLY — no coroutine needed since metadata parsing is synchronous
+                navigateToCommentInVideo(notification)
+            }
+            else -> {
+                Log.w("NotificacionesFragment", "⚠️ Unhandled notification type: '${notification.type}' for notification id=${notification.id}")
+            }
+        }
+    }
+
+    /**
+     * Navigates to VideoHomeFragment and opens the comments dialog scrolled to the specific comment.
+     * Handles comment, like, comment_reply, video_comment, video_like, comment_like notification types.
+     * Navigation is synchronous (no coroutine) to avoid race conditions with loadNotifications().
+     */
+    private fun navigateToCommentInVideo(notification: Notification) {
+        val videoId = notification.relatedId
+        if (videoId == null) {
+            Log.w("NotificacionesFragment", "⚠️ relatedId is null for comment/like notification id=${notification.id}")
+            return
+        }
+
+        Log.d("NotificacionesFragment", "💬 Processing comment/like notification: type='${notification.type}', videoId=$videoId")
+
+        // Parse metadata synchronously to extract comment_id
+        var commentId: Long? = null
+        val metadataStr = notification.metadata
+        if (metadataStr != null) {
+            try {
+                Log.d("NotificacionesFragment", "🔍 Parsing metadata: $metadataStr")
+                if (metadataStr.trim().startsWith("{")) {
+                    val jsonObject = org.json.JSONObject(metadataStr)
+                    if (jsonObject.has("comment_id")) {
+                        val idVal = jsonObject.get("comment_id")
+                        commentId = if (idVal is Number) idVal.toLong() else idVal.toString().toLongOrNull()
+                        Log.d("NotificacionesFragment", "✅ Extracted commentId from JSON: $commentId")
                     }
+                } else if (metadataStr.contains("comment_id")) {
+                    val extracted = metadataStr.substringAfter("comment_id").substringAfter(":").substringBefore(",").trim().replace("}", "").replace("\"", "")
+                    commentId = extracted.toLongOrNull()
+                    Log.d("NotificacionesFragment", "✅ Extracted commentId from text: $commentId")
                 }
+            } catch (e: Exception) {
+                Log.e("NotificacionesFragment", "❌ Error parsing metadata for comment_id", e)
+            }
+        } else {
+            Log.w("NotificacionesFragment", "⚠️ Metadata is NULL, navigating without targetCommentId")
+        }
+
+        val bundle = Bundle().apply {
+            putLong("videoId", videoId)
+            putBoolean("openComments", true)
+            commentId?.let {
+                putLong("targetCommentId", it)
+            }
+        }
+
+        Log.d("NotificacionesFragment", "🚀 Navigating to VideoHomeFragment: videoId=$videoId, openComments=true, targetCommentId=${commentId ?: "none"}")
+
+        try {
+            findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment, bundle)
+        } catch (e: Exception) {
+            Log.e("NotificacionesFragment", "❌ Navigation failed: ${e.message}", e)
+            // Fallback: try navigating directly to the destination by ID
+            try {
+                findNavController().navigate(R.id.videoHomeFragment, bundle)
+            } catch (e2: Exception) {
+                Log.e("NotificacionesFragment", "❌ Fallback navigation also failed: ${e2.message}", e2)
             }
         }
     }

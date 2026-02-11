@@ -3405,7 +3405,7 @@ object SupabaseClient {
             orderIndex = safeGetInt("order_index", 0),
             creator_usuario_id = safeGetLongOrNull("creator_usuario_id"),
             creator_username = safeGetString("creator_username"),
-            created_at = parseTimestamp("created_at")
+            created_at = safeGetString("created_at")
         )
     }
     

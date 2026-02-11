@@ -107,6 +107,7 @@ class UserProfileViewFragment : Fragment() {
     
     // Variable para el usuario cuyo perfil se está viendo
     private var username: String? = null
+    private var isInitialLoad = true // Prevent duplicate loadUserData on first creation
 
     // Variables for thumbnail change functionality (similar to ExploreFragment)
     private var currentCourseForThumbnailChange: VideoData? = null
@@ -462,12 +463,12 @@ class UserProfileViewFragment : Fragment() {
                     }
                 },
                 onDeleteClickListener = { video ->
-                    // Show ConfirmDeleteDialogFragment and call performDeleteCourse(video) on confirm
+                    // Show ConfirmDeleteDialogFragment and call performDeleteContent(video, false) on confirm
                     val requestKey = "confirm_delete_video_${'$'}{video.id}"
                     parentFragmentManager.setFragmentResultListener(requestKey, viewLifecycleOwner) { _, bundle ->
                         val confirmed = bundle.getBoolean("confirmed", false)
                         if (confirmed) {
-                            performDeleteCourse(video)
+                            performDeleteContent(video, isCourse = false)
                         }
                     }
 
@@ -715,53 +716,40 @@ class UserProfileViewFragment : Fragment() {
     }private fun loadUserData(username: String) {
         lifecycleScope.launch {
             try {
-                // Use async to load user data, avatar and subscribers count in parallel
-                val userDeferred = async(Dispatchers.IO) {
-                    var user: Usuario? = null
+                // Ensure BackendApiService is initialized
+                BackendApiService.initialize(requireContext())
+                
+                // Fetch user data once (avoid duplicate API calls - was 3x before)
+                val user = withContext(Dispatchers.IO) {
                     try {
                         val result = BackendApiService.getUserByUsername(username)
-                        user = result.getOrNull()
+                        result.getOrNull()
                     } catch (e: Exception) {
                         Log.e("UserProfileView", "Error fetching user from backend", e)
-                    }
-                    user
-                }
-                
-                // Fetch avatar URL from user profile
-                val avatarDeferred = async(Dispatchers.IO) {
-                    try {
-                        val result = BackendApiService.getUserByUsername(username)
-                        result.getOrNull()?.avatar
-                    } catch (e: Exception) {
-                        Log.e("UserProfileView", "Error fetching avatar from backend", e)
                         null
                     }
                 }
                 
-                val subscribersDeferred = async(Dispatchers.IO) {
-                    try {
-                        val userResult = BackendApiService.getUserByUsername(username)
-                        val userId = userResult.getOrNull()?.id
-                        if (userId != null) {
-                            val countResult = BackendApiService.getSubscriberCount(userId)
+                // Fetch subscriber count using the user ID we already have
+                val subscribersCount = if (user != null) {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            val countResult = BackendApiService.getSubscriberCount(user.id)
                             countResult.getOrNull()?.toLong() ?: 0L
-                        } else {
-                            Log.w("UserProfileView", "Could not find userId for username: $username")
+                        } catch (e: Exception) {
+                            Log.e("UserProfileView", "Error fetching subscriber count", e)
                             0L
                         }
-                    } catch (e: Exception) {
-                        Log.e("UserProfileView", "Error fetching subscriber count", e)
-                        0L
                     }
+                } else {
+                    Log.w("UserProfileView", "Could not find userId for username: $username")
+                    0L
                 }
-
-                val user = userDeferred.await()
-                val avatarUrl = avatarDeferred.await()
-                val subscribersCount = subscribersDeferred.await()
+                
+                val avatarUrl = user?.avatar
                 
                 Log.d("UserProfileView", "Loaded data for username: $username")
-                Log.d("UserProfileView", "User found: ${user != null}, avatar from user: ${user?.avatar}")
-                Log.d("UserProfileView", "Avatar URL from backend: $avatarUrl")
+                Log.d("UserProfileView", "User found: ${user != null}, avatar: $avatarUrl")
                 Log.d("UserProfileView", "Subscribers count from backend: $subscribersCount")
 
                 // Actualizar UI con información del usuario
@@ -776,21 +764,20 @@ class UserProfileViewFragment : Fragment() {
                     subscribersCountTextView.text = subscribersCount.toString()
                     Log.d("UserProfileView", "UI updated - Displaying subscribers count: $subscribersCount")
 
-                    // Cargar avatar del usuario - prefer direct avatar URL if user's avatar is empty
-                    val effectiveAvatarUrl = if (!user?.avatar.isNullOrEmpty()) user?.avatar else avatarUrl
-                    if (user != null && effectiveAvatarUrl != null) {
-                        loadUserAvatarFromUrl(effectiveAvatarUrl)
+                    // Cargar avatar del usuario desde el backend
+                    if (!avatarUrl.isNullOrEmpty()) {
+                        loadUserAvatarFromUrl(avatarUrl)
                     } else if (user != null) {
                         loadUserAvatar(user)
-                    } else if (avatarUrl != null) {
-                        loadUserAvatarFromUrl(avatarUrl)
                     } else {
                         userAvatarImageView.setImageResource(R.drawable.ic_profile)
                     }
                 }
 
                 // Cargar contenido del usuario (this is already optimized with async internally)
-                loadUserContent(username, user?.id)
+                // Use the canonical username from the backend user object if available, otherwise fallback to the requested username
+                val targetUsername = if (user != null && user.usuario.isNotEmpty()) user.usuario else username
+                loadUserContent(targetUsername, user?.id)
                 
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -895,11 +882,21 @@ class UserProfileViewFragment : Fragment() {
             try {
                 withContext(Dispatchers.IO) {
                     val coursesDeferred = async {
-                        val result = BackendApiService.getCoursesByCreator(username)
-                        result.getOrNull() ?: emptyList()
+                        if (userId != null && userId > 0) {
+                            // Prefer fetching by ID if available and valid as it's more reliable
+                            Log.d("UserProfileView", "Fetching courses by userId: $userId")
+                            val result = BackendApiService.getCoursesByCreatorId(userId)
+                            result.getOrNull() ?: emptyList() 
+                        } else {
+                            // Fallback to username
+                            Log.d("UserProfileView", "Fetching courses by username: $username")
+                            val result = BackendApiService.getCoursesByCreator(username)
+                            result.getOrNull() ?: emptyList()
+                        }
                     }
                     
                     val videosDeferred = async {
+                        Log.d("UserProfileView", "Fetching videos by username: $username")
                         val result = BackendApiService.getVideosByCreator(username)
                         val videos = result.getOrNull() ?: emptyList()
                         videos.map { it.copy(username = username) }
@@ -920,17 +917,8 @@ class UserProfileViewFragment : Fragment() {
                 android.util.Log.w("UserProfileView", "Backend fetch by creator/username failed, will fallback to local", e)
             }
 
-            // If Supabase didn't return results for one of the lists, fallback to local DB for that list
-            if (userCoursesList.isEmpty()) {
-                val allVideosData = getAllContentLikeExploreFragment()
-                val (courses, _) = filterContentLikeExploreFragment(allVideosData, username, userId)
-                userCoursesList = courses.map { course -> com.example.tareamov.repository.CourseRepository(requireContext()).convertVideoDataToCoursePublic(course) }
-            }
-            if (userVideosList.isEmpty()) {
-                val allVideosData = getAllContentLikeExploreFragment()
-                val (_, videos) = filterContentLikeExploreFragment(allVideosData, username, userId)
-                userVideosList = videos
-            }
+            // Backend is the source of truth — if empty, user simply has no content
+            Log.d("UserProfileView", "Backend returned ${userCoursesList.size} courses and ${userVideosList.size} videos for $username")
 
             // Ensure both lists are sorted newest first by timestamp (remote should already be ordered)
             userCoursesList = userCoursesList.sortedWith(compareByDescending<com.example.tareamov.data.entity.Course> { it.timestamp }.thenByDescending { it.creationDate })
@@ -947,9 +935,13 @@ class UserProfileViewFragment : Fragment() {
                         lower.startsWith("http://") || lower.startsWith("https://") -> path
                         lower.startsWith("content://") -> path
                         lower.startsWith("android.resource://") -> path
-                        path.startsWith("/") -> "file://$path"
+                        // For paths starting with /, distinguish between local storage and backend URLs
+                        path.startsWith("/storage") || path.startsWith("/data") -> "file://$path"
+                        path.startsWith("/") -> "${BackendApiService.baseUrl}$path"
                         // Windows-style absolute paths (may contain backslashes or drive letter)
                         path.matches(Regex("^[a-zA-Z]:\\.*")) || path.contains('\\') -> "file://$path"
+                        // Assume relative path missing slash is backend
+                        !path.contains(":") -> "${BackendApiService.baseUrl}/$path"
                         else -> path
                     }
                 }
@@ -1204,9 +1196,9 @@ class UserProfileViewFragment : Fragment() {
     }
 
     /**
-     * Sync subscription to backend (from ExploreFragment)
+     * Sync subscription to backend
      */
-    private suspend fun syncSubscriptionToSupabase(subscriberId: Long, creatorId: Long) {
+    private suspend fun syncSubscription(subscriberId: Long, creatorId: Long) {
         try {
             BackendApiService.subscribe(creatorId)
             Log.d("UserProfileView", "Subscription synced to backend: $subscriberId -> $creatorId")
@@ -1216,9 +1208,9 @@ class UserProfileViewFragment : Fragment() {
     }
 
     /**
-     * Sync unsubscription to backend (from ExploreFragment)
+     * Sync unsubscription to backend
      */
-    private suspend fun syncUnsubscriptionToSupabase(subscriberId: Long, creatorId: Long) {
+    private suspend fun syncUnsubscription(subscriberId: Long, creatorId: Long) {
         try {
             BackendApiService.unsubscribe(creatorId)
             Log.d("UserProfileView", "Unsubscription synced to backend: $subscriberId -> $creatorId")
@@ -1238,19 +1230,22 @@ class UserProfileViewFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                // Check if user is creator
+                // Fetch current user ONCE from backend (avoid redundant calls)
+                val currentUser = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserByUsername(currentUserUsername)
+                }.getOrNull()
+                val currentUserId = currentUser?.id
+
+                // Check if user is creator (by username match or by fetching course from backend)
                 val isCreator = if (currentUserUsername == course.username) {
                     true
+                } else if (currentUserId != null) {
+                    val actualCourse = withContext(Dispatchers.IO) {
+                        BackendApiService.getCourseById(course.id)
+                    }.getOrNull()
+                    actualCourse != null && currentUserId == actualCourse.creatorUserId
                 } else {
-                    val currentUserResult = withContext(Dispatchers.IO) {
-                        BackendApiService.getUserByUsername(currentUserUsername)
-                    }
-                    val creatorUserResult = withContext(Dispatchers.IO) {
-                        BackendApiService.getUserByUsername(course.username)
-                    }
-                    val currentUserId = currentUserResult.getOrNull()?.id
-                    val creatorUserId = creatorUserResult.getOrNull()?.id
-                    currentUserId != null && currentUserId == creatorUserId
+                    false
                 }
 
                 if (isCreator) {
@@ -1260,12 +1255,6 @@ class UserProfileViewFragment : Fragment() {
 
                 // Check if paid
                 if (course.isPaid && (course.price ?: 0.0) > 0) {
-                    // Check if enrolled
-                     val currentUserResult = withContext(Dispatchers.IO) {
-                        BackendApiService.getUserByUsername(currentUserUsername)
-                    }
-                     val currentUserId = currentUserResult.getOrNull()?.id
-                    
                     if (currentUserId != null) {
                         val isEnrolled = withContext(Dispatchers.IO) {
                             val result = BackendApiService.isEnrolled(course.id)
@@ -1297,25 +1286,8 @@ class UserProfileViewFragment : Fragment() {
                     return@launch
                 }
 
-                // Free course: Auto-enroll if needed
-                val currentUserResult = withContext(Dispatchers.IO) {
-                    BackendApiService.getUserByUsername(currentUserUsername)
-                }
-                val currentUserId = currentUserResult.getOrNull()?.id
-
+                // Free course: Auto-enroll if needed (use currentUserId already fetched)
                 if (currentUserId != null) {
-                    // CRITICAL: Prevent course creator from enrolling in their own course
-                    val actualCourseResult = withContext(Dispatchers.IO) {
-                        BackendApiService.getCourseById(course.id)
-                    }
-                    val actualCourse = actualCourseResult.getOrNull()
-                    
-                    if (actualCourse != null && currentUserId == actualCourse.creatorUserId) {
-                        Log.d("UserProfileView", "⚠️ Creator cannot enroll in own course ${course.id}")
-                        handleContentClick(course)
-                        return@launch
-                    }
-                    
                     val isEnrolled = withContext(Dispatchers.IO) {
                         val result = BackendApiService.isEnrolled(course.id)
                         result.getOrNull() == true
@@ -1324,7 +1296,7 @@ class UserProfileViewFragment : Fragment() {
                     if (!isEnrolled) {
                         Log.d("UserProfileView", "Auto-enrolling user $currentUserUsername in course ${course.title}")
                         
-                        // Get total tasks
+                        // Get total tasks from backend
                         val topics = withContext(Dispatchers.IO) {
                             val result = BackendApiService.getTopicsByCourse(course.id)
                             result.getOrNull() ?: emptyList()
@@ -1412,18 +1384,19 @@ class UserProfileViewFragment : Fragment() {
 
     private fun navigateToCourseDetail(course: VideoData) {
         lifecycleScope.launch {
-            // Check if current user is the course creator by comparing user IDs
+            // Check if current user is the course creator via backend
             val currentUserUsername = getCurrentUsername()
-            val isCreator = if (currentUserUsername != null) {
-                val currentUserResult = withContext(Dispatchers.IO) {
+            val isCreator = if (currentUserUsername != null && currentUserUsername == course.username) {
+                true
+            } else if (currentUserUsername != null) {
+                // Fetch the course from backend to get creatorUserId, then compare
+                val actualCourse = withContext(Dispatchers.IO) {
+                    BackendApiService.getCourseById(course.id)
+                }.getOrNull()
+                val currentUser = withContext(Dispatchers.IO) {
                     BackendApiService.getUserByUsername(currentUserUsername)
-                }
-                val creatorUserResult = withContext(Dispatchers.IO) {
-                    BackendApiService.getUserByUsername(course.username)
-                }
-                val currentUserId = currentUserResult.getOrNull()?.id
-                val creatorUserId = creatorUserResult.getOrNull()?.id
-                currentUserId != null && currentUserId == creatorUserId
+                }.getOrNull()
+                actualCourse != null && currentUser != null && currentUser.id == actualCourse.creatorUserId
             } else {
                 false
             }
@@ -1483,7 +1456,12 @@ class UserProfileViewFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        // Cargar datos del usuario
+        // Avoid duplicate load on first creation (onViewCreated already calls loadUserData)
+        if (isInitialLoad) {
+            isInitialLoad = false
+            return
+        }
+        // Reload data when returning from another fragment
         username?.let { loadUserData(it) }
         
         // Ensure bottom navigation remains visible and static
@@ -1772,7 +1750,7 @@ class UserProfileViewFragment : Fragment() {
         parentFragmentManager.setFragmentResultListener(requestKey, viewLifecycleOwner) { _, bundle ->
             val confirmed = bundle.getBoolean("confirmed", false)
             if (confirmed) {
-                performDeleteCourse(course)
+                performDeleteContent(course, isCourse = true)
             }
         }
 
@@ -1785,9 +1763,9 @@ class UserProfileViewFragment : Fragment() {
     /**
      * Actually perform the course/video deletion
      */
-    private fun performDeleteCourse(course: VideoData) {
+    private fun performDeleteContent(content: VideoData, isCourse: Boolean) {
         // --- OPTIMISTIC UI UPDATE for "Fast" feel ---
-        val idToRemove = course.id
+        val idToRemove = content.id
         
         // Remove from local lists immediately
         allContent.removeAll { it.id == idToRemove }
@@ -1813,7 +1791,7 @@ class UserProfileViewFragment : Fragment() {
         
         // Notify user immediately that we are working on it
         Toast.makeText(requireContext(), "Eliminando...", Toast.LENGTH_SHORT).show()
-        Log.d("UserProfileView", "Optimistic delete applied locally for: ${course.title}")
+        Log.d("UserProfileView", "Optimistic delete applied locally for: ${content.title} (isCourse=$isCourse)")
 
         // --- BACKGROUND SYNC ---
         // Use lifecycleScope but wrap with NonCancellable to ensure DB/Network op finishes even if user leaves screen
@@ -1821,46 +1799,24 @@ class UserProfileViewFragment : Fragment() {
             try {
                 // Use IO Dispatcher + NonCancellable to prevent JobCancellationException
                 withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
-                    // Resolve the remote course ID
-                    var remoteCourseId: Long? = null
-                    if (course.courseId != null && course.courseId!! > 0) {
-                        remoteCourseId = course.courseId
-                    }
-
-                    // If we don't have a remoteCourseId, try to find by title via search
-                    if (remoteCourseId == null) {
-                        try {
-                            val searchResult = BackendApiService.searchCourses(course.title)
-                            if (searchResult is ApiResult.Success) {
-                                remoteCourseId = searchResult.data?.firstOrNull { it.title == course.title }?.id
-                            }
-                        } catch (e: Exception) {
-                            Log.w("UserProfileView", "Could not resolve remote course id by title: ${e.message}")
-                        }
-                    }
-
-                    // Delete via backend (handles cascade deletion of videos, topics, tasks, etc.)
-                    if (remoteCourseId != null) {
-                        val deleteResult = BackendApiService.deleteCourse(remoteCourseId)
+                    if (isCourse) {
+                        // For courses, we use the ID directly as it comes from loadUserContent which maps backend ID
+                        val deleteResult = BackendApiService.deleteCourse(content.id)
                         if (deleteResult is ApiResult.Success) {
-                            Log.i("UserProfileView", "✅ Course $remoteCourseId deleted successfully via backend")
+                            Log.i("UserProfileView", "✅ Course ${content.id} deleted successfully via backend")
                         } else {
-                            Log.w("UserProfileView", "Failed to delete course $remoteCourseId: ${(deleteResult as? ApiResult.Error)?.message}")
+                            Log.w("UserProfileView", "Failed to delete course ${content.id}: ${(deleteResult as? ApiResult.Error)?.message}")
                         }
                     } else {
-                        // Try deleting the video directly if no course ID
-                        val deleteResult = BackendApiService.deleteVideo(course.id)
+                        // For videos, we use the ID directly as it comes from backend
+                        val deleteResult = BackendApiService.deleteVideo(content.id)
                         if (deleteResult is ApiResult.Success) {
-                            Log.i("UserProfileView", "✅ Video ${course.id} deleted successfully via backend")
+                            Log.i("UserProfileView", "✅ Video ${content.id} deleted successfully via backend")
                         } else {
-                            Log.w("UserProfileView", "Failed to delete video ${course.id}")
+                            Log.w("UserProfileView", "Failed to delete video ${content.id}: ${(deleteResult as? ApiResult.Error)?.message}")
                         }
                     }
-                } // End withContext(NonCancellable)
-                
-                // Note: We don't need to update UI on success because we did optimistic update.
-                // We could show a toast if we want to confirm, but for "fast" feel, silence is golden on success.
-                // If it failed, we could notify, but typically we let it settle.
+                } 
                 
             } catch (e: Exception) {
                 Log.e("UserProfileView", "Error in deleting process: ${e.message}")
@@ -1877,11 +1833,18 @@ class UserProfileViewFragment : Fragment() {
                 val updatedCourse = course.copy(title = newTitle, description = newDescription)
 
                 withContext(Dispatchers.IO) {
-                    // Update in VideoData table
-                    videoManager.updateVideo(updatedCourse)
-
-                    // Update in Course table
-                    updateCourseInTable(updatedCourse)
+                    // Update course via backend API
+                    val updates = mapOf<String, Any?>(
+                        "title" to newTitle,
+                        "description" to newDescription
+                    )
+                    val result = BackendApiService.updateCourse(course.id, updates)
+                    if (result.isSuccess) {
+                        Log.d("UserProfileView", "Course ${course.id} updated on backend")
+                    } else {
+                        Log.w("UserProfileView", "Backend update failed: ${result.errorMessage()}, falling back to local")
+                        videoManager.updateVideo(updatedCourse)
+                    }
                 }
                 
                 // Actualizar las listas locales inmediatamente
@@ -1932,13 +1895,23 @@ class UserProfileViewFragment : Fragment() {
         if (getCurrentUsername() != null && getCurrentUsername() == videoData.username) {
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
-                    val course = courseRepository.convertVideoDataToCoursePublic(videoData)
+                    // Update via backend API
+                    val updates = mapOf<String, Any?>(
+                        "title" to videoData.title,
+                        "description" to videoData.description,
+                        "thumbnail_uri" to videoData.thumbnailUri,
+                        "is_premium" to videoData.isPaid
+                    )
                     withContext(Dispatchers.IO) {
-                        courseRepository.updateCourse(course)
+                        val result = BackendApiService.updateCourse(videoData.id, updates)
+                        if (result.isSuccess) {
+                            Log.d("UserProfileView", "Course updated via backend: ${videoData.title}")
+                        } else {
+                            Log.w("UserProfileView", "Backend update failed: ${result.errorMessage()}")
+                        }
                     }
-                    Log.d("UserProfileView", "Course updated in Course table: ${videoData.title}")
                 } catch (e: Exception) {
-                    Log.e("UserProfileView", "Error updating course in table", e)
+                    Log.e("UserProfileView", "Error updating course via backend", e)
                 }
             }
         } else {
@@ -1995,12 +1968,15 @@ class UserProfileViewFragment : Fragment() {
                     // Update the course with new thumbnail
                     val updatedCourse = course.copy(thumbnailUri = finalThumbnailUri)
 
+                    // Update thumbnail via backend API
                     withContext(Dispatchers.IO) {
-                        // Update in VideoData table
-                        videoManager.updateVideo(updatedCourse)
-
-                        // Update in Course table
-                        updateCourseInTable(updatedCourse)
+                        val updates = mapOf<String, Any?>("thumbnail_uri" to finalThumbnailUri)
+                        val result = BackendApiService.updateCourse(course.id, updates)
+                        if (result.isSuccess) {
+                            Log.d("UserProfileView", "Thumbnail updated on backend for course ${course.id}")
+                        } else {
+                            Log.w("UserProfileView", "Backend thumbnail update failed: ${result.errorMessage()}")
+                        }
                     }
 
                     Log.d("UserProfileView", "Thumbnail updated for course: ${course.title}")
@@ -2160,6 +2136,19 @@ class UserProfileViewFragment : Fragment() {
                     savedState.remove<String>("updatedDescription")
                     savedState.remove<Boolean>("updatedIsPaid")
                     savedState.remove<String>("updatedThumbnailUri")
+                }
+            }
+            
+            // Listen for COURSE updates or creations
+            currentBackStackEntry?.savedStateHandle?.getLiveData<Boolean>("courseUpdated")?.observe(viewLifecycleOwner) { updated ->
+                if (updated == true) {
+                    Log.d("UserProfileView", "🔔 Course update detected via SavedStateHandle!")
+                    // Reload user data to reflect changes
+                    username?.let { 
+                        Log.d("UserProfileView", "🔄 Reloading user data after course update")
+                        loadUserData(it) 
+                    }
+                    currentBackStackEntry.savedStateHandle.remove<Boolean>("courseUpdated")
                 }
             }
         } catch (e: Exception) {

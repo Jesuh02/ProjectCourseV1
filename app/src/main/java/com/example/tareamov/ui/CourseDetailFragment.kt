@@ -33,7 +33,6 @@ import com.example.tareamov.data.entity.Subscription
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.viewmodel.CourseViewModel
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
-import com.example.tareamov.service.CloudflareR2Service
 import de.hdodenhof.circleimageview.CircleImageView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,7 +50,7 @@ class CourseDetailFragment : Fragment() {
 
     private var courseId: Long = -1
     private var courseName: String = "" // Ensure this is populated correctly
-    // Resolved course id after checking Supabase (may differ from local courseId)
+    // Resolved course id after checking backend (may differ from local courseId)
     private var resolvedCourseId: Long = -1
     private lateinit var topicsContainer: LinearLayout
     private var isCurrentUserCreator: Boolean = false
@@ -110,8 +109,14 @@ class CourseDetailFragment : Fragment() {
     private fun isCacheValid(): Boolean {
         return System.currentTimeMillis() - courseDataLoadTime < CACHE_VALIDITY_MS
     }
+
+    // Helper: check if a URL is remote (cloud-hosted)
+    private fun isRemoteUrl(url: String?): Boolean {
+        if (url.isNullOrEmpty()) return false
+        return url.startsWith("http://") || url.startsWith("https://")
+    }
     
-    // BackendApiService is used for all remote operations (replaces SyncRepository + SupabaseClient + local DAOs)
+    // BackendApiService is used for all remote operations
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -487,124 +492,6 @@ class CourseDetailFragment : Fragment() {
 
         // Load course details
         courseViewModel.getCourseById(courseId)
-
-        // Set up subscribe button click listener - Moved to ExploreFragment cards
-        // subscribeButton.setOnClickListener {
-        // lifecycleScope.launch {
-        //     try {
-        //         val remoteCourse = syncRepository.fetchCourseById(courseId)
-        //         val remoteCreator = remoteCourse?.creatorUsername?.trim()
-        //         val currentUser = sessionManager.getUsername()?.trim()
-        //         val isOwner = !remoteCreator.isNullOrBlank() && !currentUser.isNullOrBlank() && remoteCreator.equals(currentUser, ignoreCase = true)
-        //
-        //         withContext(Dispatchers.Main) {
-        //             if (isOwner) {
-        //                 editCourseButton.visibility = View.VISIBLE
-        //                 courseTitleTextView.isClickable = true
-        //             } else {
-        //                 editCourseButton.visibility = View.GONE
-        //                 courseTitleTextView.isClickable = false
-        //             }
-        //         }
-        //     } catch (e: Exception) {
-        //         // On error, fall back to local check: show edit only if session username equals local course creator
-        //         try {
-        //             val localCourse = AppDatabase.getDatabase(requireContext()).courseDao().getCourseById(courseId)
-        //             val localCreator = localCourse?.creatorUsername?.trim()
-        //             val currentUser = sessionManager.getUsername()?.trim()
-        //             val isOwnerLocal = !localCreator.isNullOrBlank() && !currentUser.isNullOrBlank() && localCreator.equals(currentUser, ignoreCase = true)
-        //             withContext(Dispatchers.Main) {
-        //                 if (isOwnerLocal) {
-        //                     editCourseButton.visibility = View.VISIBLE
-        //                     courseTitleTextView.isClickable = true
-        //                 } else {
-        //                     editCourseButton.visibility = View.GONE
-        //                     courseTitleTextView.isClickable = false
-        //                 }
-        //             }
-        //         } catch (ex: Exception) {
-        //             // If even local check fails, keep edit hidden
-        //             withContext(Dispatchers.Main) {
-        //                 editCourseButton.visibility = View.GONE
-        //                 courseTitleTextView.isClickable = false
-        //             }
-        //         }
-        //     }
-        // }
-        //     if (!sessionManager.isLoggedIn()) {
-        //         Toast.makeText(requireContext(), "Debes iniciar sesión para suscribirte", Toast.LENGTH_SHORT).show()
-        //         findNavController().navigate(R.id.loginFragment)
-        //         return@setOnClickListener
-        //     }
-        //
-        //     lifecycleScope.launch {
-        //         val username = sessionManager.getUsername() ?: return@launch
-        //         val creator = courseCreatorUsername ?: return@launch
-        //
-        //         // Check remote subscription state first
-        //         var remoteSubscribed = false
-        //         try {
-        //             val act = requireActivity()
-        //             if (act is MainActivity) {
-        //                 remoteSubscribed = withContext(Dispatchers.IO) { act.syncRepository.isSubscribedRemote(username, creator) }
-        //             }
-        //         } catch (e: Exception) {
-        //             Log.w("CourseDetailFragment", "Remote isSubscribed check failed", e)
-        //         }
-        //
-        //         if (!remoteSubscribed) {
-        //             // Subscribe remotely
-        //             val sub = Subscription(subscriberUsername = username, creatorUsername = creator, subscriptionDate = System.currentTimeMillis())
-        //             var ok = false
-        //             try {
-        //                 val act = requireActivity()
-        //                 if (act is MainActivity) {
-        //                     ok = withContext(Dispatchers.IO) { act.syncRepository.insertSubscriptionRemote(sub) }
-        //                 }
-        //             } catch (e: Exception) {
-        //                 Log.w("CourseDetailFragment", "Remote subscribe failed", e)
-        //             }
-        //
-        //             if (ok) {
-        //                 // Persist locally as well
-        //                 withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().insertSubscription(sub) }
-        //                 isSubscribed = true
-        //                 // Increase UI count by 1
-        //                 // val currentCount = try { Integer.parseInt(subscriberCountTextView.text.toString().filter { it.isDigit() }) } catch (t: Exception) { -1 }
-        //                 // We will re-fetch accurate count below; update UI state
-        //                 // updateSubscribeButtonState(true)
-        //                 Toast.makeText(requireContext(), "Te has suscrito al curso exitosamente", Toast.LENGTH_SHORT).show()
-        //             } else {
-        //                 Toast.makeText(requireContext(), "No se pudo suscribir (error de red)", Toast.LENGTH_SHORT).show()
-        //             }
-        //         } else {
-        //             // Already subscribed remotely -> unsubscribe
-        //             var ok = false
-        //             try {
-        //                 val act = requireActivity()
-        //                 if (act is MainActivity) {
-        //                     ok = withContext(Dispatchers.IO) { act.syncRepository.deleteSubscriptionRemote(username, creator) }
-        //                 }
-        //             } catch (e: Exception) {
-        //                 Log.w("CourseDetailFragment", "Remote unsubscribe failed", e)
-        //             }
-        //
-        //             if (ok) {
-        //                 // Remove local record
-        //                 withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().deleteSubscription(username, creator) }
-        //                 isSubscribed = false
-        //                 // updateSubscribeButtonState(false)
-        //                 Toast.makeText(requireContext(), "Se ha desuscrito del curso", Toast.LENGTH_SHORT).show()
-        //             } else {
-        //                 Toast.makeText(requireContext(), "No se pudo desuscribir (error de red)", Toast.LENGTH_SHORT).show()
-        //             }
-        //         }
-        //
-        //         // Refresh subscriber count from local DAO (or optionally from Supabase)
-        //         // val newCount = withContext(Dispatchers.IO) { AppDatabase.getDatabase(requireContext()).subscriptionDao().getSubscriptionCountForCreator(creator) }
-        //         // subscriberCountTextView.text = formatSubscriberCount(newCount)
-        //     }
-        // }
         
         // Setup bottom navigation
         setupBottomNavigation(view)
@@ -614,7 +501,7 @@ class CourseDetailFragment : Fragment() {
         navBackEntry?.savedStateHandle?.getLiveData<Long>("topic_created")?.observe(viewLifecycleOwner) { topicId ->
             try {
                 Log.d("CourseDetailFragment", "Detected topic_created=$topicId, refreshing topics")
-                refreshTopicsFromSupabase()
+                refreshTopicsFromBackend()
                 // Clear the flag so subsequent returns don't re-trigger unless set again
                 navBackEntry.savedStateHandle.remove<Long>("topic_created")
             } catch (e: Exception) {
@@ -625,8 +512,8 @@ class CourseDetailFragment : Fragment() {
         // Observe general refresh flag (usado por tareas y otros cambios)
         navBackEntry?.savedStateHandle?.getLiveData<Boolean>("refresh_from_supabase")?.observe(viewLifecycleOwner) { shouldRefresh ->
             if (shouldRefresh == true) {
-                Log.d("CourseDetailFragment", "Refresh flag received, reloading from Supabase...")
-                refreshTopicsFromSupabase()
+                Log.d("CourseDetailFragment", "Refresh flag received, reloading from backend...")
+                refreshTopicsFromBackend()
                 navBackEntry.savedStateHandle.remove<Boolean>("refresh_from_supabase")
             }
         }
@@ -647,7 +534,7 @@ class CourseDetailFragment : Fragment() {
             if (shouldForceReload == true) {
                 Log.d("CourseDetailFragment", "Force reload requested - clearing cache and reloading")
                 cachedTopicsData.clear()
-                refreshTopicsFromSupabase()
+                refreshTopicsFromBackend()
                 navBackEntry.savedStateHandle.remove<Boolean>("force_reload_topics")
             }
         }
@@ -711,7 +598,9 @@ class CourseDetailFragment : Fragment() {
                     BackendApiService.getUnreadNotificationCount()
                 }
                 
-                val unreadCount = (unreadResult as? ApiResult.Success)?.data ?: 0
+                val unreadCount = if (unreadResult is ApiResult.Success) {
+                    unreadResult.data ?: 0
+                } else 0
                 
                 if (unreadCount > 0) {
                     bottomNavBinding.notificationBadge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
@@ -1965,7 +1854,7 @@ class CourseDetailFragment : Fragment() {
                 
                 if (uniqueContentItems.isNotEmpty()) {
                     for (contentItem in uniqueContentItems) {
-                        Log.d("CourseDetailFragment", "Adding content item: name=${contentItem.name}, type=${contentItem.contentType}, uri=${contentItem.uriString}, isR2=${CloudflareR2Service.isR2Url(contentItem.uriString)}")
+                        Log.d("CourseDetailFragment", "Adding content item: name=${contentItem.name}, type=${contentItem.contentType}, uri=${contentItem.uriString}, isRemote=${isRemoteUrl(contentItem.uriString)}")
                         
                         val ctx = context ?: break
                         val contentItemView = LayoutInflater.from(ctx).inflate(
@@ -1979,8 +1868,8 @@ class CourseDetailFragment : Fragment() {
                         val typeView = contentItemView.findViewById<TextView>(R.id.contentTypeView)
                         val deleteButton = contentItemView.findViewById<ImageButton>(R.id.deleteContentButton)
                         
-                        // Show cloud emoji if it's an R2 URL
-                        val displayName = if (CloudflareR2Service.isR2Url(contentItem.uriString)) {
+                        // Show cloud emoji if it's a remote URL
+                        val displayName = if (isRemoteUrl(contentItem.uriString)) {
                             "☁️ ${contentItem.name ?: "Archivo adjunto"}"
                         } else {
                             contentItem.name ?: "Archivo adjunto"
@@ -2092,8 +1981,8 @@ class CourseDetailFragment : Fragment() {
         container.addView(taskView)
     }
 
-    // Refresh topics and re-render UI from Supabase for the current course
-    private fun refreshTopicsFromSupabase() {
+    // Refresh topics and re-render UI from backend for the current course
+    private fun refreshTopicsFromBackend() {
         if (courseId == -1L) return
 
         // Cancel previous job if active to prevent race conditions and duplication
@@ -2244,8 +2133,8 @@ class CourseDetailFragment : Fragment() {
         val typeView = contentView.findViewById<TextView>(R.id.contentTypeView)
         val deleteButton = contentView.findViewById<ImageButton>(R.id.deleteContentButton)
 
-        // Show cloud icon if it's an R2 URL
-        val displayName = if (CloudflareR2Service.isR2Url(item.uriString)) {
+        // Show cloud icon if it's a remote URL
+        val displayName = if (isRemoteUrl(item.uriString)) {
             "☁️ ${item.name ?: "Archivo adjunto"}"
         } else {
             item.name ?: "Archivo adjunto"
@@ -2513,7 +2402,7 @@ class CourseDetailFragment : Fragment() {
             Log.d("CourseDetailFragment", "   - Name: ${item.name}")
             Log.d("CourseDetailFragment", "   - Type: ${item.contentType}")
             Log.d("CourseDetailFragment", "   - URI: ${item.uriString}")
-            Log.d("CourseDetailFragment", "   - Is R2 URL: ${CloudflareR2Service.isR2Url(item.uriString)}")
+            Log.d("CourseDetailFragment", "   - Is Remote URL: ${isRemoteUrl(item.uriString)}")
             
             // For videos, use our custom VideoPlayerActivity
             if (item.contentType == "video") {
@@ -2524,12 +2413,12 @@ class CourseDetailFragment : Fragment() {
                 
                 // Handle different URI formats
                 if (processedUri.isNotEmpty()) {
-                    // Check if it's a Cloudflare R2 URL (HTTP/HTTPS remote URL)
-                    if (CloudflareR2Service.isR2Url(processedUri) || 
+                    // Check if it's a remote URL (HTTP/HTTPS)
+                    if (isRemoteUrl(processedUri) || 
                         processedUri.startsWith("http://") || 
                         processedUri.startsWith("https://")) {
                         // Remote URL - use directly
-                        Log.d("CourseDetailFragment", "☁️ Opening remote video from R2/URL: $processedUri")
+                        Log.d("CourseDetailFragment", "☁️ Opening remote video: $processedUri")
                     }
                     // If it's a file path without scheme, add file:// prefix
                     else if (!processedUri.startsWith("content://") && !processedUri.startsWith("file://") && !processedUri.startsWith("android.resource://")) {
@@ -2587,11 +2476,11 @@ class CourseDetailFragment : Fragment() {
             // For other content types (documents), handle remote URLs
             val uriString = item.uriString
             
-            // Check if it's a remote URL (R2 or other HTTP/HTTPS)
-            if (CloudflareR2Service.isR2Url(uriString) || 
+            // Check if it's a remote URL (HTTP/HTTPS)
+            if (isRemoteUrl(uriString) || 
                 uriString.startsWith("http://") || 
                 uriString.startsWith("https://")) {
-                Log.d("CourseDetailFragment", "☁️ Opening remote document from R2/URL: $uriString")
+                Log.d("CourseDetailFragment", "☁️ Opening remote document: $uriString")
                 
                 // Open remote URL in browser or appropriate app
                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uriString))
@@ -2648,8 +2537,8 @@ class CourseDetailFragment : Fragment() {
         try {
             var processedUri = item.uriString ?: ""
             if (processedUri.isNotEmpty()) {
-                // Check if it's a remote URL (R2 or HTTP/HTTPS) - use directly
-                if (CloudflareR2Service.isR2Url(processedUri) || 
+                // Check if it's a remote URL (HTTP/HTTPS) - use directly
+                if (isRemoteUrl(processedUri) || 
                     processedUri.startsWith("http://") || 
                     processedUri.startsWith("https://")) {
                     Log.d("CourseDetailFragment", "☁️ Opening remote video in floating player: $processedUri")
@@ -3103,7 +2992,7 @@ class CourseDetailFragment : Fragment() {
                         // Reload the course details to refresh the UI
                         loadCourseDetails()
                     } else {
-                        Toast.makeText(requireContext(), "Error: No se pudo eliminar el tema de Supabase. Verifique su conexión.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(requireContext(), "Error: No se pudo eliminar el tema. Verifique su conexión.", Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Exception) {
@@ -3156,7 +3045,7 @@ class CourseDetailFragment : Fragment() {
                         // Reload the course details to refresh the UI
                         loadCourseDetails()
                     } else {
-                        Toast.makeText(requireContext(), "Error: No se pudo eliminar la tarea de Supabase. Verifique su conexión.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(requireContext(), "Error: No se pudo eliminar la tarea. Verifique su conexión.", Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Exception) {
@@ -3209,7 +3098,7 @@ class CourseDetailFragment : Fragment() {
                         container.removeView(contentView)
                         Toast.makeText(requireContext(), "Contenido eliminado exitosamente", Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(requireContext(), "Error: No se pudo eliminar de Supabase. Verifique su conexión e intente nuevamente.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(requireContext(), "Error: No se pudo eliminar el contenido. Verifique su conexión e intente nuevamente.", Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Exception) {

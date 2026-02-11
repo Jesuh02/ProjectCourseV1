@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Define the path for files stored via context.getFilesDir() -->
+    <!-- All files under getFilesDir() -->
     <files-path
         name="files"
         path="/" />
 
-    <!-- Define specific paths for different content types -->
+    <!-- Specific subdirectories under getFilesDir() -->
+    <files-path
+        name="task_submissions"
+        path="task_submissions/" />
+
     <files-path
         name="course_content_files"
         path="course_content/" />
@@ -36,38 +40,27 @@
         name="external_files"
         path="." />
 
-    <external-cache-path
-        name="external_cache"
-        path="." />
-    path="." />
     <external-files-path
-        name="external_files"
-        path="." />
-    <external-files-path
-        name="documents"
+        name="external_documents"
         path="Documents/" />
-    <cache-path
-        name="cache"
-        path="." />
+
     <external-cache-path
         name="external_cache"
         path="." />
-    <external-path
-        name="external"
-        path="." />
-    <!-- Add specific path for DCIM folder -->
+
+    <!-- Specific external folders -->
     <external-path
         name="dcim"
         path="DCIM/" />
-    <!-- Add specific path for Pictures folder -->
+
     <external-path
         name="pictures"
         path="Pictures/" />
-    <!-- Add specific path for Movies folder -->
+
     <external-path
         name="movies"
         path="Movies/" />
-    <!-- Add specific path for Download folder -->
+
     <external-path
         name="download"
         path="Download/" />

@@ -51,6 +51,10 @@ object VideoCacheManager {
         }
         
         try {
+            // CRITICAL: Set appContextRef BEFORE calling updateHttpFactory
+            // so the factory can access the context for DefaultDataSource
+            appContextRef = java.lang.ref.WeakReference(context.applicationContext)
+            
             val cacheDir = File(context.cacheDir, CACHE_FOLDER_NAME)
             if (!cacheDir.exists()) {
                 cacheDir.mkdirs()
@@ -61,26 +65,8 @@ object VideoCacheManager {
             
             cache = SimpleCache(cacheDir, cacheEvictor, databaseProvider)
             
-            // Create OPTIMIZED HTTP data source with fast timeouts and parallel connections
-            val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-                .setConnectTimeoutMs(CONNECT_TIMEOUT_MS)
-                .setReadTimeoutMs(READ_TIMEOUT_MS)
-                .setAllowCrossProtocolRedirects(true)
-                .setKeepPostFor302Redirects(true)
-                .setUserAgent("ExoPlayer/CourseV-App")
-            
-            // Create upstream data source (network)
-            val upstreamDataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
-            
-            // Create cache data source that wraps the upstream
-            // FLAG_BLOCK_ON_CACHE: Block until cache is available (instant for cached content)
-            cacheDataSourceFactory = CacheDataSource.Factory()
-                .setCache(cache!!)
-                .setUpstreamDataSourceFactory(upstreamDataSourceFactory)
-                .setFlags(
-                    CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
-                    CacheDataSource.FLAG_BLOCK_ON_CACHE
-                )
+            // Initial factory setup
+            updateHttpFactory()
             
             isInitialized = true
             Log.d(TAG, "Video cache initialized with ${CACHE_SIZE_BYTES / (1024 * 1024)} MB capacity")
@@ -89,13 +75,55 @@ object VideoCacheManager {
             Log.e(TAG, "Failed to initialize video cache", e)
         }
     }
+
+    private fun updateHttpFactory() {
+        // NOTE: No longer adding Authorization header here.
+        // The backend now returns presigned R2 URLs that already contain
+        // authentication in query parameters (X-Amz-Signature, etc.).
+        // Adding extra Authorization headers to presigned URLs would cause 403 errors.
+
+        // Create OPTIMIZED HTTP data source (no auth headers needed for presigned URLs)
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(CONNECT_TIMEOUT_MS)
+            .setReadTimeoutMs(READ_TIMEOUT_MS)
+            .setAllowCrossProtocolRedirects(true)
+            .setKeepPostFor302Redirects(true)
+            .setUserAgent("ExoPlayer/CourseV-App")
+        
+        // Create upstream data source (network)
+        val upstreamDataSourceFactory = DefaultDataSource.Factory(getContextOrNull() ?: return, httpDataSourceFactory)
+        
+        // Create cache data source that wraps the upstream
+        val c = cache ?: return
+        cacheDataSourceFactory = CacheDataSource.Factory()
+            .setCache(c)
+            .setUpstreamDataSourceFactory(upstreamDataSourceFactory)
+            .setFlags(
+                CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
+                CacheDataSource.FLAG_BLOCK_ON_CACHE
+            )
+    }
+
+    private var appContextRef: java.lang.ref.WeakReference<Context>? = null
+
+    private fun getContextOrNull(): Context? {
+        return appContextRef?.get()
+    }
     
     /**
      * Get the cache data source factory for use with ExoPlayer.
      */
     fun getCacheDataSourceFactory(context: Context): DataSource.Factory {
+        if (appContextRef == null) {
+            appContextRef = java.lang.ref.WeakReference(context.applicationContext)
+        }
+
         if (!isInitialized) {
             initialize(context)
+        } else {
+            // Check if token changed and update factory if needed
+            // This is a simple lightweight check
+            updateHttpFactory() 
         }
         return cacheDataSourceFactory ?: DefaultDataSource.Factory(context)
     }

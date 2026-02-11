@@ -42,7 +42,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 when (result) {
                     is ApiResult.Success -> {
                         val authResponse = result.data
-                        if (authResponse?.token != null && authResponse.user != null) {
+                        if (authResponse?.effectiveToken() != null && authResponse.user != null) {
                             val user = authResponse.user
                             val userId = user.get("id")?.asLong ?: -1L
                             val personaId = user.get("persona_id")?.asLong ?: -1L

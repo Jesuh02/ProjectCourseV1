@@ -1172,7 +1172,10 @@ class AdminDashboardFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val unreadCount = withContext(Dispatchers.IO) {
-                    BackendApiService.getUnreadNotificationCount().getOrNull() ?: 0
+                    val result = BackendApiService.getUnreadNotificationCount()
+                    if (result is ApiResult.Success) {
+                        result.data ?: 0
+                    } else 0
                 }
                 
                 if (unreadCount > 0) {

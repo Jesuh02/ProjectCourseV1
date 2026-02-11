@@ -47,7 +47,6 @@ import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Course
-import com.example.tareamov.service.CloudflareR2Service
 import com.example.tareamov.util.VideoManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -335,7 +334,10 @@ class ExploreFragment : Fragment() {
                 val countResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     BackendApiService.getUnreadNotificationCount()
                 }
-                val unreadCount = if (countResult is ApiResult.Success) countResult.data else 0
+                
+                val unreadCount = if (countResult is ApiResult.Success) {
+                    countResult.data ?: 0
+                } else 0
                 
                 if (unreadCount > 0) {
                     bottomNavBinding.notificationBadge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
@@ -878,11 +880,11 @@ class ExploreFragment : Fragment() {
                 
                 // Create initial progress record via BackendApiService
                 val progressData = mapOf(
-                    "cursoId" to course.id,
-                    "tareasCompletadas" to 0,
-                    "tareasTotales" to totalTasks,
-                    "porcentajeProgreso" to 0f,
-                    "estado" to "Perdido"
+                    "courseId" to course.id,
+                    "completedTasks" to 0,
+                    "totalTasks" to totalTasks,
+                    "progressPercentage" to 0f,
+                    "status" to "Perdido"
                 )
                 
                 val syncResult = withContext(Dispatchers.IO) {
@@ -1510,28 +1512,37 @@ class ExploreFragment : Fragment() {
         currentCourseForThumbnailChange?.let { course ->
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
-                    // Subir miniatura a Cloudflare R2 si está configurado
+                    // Subir miniatura al backend (que se encarga de almacenarla en la nube)
                     var finalThumbnailUri = imageUri.toString()
-                    if (CloudflareR2Service.isConfigured()) {
-                        Toast.makeText(requireContext(), "Subiendo miniatura a la nube...", Toast.LENGTH_SHORT).show()
-                        val result = withContext(Dispatchers.IO) {
-                            CloudflareR2Service.uploadFile(
-                                context = requireContext(),
-                                fileUri = imageUri,
-                                folder = "thumbnails/courses",
-                                customFileName = "course_${course.id}_${System.currentTimeMillis()}"
-                            )
-                        }
-                        when (result) {
-                            is CloudflareR2Service.UploadResult.Success -> {
-                                finalThumbnailUri = result.url
-                                Log.d("ExploreFragment", "☁️ Thumbnail uploaded to R2: $finalThumbnailUri")
+                    Toast.makeText(requireContext(), "Subiendo miniatura...", Toast.LENGTH_SHORT).show()
+                    try {
+                        val contentResolver = requireContext().contentResolver
+                        val mimeType = contentResolver.getType(imageUri) ?: "image/jpeg"
+                        val inputStream = contentResolver.openInputStream(imageUri)
+                        if (inputStream != null) {
+                            val bytes = inputStream.readBytes()
+                            inputStream.close()
+                            val uploadResult = withContext(Dispatchers.IO) {
+                                BackendApiService.uploadFile(
+                                    fileBytes = bytes,
+                                    fileName = "course_${course.id}_${System.currentTimeMillis()}.jpg",
+                                    mimeType = mimeType,
+                                    folder = "thumbnails/courses"
+                                )
                             }
-                            is CloudflareR2Service.UploadResult.Error -> {
-                                Log.e("ExploreFragment", "❌ Failed to upload thumbnail: ${result.message}")
-                                Toast.makeText(requireContext(), "Error subiendo a nube, usando local", Toast.LENGTH_SHORT).show()
+                            if (uploadResult is ApiResult.Success) {
+                                val url = uploadResult.data?.get("url")?.asString
+                                if (!url.isNullOrBlank()) {
+                                    finalThumbnailUri = url
+                                    Log.d("ExploreFragment", "☁️ Thumbnail uploaded via backend: $finalThumbnailUri")
+                                }
+                            } else {
+                                Log.w("ExploreFragment", "❌ Failed to upload thumbnail via backend")
+                                Toast.makeText(requireContext(), "Error subiendo miniatura, usando local", Toast.LENGTH_SHORT).show()
                             }
                         }
+                    } catch (e: Exception) {
+                        Log.w("ExploreFragment", "Error uploading thumbnail via backend", e)
                     }
 
                     // Update the course with new thumbnail
@@ -1728,6 +1739,9 @@ class ExploreFragment : Fragment() {
         }
 
         isLoadingCourses = true
+        
+        // Ensure BackendApiService is initialized
+        BackendApiService.initialize(requireContext())
         
         // Show skeleton only if list is empty (initial load or full refresh)
         if (coursesList.isEmpty()) {
@@ -2150,16 +2164,17 @@ class ExploreFragment : Fragment() {
                 if (isNetworkAvailable()) {
                     val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
                     val sessionUserId = session.getUserId()
-                    val serverCourses = withContext(Dispatchers.IO) {
+                    val result = withContext(Dispatchers.IO) {
                         try {
-                            val result = BackendApiService.getCourses(1, 200)
-                            if (result is ApiResult.Success) result.data else emptyList<com.example.tareamov.data.entity.Course>()
+                            // Backend API fetch for premium courses
+                            val res = BackendApiService.getPremiumCourses(1, 200)
+                            if (res is ApiResult.Success) res.data else emptyList<com.example.tareamov.data.entity.Course>()
                         } catch (t: Throwable) {
                             emptyList<com.example.tareamov.data.entity.Course>()
                         }
                     }
 
-                    val premium = serverCourses.filter { it.isPremium == true && (sessionUserId <= 0L || it.creatorUserId != sessionUserId) }
+                    val premium = result.filter { sessionUserId <= 0L || it.creatorUserId != sessionUserId }
                         .sortedByDescending { it.timestamp }
 
                     coursesList.clear()
@@ -2378,16 +2393,8 @@ class ExploreFragment : Fragment() {
                 
                 // Fetch courses purchased by the current user (APPROVED or successful transactions)
                 val purchasedCourses = withContext(Dispatchers.IO) {
-                    val transResult = BackendApiService.getMyTransactions()
-                    if (transResult is ApiResult.Success) {
-                        val courseIds = transResult.data.mapNotNull { json ->
-                            try { json.get("course_id")?.asLong } catch (_: Exception) { null }
-                        }.distinct()
-                        if (courseIds.isNotEmpty()) {
-                            val coursesResult = BackendApiService.getCoursesByIds(courseIds)
-                            if (coursesResult is ApiResult.Success) coursesResult.data else emptyList()
-                        } else emptyList()
-                    } else emptyList()
+                    val result = BackendApiService.getPurchasedCourses(currentUserId)
+                    if (result is ApiResult.Success) result.data else emptyList()
                 }
                 
                 Log.d("ExploreFragment", "Se obtuvieron ${purchasedCourses.size} cursos comprados para user $currentUserId")
@@ -2452,14 +2459,18 @@ class ExploreFragment : Fragment() {
             }
             
             try {
-                // Fetch total courses count
+                // Fetch total courses count efficiently using metadata endpoint
                 val serverTotal = withContext(Dispatchers.IO) {
                     try {
-                        val result = BackendApiService.getCourses(1, 1)
-                        // Get all courses to count total
-                        val allResult = BackendApiService.getCourses(1, 200)
-                        if (allResult is ApiResult.Success) allResult.data.size else 0
-                    } catch (t: Throwable) { 0 }
+                        val result = BackendApiService.getCoursesMetadata(1, 1)
+                        if (result is ApiResult.Success) {
+                            // Extract 'total' field from top-level JSON response
+                            result.data.get("total")?.asInt ?: 0
+                        } else 0
+                    } catch (t: Throwable) {
+                        Log.w("ExploreFragment", "Failed to get total count from metadata", t)
+                        0
+                    }
                 }
                 if (serverTotal > 0) {
                     totalCourses = serverTotal
@@ -2520,6 +2531,11 @@ class ExploreFragment : Fragment() {
     // Helper to parse date string to timestamp
     private fun parseDate(dateString: String): Long {
         return try {
+            // Check if it's a numeric timestamp string
+            if (dateString.matches(Regex("^\\d+$"))) {
+                return dateString.toLong()
+            }
+            // Otherwise parse as ISO date string
             val format = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault())
             format.parse(dateString)?.time ?: 0
         } catch (e: Exception) {
@@ -2596,26 +2612,24 @@ class ExploreFragment : Fragment() {
     /**
      * Sync subscription to backend
      */
-    private suspend fun syncSubscriptionToSupabase(subscriberId: Long, creatorId: Long) {
+    private suspend fun syncSubscription(subscriberId: Long, creatorId: Long) {
         try {
             BackendApiService.subscribe(creatorId)
             Log.d("ExploreFragment", "Subscription synced via BackendApiService: $subscriberId -> $creatorId")
         } catch (e: Exception) {
             Log.e("ExploreFragment", "Error syncing subscription", e)
-            // Don't throw - local subscription is more important
         }
     }
 
     /**
      * Sync unsubscription to backend
      */
-    private suspend fun syncUnsubscriptionToSupabase(subscriberId: Long, creatorId: Long) {
+    private suspend fun syncUnsubscription(subscriberId: Long, creatorId: Long) {
         try {
             BackendApiService.unsubscribe(creatorId)
             Log.d("ExploreFragment", "Unsubscription synced via BackendApiService: $subscriberId -> $creatorId")
         } catch (e: Exception) {
             Log.e("ExploreFragment", "Error syncing unsubscription", e)
-            // Don't throw - local unsubscription is more important
         }
     }
 
@@ -2740,26 +2754,33 @@ class ExploreFragment : Fragment() {
                             val thumbnailUri = thumbnailExtractor.extractThumbnailFromVideo(parsedUri)
                             
                             if (thumbnailUri != null) {
-                                // Subir a Cloudflare R2 si está configurado
+                                // Subir miniatura al backend
                                 var finalThumbnailUri = thumbnailUri.toString()
                                 
-                                if (CloudflareR2Service.isConfigured()) {
-                                    val uploadResult = CloudflareR2Service.uploadFile(
-                                        context = requireContext(),
-                                        fileUri = thumbnailUri,
-                                        folder = "thumbnails/courses/auto",
-                                        customFileName = "auto_thumb_${course.id}_${System.currentTimeMillis()}"
-                                    )
-                                    
-                                    when (uploadResult) {
-                                        is CloudflareR2Service.UploadResult.Success -> {
-                                            finalThumbnailUri = uploadResult.url
-                                            Log.d("ExploreFragment", "☁️ Miniatura automática subida a R2: $finalThumbnailUri")
-                                        }
-                                        is CloudflareR2Service.UploadResult.Error -> {
-                                            Log.w("ExploreFragment", "⚠️ Error subiendo miniatura a R2, usando local")
+                                try {
+                                    val ctx = requireContext()
+                                    val inputStream = ctx.contentResolver.openInputStream(thumbnailUri)
+                                    if (inputStream != null) {
+                                        val bytes = inputStream.readBytes()
+                                        inputStream.close()
+                                        val uploadResult = BackendApiService.uploadFile(
+                                            fileBytes = bytes,
+                                            fileName = "auto_thumb_${course.id}_${System.currentTimeMillis()}.jpg",
+                                            mimeType = "image/jpeg",
+                                            folder = "thumbnails/courses/auto"
+                                        )
+                                        if (uploadResult is ApiResult.Success) {
+                                            val url = uploadResult.data?.get("url")?.asString
+                                            if (!url.isNullOrBlank()) {
+                                                finalThumbnailUri = url
+                                                Log.d("ExploreFragment", "☁️ Miniatura automática subida via backend: $finalThumbnailUri")
+                                            }
+                                        } else {
+                                            Log.w("ExploreFragment", "⚠️ Error subiendo miniatura via backend, usando local")
                                         }
                                     }
+                                } catch (e: Exception) {
+                                    Log.w("ExploreFragment", "⚠️ Error subiendo miniatura via backend", e)
                                 }
                                 
                                 // Actualizar el curso con la nueva miniatura

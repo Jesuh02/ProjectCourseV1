@@ -16,12 +16,12 @@ import android.os.Looper
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.example.tareamov.R
-import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import java.io.File
 import kotlinx.coroutines.*
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking // Explicit import for runBlocking
 import kotlin.math.abs // Use kotlin.math.abs to avoid ambiguity
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -165,15 +165,12 @@ class VideoAdapter(
             // Start with videoData.isPaid but also check course in background
             premiumBadge?.visibility = if (videoData.isPaid) View.VISIBLE else View.GONE
             
-            // Also check course isPremium from database for accurate premium badge display
+            // Also check course isPremium from backend for accurate premium badge display
             if (videoData.courseId != null && videoData.courseId!! > 0) {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        val db = com.example.tareamov.data.AppDatabase.getDatabase(itemView.context)
-                        var course = db.courseDao().getCourseById(videoData.courseId!!)
-                        if (course == null) {
-                            course = com.example.tareamov.service.SupabaseClient.fetchCourseById(videoData.courseId!!)
-                        }
+                        val courseResult = BackendApiService.getCourseById(videoData.courseId!!)
+                        val course = courseResult.getOrNull()
                         val isPremium = course?.isPremium == true || (course?.price ?: 0.0) > 0
                         withContext(Dispatchers.Main) {
                             premiumBadge?.visibility = if (isPremium) View.VISIBLE else View.GONE
@@ -184,13 +181,14 @@ class VideoAdapter(
                 }
             }
 
-            // Reset views and states (but NOT isLiked - let DB determine it)
+            // Reset views and states
             videoView.visibility = View.VISIBLE
             loadingProgressBar?.visibility = View.GONE // Hide initially, show only if needed
             playPauseOverlay?.visibility = View.GONE
             isVideoPaused = false
             isMuted = false
             isSubscribed = false
+            isLiked = false // CRITICAL FIX: Reset like state for recycled views
             
             // Reset button states
             updateSoundButton()
@@ -218,7 +216,7 @@ class VideoAdapter(
                 thumbnailView?.setImageResource(android.R.color.black)
             }
             
-            // Load like state ASYNCHRONOUSLY from Supabase (polymorphic likes table)
+            // Load like state ASYNCHRONOUSLY from backend (polymorphic likes table)
             val context = itemView.context.applicationContext
             val userId = currentUserId
             
@@ -238,10 +236,10 @@ class VideoAdapter(
                 }
             }
             
-            // Fetch like count from Supabase (polymorphic likes table)
+            // Fetch like count from backend (polymorphic likes table)
             CoroutineScope(Dispatchers.Main).launch {
                 try {
-                    // Get like count from polymorphic likes table via Supabase
+                    // Get like count from polymorphic likes table via backend
                     val likeCount = withContext(Dispatchers.IO) {
                         getLikeCount?.invoke(videoData.id) ?: 0
                     }
@@ -286,34 +284,36 @@ class VideoAdapter(
 
             currentJob = CoroutineScope(Dispatchers.Main).launch {
                 try {
-                    // Obtener username desde course_id o remote_id (creator ID)
+                    // Obtener username desde course_id o remote_id (from backend API)
                     val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
                         withContext(Dispatchers.IO) {
-                            // Try to get creator ID from Supabase directly for validation
                             try {
-                                val course = com.example.tareamov.service.SupabaseClient.fetchCourseById(videoData.courseId!!)
+                                val courseResult = BackendApiService.getCourseById(videoData.courseId!!)
+                                val course = courseResult.getOrNull()
                                 if (course != null) {
                                     currentCreatorId = course.creatorUserId
+                                    // Get creator username from backend
+                                    if (course.creatorUserId > 0) {
+                                        val userResult = BackendApiService.getUserById(course.creatorUserId)
+                                        userResult.getOrNull()?.usuario ?: videoData.username
+                                    } else {
+                                        videoData.username
+                                    }
+                                } else {
+                                    videoData.username
                                 }
                             } catch (e: Exception) {
-                                Log.e("VideoAdapter", "Error fetching course from Supabase", e)
-                                // Fallback to local
-                                val context = itemView.context.applicationContext
-                                val db = AppDatabase.getDatabase(context)
-                                val course = db.courseDao().getCourseById(videoData.courseId!!)
-                                if (course != null) {
-                                    currentCreatorId = course.creatorUserId
-                                }
+                                Log.e("VideoAdapter", "Error fetching course from backend", e)
+                                videoData.username
                             }
-                            com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
                         }
                     } else if (videoData.remoteId != null && videoData.remoteId!! > 0) {
-                        // Requirement: remote_id is a userId; show/return the USERNAME associated to that id (from Supabase).
+                        // remote_id is a userId; get USERNAME from backend
                         withContext(Dispatchers.IO) {
                             try {
                                 currentCreatorId = videoData.remoteId!!
-                                com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(videoData.remoteId!!)
-                                    ?: videoData.username
+                                val userResult = BackendApiService.getUserById(videoData.remoteId!!)
+                                userResult.getOrNull()?.usuario ?: videoData.username
                             } catch (e: Exception) {
                                 videoData.username
                             }
@@ -322,14 +322,18 @@ class VideoAdapter(
                         videoData.username // Fallback para compatibilidad
                     }
 
-                    // If creatorId is still not set but we have a username, try to find the user
+                    // If creatorId is still not set but we have a username, try to find the user via backend
                     if (currentCreatorId == -1L && !username.isNullOrEmpty()) {
                         withContext(Dispatchers.IO) {
-                            val context = itemView.context.applicationContext
-                            val db = AppDatabase.getDatabase(context)
-                            val user = db.usuarioDao().getUsuarioByUsername(username)
-                            if (user != null) {
-                                currentCreatorId = user.id
+                            try {
+                                val userResult = BackendApiService.getUserByUsername(username)
+                                val user = userResult.getOrNull()
+                                if (user != null) {
+                                    currentCreatorId = user.id
+                                }
+                                Unit
+                            } catch (e: Exception) {
+                                Log.w("VideoAdapter", "Error fetching user by username from backend", e)
                             }
                         }
                     }
@@ -361,50 +365,25 @@ class VideoAdapter(
                         onUsernameClick?.invoke(videoData)
                     }
 
-                    // --- AVATAR LOADING LOGIC ---
+                    // --- AVATAR LOADING LOGIC (from backend) ---
                     val usuario = withContext(Dispatchers.IO) {
                         try {
                             var user: com.example.tareamov.data.entity.Usuario? = null
-                            val client = com.example.tareamov.service.SupabaseClient
                             
-                            // 1. Try Supabase first (Priority)
-                            if (client.isConfigured()) {
-                                // Try by ID first if available (most reliable)
-                                if (currentCreatorId != -1L) {
-                                    user = client.fetchUsuarioById(currentCreatorId)
-                                }
-                                // Fallback to username if ID didn't work
-                                if (user == null && !username.isNullOrEmpty()) {
-                                    user = client.fetchUsuarioByUsername(username)
-                                }
+                            // Get user from backend API
+                            if (currentCreatorId > 0) {
+                                val userResult = BackendApiService.getUserById(currentCreatorId)
+                                user = userResult.getOrNull()
                             }
-                            
-                            // 2. Fallback to local DB if Supabase failed or not configured
-                            if (user == null) {
-                                val context = itemView.context.applicationContext
-                                val db = AppDatabase.getDatabase(context)
-                                if (currentCreatorId != -1L) {
-                                    user = db.usuarioDao().getUsuarioById(currentCreatorId)
-                                }
-                                if (user == null && !username.isNullOrEmpty()) {
-                                    user = db.usuarioDao().getUsuarioByUsername(username)
-                                }
-                            }
-                            
-                            // 3. Update local cache if found in Supabase
-                            if (user != null && client.isConfigured()) {
-                                try {
-                                    val context = itemView.context.applicationContext
-                                    val db = AppDatabase.getDatabase(context)
-                                    db.usuarioDao().insertUsuario(user)
-                                } catch (e: Exception) {
-                                    Log.w("VideoAdapter", "Failed to cache user", e)
-                                }
+                            // Fallback to username if ID didn't work
+                            if (user == null && !username.isNullOrEmpty()) {
+                                val userResult = BackendApiService.getUserByUsername(username)
+                                user = userResult.getOrNull()
                             }
                             
                             user
                         } catch (e: Exception) {
-                            Log.e("VideoAdapter", "Error fetching avatar user", e)
+                            Log.e("VideoAdapter", "Error fetching avatar user from backend", e)
                             null
                         }
                     }
@@ -544,6 +523,57 @@ class VideoAdapter(
                     
                     // Add playback listener
                     player.addListener(object : Player.Listener {
+                        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                            Log.e("VideoAdapter", "ExoPlayer error: ${error.message}, code=${error.errorCode}", error)
+                            
+                            // 1. Check for 401 Unauthorized
+                            val cause = error.cause
+                            if (cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException && cause.responseCode == 401) {
+                                Log.e("VideoAdapter", "401 Unauthorized - Token expired or missing. Stopping playback retry.")
+                                errorRecoveryAttempts = maxErrorRecoveryAttempts // Stop retries
+                                isVideoPaused = true
+                                loadingProgressBar?.visibility = View.GONE
+                                
+                                // Optional: Reset player logic or notify user?
+                                // For now, we just stop the loop.
+                                return
+                            }
+
+                            // 2. Check for Audio/Emulator errors
+                            val isAudioError = error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                                    error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
+                                    error.message?.contains("audio", ignoreCase = true) == true ||
+                                    error.message?.contains("pcm", ignoreCase = true) == true
+
+                            if ((isAudioError || isEmulator) && errorRecoveryAttempts < maxErrorRecoveryAttempts) {
+                                errorRecoveryAttempts++
+                                Log.w("VideoAdapter", "Audio error detected, attempting recovery #$errorRecoveryAttempts")
+                                try {
+                                    player.volume = 0f
+                                    isMuted = true
+                                    updateSoundButton()
+                                    
+                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                        try {
+                                            player.prepare()
+                                            player.playWhenReady = isActivePosition(bindingAdapterPosition)
+                                        } catch (_: Exception) {}
+                                    }, 200)
+                                } catch (e: Exception) {
+                                    Log.e("VideoAdapter", "Recovery failed", e)
+                                }
+                            } else if (errorRecoveryAttempts < maxErrorRecoveryAttempts) {
+                                // 3. Generic recovery
+                                errorRecoveryAttempts++
+                                Log.d("VideoAdapter", "Retrying video playback... attempt $errorRecoveryAttempts")
+                                player.prepare()
+                                player.playWhenReady = isActivePosition(bindingAdapterPosition)
+                            } else {
+                                Log.e("VideoAdapter", "Max recovery attempts reached, showing error")
+                                loadingProgressBar?.visibility = View.GONE
+                            }
+                        }
+
                         override fun onPlaybackStateChanged(playbackState: Int) {
                             when (playbackState) {
                                 Player.STATE_READY -> {
@@ -628,39 +658,6 @@ class VideoAdapter(
                             val duration = player.duration
                             if (duration != androidx.media3.common.C.TIME_UNSET) {
                                 Log.d("VideoAdapter", "ExoPlayer duration updated: $duration")
-                            }
-                        }
-                        
-                        override fun onPlayerError(error: PlaybackException) {
-                            Log.e("VideoAdapter", "ExoPlayer error: ${error.message}, code=${error.errorCode}", error)
-                            
-                            // Check if audio error on emulator
-                            val isAudioError = error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
-                                    error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
-                                    error.message?.contains("audio", ignoreCase = true) == true ||
-                                    error.message?.contains("pcm", ignoreCase = true) == true
-                            
-                            if ((isAudioError || isEmulator) && errorRecoveryAttempts < maxErrorRecoveryAttempts) {
-                                errorRecoveryAttempts++
-                                Log.w("VideoAdapter", "Audio error detected, attempting recovery #$errorRecoveryAttempts")
-                                
-                                try {
-                                    player.volume = 0f
-                                    isMuted = true
-                                    updateSoundButton()
-                                    
-                                    Handler(Looper.getMainLooper()).postDelayed({
-                                        try {
-                                            player.prepare()
-                                            player.play()
-                                        } catch (_: Exception) {}
-                                    }, 200)
-                                } catch (e: Exception) {
-                                    Log.e("VideoAdapter", "Recovery failed", e)
-                                }
-                            } else if (errorRecoveryAttempts >= maxErrorRecoveryAttempts) {
-                                Log.e("VideoAdapter", "Max recovery attempts reached, showing error")
-                                loadingProgressBar?.visibility = View.GONE
                             }
                         }
                     })
@@ -1415,34 +1412,51 @@ class VideoAdapter(
                     intent.putExtra("video_path", videoData.localFilePath ?: videoData.videoUriString)
                     intent.putExtra("video_title", videoData.title)
                     intent.putExtra("video_description", videoData.description)
-                    // Obtener username desde course_id para el intent
-                    val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
-                        runBlocking {
-                            com.example.tareamov.service.SupabaseClient.getUsernameFromCourseId(videoData.courseId!!)
-                        }
-                    } else {
-                        videoData.username
-                    }
-                    intent.putExtra("username", username ?: "")
-                    
-                    // Save current video position to restore in VideoPlayerActivity
-                    val currentVideoPosition = try {
-                        if (useExoPlayer) {
-                            exoPlayer?.currentPosition?.toInt() ?: 0
+                    // Fetch data asynchronously to prevent UI freeze
+                    CoroutineScope(Dispatchers.Main).launch {
+                        // Obtener username desde course_id via backend
+                        val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
+                            withContext(Dispatchers.IO) {
+                                try {
+                                    val courseResult = BackendApiService.getCourseById(videoData.courseId!!)
+                                    val course = courseResult.getOrNull()
+                                    if (course != null) {
+                                        val uName = if (course.creatorUserId > 0) {
+                                            val userResult = BackendApiService.getUserById(course.creatorUserId)
+                                            userResult.getOrNull()?.usuario
+                                        } else null
+                                        uName ?: videoData.username
+                                    } else {
+                                        videoData.username
+                                    }
+                                } catch (e: Exception) {
+                                    videoData.username
+                                }
+                            }
                         } else {
-                            videoView.currentPosition
+                            videoData.username
                         }
-                    } catch (e: Exception) {
-                        0
+                        intent.putExtra("username", username ?: "")
+                        
+                        // Save current video position to restore in VideoPlayerActivity
+                        val currentVideoPosition = try {
+                            if (useExoPlayer) {
+                                exoPlayer?.currentPosition?.toInt() ?: 0
+                            } else {
+                                videoView.currentPosition
+                            }
+                        } catch (e: Exception) {
+                            0
+                        }
+                        intent.putExtra("video_position", currentVideoPosition)
+                        Log.d("VideoAdapter", "Passing video position to fullscreen: $currentVideoPosition ms")
+                        
+                        // Pause current video before switching
+                        pauseVideo()
+                        
+                        context.startActivity(intent)
+                        Log.d("VideoAdapter", "Navigating to fullscreen with video: ${videoData.title}")
                     }
-                    intent.putExtra("video_position", currentVideoPosition)
-                    Log.d("VideoAdapter", "Passing video position to fullscreen: $currentVideoPosition ms")
-                    
-                    // Pause current video before switching
-                    pauseVideo()
-                    
-                    context.startActivity(intent)
-                    Log.d("VideoAdapter", "Navigating to fullscreen with video: ${videoData.title}")
                 } else {
                     Log.e("VideoAdapter", "Invalid position for fullscreen navigation")
                 }

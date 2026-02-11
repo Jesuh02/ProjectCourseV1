@@ -40,6 +40,11 @@ import java.io.File
 // Avatar removed from item layout; CircleImageView no longer required here
 
 class TaskSubmissionsFragment : Fragment() {
+
+    companion object {
+        private const val R2_PUBLIC_BASE_URL = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev"
+    }
+
     private lateinit var recyclerView: RecyclerView
     private lateinit var adapter: SubmissionsAdapter
     private lateinit var sessionManager: SessionManager
@@ -305,7 +310,7 @@ class TaskSubmissionsFragment : Fragment() {
     private fun loadTaskWithCourseInfo() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                // Fetchtask, topic and course info from Supabase (remote-first)
+                // Fetch task, topic and course info from backend
                 val taskInfo = withContext(Dispatchers.IO) {
                     try {
                         val taskResult = BackendApiService.getTaskById(taskId)
@@ -354,7 +359,7 @@ class TaskSubmissionsFragment : Fragment() {
     private fun loadTaskProgress() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                // Determine courseId, subscribers and submissions via Supabase
+                // Determine courseId, subscribers and submissions via backend
                 val courseId = withContext(Dispatchers.IO) {
                     try {
                         val taskResult = BackendApiService.getTaskById(taskId)
@@ -472,12 +477,12 @@ class TaskSubmissionsFragment : Fragment() {
                         view?.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
                         findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
                     } else {
-                        // Not graded yet: disable duplicate actions
-                        view?.findViewById<Button>(R.id.submitButton)?.isEnabled = false
-                        view?.findViewById<Button>(R.id.submitButton)?.text = "Ya enviado"
-                        view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = false
-                        view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Ya enviado"
-                        view?.findViewById<Button>(R.id.selectFileButton)?.isEnabled = false
+                        // Not graded yet: Allow updates
+                        view?.findViewById<Button>(R.id.submitButton)?.isEnabled = true
+                        view?.findViewById<Button>(R.id.submitButton)?.text = "Actualizar entrega"
+                        view?.findViewById<Button>(R.id.submitGitHubButton)?.isEnabled = true
+                        view?.findViewById<Button>(R.id.submitGitHubButton)?.text = "Actualizar GitHub"
+                        view?.findViewById<Button>(R.id.selectFileButton)?.isEnabled = true
                     }
                 } else {
                     // User hasn't submitted yet
@@ -687,7 +692,7 @@ class TaskSubmissionsFragment : Fragment() {
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e("TaskSubmissionsFragment", "Exception pushing updated submission to Supabase", e)
+                    Log.e("TaskSubmissionsFragment", "Exception pushing updated submission to backend", e)
                     context?.let { ctx ->
                         Toast.makeText(ctx, "Error enviando calificación al servidor; se reintentará.", Toast.LENGTH_SHORT).show()
                     }
@@ -854,7 +859,7 @@ class TaskSubmissionsFragment : Fragment() {
 
     /**
      * (DEPRECATED: Usar recalculateAllStudentsProgressForCourse en su lugar)
-     * Recalcula el progreso del estudiante y lo sincroniza a Supabase.
+     * Recalcula el progreso del estudiante y lo sincroniza al backend.
      * Este método se llama cuando:
      * - Se actualiza una calificación de una entrega
      * - Se crea una nueva entrega del estudiante
@@ -926,13 +931,12 @@ class TaskSubmissionsFragment : Fragment() {
             val synced = withContext(Dispatchers.IO) {
                 try {
                     val result = BackendApiService.upsertProgress(mapOf(
-                        "usuario_estudiante" to userId,
-                        "curso_id" to courseId,
-                        "tareas_totales" to tareasTotales,
-                        "tareas_completadas" to tareasCompletadas,
-                        "porcentaje_progreso" to porcentajeProgreso,
-                        "promedio" to promedio,
-                        "calificacion_ponderada" to promedio
+                        "userId" to userId,
+                        "courseId" to courseId,
+                        "totalTasks" to tareasTotales,
+                        "completedTasks" to tareasCompletadas,
+                        "progressPercentage" to porcentajeProgreso,
+                        "averageGrade" to promedio
                     ))
                     result is ApiResult.Success
                 } catch (e: Exception) {
@@ -964,11 +968,14 @@ class TaskSubmissionsFragment : Fragment() {
             return
         }
 
-        // RESTRICCIÓN: Verificar si el usuario ya entregó esta tarea
+        // RESTRICCIÓN: Verificar si ya entregó (solo informativo/log, permitimos update si no está calificado)
         if (hasUserSubmitted) {
-            Toast.makeText(context, "⚠️ Ya has entregado esta tarea. Solo se permite una entrega por tarea.", Toast.LENGTH_LONG).show()
-            Log.w("TaskSubmissionsFragment", "🚫 Intento de entrega duplicada bloqueado para userId=$currentUserId, taskId=$taskId")
-            return
+            val userSub = userSubmission
+            if (userSub != null && userSub.grade != null) {
+                Toast.makeText(context, "⚠️ Esta tarea ya fue calificada, no se puede modificar.", Toast.LENGTH_LONG).show()
+                return
+            }
+            Log.d("TaskSubmissionsFragment", "ℹ️ Actualizando entrega existente para userId=$currentUserId, taskId=$taskId")
         }
 
         // Usar getFileName() para obtener el nombre real del archivo con extensión
@@ -1024,77 +1031,72 @@ class TaskSubmissionsFragment : Fragment() {
                 }
                 
                 if (existingSubmission != null) {
-                    Log.w("TaskSubmissionsFragment", "🚫 Entrega duplicada detectada en Supabase - submissionId=${existingSubmission.id}")
-                    Toast.makeText(context, "⚠️ Ya existe una entrega registrada para esta tarea. No se permiten entregas duplicadas.", Toast.LENGTH_LONG).show()
-                    findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+                    if (existingSubmission.grade != null) {
+                        Log.w("TaskSubmissionsFragment", "🚫 Entrega ya calificada - submissionId=${existingSubmission.id}")
+                        Toast.makeText(context, "⚠️ Esta tarea ya fue calificada y no se puede modificar.", Toast.LENGTH_LONG).show()
+                        findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+                        isSubmitting = false
+                        return@launch
+                    }
+                    Log.i("TaskSubmissionsFragment", "ℹ️ Actualizando entrega existente - submissionId=${existingSubmission.id}")
                     hasUserSubmitted = true
                     userSubmission = existingSubmission
-                    isSubmitting = false
-                    findViewByName<Button>("submitFileButton")?.text = "Ya enviado"
-                    return@launch
                 }
                 
-                // PASO 0: Subir archivo a Cloudflare R2 si está configurado
-                var cloudFileUri = finalUri.toString()
+
+                // PASO 0: Subir archivo al backend (R2 cloud storage) - OBLIGATORIO
+                var cloudFileUri: String? = null
                 val currentUsername = sessionManager.getUsername() ?: "unknown"
                 
-                if (com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
-                    findViewByName<TextView>("progressTextView")?.text = "Subiendo archivo a la nube..."
+                try {
+                    findViewByName<TextView>("progressTextView")?.text = "Subiendo archivo al servidor..."
                     findViewByName<ProgressBar>("taskProgressBar")?.progress = 10
 
-                    // Preferir el content:// URI original cuando sea posible — evita problemas con contentResolver y file://
-                    val uploadUri = if (uri.scheme == "content") uri else finalUri
+                    val contentResolver = requireContext().contentResolver
+                    val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
+                    val inputStream = contentResolver.openInputStream(uri)
+                    
+                    if (inputStream != null) {
+                        val bytes = withContext(Dispatchers.IO) { inputStream.readBytes() }
+                        inputStream.close()
 
-                    var uploadResult = try {
-                        withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.CloudflareR2Service.uploadSubmission(
-                                context = requireContext(),
-                                fileUri = uploadUri,
-                                taskId = taskId,
-                                username = currentUsername
-                            ) { progress ->
-                                CoroutineScope(Dispatchers.Main).launch {
-                                    findViewByName<ProgressBar>("taskProgressBar")?.progress = 10 + (progress * 0.3).toInt() // 10-40%
-                                    findViewByName<TextView>("progressTextView")?.text = "Subiendo archivo: $progress%"
-                                }
-                            }
+                        findViewByName<ProgressBar>("taskProgressBar")?.progress = 25
+                        findViewByName<TextView>("progressTextView")?.text = "Subiendo archivo: 50%"
+
+                        val uploadResult = withContext(Dispatchers.IO) {
+                            BackendApiService.uploadSubmissionFile(
+                                fileBytes = bytes,
+                                fileName = fileName,
+                                mimeType = mimeType,
+                                folder = "submissions/task_$taskId"
+                            )
                         }
-                    } catch (e: Exception) {
-                        Log.w("TaskSubmissionsFragment", "Primera subida a R2 falló con uri=$uploadUri: ${e.message}", e)
-                        null
-                    }
 
-                    // Si el intento con el content uri falló y teníamos un file://, intentar con finalUri como fallback
-                    if (uploadResult == null && finalUri != uploadUri) {
-                        try {
-                            uploadResult = withContext(Dispatchers.IO) {
-                                com.example.tareamov.service.CloudflareR2Service.uploadSubmission(
-                                    context = requireContext(),
-                                    fileUri = finalUri,
-                                    taskId = taskId,
-                                    username = currentUsername
-                                ) { progress ->
-                                    CoroutineScope(Dispatchers.Main).launch {
-                                        findViewByName<ProgressBar>("taskProgressBar")?.progress = 10 + (progress * 0.3).toInt()
-                                        findViewByName<TextView>("progressTextView")?.text = "Subiendo archivo (fallback): $progress%"
-                                    }
-                                }
+                        if (uploadResult is ApiResult.Success) {
+                            // Read the R2 object key (relative path) — never the public URL
+                            val key = uploadResult.data?.get("key")?.asString
+                            if (!key.isNullOrBlank()) {
+                                cloudFileUri = key
+                                Log.d("TaskSubmissionsFragment", "✅ Archivo subido via backend, key: $cloudFileUri")
+                                findViewByName<TextView>("progressTextView")?.text = "Archivo subido, procesando..."
                             }
-                        } catch (e: Exception) {
-                            Log.w("TaskSubmissionsFragment", "Fallback upload a R2 falló con finalUri=$finalUri: ${e.message}", e)
-                            uploadResult = null
+                        } else {
+                            Log.e("TaskSubmissionsFragment", "❌ Error subiendo archivo al servidor: ${(uploadResult as? ApiResult.Error)?.message}")
                         }
-                    }
-
-                    if (uploadResult is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success) {
-                        cloudFileUri = uploadResult.url
-                        Log.d("TaskSubmissionsFragment", "✅ Archivo subido a R2: $cloudFileUri")
-                        findViewByName<TextView>("progressTextView")?.text = "Archivo subido, procesando..."
-                    } else if (uploadResult is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error) {
-                        Log.w("TaskSubmissionsFragment", "⚠️ R2 upload failed: ${uploadResult.message}")
                     } else {
-                        Log.w("TaskSubmissionsFragment", "⚠️ No se pudo subir el archivo a R2, se usará URI local")
+                        Log.e("TaskSubmissionsFragment", "❌ No se pudo leer el archivo seleccionado")
                     }
+                } catch (e: Exception) {
+                    Log.e("TaskSubmissionsFragment", "❌ Error subiendo archivo al servidor: ${e.message}", e)
+                }
+
+                // Si no se pudo subir a R2, abortar la entrega
+                if (cloudFileUri == null) {
+                    Toast.makeText(context, "❌ No se pudo subir el archivo al servidor. Verifica tu conexión e intenta de nuevo.", Toast.LENGTH_LONG).show()
+                    findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+                    isSubmitting = false
+                    findViewByName<Button>("submitFileButton")?.isEnabled = true
+                    return@launch
                 }
                 
                 findViewByName<ProgressBar>("taskProgressBar")?.progress = 40
@@ -1127,6 +1129,7 @@ class TaskSubmissionsFragment : Fragment() {
                                 "task_id" to updated.taskId,
                                 "student_id" to updated.studentId,
                                 "file_url" to updated.fileUri,
+                                "content" to updated.fileName,
                                 "status" to "submitted"
                             ))
                         }
@@ -1271,7 +1274,7 @@ class TaskSubmissionsFragment : Fragment() {
                     // IMPORTANTE: Recalcular y sincronizar progreso del estudiante
                     recalculateAndSyncStudentProgress(currentUserId)
 
-                    // Refresh the submissions list from Supabase to ensure frontend data comes from server
+                    // Refresh the submissions list from backend to ensure frontend data is up to date
                     loadSubmissions()
                 } else {
                     Log.w("TaskSubmissionsFragment", "No se pudo crear/actualizar la entrega, refrescando lista")
@@ -1486,14 +1489,14 @@ class TaskSubmissionsFragment : Fragment() {
                 } else 0f
                 
                 // Upsert progress via BackendApiService
+                // Keys MUST be camelCase — the backend repo maps them to snake_case DB columns
                 val upsertResult = BackendApiService.upsertProgress(mapOf(
-                    "usuario_estudiante" to userId,
-                    "curso_id" to courseId,
-                    "tareas_totales" to totalTasks,
-                    "tareas_completadas" to completedTasks,
-                    "porcentaje_progreso" to progressPct,
-                    "promedio" to avgGrade,
-                    "calificacion_ponderada" to avgGrade
+                    "userId" to userId,
+                    "courseId" to courseId,
+                    "totalTasks" to totalTasks,
+                    "completedTasks" to completedTasks,
+                    "progressPercentage" to progressPct,
+                    "averageGrade" to avgGrade
                 ))
                 
                 if (upsertResult is ApiResult.Success) {
@@ -1509,57 +1512,11 @@ class TaskSubmissionsFragment : Fragment() {
 
     /**
      * Notifies the course creator when a student submits a task
-     * This runs asynchronously to not block the submission flow
+     * This logic has been moved to the backend (SubmissionController) to avoid duplicates and ensure consistency.
      */
     private fun notifyCourseCreatorOfSubmission(taskId: Long, taskName: String, studentUsername: String) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                Log.d("TaskSubmissionsFragment", "📢 Notifying course creator about submission for task $taskId")
-                
-                // Get student avatar URL if available
-                val studentAvatarUrl = sessionManager.getUserId().let { userId ->
-                    if (userId != -1L) {
-                        try {
-                            val userResult = BackendApiService.getUserById(userId)
-                            if (userResult is ApiResult.Success) userResult.data?.avatar else null
-                        } catch (e: Exception) {
-                            Log.w("TaskSubmissionsFragment", "Could not fetch student avatar", e)
-                            null
-                        }
-                    } else null
-                }
-                
-                // Notify course creator about submission via backend
-                try {
-                    val taskResult = BackendApiService.getTaskById(taskId)
-                    if (taskResult is ApiResult.Success) {
-                        val task = taskResult.data
-                        val topicResult = task?.topicId?.let { BackendApiService.getTopicById(it) }
-                        val topic = if (topicResult is ApiResult.Success) topicResult?.data else null
-                        val courseId = topic?.courseId
-                        if (courseId != null) {
-                            val courseResult = BackendApiService.getCourseById(courseId)
-                            if (courseResult is ApiResult.Success) {
-                                val creatorId = courseResult.data?.creatorUserId
-                                if (creatorId != null) {
-                                    BackendApiService.sendNotification(
-                                        userId = creatorId,
-                                        title = "Nueva entrega: $taskName",
-                                        message = "$studentUsername ha enviado una entrega para la tarea '$taskName'",
-                                        type = "submission"
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    Log.i("TaskSubmissionsFragment", "✅ Course creator notified about submission")
-                } catch (e2: Exception) {
-                    Log.w("TaskSubmissionsFragment", "⚠️ Failed to notify course creator", e2)
-                }
-            } catch (e: Exception) {
-                Log.e("TaskSubmissionsFragment", "❌ Error notifying course creator", e)
-            }
-        }
+        // Notification is now handled by the backend
+        Log.d("TaskSubmissionsFragment", "🔔 Notification delegated to backend for task $taskId")
     }
 
     private fun openFilePicker() {
@@ -1609,7 +1566,7 @@ class TaskSubmissionsFragment : Fragment() {
                 Log.d("TaskSubmissionsFragment", "📄 Tipo de archivo detectado: $fileType para archivo: ${submission.fileName}")
                 Log.d("TaskSubmissionsFragment", "📝 Extensión del archivo: ${submission.fileName.substringAfterLast('.', "sin extensión")}")
                 Log.d("TaskSubmissionsFragment", "📝 Contenido extraído (${analysisResult.content.length} caracteres): ${analysisResult.content.take(100)}...")
-                // Obtener la descripción de la tarea desde Supabase (remote-first)
+                // Obtener la descripción de la tarea desde el backend
                 val taskDescription = withContext(Dispatchers.IO) {
                     try {
                         val taskResult = BackendApiService.getTaskById(submission.taskId)
@@ -1759,7 +1716,7 @@ class TaskSubmissionsFragment : Fragment() {
                 Log.d("TaskSubmissionsFragment", "📄 Tipo de archivo: $fileType")
                 Log.d("TaskSubmissionsFragment", "📝 Contenido extraído (${analysisResult.content.length} caracteres): ${analysisResult.content.take(100)}...")
                 
-                // Obtener la descripción de la tarea desde Supabase (remote-first)
+                // Obtener la descripción de la tarea desde el backend
                 val taskDescription = withContext(Dispatchers.IO) {
                     try {
                         val taskResult = BackendApiService.getTaskById(submission.taskId)
@@ -1847,16 +1804,28 @@ class TaskSubmissionsFragment : Fragment() {
                 return
             }
             
-            // Send FileContext directly to Supabase (do not persist locally)
+            // Send FileContext to backend
             try {
-                val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
                 kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    val ok = supabaseRepo.upsert("file_contexts", fileContext)
-                    if (ok) Log.i("TaskSubmissionsFragment", "FileContext upserted to Supabase.")
-                    else Log.w("TaskSubmissionsFragment", "Failed to upsert FileContext to Supabase.")
+                    val payload = mapOf(
+                        "submissionId" to fileContext.submissionId,
+                        "fileName" to fileContext.fileName,
+                        "fileType" to fileContext.fileType,
+                        "fileSize" to (if (fileContext.fileContent.isNotEmpty()) fileContext.fileContent.length.toLong() else 0L),
+                        "content" to fileContext.fileContent,
+                        "taskId" to taskId,
+                        "topicName" to topicName,
+                        "courseName" to courseTitle,
+                        "taskDescription" to taskDescription,
+                        "courseDescription" to courseDescription,
+                        "studentId" to sessionManager.getUserId()
+                    )
+                    val result = BackendApiService.createFileContext(payload)
+                    if (result.isSuccess) Log.i("TaskSubmissionsFragment", "FileContext sent to backend.")
+                    else Log.w("TaskSubmissionsFragment", "Failed to send FileContext to backend.")
                 }
             } catch (e: Exception) {
-                Log.w("TaskSubmissionsFragment", "Exception sending FileContext to Supabase: ${e.message}")
+                Log.w("TaskSubmissionsFragment", "Exception sending FileContext to backend: ${e.message}")
             }
             
             // El resto del código debe ejecutarse en el hilo principal para UI
@@ -2089,7 +2058,7 @@ class TaskSubmissionsFragment : Fragment() {
                 // Avatar removed from item layout; no per-item avatar handling needed
 
                 viewFileButton.setOnClickListener {
-                    openSubmissionFile(submission.fileUri)
+                    openSubmissionFile(submission)
                 }
 
                 chatBotButton.setOnClickListener {
@@ -2173,18 +2142,139 @@ class TaskSubmissionsFragment : Fragment() {
 
             // Avatar loading removed
 
-            private fun openSubmissionFile(uriString: String) {
+            private fun openSubmissionFile(submission: TaskSubmission) {
+                val ctx = context ?: return
+                val uriString = submission.fileUri
+
+                if (uriString.isBlank()) {
+                    Toast.makeText(ctx, "No hay archivo asociado a esta entrega", Toast.LENGTH_SHORT).show()
+                    return
+                }
+
+                val isLocalFile = uriString.startsWith("file:///") || uriString.startsWith("content://")
+                val isFullUrl = uriString.startsWith("http://") || uriString.startsWith("https://")
+
+                // Case 1: HTTP/HTTPS URL (R2 public URL, GitHub, etc.) → open in browser
+                if (isFullUrl) {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uriString)))
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error opening URL", e)
+                        Toast.makeText(ctx, "Error al abrir URL: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                    return
+                }
+
+                // Case 2: R2 object key (relative path like "submissions/task_168/...") → build public URL and open in browser
+                if (!isLocalFile) {
+                    val publicUrl = "$R2_PUBLIC_BASE_URL/$uriString"
+                    Log.d("TaskSubmissionsFragment", "Opening R2 public URL: $publicUrl")
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(publicUrl)))
+                    } catch (e: Exception) {
+                        Log.e("TaskSubmissionsFragment", "Error opening R2 URL", e)
+                        Toast.makeText(ctx, "Error al abrir archivo: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                    return
+                }
+
+                // Case 3: Local file:/// URI
+                if (uriString.startsWith("file:///")) {
+                    val parsedUri = Uri.parse(uriString)
+                    val file = java.io.File(parsedUri.path ?: return)
+
+                    if (file.exists()) {
+                        // File exists locally - open with FileProvider
+                        try {
+                            val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                                ctx, "${ctx.packageName}.fileprovider", file
+                            )
+                            val ext = android.webkit.MimeTypeMap.getFileExtensionFromUrl(
+                                submission.fileName.replace(" ", "%20")
+                            )
+                            val mimeType = android.webkit.MimeTypeMap.getSingleton()
+                                .getMimeTypeFromExtension(ext) ?: "*/*"
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(contentUri, mimeType)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            startActivity(intent)
+                        } catch (e: Exception) {
+                            Log.e("TaskSubmissionsFragment", "Error opening local file with FileProvider", e)
+                            Toast.makeText(ctx, "Error al abrir el archivo: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+
+                        // Background: re-upload to R2 so it becomes publicly accessible
+                        reUploadLocalFileToR2(submission, file)
+                    } else {
+                        // File doesn't exist locally (opened from another device)
+                        Toast.makeText(ctx, "Este archivo fue guardado localmente en otro dispositivo y no está disponible desde aquí.", Toast.LENGTH_LONG).show()
+                    }
+                    return
+                }
+
+                // Case 4: content:// URI
                 try {
-                    val uri = Uri.parse(uriString)
+                    val parsedUri = Uri.parse(uriString)
+                    val ext = android.webkit.MimeTypeMap.getFileExtensionFromUrl(uriString)
+                    val mimeType = android.webkit.MimeTypeMap.getSingleton()
+                        .getMimeTypeFromExtension(ext) ?: "*/*"
                     val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, "*/*")
+                        setDataAndType(parsedUri, mimeType)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     startActivity(intent)
                 } catch (e: Exception) {
                     Log.e("TaskSubmissionsFragment", "Error opening file", e)
-                    Toast.makeText(context, "Error al abrir el archivo: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(ctx, "Error al abrir el archivo: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
+            }
+        }
+    }
+
+    /**
+     * Re-uploads a local file to R2 in the background and updates the submission record,
+     * so the file becomes publicly accessible from any device.
+     */
+    private fun reUploadLocalFileToR2(submission: TaskSubmission, file: java.io.File) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.d("TaskSubmissionsFragment", "📤 Re-uploading local file to R2: ${file.name}")
+                val bytes = file.readBytes()
+                val ext = file.extension.lowercase()
+                val mimeType = android.webkit.MimeTypeMap.getSingleton()
+                    .getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+
+                val uploadResult = BackendApiService.uploadSubmissionFile(
+                    fileBytes = bytes,
+                    fileName = submission.fileName.ifBlank { file.name },
+                    mimeType = mimeType,
+                    folder = "submissions/task_${submission.taskId}"
+                )
+
+                if (uploadResult is ApiResult.Success) {
+                    val key = uploadResult.data?.get("key")?.asString
+                    if (!key.isNullOrBlank()) {
+                        // Update the submission record with the R2 key
+                        BackendApiService.submitWork(mapOf(
+                            "task_id" to submission.taskId,
+                            "student_id" to submission.studentId,
+                            "file_url" to key,
+                            "content" to submission.fileName,
+                            "status" to "submitted"
+                        ))
+                        Log.i("TaskSubmissionsFragment", "✅ Re-uploaded local file to R2 key: $key")
+
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "📤 Archivo subido al servidor para acceso público", Toast.LENGTH_SHORT).show()
+                            loadSubmissions()
+                        }
+                    }
+                } else {
+                    Log.w("TaskSubmissionsFragment", "⚠️ Failed to re-upload to R2: ${(uploadResult as? ApiResult.Error)?.message}")
+                }
+            } catch (e: Exception) {
+                Log.w("TaskSubmissionsFragment", "⚠️ Error re-uploading local file to R2", e)
             }
         }
     }
@@ -2219,11 +2309,14 @@ class TaskSubmissionsFragment : Fragment() {
             return
         }
         
-        // RESTRICCIÓN: Verificar si el usuario ya entregó esta tarea
+        // RESTRICCIÓN: Verificar si ya entregó (permitimos update si no está calificado)
         if (hasUserSubmitted) {
-            Toast.makeText(context, "⚠️ Ya has entregado esta tarea. Solo se permite una entrega por tarea.", Toast.LENGTH_LONG).show()
-            Log.w("TaskSubmissionsFragment", "🚫 Intento de entrega duplicada de GitHub bloqueado para userId=$currentUserId, taskId=$taskId")
-            return
+            val userSub = userSubmission
+            if (userSub != null && userSub.grade != null) {
+                Toast.makeText(context, "⚠️ Esta tarea ya fue calificada, no se puede modificar.", Toast.LENGTH_LONG).show()
+                return
+            }
+            Log.d("TaskSubmissionsFragment", "ℹ️ Actualizando entrega GitHub para userId=$currentUserId, taskId=$taskId")
         }
         
         // Mostrar progreso (views may be absent)
@@ -2247,14 +2340,15 @@ class TaskSubmissionsFragment : Fragment() {
                 }
                 
                 if (existingSubmission != null) {
-                    Log.w("TaskSubmissionsFragment", "🚫 Entrega duplicada de GitHub detectada - submissionId=${existingSubmission.id}")
-                    Toast.makeText(context, "⚠️ Ya existe una entrega registrada para esta tarea. No se permiten entregas duplicadas.", Toast.LENGTH_LONG).show()
-                    findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+                    if (existingSubmission.grade != null) {
+                        Log.w("TaskSubmissionsFragment", "🚫 Entrega de GitHub ya calificada - submissionId=${existingSubmission.id}")
+                        Toast.makeText(context, "⚠️ Esta tarea ya fue calificada y no se puede modificar.", Toast.LENGTH_LONG).show()
+                        findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+                        return@launch
+                    }
+                    Log.i("TaskSubmissionsFragment", "ℹ️ Actualizando entrega GitHub existente - submissionId=${existingSubmission.id}")
                     hasUserSubmitted = true
                     userSubmission = existingSubmission
-                    findViewByName<Button>("submitGitHubButton")?.isEnabled = false
-                    findViewByName<Button>("submitGitHubButton")?.text = "Ya enviado"
-                    return@launch
                 }
                 
                 // Crear la entrega de tarea con la URL
@@ -2279,7 +2373,7 @@ class TaskSubmissionsFragment : Fragment() {
                             "task_id" to taskId,
                             "student_id" to currentUserId,
                             "file_url" to repoUrl,
-                            "file_name" to fileName,
+                            "fileName" to fileName,
                             "status" to "submitted"
                         ))
                         if (submitResult is ApiResult.Success) submitResult.data?.id else null

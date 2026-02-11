@@ -29,8 +29,10 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import kotlinx.coroutines.withContext
+import okio.source
 
 class VideoDetailsFragment : Fragment() {
     private lateinit var videoUri: Uri
@@ -657,10 +659,31 @@ class VideoDetailsFragment : Fragment() {
 
                     // Upload video to Cloudflare R2 if configured
                     var finalVideoUri = videoUri.toString()
+                    var uploadedViaBackend = false
+                    
+                    // Try Backend Presigned URL First
+                    val videoCleanName = title.replace(Regex("[^a-zA-Z0-9]"), "_") + ".mp4"
+                    val videoUploadData = getUploadUrlFromBackend(videoCleanName, "video/mp4")
+                    if (videoUploadData != null) {
+                         updateLoadingProgress(15, "Subiendo video (nube)...", true)
+                         val uploadUrl = videoUploadData.getString("uploadUrl")
+                         val publicUrl = videoUploadData.getString("publicUrl")
+                         val success = uploadToPresignedUrl(uploadUrl, videoUri, "video/mp4") { progress ->
+                             val mappedProgress = 15 + (progress * 0.55).toInt()
+                             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+                                 updateLoadingProgress(mappedProgress, "Subiendo video: $progress%", true)
+                             }
+                         }
+                         if (success) {
+                             finalVideoUri = publicUrl
+                             uploadedViaBackend = true
+                             Log.d("VideoDetailsFragment", "✅ Video uploaded to Backend Storage: $finalVideoUri")
+                         }
+                    }
                     
                     Log.d("VideoDetailsFragment", "🔍 Verificando configuración R2: isConfigured=${com.example.tareamov.service.CloudflareR2Service.isConfigured()}")
                     
-                    if (com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
+                    if (!uploadedViaBackend && com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
                         updateLoadingProgress(10, "Verificando conexión con la nube...", false)
                         
                         // Primero probar la conexión
@@ -734,17 +757,47 @@ class VideoDetailsFragment : Fragment() {
                                 }
                             }
                         }
-                    } else {
-                        Log.w("VideoDetailsFragment", "⚠️ R2 no está configurado!")
-                        Log.w("VideoDetailsFragment", "   Verifica local.properties contiene:")
-                        Log.w("VideoDetailsFragment", "   - R2_ACCOUNT_ID")
-                        Log.w("VideoDetailsFragment", "   - R2_ACCESS_KEY_ID")
-                        Log.w("VideoDetailsFragment", "   - R2_SECRET_ACCESS_KEY")
+                    } else if (!uploadedViaBackend) {
+                        Log.w("VideoDetailsFragment", "⚠️ R2 no está configurado y backend upload falló")
+                    }
+
+                    // GUARD: If video was not uploaded to cloud, block save
+                    if (!finalVideoUri.startsWith("http://") && !finalVideoUri.startsWith("https://")) {
+                        Log.e("VideoDetailsFragment", "❌ Video no fue subido a la nube. URI local: $finalVideoUri")
+                        hideProfessionalLoading()
+                        withContext(Dispatchers.Main) {
+                            if (isAdded) {
+                                Toast.makeText(
+                                    requireContext(),
+                                    "Error: No se pudo subir el video a la nube. Otros usuarios no podrán verlo. Intenta de nuevo.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                        return@launch
                     }
 
                     // Upload thumbnail to Cloudflare R2 if selected
                     var thumbnailUrl: String? = null
+                    var thumbUploadedViaBackend = false
+                    
                     if (thumbnailUri != null) {
+                        val thumbName = "thumb_${System.currentTimeMillis()}.jpg"
+                        val thumbUploadData = getUploadUrlFromBackend(thumbName, "image/jpeg")
+                        if (thumbUploadData != null) {
+                            updateLoadingProgress(75, "Subiendo miniatura (nube)...", false)
+                            val uploadUrl = thumbUploadData.getString("uploadUrl")
+                            val publicUrl = thumbUploadData.getString("publicUrl")
+                            val success = uploadToPresignedUrl(uploadUrl, thumbnailUri!!, "image/jpeg") {  }
+                            if (success) {
+                                thumbnailUrl = publicUrl
+                                thumbUploadedViaBackend = true
+                                Log.d("VideoDetailsFragment", "✅ Thumbnail uploaded to Backend Storage: $thumbnailUrl")
+                            }
+                        }
+                    }
+
+                    if (thumbnailUri != null && !thumbUploadedViaBackend) {
                         updateLoadingProgress(75, "Subiendo miniatura...", false)
                         
                         val thumbnailResult = withContext(Dispatchers.IO) {
@@ -804,23 +857,19 @@ class VideoDetailsFragment : Fragment() {
                     // Only create course if user chose to
                     if (createCourse) {
                         updateLoadingProgress(90, "Creando curso...", false)
-                        val newCourse = com.example.tareamov.data.entity.Course(
-                            id = 0, // Supabase auto-generates
-                            title = title,
-                            description = description,
-                            creatorUserId = userId, // Foreign key to usuarios.id
-                            thumbnailUri = thumbnailUrl, // Miniatura subida a R2
-                            videoUri = finalVideoUri, // Use R2 URL or local URI
-                            isPremium = isPaidCourse,
-                            price = if (isPaidCourse) 9.99 else 0.0,
-                            creationDate = System.currentTimeMillis().toString(),
-                            timestamp = System.currentTimeMillis()
+                        val payload = mapOf(
+                            "title" to title,
+                            "description" to description,
+                            "creatorUsername" to currentUsername,
+                            "thumbnailUri" to thumbnailUrl,
+                            "isFree" to !isPaidCourse,
+                            "price" to if (isPaidCourse) 9.99 else 0.0
                         )
                         
-                        Log.d("VideoDetailsFragment", "Creating course with creatorUserId: $userId, title: $title")
+                        Log.d("VideoDetailsFragment", "Creating course via Map with creator: $currentUsername, title: $title")
                         
                         courseRemoteId = withContext(Dispatchers.IO) {
-                            BackendApiService.createCourse(newCourse).getOrNull()?.id
+                            BackendApiService.createCourse(payload).getOrNull()?.id
                         }
                         
                         if (courseRemoteId == null || courseRemoteId <= 0) {
@@ -982,6 +1031,108 @@ class VideoDetailsFragment : Fragment() {
         this.toMediaTypeOrNull() ?: throw IllegalArgumentException("Invalid media type")
     private fun String.toRequestBody(mediaType: okhttp3.MediaType): okhttp3.RequestBody = 
         okhttp3.RequestBody.Companion.create(mediaType, this)
+
+    /**
+     * Obtains a presigned upload URL from the backend
+     */
+    private suspend fun getUploadUrlFromBackend(filename: String, contentType: String): org.json.JSONObject? = withContext(Dispatchers.IO) {
+        try {
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            
+            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.getMcpBaseUrl()
+            val url = "$baseUrl/video/upload-url"
+            
+            Log.d("VideoDetailsFragment", "🔗 Requesting presigned upload URL: $url")
+            Log.d("VideoDetailsFragment", "   filename=$filename, contentType=$contentType")
+            
+            val jsonBody = org.json.JSONObject().apply {
+                put("filename", filename)
+                put("contentType", contentType)
+            }
+            
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val requestBody = jsonBody.toString().toRequestBody(mediaType)
+            
+            val request = okhttp3.Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .addHeader("Content-Type", "application/json")
+                .build()
+            
+            client.newCall(request).execute().use { response ->
+                val respBody = response.body?.string()
+                Log.d("VideoDetailsFragment", "🔗 Upload URL response: code=${response.code}, body=${respBody?.take(200)}")
+                if (response.isSuccessful && respBody != null) {
+                    val json = org.json.JSONObject(respBody)
+                    if (json.optBoolean("success")) {
+                        val data = json.optJSONObject("data")
+                        Log.d("VideoDetailsFragment", "✅ Got presigned upload URL: ${data?.optString("publicUrl")?.take(80)}")
+                        return@withContext data
+                    } else {
+                        Log.e("VideoDetailsFragment", "❌ Upload URL request failed: ${json.optString("error")}")
+                    }
+                } else {
+                    Log.e("VideoDetailsFragment", "❌ Upload URL HTTP error: ${response.code} - ${respBody?.take(200)}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("VideoDetailsFragment", "❌ Error getting upload URL", e)
+        }
+        return@withContext null
+    }
+
+    /**
+     * Uploads file to presigned URL
+     */
+    private suspend fun uploadToPresignedUrl(uploadUrl: String, uri: Uri, contentType: String, progressCallback: (Int) -> Unit): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val resolver = requireContext().contentResolver
+            val fileSize = resolver.openFileDescriptor(uri, "r")?.statSize ?: 0L
+            
+            val inputStream = resolver.openInputStream(uri) ?: return@withContext false
+            
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            
+            // Create a RequestBody that supports progress tracking
+            val requestBody = object : okhttp3.RequestBody() {
+                override fun contentType() = contentType.toMediaType()
+                override fun contentLength() = fileSize
+                override fun writeTo(sink: okio.BufferedSink) {
+                    val source = inputStream.source()
+                    var totalBytes = 0L
+                    val buffer = okio.Buffer()
+                    var readCount: Long = 0L
+                    
+                    while (source.read(buffer, 8192L).also { readCount = it } != -1L) {
+                        sink.write(buffer, readCount)
+                        totalBytes += readCount
+                        if (fileSize > 0) {
+                            val progress = ((totalBytes * 100) / fileSize).toInt()
+                            progressCallback(progress)
+                        }
+                    }
+                }
+            }
+            
+            val request = okhttp3.Request.Builder()
+                .url(uploadUrl)
+                .put(requestBody)
+                .build()
+                
+            client.newCall(request).execute().use { response ->
+                return@withContext response.isSuccessful
+            }
+        } catch (e: Exception) {
+            Log.e("VideoDetailsFragment", "Error uploading to presigned URL", e)
+            return@withContext false
+        }
+    }
     
     override fun onDestroyView() {
         super.onDestroyView()

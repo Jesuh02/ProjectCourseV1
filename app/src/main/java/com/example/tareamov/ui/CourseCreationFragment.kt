@@ -248,8 +248,8 @@ class CourseCreationFragment : Fragment() {
             0.0
         }
 
-        if (courseName.isBlank()) {
-            Toast.makeText(context, "Por favor ingresa un nombre para el curso", Toast.LENGTH_SHORT).show()
+        if (courseName.length < 3) {
+            Toast.makeText(context, "El título debe tener al menos 3 caracteres", Toast.LENGTH_SHORT).show()
             return
         }
         
@@ -301,9 +301,8 @@ class CourseCreationFragment : Fragment() {
                         "description" to courseDescription,
                         "category" to courseCategory,
                         "price" to coursePrice,
-                        "is_premium" to isPaidCourse,
-                        "thumbnail_uri" to (thumbnailUriString),
-                        "last_modified_date" to System.currentTimeMillis().toString()
+                        "isFree" to !isPaidCourse,
+                        "thumbnailUri" to (thumbnailUriString)
                     )
                     
                     val updateResult = withContext(Dispatchers.IO) {
@@ -320,25 +319,14 @@ class CourseCreationFragment : Fragment() {
                         }
                     }
                 } else {
-                    val courseData = Course(
-                        id = 0,
-                        title = courseName,
-                        description = courseDescription,
-                        creatorUserId = userId,
-                        thumbnailUri = thumbnailUriString,
-                        videoUri = null,
-                        localFilePath = null,
-                        duration = null,
-                        category = courseCategory,
-                        price = coursePrice,
-                        isPremium = isPaidCourse,
-                        isPublished = true,
-                        creationDate = System.currentTimeMillis().toString(),
-                        lastModifiedDate = System.currentTimeMillis().toString(),
-                        enrollmentCount = 0,
-                        rating = 0.0f,
-                        tags = null,
-                        timestamp = System.currentTimeMillis()
+                    val payload = mapOf(
+                        "title" to courseName,
+                        "description" to courseDescription,
+                        "category" to courseCategory,
+                        "price" to coursePrice,
+                        "creatorUsername" to currentUsername,
+                        "isFree" to !isPaidCourse,
+                        "thumbnailUri" to thumbnailUriString
                     )
             
                     // Check if title already exists via search
@@ -355,7 +343,7 @@ class CourseCreationFragment : Fragment() {
                     }
 
                     val createResult = withContext(Dispatchers.IO) {
-                        BackendApiService.createCourse(courseData)
+                        BackendApiService.createCourse(payload)
                     }
 
                     when (createResult) {
@@ -386,8 +374,8 @@ class CourseCreationFragment : Fragment() {
 
     private fun addNewTopic() {
         val courseName = view?.findViewById<EditText>(R.id.courseNameEditText)?.text.toString()
-        if (courseName.isBlank()) {
-            Toast.makeText(context, "Por favor ingresa un nombre para el curso antes de añadir temas", Toast.LENGTH_SHORT).show()
+        if (courseName.length < 3) {
+            Toast.makeText(context, "El título debe tener al menos 3 caracteres", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -444,25 +432,14 @@ class CourseCreationFragment : Fragment() {
                     }
                 }
 
-                val courseData = Course(
-                    id = 0,
-                    title = courseName,
-                    description = courseDescription,
-                    creatorUserId = userId,
-                    thumbnailUri = thumbnailUriString,
-                    videoUri = null,
-                    localFilePath = null,
-                    duration = null,
-                    category = courseCategory,
-                    price = coursePrice,
-                    isPremium = isPaidCourse,
-                    isPublished = true,
-                    creationDate = System.currentTimeMillis().toString(),
-                    lastModifiedDate = System.currentTimeMillis().toString(),
-                    enrollmentCount = 0,
-                    rating = 0.0f,
-                    tags = null,
-                    timestamp = System.currentTimeMillis()
+                val payload = mapOf(
+                    "title" to courseName,
+                    "description" to courseDescription,
+                    "category" to courseCategory,
+                    "price" to coursePrice,
+                    "creatorUsername" to currentUserUsername,
+                    "isFree" to !isPaidCourse,
+                    "thumbnailUri" to thumbnailUriString
                 )
 
                 try {
@@ -480,7 +457,7 @@ class CourseCreationFragment : Fragment() {
                     }
 
                     val createResult = withContext(Dispatchers.IO) {
-                        BackendApiService.createCourse(courseData)
+                        BackendApiService.createCourse(payload)
                     }
 
                     when (createResult) {

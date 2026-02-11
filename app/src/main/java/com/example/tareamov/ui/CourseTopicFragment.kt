@@ -741,7 +741,7 @@ class CourseTopicFragment : Fragment() {
                     Toast.makeText(requireContext(), "Tema guardado correctamente en Supabase", Toast.LENGTH_SHORT).show()
                 }
 
-                // Notify CourseDetailFragment to refresh from Supabase and force reload
+                // Notify CourseDetailFragment to refresh from backend and force reload
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("topic_created", savedTopicId)
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("refresh_from_supabase", true)
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("force_reload_topics", true)

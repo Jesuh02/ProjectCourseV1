@@ -59,5 +59,10 @@ data class Notification(
         const val TYPE_LIKE = "like"
         const val TYPE_NEW_TASK = "new_task"
         const val TYPE_TASK_SUBMISSION = "task_submission"
+        // Additional comment/like subtypes from backend
+        const val TYPE_VIDEO_COMMENT = "video_comment"
+        const val TYPE_COMMENT_REPLY = "comment_reply"
+        const val TYPE_VIDEO_LIKE = "video_like"
+        const val TYPE_COMMENT_LIKE = "comment_like"
     }
 }

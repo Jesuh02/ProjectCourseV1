@@ -233,6 +233,11 @@ class VideoHomeFragment : Fragment() {
                         )
                     }
                 }
+                // Diagnostic: log video URIs to verify signed URLs are being received
+                videos.take(3).forEach { v ->
+                    val uri = v.getBestVideoUri()
+                    Log.d("VideoHomeFragment", "video_id=${v.id} videoUri=${uri} (raw=${v.videoUriString?.take(80)})")
+                }
             } catch (e: Exception) {
                 Log.w("VideoHomeFragment", "Failed to log remote_id for no-course videos", e)
             }
@@ -877,6 +882,8 @@ class VideoHomeFragment : Fragment() {
     }
 
     private suspend fun handleSubscriptionToggle(creatorId: Long, isSubscribing: Boolean) {
+        if (creatorId <= 0) return
+
         val currentUserId = getCurrentUserId()
         if (currentUserId == -1L) {
             withContext(Dispatchers.Main) {
@@ -952,7 +959,7 @@ class VideoHomeFragment : Fragment() {
                 }
 
                 val unreadCount = when (result) {
-                    is ApiResult.Success -> result.data
+                    is ApiResult.Success -> result.data ?: 0
                     is ApiResult.Error -> 0
                 }
 
@@ -1239,22 +1246,28 @@ class VideoHomeFragment : Fragment() {
                 arguments?.remove("targetCommentId")
             },
             checkUserLikedVideo = { videoId ->
-                val userId = getCurrentUserId()
-                if (userId > 0) {
-                    val result = BackendApiService.checkLike("video", videoId)
-                    result.getOrNull() ?: false
-                } else {
-                    false
+                withContext(Dispatchers.IO) {
+                    val userId = getCurrentUserId()
+                    if (userId > 0) {
+                        val result = BackendApiService.checkLike("video", videoId)
+                        result.getOrNull() ?: false
+                    } else {
+                        false
+                    }
                 }
             },
             getLikeCount = { videoId ->
-                val result = BackendApiService.getLikesByEntity("video", videoId)
-                val jsonObj = result.getOrNull()
-                jsonObj?.get("count")?.asInt ?: 0
+                withContext(Dispatchers.IO) {
+                    val result = BackendApiService.getLikesByEntity("video", videoId)
+                    val jsonObj = result.getOrNull()
+                    jsonObj?.get("count")?.asInt ?: 0
+                }
             },
             getCommentCount = { videoId ->
-                val result = BackendApiService.getCommentsByVideo(videoId)
-                result.getOrNull()?.size ?: 0
+                withContext(Dispatchers.IO) {
+                    val result = BackendApiService.getCommentsByVideo(videoId)
+                    result.getOrNull()?.size ?: 0
+                }
             }
         )
 
@@ -2333,9 +2346,14 @@ class VideoHomeFragment : Fragment() {
 
                 // Fetch username asynchronously
                 lifecycleScope.launch {
-                    val userResult = withContext(Dispatchers.IO) {
-                        BackendApiService.getUserById(comment.usuarioId)
+                    val userResult = if (comment.usuarioId > 0) {
+                        withContext(Dispatchers.IO) {
+                            BackendApiService.getUserById(comment.usuarioId)
+                        }
+                    } else {
+                        ApiResult.Error("Invalid user ID", 400)
                     }
+                    
                     val username = userResult.getOrNull()?.usuario ?: "Usuario"
 
                     replyingToUsername = username
@@ -2421,7 +2439,9 @@ class VideoHomeFragment : Fragment() {
                 // Short delay to show skeleton briefly for better UX
                 kotlinx.coroutines.delay(300)
 
-                val commentsResult = BackendApiService.getCommentsByVideo(videoData.id)
+                val commentsResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getCommentsByVideo(videoData.id)
+                }
                 val comments = if (commentsResult is ApiResult.Success) commentsResult.data ?: emptyList() else emptyList()
 
                 skeletonContainer?.clearAnimation()
@@ -2484,6 +2504,13 @@ class VideoHomeFragment : Fragment() {
                 lifecycleScope.launch {
                     try {
                         val userId = getCurrentUserId()
+                        
+                        // FIX: Ensure BackendApiService has the correct user ID to prevent "Usuario no encontrado" (user 0) errors
+                        if (userId > 0 && BackendApiService.currentUserId <= 0) {
+                             Log.w("VideoHomeFragment", "Syncing BackendApiService.currentUserId: 0 -> $userId")
+                             BackendApiService.currentUserId = userId
+                        }
+                        
                         if (userId > 0) {
                             // Logic to handle reply vs top-level comment
                             // If replyingToUsername is set, we might want to prepend @username or handle parentId if DB supports it
@@ -2514,6 +2541,10 @@ class VideoHomeFragment : Fragment() {
                                 commentsRecyclerView?.visibility = View.VISIBLE
                                 commentsAdapter.submitList(comments)
                                 context?.let { Toast.makeText(it, "Comentario agregado", Toast.LENGTH_SHORT).show() }
+                            } else {
+                                val errorMsg = (commentResult as? ApiResult.Error)?.message ?: "Error desconocido"
+                                Log.e("VideoHomeFragment", "Error posting comment: $errorMsg")
+                                context?.let { Toast.makeText(it, "No se pudo comentar: $errorMsg", Toast.LENGTH_LONG).show() }
                             }
                         } else {
                             context?.let { Toast.makeText(it, "Debes iniciar sesión para comentar", Toast.LENGTH_SHORT).show() }
@@ -2872,7 +2903,9 @@ class VideoHomeFragment : Fragment() {
                     // Fetch real count asynchronously
                     likeCounts[comment.id] = 0 // Placeholder
                     lifecycleScope.launch {
-                        val countResult = BackendApiService.getLikesByEntity("comment", comment.id)
+                        val countResult = withContext(Dispatchers.IO) {
+                            BackendApiService.getLikesByEntity("comment", comment.id)
+                        }
                         val count = if (countResult is ApiResult.Success) {
                             val data = countResult.data
                             data?.get("count")?.asInt ?: 0
@@ -2890,7 +2923,9 @@ class VideoHomeFragment : Fragment() {
                     lifecycleScope.launch {
                         val userId = getCurrentUserId()
                         if (userId > 0) {
-                            val likedResult = BackendApiService.checkLike("comment", comment.id)
+                            val likedResult = withContext(Dispatchers.IO) {
+                                BackendApiService.checkLike("comment", comment.id)
+                            }
                             val liked = likedResult is ApiResult.Success && likedResult.data == true
                             likedComments[comment.id] = liked
                             // Only update if visible
@@ -2923,7 +2958,13 @@ class VideoHomeFragment : Fragment() {
                 // Load username and avatar
                 lifecycleScope.launch {
                     try {
-                        val userResult = BackendApiService.getUserById(comment.usuarioId)
+                        val userResult = if (comment.usuarioId > 0) {
+                            withContext(Dispatchers.IO) {
+                                BackendApiService.getUserById(comment.usuarioId)
+                            }
+                        } else {
+                            ApiResult.Error("Invalid user ID", 400)
+                        }
                         val user = if (userResult is ApiResult.Success) userResult.data else null
                         val username = user?.usuario ?: "Usuario"
                         usernameText.text = username
@@ -3078,7 +3119,11 @@ class VideoHomeFragment : Fragment() {
                     // Async load user
                     lifecycleScope.launch {
                         try {
-                            val userResult = BackendApiService.getUserById(reply.usuarioId)
+                            val userResult = if (reply.usuarioId > 0) {
+                                BackendApiService.getUserById(reply.usuarioId)
+                            } else {
+                                ApiResult.Error("Invalid user ID", 400)
+                            }
                             val user = if (userResult is ApiResult.Success) userResult.data else null
                             val username = user?.usuario ?: "Usuario"
                             usernameText.text = username
