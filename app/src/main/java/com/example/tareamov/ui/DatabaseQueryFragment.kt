@@ -1646,7 +1646,22 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             }
             
             if (result.success && result.data != null) {
-                val data = result.data
+                var data = result.data
+
+                // FIX: If data is a String that looks like JSON, parse it first
+                // (Server often returns stringified JSON in 'text' field of tool response)
+                if (data is String) {
+                    val trimmed = data.trim()
+                    try {
+                        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                            data = JSONObject(trimmed)
+                        } else if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                            data = JSONArray(trimmed)
+                        }
+                    } catch (e: Exception) {
+                        Log.v(TAG, "Response string is not JSON: ${e.message}")
+                    }
+                }
                 
                 // If data is a JSONObject, check if it has a "data" field (common pattern in this app)
                 if (data is JSONObject) {

@@ -129,7 +129,7 @@ android {
         // Add Room schema location
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
-            arg("room.incremental", "true")
+            arg("room.incremental", "false")
             arg("room.expandProjection", "true")
         }
     }
