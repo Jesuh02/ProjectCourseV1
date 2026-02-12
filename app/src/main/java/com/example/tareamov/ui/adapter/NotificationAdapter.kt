@@ -30,7 +30,7 @@ class NotificationAdapter(
 ) : ListAdapter<Notification, NotificationAdapter.NotificationViewHolder>(NotificationDiffCallback()) {
 
     // Cache for course thumbnails by taskId to avoid repeated network calls
-    private val courseThumbnailCache: MutableMap<Long, String?> = java.util.Collections.synchronizedMap(java.util.HashMap())
+    private val courseThumbnailCache = java.util.concurrent.ConcurrentHashMap<Long, String?>()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): NotificationViewHolder {
         val view = LayoutInflater.from(parent.context)
@@ -56,7 +56,7 @@ class NotificationAdapter(
         fun bind(
             notification: Notification, 
             onClick: (Notification) -> Unit,
-            thumbnailCache: MutableMap<Long, String?>
+            thumbnailCache: java.util.concurrent.ConcurrentHashMap<Long, String?>
         ) {
             // Use the actual notification title or fallback to "Notificación"
             titleText.text = notification.title.ifEmpty { "Notificación" }
@@ -168,7 +168,7 @@ class NotificationAdapter(
          */
         private fun loadCourseThumbnailForTask(
             taskId: Long,
-            thumbnailCache: MutableMap<Long, String?>
+            thumbnailCache: java.util.concurrent.ConcurrentHashMap<Long, String?>
         ) {
             // Check cache first
             if (thumbnailCache.containsKey(taskId)) {
