@@ -42,6 +42,50 @@ object CloudflareR2Service {
     private const val DEFAULT_PUBLIC_URL = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev"
     private var publicUrlBase: String? = DEFAULT_PUBLIC_URL
     
+    // Configuración para el bucket de miniaturas (Público)
+    private const val THUMBNAIL_BUCKET_NAME = "coursev-fil"
+    private const val THUMBNAIL_PUBLIC_URL_BASE = "https://pub-4e815af1d00c464d999d446ba4c03d07.r2.dev"
+    
+    // ==================== SIGNED URL CACHE ====================
+    // Cache de URLs firmadas para evitar llamadas repetidas al backend.
+    // Las URLs firmadas expiran en 1 hora (3600s) en el backend;
+    // usamos un TTL de 50 minutos para tener margen de seguridad.
+    private const val SIGNED_URL_CACHE_TTL_MS = 50L * 60 * 1000 // 50 minutos
+    
+    private data class CachedSignedUrl(
+        val url: String,
+        val timestamp: Long = System.currentTimeMillis()
+    ) {
+        fun isExpired(): Boolean = (System.currentTimeMillis() - timestamp) > SIGNED_URL_CACHE_TTL_MS
+    }
+    
+    // Thread-safe cache: objectKey → CachedSignedUrl
+    private val signedUrlCache = java.util.concurrent.ConcurrentHashMap<String, CachedSignedUrl>()
+    
+    /**
+     * Limpia todas las URLs firmadas cacheadas.
+     * Útil al hacer logout o cambiar de cuenta.
+     */
+    fun clearSignedUrlCache() {
+        signedUrlCache.clear()
+        Log.d(TAG, "🗑️ Signed URL cache cleared")
+    }
+    
+    /**
+     * Extrae el object key de una URL firmada de R2.
+     * Ejemplo: "https://xxx.r2.dev/videos/file.mp4?X-Amz-..." → "videos/file.mp4"
+     * Retorna null si no es una URL de R2.
+     */
+    fun extractObjectKeyFromSignedUrl(signedUrl: String): String? {
+        if (!isR2Url(signedUrl) && !signedUrl.contains("X-Amz-")) return null
+        return try {
+            val uri = Uri.parse(signedUrl)
+            uri.path?.trimStart('/')
+        } catch (e: Exception) {
+            null
+        }
+    }
+    
     // OkHttp client con configuración optimizada para subidas grandes
     private val client = OkHttpClient.Builder()
         .connectTimeout(120, TimeUnit.SECONDS)
@@ -176,17 +220,18 @@ object CloudflareR2Service {
     /**
      * Crea una URL de compartir optimizada con información adicional
      * Esta URL incluye metadatos para previsualizaciones en redes sociales (Open Graph)
+     * @param context Contexto necesario para obtener URLs firmadas
      * @param videoData El video a compartir
      * @return URL formateada para compartir
      */
-    fun createShareableVideoUrl(videoUrl: String, title: String, description: String = ""): String {
+    suspend fun createShareableVideoUrl(context: Context, videoUrl: String, title: String, description: String = ""): String {
         // Si ya es una URL pública de R2, devolverla con contexto adicional
         if (isR2Url(videoUrl)) {
             return videoUrl
         }
         
         // Si no, intentar convertir a URL pública
-        val publicUrl = getVideoStreamUrl(videoUrl)
+        val publicUrl = getVideoStreamUrl(context, videoUrl)
         return publicUrl ?: videoUrl
     }
     
@@ -204,39 +249,64 @@ object CloudflareR2Service {
         if (url.isNullOrEmpty()) return false
         return url.contains(".r2.dev") || 
                url.contains(".r2.cloudflarestorage.com") ||
-               url.contains("pub-9f393625246c4018b5613be60b01bda1")
+               url.contains("pub-9f393625246c4018b5613be60b01bda1") ||
+               url.contains("pub-4e815af1d00c464d999d446ba4c03d07")
     }
     
     /**
      * Convierte una URI de video local almacenada en Supabase a URL pública de R2
      * Los videos subidos se guardan en la carpeta "videos/" en R2
      * @param videoUriString La URI del video (puede ser local o ya una URL de R2)
-     * @return URL pública de R2 si el video está disponible, null si no
+     * @return URL firmada de R2 si es contenido privado, o la URL original
      */
-    fun getVideoStreamUrl(videoUriString: String?): String? {
+    suspend fun getVideoStreamUrl(context: Context, videoUriString: String?): String? {
         if (videoUriString.isNullOrEmpty()) return null
         
-        // Si ya es una URL de R2, devolverla directamente
+        var objectKey: String? = null
+        
+        // Caso 1: URL completa antigua de R2 (contiene el dominio r2.dev)
         if (isR2Url(videoUriString)) {
-            return videoUriString
+            val uri = Uri.parse(videoUriString)
+            objectKey = uri.path?.trimStart('/')
         }
-        
-        // Si es una URL HTTP/HTTPS válida (no de R2), devolverla
-        if (videoUriString.startsWith("http://") || videoUriString.startsWith("https://")) {
-            return videoUriString
+        // Caso 2: Ruta relativa limpia "videos/archivo.mp4" (guardada tras migración DB)
+        else if (!videoUriString.startsWith("http://") && !videoUriString.startsWith("https://") && !videoUriString.startsWith("file://") && !videoUriString.startsWith("content://")) {
+             objectKey = videoUriString
         }
-        
-        // Para URIs locales (file://), intentar extraer el nombre del archivo
-        // y construir la URL de R2
-        if (videoUriString.startsWith("file://")) {
+        // Caso 3: Fallback legacy para file:// que asume que el archivo también existe remotamente
+        else if (videoUriString.startsWith("file://")) {
             val fileName = videoUriString.substringAfterLast("/")
             if (fileName.isNotEmpty()) {
-                // Intentar encontrar el video en R2 por nombre de archivo
-                return "${getPublicUrlBase()}/videos/$fileName"
+                objectKey = "videos/$fileName"
             }
         }
         
-        return null
+        if (objectKey != null) {
+             // Verificar caché primero
+             val cached = signedUrlCache[objectKey]
+             if (cached != null && !cached.isExpired()) {
+                 Log.d(TAG, "✅ Signed URL desde caché para key: $objectKey")
+                 return cached.url
+             }
+             
+             Log.d(TAG, "Solicitando Signed URL para key: $objectKey (cache miss)")
+             try {
+                // Instanciar MCPHttpClient - asegurarse que la clase es accesible
+                val mcpClient = MCPHttpClient(context)
+                val signedUrl = mcpClient.getSignedUrl(objectKey)
+                if (!signedUrl.isNullOrEmpty()) {
+                    // Guardar en caché
+                    signedUrlCache[objectKey] = CachedSignedUrl(signedUrl)
+                    Log.d(TAG, "✅ Signed URL obtenida y cacheada (TTL=50min) para: $objectKey")
+                    return signedUrl
+                }
+             } catch (e: Exception) {
+                 Log.e(TAG, "Error obteniendo Signed URL", e)
+             }
+        }
+        
+        // Si no es R2 o falló la firma, devolver original (para URLs externas o compatibilidad)
+        return videoUriString
     }
     
     /**
@@ -674,9 +744,11 @@ object CloudflareR2Service {
             Log.d(TAG, "📤 Uploading compressed thumbnail: $objectKey (${compressedBytes.size / 1024} KB)")
             onProgress?.invoke(30)
             
-            // Subir usando firma AWS Signature V4
-            val host = "$BUCKET_NAME.$ACCOUNT_ID.r2.cloudflarestorage.com"
+            // Subir usando firma AWS Signature V4 al bucket PÚBLICO de miniaturas
+            val host = "$THUMBNAIL_BUCKET_NAME.$ACCOUNT_ID.r2.cloudflarestorage.com"
             val url = "https://$host/$objectKey"
+            val publicUrl = "$THUMBNAIL_PUBLIC_URL_BASE/$objectKey"
+
             val date = getAmzDate()
             val dateStamp = date.substring(0, 8)
             val contentHash = sha256Hex(compressedBytes)
@@ -714,7 +786,6 @@ object CloudflareR2Service {
             onProgress?.invoke(100)
             
             if (response.isSuccessful) {
-                val publicUrl = getPublicUrl(objectKey)
                 Log.d(TAG, "✅ Thumbnail uploaded successfully: $publicUrl")
                 return@withContext UploadResult.Success(
                     url = publicUrl,

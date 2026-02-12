@@ -288,6 +288,54 @@ class MCPHttpClient(private val context: Context) {
             }
         }
     }
+
+    /**
+     * Executes a generic POST request (REST JSON)
+     */
+    suspend fun postJson(path: String, jsonObject: JSONObject): String? {
+        return withMcpBase { base ->
+            val fullUrl = buildUrl(base, path)
+            Log.d(tag, "REST POST url=$fullUrl")
+
+            val request = Request.Builder()
+                .url(fullUrl)
+                .header("X-API-Key", API_KEY)
+                .header("Content-Type", "application/json")
+                .post(jsonObject.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e(tag, "POST failed: ${response.code}")
+                    null
+                } else {
+                    response.body?.string()
+                }
+            }
+        }
+    }
+
+    /**
+     * Get a signed URL for a private R2 object
+     */
+    suspend fun getSignedUrl(objectKey: String): String? {
+        try {
+            val payload = JSONObject().apply {
+                put("objectKey", objectKey)
+            }
+            // The endpoint is /video/signed-url based on backend implementation
+            val responseStr = postJson("/video/signed-url", payload) ?: return null
+            
+            val responseJson = JSONObject(responseStr)
+            if (responseJson.optBoolean("success")) {
+                return responseJson.optString("signedUrl")
+            }
+            return null
+        } catch (e: Exception) {
+            Log.e(tag, "Error getting signed URL", e)
+            return null
+        }
+    }
     
     data class MCPQueryResult(
         val success: Boolean,

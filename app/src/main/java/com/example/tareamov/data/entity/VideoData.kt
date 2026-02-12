@@ -86,7 +86,7 @@ data class VideoData(
     // Get the best available URI for playback
     fun getBestVideoUri(): Uri? {
         // Optimization: Avoid blocking network calls here.
-        // The VideoPlayerActivity will handle fetching the streaming URL asynchronously.
+        // The VideoAdapter will handle fetching the signed streaming URL asynchronously.
         
         // Then try the local file path (for locally created videos)
         if (localFilePath != null) {
@@ -97,13 +97,20 @@ data class VideoData(
         }
 
         // Then try the original URI
-        // If the stored string looks like a full HTTP URL (Supabase storage public URL), parse it
+        // If the stored string looks like a full HTTP URL, parse it
         if (!videoUriString.isNullOrEmpty()) {
             try {
                 val uri = Uri.parse(videoUriString)
-                // Accept http(s) and file schemes
+                // For R2 URLs (r2.dev domain), return NULL so the adapter
+                // resolves them via getVideoStreamUrl() → signed URL + cache.
+                // This prevents using stale public URLs from the old public bucket.
                 if (uri.scheme == "http" || uri.scheme == "https") {
-                    // R2 files are stored WITHOUT extension, use URL as-is
+                    val urlStr = uri.toString()
+                    if (urlStr.contains(".r2.dev") || urlStr.contains(".r2.cloudflarestorage.com")) {
+                        // R2 content → let the adapter resolve via signed URL
+                        return null
+                    }
+                    // Non-R2 http URL (e.g. external), use directly
                     return uri
                 }
                 // For file:// scheme, check if file exists
@@ -115,14 +122,9 @@ data class VideoData(
                             return uri
                         }
                     }
-                    // File doesn't exist locally, try R2 fallback with filename
-                    val fileName = videoUriString?.substringAfterLast("/")
-                    if (!fileName.isNullOrEmpty()) {
-                        // R2 fallback (uses public bucket)
-                        // Note: New videos should have extension (.mp4), old ones might not
-                        val r2FallbackUrl = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/$fileName"
-                        return Uri.parse(r2FallbackUrl)
-                    }
+                    // File doesn't exist locally → return null
+                    // The adapter will resolve via videoUriString + getVideoStreamUrl()
+                    return null
                 }
             } catch (e: Exception) {
                 // fall through to returning the parsed property if available
