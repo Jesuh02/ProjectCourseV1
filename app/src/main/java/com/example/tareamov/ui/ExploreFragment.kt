@@ -449,12 +449,13 @@ class ExploreFragment : Fragment() {
         
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                // Poll for status - Backend hopefully updated via Webhook
+                // Poll for status - Backend updates via Wompi Webhook
+                // Webhook can take 5-30 seconds to arrive, so poll multiple times
                 var isPaid = false
-                // Try 2 times
-                repeat(2) { i ->
+                // Try up to 12 times (every 3 seconds = ~36 seconds total)
+                repeat(12) { i ->
                     if (isPaid) return@repeat
-                    if (i > 0) kotlinx.coroutines.delay(1500)
+                    if (i > 0) kotlinx.coroutines.delay(3000)
                     
                     isPaid = withContext(Dispatchers.IO) {
                         try {
@@ -819,8 +820,14 @@ class ExploreFragment : Fragment() {
                                 "courseId" to course.id
                             ))
                             if (paymentResult is ApiResult.Success) {
-                                paymentResult.data.get("paymentUrl")?.asString
-                            } else null
+                                // Try multiple field names for URL compatibility
+                                paymentResult.data.get("urlBankPayment")?.asString
+                                    ?: paymentResult.data.get("paymentUrl")?.asString
+                                    ?: paymentResult.data.getAsJsonObject("data")?.get("checkoutUrl")?.asString
+                            } else {
+                                Log.e("ExploreFragment", "Payment initiation failed: $paymentResult")
+                                null
+                            }
                         }
                         
                         if (!paymentUrl.isNullOrEmpty()) {
@@ -1738,6 +1745,12 @@ class ExploreFragment : Fragment() {
             return
         }
 
+        // Prevent wiping any active filter/search on network reconnect or other triggers
+        if (isFilterActive) {
+            Log.d("ExploreFragment", "loadCourses: filter/search active (index=$currentFilterIndex), skipping full reload to prevent result loss")
+            return
+        }
+
         isLoadingCourses = true
         
         // Ensure BackendApiService is initialized
@@ -1842,9 +1855,16 @@ class ExploreFragment : Fragment() {
      * Note: Currently all courses are loaded at once, but this is kept for future pagination
      */
     private fun loadMoreCourses() {
-        // Skip pagination if text search is active
+        // Skip pagination only when a text search is active (category filters should paginate)
         if (isFilterActive && _searchText.value.isNotEmpty()) {
-            Log.d("ExploreFragment", "loadMoreCourses: search active, skipping load")
+            Log.d("ExploreFragment", "loadMoreCourses: text search active, skipping load")
+            hasTriggeredLoadAtPosition5 = false
+            return
+        }
+        // Quick-filters (popular=8, new=7) load all data at once; no pagination needed
+        if (isFilterActive && currentFilterIndex >= 7) {
+            Log.d("ExploreFragment", "loadMoreCourses: non-paginated filter (index=$currentFilterIndex), skipping")
+            hasTriggeredLoadAtPosition5 = false
             return
         }
         
@@ -1878,15 +1898,19 @@ class ExploreFragment : Fragment() {
                         }
                         3 -> BackendApiService.getPremiumCoursesPaginated(pageNumber, pageSize)
                         4 -> BackendApiService.getFreeCoursesPaginated(pageNumber, pageSize)
-                        5 -> {
-                            val listResult = BackendApiService.getPurchasedCourses(page = pageNumber, limit = pageSize)
-                             if (listResult is ApiResult.Success) {
-                                 val data = listResult.data
-                                 val meta = BackendApiService.PaginationMetadata(pageNumber, pageSize, 100, 10)
-                                 ApiResult.Success(BackendApiService.PaginatedResponse(data, meta))
-                             } else {
-                                 ApiResult.Error("Error", 0)
-                             }
+                        5 -> { // Enrolled (progreso_estudiante)
+                            BackendApiService.getEnrolledCoursesPaginated(
+                                userId = if (uid > 0) uid else null,
+                                page = pageNumber,
+                                limit = pageSize
+                            )
+                        }
+                        6 -> { // Purchased (transactions)
+                            BackendApiService.getPurchasedCoursesPaginated(
+                                userId = if (uid > 0) uid else null,
+                                page = pageNumber,
+                                limit = pageSize
+                            )
                         }
                         else -> BackendApiService.getCoursesPaginated(pageNumber, pageSize)
                     }
@@ -2331,55 +2355,65 @@ class ExploreFragment : Fragment() {
         }
     }
 
-    // Filter enrolled courses (Purchased)
+    // Filter enrolled courses (from progreso_estudiante table)
     private fun filterEnrolledCourses() {
-        // Set filter index for "Enrolled" (Purchased)
         currentFilterIndex = 5
+        isFilterActive = true
         isLoadingCourses = true
-        // Allow pagination for this filter
+        _searchText.value = ""
         currentPage = 0
         hasTriggeredLoadAtPosition5 = false
         
-        CoroutineScope(Dispatchers.IO).launch {
+        lifecycleScope.launch {
             try {
-                // Use BackendApiService.getPurchasedCourses (paginated)
-                // First page = 1
-                // Note: The backend ensures we search in 'transactions' table with status='approved'
-                val result = BackendApiService.getPurchasedCourses(page = 1, limit = pageSize)
+                val session = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                val uid = session.getUserId()
+                
+                // Use /courses/enrolled endpoint which queries progreso_estudiante table
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getEnrolledCoursesPaginated(
+                        userId = if (uid > 0) uid else null,
+                        page = 1,
+                        limit = pageSize
+                    )
+                }
                 
                 if (result !is ApiResult.Success) {
-                     withContext(Dispatchers.Main) {
-                        showDarkToast("Error al obtener cursos comprados")
+                    withContext(Dispatchers.Main) {
+                        showDarkToast("Error al obtener mis inscripciones")
                         isLoadingCourses = false
                     }
                     return@launch
                 }
                 
-                val enrolledCourses = result.data
-                Log.d("ExploreFragment", "Se obtuvieron ${enrolledCourses.size} cursos comprados (pág 1)")
+                val enrolledCourses = result.data.data
+                val meta = result.data.pagination
+                Log.d("ExploreFragment", "Se obtuvieron ${enrolledCourses.size} cursos inscritos (pág 1), total=${meta?.total}")
                 
                 withContext(Dispatchers.Main) {
                     val sorted = enrolledCourses.sortedByDescending { it.timestamp }
                     coursesList.clear()
                     coursesList.addAll(sorted)
                     
+                    totalCourses = meta?.total ?: sorted.size
+                    currentPage = 1
+                    
                     if (::coursesAdapter.isInitialized) {
                         coursesAdapter.updateCourses(coursesList)
                     }
                     
-                    val count = sorted.size
-                    showDarkToast(if (count == 0) "No tienes cursos comprados" else "Mostrando cursos comprados")
+                    val total = meta?.total ?: sorted.size
+                    showDarkToast(if (total == 0) "No tienes inscripciones" else "Mostrando inscripciones ($total)")
                     
-                    // Update header counts to reflect currently loaded enrolled courses
-                    updateFilteredCourseStats(count, "enrolled")
+                    updateFilteredCourseStats(total, "enrolled")
+                    updateActiveFilterUI("Mis Inscripciones")
                     
-                    isFilterActive = true
                     isLoadingCourses = false
                 }
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error filtering enrolled courses", e)
                 withContext(Dispatchers.Main) {
-                    showDarkToast("Error al cargar cursos comprados")
+                    showDarkToast("Error al cargar inscripciones")
                     isLoadingCourses = false
                 }
             }
@@ -2417,21 +2451,25 @@ class ExploreFragment : Fragment() {
 
     // Filter purchased courses (courses with successful transactions)
     private fun filterPurchasedCourses() {
+        currentFilterIndex = 6
+        isFilterActive = true
         isLoadingCourses = true
+        _searchText.value = ""
+        currentPage = 0
+        hasTriggeredLoadAtPosition5 = false
         
-        viewLifecycleOwner.lifecycleScope.launch {
+        lifecycleScope.launch {
             try {
-                // Get current user ID from active session
                 val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
                 val currentUserId = sessionManager.getUserId()
                 
                 if (currentUserId == -1L) {
                     withContext(Dispatchers.Main) {
                         showDarkToast("Debes iniciar sesión para ver tus cursos comprados")
-                        displayCourses(emptyList())
+                        coursesList.clear()
+                        if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
                         updateFilteredCourseStats(0, "purchased")
                         updateActiveFilterUI("Cursos Comprados")
-                        isFilterActive = true
                         isLoadingCourses = false
                     }
                     return@launch
@@ -2439,27 +2477,43 @@ class ExploreFragment : Fragment() {
                 
                 Log.d("ExploreFragment", "Fetching purchased courses for user ID: $currentUserId")
                 
-                // Fetch courses purchased by the current user (APPROVED or successful transactions)
-                val purchasedCourses = withContext(Dispatchers.IO) {
-                    val result = BackendApiService.getPurchasedCourses(currentUserId)
-                    if (result is ApiResult.Success) result.data else emptyList()
+                // Use paginated endpoint for proper scrolling support
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getPurchasedCoursesPaginated(currentUserId, page = 1, limit = pageSize)
                 }
                 
-                Log.d("ExploreFragment", "Se obtuvieron ${purchasedCourses.size} cursos comprados para user $currentUserId")
+                if (result !is ApiResult.Success) {
+                    withContext(Dispatchers.Main) {
+                        showDarkToast("Error al obtener cursos comprados")
+                        isLoadingCourses = false
+                    }
+                    return@launch
+                }
+                
+                val purchasedCourses = result.data.data
+                val meta = result.data.pagination
+                Log.d("ExploreFragment", "Se obtuvieron ${purchasedCourses.size} cursos comprados (pág 1), total=${meta?.total}")
                 
                 withContext(Dispatchers.Main) {
-                    displayCourses(purchasedCourses)
+                    val sorted = purchasedCourses.sortedByDescending { it.timestamp }
+                    coursesList.clear()
+                    coursesList.addAll(sorted)
                     
-                    val count = purchasedCourses.size
-                    if (count == 0) {
+                    totalCourses = meta?.total ?: sorted.size
+                    currentPage = 1
+                    
+                    if (::coursesAdapter.isInitialized) {
+                        coursesAdapter.updateCourses(coursesList)
+                    }
+                    
+                    val total = meta?.total ?: sorted.size
+                    if (total == 0) {
                         showDarkToast("No has comprado ningún curso aún")
                     } else {
-                        showDarkToast("Mostrando $count cursos comprados")
+                        showDarkToast("Mostrando $total cursos comprados")
                     }
-                    // Update header counts to reflect purchased filter
-                    updateFilteredCourseStats(count, "purchased")
+                    updateFilteredCourseStats(total, "purchased")
                     updateActiveFilterUI("Cursos Comprados")
-                    isFilterActive = true
                     isLoadingCourses = false
                 }
             } catch (e: Exception) {
@@ -2577,9 +2631,23 @@ class ExploreFragment : Fragment() {
             if (dateString.matches(Regex("^\\d+$"))) {
                 return dateString.toLong()
             }
-            // Otherwise parse as ISO date string
-            val format = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault())
-            format.parse(dateString)?.time ?: 0
+            // Try multiple date formats
+            val formats = arrayOf(
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss.SSS",
+                "yyyy-MM-dd'T'HH:mm:ss",
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd"
+            )
+            for (fmt in formats) {
+                try {
+                    val format = java.text.SimpleDateFormat(fmt, java.util.Locale.getDefault())
+                    val parsed = format.parse(dateString)
+                    if (parsed != null) return parsed.time
+                } catch (_: Exception) { /* try next format */ }
+            }
+            Log.w("ExploreFragment", "No format matched for date: $dateString")
+            0
         } catch (e: Exception) {
             Log.w("ExploreFragment", "Failed to parse date: $dateString", e)
             0
@@ -2779,7 +2847,7 @@ class ExploreFragment : Fragment() {
         }
 
         isFilterActive = true
-        currentFilterIndex = 6
+        currentFilterIndex = 8
 
         // Do not log popular list entries to avoid noisy output when a filter is active
 

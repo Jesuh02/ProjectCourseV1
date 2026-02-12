@@ -256,6 +256,43 @@ class ReinforcementLearningViewModel(
                     return@launch
                 }
 
+                // ═══════════════════════════════════════════════════════════
+                // 🔥 RAG INGESTION: Ensure content_items are ingested into
+                // rag_documents BEFORE generating questions.
+                // First time: downloads files, chunks, embeds, stores.
+                // Second time (same task+topic): skips automatically.
+                // ═══════════════════════════════════════════════════════════
+                if (taskId > 0) {
+                    try {
+                        Log.d("ReinforcementVM", "📥 Triggering RAG ingestion for task=$taskId, topic=$topicId, course=$courseId...")
+                        val ingestResult = withContext(Dispatchers.IO) {
+                            BackendApiService.ingestTaskContent(
+                                taskId = taskId,
+                                topicId = if (topicId > 0) topicId else null,
+                                courseId = if (courseId > 0) courseId else null
+                            )
+                        }
+                        when (ingestResult) {
+                            is ApiResult.Success -> {
+                                val data = ingestResult.data
+                                val skipped = data?.get("skipped")?.asBoolean ?: false
+                                if (skipped) {
+                                    Log.d("ReinforcementVM", "ℹ️ RAG ingestion skipped (content already exists)")
+                                } else {
+                                    val filesProcessed = data?.get("filesProcessed")?.asInt ?: 0
+                                    val chunksStored = data?.get("totalChunksStored")?.asInt ?: 0
+                                    Log.d("ReinforcementVM", "✅ RAG ingestion complete: $filesProcessed files, $chunksStored chunks")
+                                }
+                            }
+                            is ApiResult.Error -> {
+                                Log.w("ReinforcementVM", "⚠️ RAG ingestion failed (non-blocking): ${ingestResult.message}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ReinforcementVM", "⚠️ RAG ingestion error (non-blocking): ${e.message}")
+                    }
+                }
+
                 // Fetch History to avoid repetition via backend
                 val historyQuestions = if (userId > 0) {
                     try {

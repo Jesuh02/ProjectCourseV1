@@ -671,7 +671,8 @@ class CourseAdapter(
                                 holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
                                 
                                 holder.enrollButton?.setOnClickListener {
-                                    onCourseClickListener(course)
+                                    // Trigger payment flow instead of course navigation
+                                    onPaymentClickListener?.invoke(course) ?: onCourseClickListener(course)
                                 }
                                 
                                 Log.d("CourseAdapter", "Course ${course.id} not purchased yet, showing buy button")

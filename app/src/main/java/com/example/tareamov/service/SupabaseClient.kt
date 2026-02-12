@@ -3041,7 +3041,7 @@ object SupabaseClient {
                 }
                 
                 // Prioritize FileContext with non-empty file_content
-                val withContent = list.filter { it.fileContent.isNotBlank() }
+                val withContent = list.filter { !it.fileContent.isNullOrBlank() }
                 val result = if (withContent.isNotEmpty()) {
                     Log.d("SupabaseClient", "✅ Found ${withContent.size} FileContext(s) with content, using first")
                     withContent.first()
@@ -3050,7 +3050,7 @@ object SupabaseClient {
                     list.first()
                 }
                 
-                Log.d("SupabaseClient", "📄 Selected FileContext: id=${result.id}, fileName=${result.fileName}, contentLength=${result.fileContent.length}")
+                Log.d("SupabaseClient", "📄 Selected FileContext: id=${result.id}, fileName=${result.fileName}, contentLength=${(result.fileContent ?: "").length}")
                 result
             } else {
                 Log.w("SupabaseClient", "⚠️ Failed to fetch FileContext: ${response.code} ${response.message}")

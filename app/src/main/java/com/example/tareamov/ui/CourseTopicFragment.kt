@@ -201,22 +201,16 @@ class CourseTopicFragment : Fragment() {
                     
                     Log.d("CourseTopicFragment", "✅ Loaded topic data: name='${topic.name}', description='${topic.description}'")
                     
-                    // Load content items for this topic via tasks
-                    val tasksResult = withContext(Dispatchers.IO) { BackendApiService.getTasksByTopic(topicId) }
-                    val tasks = if (tasksResult is ApiResult.Success) tasksResult.data ?: emptyList() else emptyList()
-                    val contentItems = mutableListOf<com.example.tareamov.data.entity.ContentItem>()
-                    for (task in tasks) {
-                        val ciResult = withContext(Dispatchers.IO) { BackendApiService.getContentItemsByTask(task.id) }
-                        if (ciResult is ApiResult.Success) contentItems.addAll(ciResult.data ?: emptyList())
+                    // Load content items for this topic directly
+                    val contentResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getContentItemsByTopic(topicId)
                     }
+                    val contentItems = if (contentResult is ApiResult.Success) contentResult.data ?: emptyList() else emptyList()
                     
-                    // Filter only topic-level content (not task content)
-                    val topicContentItems = contentItems.filter { it.taskId == null || it.taskId == 0L }
-                    
-                    Log.d("CourseTopicFragment", "📄 Found ${topicContentItems.size} content items for topic $topicId")
+                    Log.d("CourseTopicFragment", "📄 Found ${contentItems.size} content items for topic $topicId")
                     
                     // Add existing content items to the container
-                    for (contentItem in topicContentItems) {
+                    for (contentItem in contentItems) {
                         addExistingContentToList(contentItem, contentContainer)
                     }
                 } else {
@@ -644,7 +638,8 @@ class CourseTopicFragment : Fragment() {
                             Log.d("CourseTopicFragment", "✅ Topic $topicId updated successfully")
                             topicId
                         } else {
-                            Log.e("CourseTopicFragment", "❌ Failed to update topic $topicId")
+                            val errorMsg = if (result is ApiResult.Error) "${result.message} (Code: ${result.code})" else "Unknown error"
+                            Log.e("CourseTopicFragment", "❌ Failed to update topic $topicId: $errorMsg")
                             -1L
                         }
                     } else {

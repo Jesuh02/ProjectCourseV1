@@ -253,20 +253,23 @@ class VideoHomeFragment : Fragment() {
             }
             
             if (::videoAdapter.isInitialized) {
-                videoAdapter.updateVideos(videoList)
+                videoAdapter.updateVideos(videos)
                 
                 val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
                 
                 // Handle auto-opening comments if requested (e.g. from notification)
-                if (shouldOpenComments && videoList.isNotEmpty()) {
+                if (shouldOpenComments && videos.isNotEmpty()) {
                     // content is loaded, try to find the video
                     val reqVideoId = arguments?.getLong("videoId", -1L) ?: -1L
                     val targetCommentId = arguments?.getLong("targetCommentId", -1L) ?: -1L
-                    val targetIndex = if (reqVideoId != -1L) videoList.indexOfFirst { it.id == reqVideoId } else 0
+                    val targetIndex = if (reqVideoId != -1L) videos.indexOfFirst { it.id == reqVideoId } else 0
                     
                     Log.d("VideoHomeFragment", "🎬 Auto-opening comments: videoId=$reqVideoId, commentId=$targetCommentId, videoIndex=$targetIndex")
                     
-                    if (targetIndex != -1) {
+                    if (targetIndex != -1 && targetIndex < videos.size) {
+                         // Capture video to avoid IndexOutOfBounds if list changes during postDelayed
+                         val targetVideo = videos[targetIndex]
+                         
                          // Post to message queue to ensure view is ready
                          viewPager?.post {
                              if (viewPager.currentItem != targetIndex) {
@@ -275,8 +278,8 @@ class VideoHomeFragment : Fragment() {
                              
                              // Esperar un poco más para asegurar que el video está completamente cargado
                              viewPager.postDelayed({
-                                 Log.d("VideoHomeFragment", "🎯 Opening comments dialog for video ${videoList[targetIndex].id} with target comment $targetCommentId")
-                                 showCommentsDialog(videoList[targetIndex], targetCommentId)
+                                 Log.d("VideoHomeFragment", "🎯 Opening comments dialog for video ${targetVideo.id} with target comment $targetCommentId")
+                                 showCommentsDialog(targetVideo, targetCommentId)
                                  shouldOpenComments = false // Reset flag
                              }, 500) // Delay adicional para asegurar que el video está listo
                          }

@@ -1209,7 +1209,7 @@ class TaskSubmissionsFragment : Fragment() {
                     structuredFileContext?.let {
                         Log.d(
                             "TaskSubmissionsFragment",
-                            "🧩 FileConverterService generó contexto -> tipo=${it.fileType}, longitud=${it.fileContent.length}"
+                            "🧩 FileConverterService generó contexto -> tipo=${it.fileType}, longitud=${(it.fileContent ?: "").length}"
                         )
                     }
                 } catch (e: Exception) {
@@ -1253,7 +1253,7 @@ class TaskSubmissionsFragment : Fragment() {
 
                     Log.d(
                         "TaskSubmissionsFragment",
-                        "📦 FileContext final -> nombre=${fileContext.fileName}, tipo=${fileContext.fileType}, longitud=${fileContext.fileContent.length}"
+                        "📦 FileContext final -> nombre=${fileContext.fileName}, tipo=${fileContext.fileType}, longitud=${(fileContext.fileContent ?: "").length}"
                     )
 
                     // FileContext is sent as part of the submission flow
@@ -1261,7 +1261,7 @@ class TaskSubmissionsFragment : Fragment() {
                     withContext(Dispatchers.IO) {
                         try {
                             Log.d("TaskSubmissionsFragment", "📤 FileContext prepared for submission $createdSubmissionId")
-                            Log.d("TaskSubmissionsFragment", "📤 Datos: submissionId=$createdSubmissionId, fileName=${fileContext.fileName}, contentLength=${fileContext.fileContent.length}")
+                            Log.d("TaskSubmissionsFragment", "📤 Datos: submissionId=$createdSubmissionId, fileName=${fileContext.fileName}, contentLength=${(fileContext.fileContent ?: "").length}")
                             // TODO: Add BackendApiService endpoint for FileContext if needed
                         } catch (e: Exception) {
                             Log.e("TaskSubmissionsFragment", "❌ Error handling FileContext", e)
@@ -1353,7 +1353,7 @@ class TaskSubmissionsFragment : Fragment() {
         }
 
         structuredContext?.let {
-            if (it.fileContent.isNotBlank()) {
+            if (!it.fileContent.isNullOrBlank()) {
                 return it.copy(
                     submissionId = submissionId,
                     fileName = sanitizedFileName,
@@ -1811,8 +1811,8 @@ class TaskSubmissionsFragment : Fragment() {
                         "submissionId" to fileContext.submissionId,
                         "fileName" to fileContext.fileName,
                         "fileType" to fileContext.fileType,
-                        "fileSize" to (if (fileContext.fileContent.isNotEmpty()) fileContext.fileContent.length.toLong() else 0L),
-                        "content" to fileContext.fileContent,
+                        "fileSize" to (if (!fileContext.fileContent.isNullOrEmpty()) (fileContext.fileContent ?: "").length.toLong() else 0L),
+                        "content" to (fileContext.fileContent ?: ""),
                         "taskId" to taskId,
                         "topicName" to topicName,
                         "courseName" to courseTitle,

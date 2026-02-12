@@ -282,6 +282,18 @@ object BackendApiService {
     suspend fun getCoursesByCreatorIdPaginated(userId: Long, page: Int = 1, limit: Int = 50): ApiResult<PaginatedResponse<Course>> =
         executePaginated(get("/courses/creator-id/$userId?page=$page&pageSize=$limit"))
 
+    suspend fun getEnrolledCoursesPaginated(userId: Long? = null, page: Int = 1, limit: Int = 50): ApiResult<PaginatedResponse<Course>> {
+        val uid = userId ?: currentUserId
+        if (uid <= 0) return ApiResult.Error("User ID required", 400)
+        return executePaginated(get("/courses/enrolled?userId=$uid&page=$page&pageSize=$limit"))
+    }
+
+    suspend fun getPurchasedCoursesPaginated(userId: Long? = null, page: Int = 1, limit: Int = 50): ApiResult<PaginatedResponse<Course>> {
+        val uid = userId ?: currentUserId
+        if (uid <= 0) return ApiResult.Error("User ID required", 400)
+        return executePaginated(get("/courses/purchased?userId=$uid&page=$page&pageSize=$limit"))
+    }
+
     suspend fun uploadAvatar(context: Context, fileUri: android.net.Uri): ApiResult<String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         try {
             ensureTokenLoaded(context)
@@ -644,6 +656,9 @@ object BackendApiService {
 
     suspend fun getContentItemsByTask(taskId: Long): ApiResult<List<ContentItem>> =
         executeList(get("/content-items/task/$taskId"))
+
+    suspend fun getContentItemsByTopic(topicId: Long): ApiResult<List<ContentItem>> =
+        executeList(get("/content-items/topic/$topicId"))
 
     suspend fun getContentItemById(id: Long): ApiResult<ContentItem> =
         execute(get("/content-items/$id"))
@@ -1198,6 +1213,38 @@ object BackendApiService {
 
     suspend fun getAllReinforcementHistory(): ApiResult<List<JsonObject>> =
         executeList(get("/reinforcement/history"))
+
+    // ═══════════════════════════════════════════════════════════
+    // RAG (Document Ingestion)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Trigger RAG ingestion for a task's content_items.
+     * The backend fetches content_items by taskId, downloads files from their URLs,
+     * chunks, creates embeddings, and stores in rag_documents.
+     * If rag_documents already exist for this task+topic, it skips (dedup).
+     *
+     * @return ApiResult with ingestion details (skipped, filesProcessed, totalChunksStored)
+     */
+    suspend fun ingestTaskContent(
+        taskId: Long,
+        topicId: Long? = null,
+        courseId: Long? = null
+    ): ApiResult<JsonObject> {
+        val body = mutableMapOf<String, Any?>("taskId" to taskId)
+        if (topicId != null && topicId > 0) body["topicId"] = topicId
+        if (courseId != null && courseId > 0) body["courseId"] = courseId
+        return execute(post("/rag/ingest-task-content", body))
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // EXCEL / REPORTING
+    // ═══════════════════════════════════════════════════════════
+
+    suspend fun generateExcel(query: String, userId: String? = null): ApiResult<JsonObject?> {
+        val payload = mapOf("query" to query, "userId" to (userId ?: currentUserId.toString()))
+        return execute(post("/excel/generate-excel", payload))
+    }
 }
 
 // ═══════════════════════════════════════════════════════════

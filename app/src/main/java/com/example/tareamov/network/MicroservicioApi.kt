@@ -34,7 +34,7 @@ data class FeedbackEntregaResponse(
 data class MicroservicioPromptRequest(
     val prompt: String,
     val ollamaUrl: String = "http://localhost:11434",
-    val model: String = "",
+    val model: String = "deepseek-chat",
     val descripcionTarea: String? = null,
     val taskDescription: String? = null,  // Descripción específica de la tarea
     val fileContent: String? = null,      // Contenido del archivo (texto plano extraído)

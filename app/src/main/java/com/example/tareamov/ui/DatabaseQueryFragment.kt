@@ -1059,43 +1059,20 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
-                    "http://10.0.2.2:3000"
-                }
-                
-                val payload = JSONObject().apply {
-                    put("query", query)
-                    put("userId", sessionManager.getUsername() ?: "user")
-                }
-                
-                val client = okhttp3.OkHttpClient.Builder()
-                    .connectTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
-                    .writeTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
-                
-                val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-                val request = okhttp3.Request.Builder()
-                    .url("$baseUrl/excel/generate-excel")
-                    .header("X-Supabase-Url", com.example.tareamov.BuildConfig.SUPABASE_URL)
-                    .header("X-Supabase-Key", com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY)
-                    .post(body)
-                    .build()
-                
-                val response = client.newCall(request).execute()
-                val responseBody = response.body?.string()
+                // Using centralized service
+                val result = BackendApiService.generateExcel(query)
                 
                 withContext(Dispatchers.Main) {
                     binding.loadingSpinner.visibility = View.GONE
                     binding.sendButton.visibility = View.VISIBLE
                     
-                    if (response.isSuccessful && responseBody != null) {
+                    if (result is ApiResult.Success && result.data != null) {
                         try {
-                            val json = JSONObject(responseBody)
+                            val json = result.data
                             if (json.has("url")) {
-                                val url = json.getString("url")
-                                val filename = json.optString("filename", "reporte.xlsx")
-                                val rows = json.optInt("rows", 0)
+                                val url = json.get("url").asString
+                                val filename = if (json.has("filename")) json.get("filename").asString else "reporte.xlsx"
+                                val rows = if (json.has("rows")) json.get("rows").asInt else 0
                                 
                                 // Create a single message with the attachment info (WITHOUT adding to input bar)
                                 val uri = android.net.Uri.parse(url)
@@ -1121,12 +1098,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                             addMessageToChat("❌ Error procesando respuesta: ${e.message}", false)
                         }
                     } else {
-                        val errorMsg = try {
-                            val errJson = JSONObject(responseBody ?: "")
-                            errJson.optString("error", "Error ${response.code}")
-                        } catch (e: Exception) {
-                            "Error ${response.code}"
-                        }
+                        val errorMsg = if (result is ApiResult.Error) result.message else "Error desconocido"
                         addMessageToChat("❌ Error al generar Excel: $errorMsg", false)
                     }
                 }
@@ -1652,8 +1624,11 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             // This triggers the backend agent (DeepSeek) if the query is natural language
             var result = mcpHttpClient.executeTool("query_database", args)
             
-            // Auto-retry if not reachable or connection failed
-            if (!result.success && (result.error?.contains("reachable") == true || result.error?.contains("failed") == true)) {
+            // Auto-retry if not reachable, connection failed, or server not available
+            if (!result.success && (result.error?.contains("reachable") == true 
+                    || result.error?.contains("failed") == true
+                    || result.error?.contains("not available") == true
+                    || result.error?.contains("not reachable") == true)) {
                 Log.w(TAG, "⚠️ First attempt failed (${result.error}), re-initializing MCP client and retrying...")
                 // Force re-initialization to find a valid host
                 if (mcpHttpClient.initialize(force = true)) {
