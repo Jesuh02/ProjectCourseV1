@@ -196,9 +196,15 @@ class NotificacionesFragment : Fragment() {
             Notification.TYPE_NEW_TASK -> {
                 Log.d("Notificaciones", "New task notification clicked: ${notification.relatedId}")
                 notification.relatedId?.let { taskId ->
+                    // Extraer taskName del título "Nueva tarea: <taskName>"
+                    val taskName = when {
+                        notification.title.contains(":") -> notification.title.substringAfter(":").trim()
+                        notification.message.contains("'") -> notification.message.substringAfter("'").substringBefore("'")
+                        else -> ""
+                    }
                     val bundle = Bundle().apply {
                         putLong("taskId", taskId)
-                        putString("taskName", notification.message.substringAfter("\"").substringBefore("\""))
+                        putString("taskName", taskName)
                     }
                     try {
                         findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
@@ -210,9 +216,15 @@ class NotificacionesFragment : Fragment() {
             Notification.TYPE_TASK_SUBMISSION -> {
                 Log.d("Notificaciones", "Task submission notification clicked: ${notification.relatedId}")
                 notification.relatedId?.let { taskId ->
+                    // Extraer taskName del título "Nueva entrega: <taskName>" o del mensaje "'<taskName>'"
+                    val taskName = when {
+                        notification.title.contains(":") -> notification.title.substringAfter(":").trim()
+                        notification.message.contains("'") -> notification.message.substringAfter("'").substringBefore("'")
+                        else -> ""
+                    }
                     val bundle = Bundle().apply {
                         putLong("taskId", taskId)
-                        putString("taskName", notification.message.substringAfter("\"").substringBefore("\""))
+                        putString("taskName", taskName)
                         putString("courseCreatorUsername", sessionManager.getUsername())
                         notification.senderUsername?.let {
                             putString("scrollToSubmissionUsername", it)

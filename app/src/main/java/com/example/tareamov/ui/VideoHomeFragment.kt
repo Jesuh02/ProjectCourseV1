@@ -512,7 +512,13 @@ class VideoHomeFragment : Fragment() {
         // Set up button to navigate to the content upload screen
         view.findViewById<ImageButton>(R.id.goToHomeButton)?.setOnClickListener {
             // Navigate to ContentUploadFragment first to select a video
-            findNavController().navigate(R.id.action_videoHomeFragment_to_contentUploadFragment)
+            try {
+                if (findNavController().currentDestination?.id == R.id.videoHomeFragment) {
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_contentUploadFragment)
+                }
+            } catch (e: Exception) {
+                Log.e("VideoHomeFragment", "Navigation error (upload): ${e.message}")
+            }
         }
 
         // Set up Explorar button to navigate to ExploreFragment
@@ -520,7 +526,13 @@ class VideoHomeFragment : Fragment() {
         exploreButton?.setOnClickListener {
             // Instant visual feedback
             updateBottomNavSelection("explore")
-            findNavController().navigate(R.id.action_videoHomeFragment_to_exploreFragment)
+            try {
+                if (findNavController().currentDestination?.id == R.id.videoHomeFragment) {
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_exploreFragment)
+                }
+            } catch (e: Exception) {
+                Log.e("VideoHomeFragment", "Navigation error (explore): ${e.message}")
+            }
         }
 
         // Set up Activity button to navigate to NotificacionesFragment
@@ -528,7 +540,13 @@ class VideoHomeFragment : Fragment() {
         activityButton?.setOnClickListener {
             // Instant visual feedback
             updateBottomNavSelection("activity")
-            findNavController().navigate(R.id.action_videoHomeFragment_to_notificacionesFragment)
+            try {
+                if (findNavController().currentDestination?.id == R.id.videoHomeFragment) {
+                    findNavController().navigate(R.id.action_videoHomeFragment_to_notificacionesFragment)
+                }
+            } catch (e: Exception) {
+                Log.e("VideoHomeFragment", "Navigation error (notifications): ${e.message}")
+            }
         }
 
         // Mostrar/ocultar slot admin según rol (evita hueco para no-admins)

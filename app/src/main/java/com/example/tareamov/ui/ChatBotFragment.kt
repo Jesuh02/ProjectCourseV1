@@ -440,8 +440,8 @@ class ChatBotFragment : Fragment() {
                 fileContent = fileContent,
                 userId = currentUserId
             )
-            val response = microservicioApi.procesarPrompt(request)
-            response.respuesta_texto ?: "No se pudo obtener respuesta."
+            val responseWrapper = microservicioApi.procesarPrompt(request)
+            responseWrapper.data?.respuesta_texto ?: "No se pudo obtener respuesta: ${responseWrapper.error ?: "Error desconocido"}"
 
         } catch (e: Exception) {
             "Error al procesar la entrega: ${e.message}"
@@ -1234,13 +1234,15 @@ class ChatBotFragment : Fragment() {
 
                         val currentUserId = sessionManager.getUserId()
                         val bodyWithUserId = body.copy(userId = currentUserId)
-                        val res = microservicioApi.procesarPrompt(bodyWithUserId)
+                        val resWrapper = microservicioApi.procesarPrompt(bodyWithUserId)
+                        
+                        val res = resWrapper.data
 
-                        if (res.respuesta_texto.isNullOrBlank()) {
+                        if (!resWrapper.success || res == null || res.respuesta_texto.isNullOrBlank()) {
                             if (effectiveFileContent.isBlank() || effectiveFileContent.length < 50) {
                                 LLMResponse("El archivo enviado está vacío o no se pudo leer su contenido.", 0f, true)
                             } else {
-                                LLMResponse("Hubo un problema al procesar tu solicitud.", null, false)
+                                LLMResponse("Hubo un problema al procesar tu solicitud: ${resWrapper.error}", null, false)
                             }
                         } else {
                             LLMResponse(res.respuesta_texto, res.nota, res.esCalificacion == true)
@@ -1909,24 +1911,32 @@ class ChatBotFragment : Fragment() {
                         // Agregar userId para notificaciones
                         val currentUserId = sessionManager.getUserId()
                         val bodyWithUserId = body.copy(userId = currentUserId)
-                        val res = microservicioApi.procesarPrompt(bodyWithUserId)
+                        val resWrapper = microservicioApi.procesarPrompt(bodyWithUserId)
+                        
+                        // Extract inner response
+                        val res = resWrapper.data
+
                         Log.d("ChatBotFragment", "✅ RESPUESTA RECIBIDA DEL MICROSERVICIO:")
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📥 RESPUESTA COMPLETA DEL MODELO:")
-                        Log.d("ChatBotFragment", "respuesta_texto completa: '${res.respuesta_texto}'")
-                        Log.d("ChatBotFragment", "nota del backend: ${res.nota}")
-                        Log.d("ChatBotFragment", "esCalificacion: ${res.esCalificacion}")
-                        Log.d("ChatBotFragment", "Longitud total: ${res.respuesta_texto?.length ?: 0} caracteres")
+                        Log.d("ChatBotFragment", "Success: ${resWrapper.success}")
+                        Log.d("ChatBotFragment", "respuesta_texto completa: '${res?.respuesta_texto}'")
+                        Log.d("ChatBotFragment", "nota del backend: ${res?.nota}")
+                        Log.d("ChatBotFragment", "esCalificacion: ${res?.esCalificacion}")
+                        Log.d("ChatBotFragment", "Longitud total: ${res?.respuesta_texto?.length ?: 0} caracteres")
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "✅ ENVIANDO RESPUESTA COMPLETA AL CHAT (SIN FILTROS)")
                         Log.d("ChatBotFragment", "==============================================")
 
-                        // Devolver la respuesta COMPLETA tal como la envía el modelo, incluyendo formato
-                        // Si la respuesta es nula y el fileContent está vacío, dar mensaje específico
-                        if (res.respuesta_texto.isNullOrBlank()) {
-                            // Verificar si el contenido del archivo estaba vacío
-                            if (effectiveFileContent.isBlank() || effectiveFileContent.length < 50) {
-                                LLMResponse("""📊 **CALIFICACIÓN: 0/100**
+                        if (!resWrapper.success || res == null) {
+                             LLMResponse("Error del servidor: ${resWrapper.error ?: "Respuesta vacía"}", null, false)
+                        } else {
+                            // Devolver la respuesta COMPLETA tal como la envía el modelo, incluyendo formato
+                            // Si la respuesta es nula y el fileContent está vacío, dar mensaje específico
+                            if (res.respuesta_texto.isNullOrBlank()) {
+                                // Verificar si el contenido del archivo estaba vacío
+                                if (effectiveFileContent.isBlank() || effectiveFileContent.length < 50) {
+                                    LLMResponse("""📊 **CALIFICACIÓN: 0/100**
 
 ❌ **RESULTADO:** No aprobado
 
@@ -1941,12 +1951,13 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 4. Vuelve a subir la tarea con el contenido completo
 
 📝 **Feedback:** Una entrega vacía siempre recibe nota 0.""", 0f, true)
+                                } else {
+                                    LLMResponse("Hubo un problema al procesar tu solicitud. Por favor, intenta nuevamente.", null, false)
+                                }
                             } else {
-                                LLMResponse("Hubo un problema al procesar tu solicitud. Por favor, intenta nuevamente.", null, false)
+                                // Capturar la nota y señal de calificación del backend directamente
+                                LLMResponse(res.respuesta_texto, res.nota, res.esCalificacion == true)
                             }
-                        } else {
-                            // Capturar la nota y señal de calificación del backend directamente
-                            LLMResponse(res.respuesta_texto, res.nota, res.esCalificacion == true)
                         }
                     } catch (e: HttpException) {
                         Log.e("ChatBotFragment", "❌ HttpException: ${e.message()}")
@@ -2005,11 +2016,13 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 fileUri = null
                             )
 
-                            val cloudRes = api.procesarPrompt(fallbackBody)
-                            if (!cloudRes.respuesta_texto.isNullOrBlank()) {
+                            val cloudResWrapper = api.procesarPrompt(fallbackBody)
+                            val cloudRes = cloudResWrapper.data
+                            
+                            if (cloudResWrapper.success && cloudRes != null && !cloudRes.respuesta_texto.isNullOrBlank()) {
                                 LLMResponse(cloudRes.respuesta_texto, cloudRes.nota, cloudRes.esCalificacion == true)
                             } else {
-                                LLMResponse("El modelo en la nube no devolvió respuesta válida.", null)
+                                LLMResponse("El modelo en la nube no devolvió respuesta válida: ${cloudResWrapper.error}", null)
                             }
                         } catch (ce: Exception) {
                             Log.e("ChatBotFragment", "Cloud fallback failed after timeout: ${ce.message}")

@@ -397,10 +397,17 @@ class ReinforcementLearningViewModel(
                         taskId = if (taskId > -1L) taskId else null
                     )
                     try {
-                        val cloudResp = withContext(Dispatchers.IO) { api.procesarPrompt(requestBody) }
-                        jsonText = cloudResp.respuesta_texto
-                        lastError = cloudResp.error
-                        Log.d("ReinforcementVM", "API returned from ${BASE_URL}; response error=${cloudResp.error}")
+                        val cloudRespWrapper = withContext(Dispatchers.IO) { api.procesarPrompt(requestBody) }
+                         
+                         if (!cloudRespWrapper.success || cloudRespWrapper.data == null) {
+                             lastError = cloudRespWrapper.error ?: "Unknown error from server wrapper"
+                             Log.e("ReinforcementVM", "API returned success=false or null data: $lastError")
+                         } else {
+                             val cloudResp = cloudRespWrapper.data
+                             jsonText = cloudResp.respuesta_texto
+                             lastError = cloudResp.error
+                             Log.d("ReinforcementVM", "API returned from ${BASE_URL}; response error=${cloudResp.error}")
+                         }
                     } catch (e: Exception) {
                         lastError = e.message
                         Log.e("ReinforcementVM", "API call to ${BASE_URL} failed: ${e.message}")
@@ -517,11 +524,17 @@ class ReinforcementLearningViewModel(
 
                     _uiState.value = ReinforcementState.Success(finalQuestions)
 
-                    // Save to backend history via BackendApiService
-                    if (userId > 0) {
+                    // Save questions to backend via /save-questions endpoint
+                    // This is the SINGLE save point — uses MCPService with full uniqueness flow
+                    // (hash + embedding + semantic dedup) and correctly passes topicId/taskId.
+                    // LLMDomainService.processPrompt does NOT save to avoid duplication.
+                    val isFallbackQuestions = finalQuestions.any { it.question.contains("(Ref:") || it.question.contains("Definición técnica precisa") }
+                    
+                    if (userId > 0 && !isFallbackQuestions) {
                         try {
                             withContext(Dispatchers.IO) {
                                 BackendApiService.saveReinforcementSession(
+                                    userId,
                                     courseId,
                                     finalQuestions.map { q ->
                                         mapOf(
@@ -530,12 +543,17 @@ class ReinforcementLearningViewModel(
                                             "correctIndex" to q.correctIndex,
                                             "explanation" to (q.explanation ?: "")
                                         )
-                                    }
+                                    },
+                                    topicId = if (topicId > 0) topicId else null,
+                                    taskId = if (taskId > 0) taskId else null
                                 )
                             }
+                            Log.d("ReinforcementVM", "✅ Questions saved to backend (session + history + options) via /save-questions")
                         } catch (e: Exception) {
-                            Log.w("ReinforcementVM", "Error saving history: ${e.message}")
+                            Log.w("ReinforcementVM", "⚠️ Save to /save-questions failed: ${e.message}")
                         }
+                    } else if (isFallbackQuestions) {
+                        Log.d("ReinforcementVM", "⏭️ Skipping save for fallback/generic questions (not derived from LLM)")
                     }
                 }
                 

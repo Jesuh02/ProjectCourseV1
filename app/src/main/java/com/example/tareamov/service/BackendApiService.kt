@@ -143,8 +143,8 @@ object BackendApiService {
      * Ejecuta la request y parsea la respuesta como ApiResponse<T>.
      * El backend siempre retorna { success: Boolean, data: T }
      */
-    private inline fun <reified T> execute(request: Request): ApiResult<T> {
-        return try {
+    private suspend inline fun <reified T> execute(request: Request): ApiResult<T> = withContext(Dispatchers.IO) {
+        try {
             val response = client.newCall(request).execute()
             val bodyStr = response.body?.string() ?: "{}"
 
@@ -153,7 +153,7 @@ object BackendApiService {
                     val obj = JsonParser.parseString(bodyStr).asJsonObject
                     obj.get("error")?.asString ?: obj.get("message")?.asString ?: "Error ${response.code}"
                 } catch (_: Exception) { "Error HTTP ${response.code}" }
-                return ApiResult.Error(errorMsg, response.code)
+                return@withContext ApiResult.Error(errorMsg, response.code)
             }
 
             val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
@@ -161,14 +161,14 @@ object BackendApiService {
 
             if (!success) {
                 val errorMsg = jsonObj.get("error")?.asString ?: "Unknown error"
-                return ApiResult.Error(errorMsg, response.code)
+                return@withContext ApiResult.Error(errorMsg, response.code)
             }
 
             val dataElement = jsonObj.get("data")
             if (dataElement == null || dataElement.isJsonNull) {
                 // Para tipos que pueden ser null o Unit
                 @Suppress("UNCHECKED_CAST")
-                return ApiResult.Success(null as T)
+                return@withContext ApiResult.Success(null as T)
             }
 
             val data: T = gson.fromJson(dataElement, object : TypeToken<T>() {}.type)
@@ -183,8 +183,8 @@ object BackendApiService {
     }
 
     /** Versión que retorna List<T> */
-    private inline fun <reified T> executeList(request: Request): ApiResult<List<T>> {
-        return try {
+    private suspend inline fun <reified T> executeList(request: Request): ApiResult<List<T>> = withContext(Dispatchers.IO) {
+        try {
             val response = client.newCall(request).execute()
             val bodyStr = response.body?.string() ?: "{}"
 
@@ -193,14 +193,14 @@ object BackendApiService {
                     val obj = JsonParser.parseString(bodyStr).asJsonObject
                     obj.get("error")?.asString ?: "Error ${response.code}"
                 } catch (_: Exception) { "Error HTTP ${response.code}" }
-                return ApiResult.Error(errorMsg, response.code)
+                return@withContext ApiResult.Error(errorMsg, response.code)
             }
 
             val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
             val dataElement = jsonObj.get("data")
 
             if (dataElement == null || dataElement.isJsonNull) {
-                return ApiResult.Success(emptyList())
+                return@withContext ApiResult.Success(emptyList())
             }
 
             val listType = TypeToken.getParameterized(List::class.java, T::class.java).type
@@ -211,6 +211,76 @@ object BackendApiService {
             ApiResult.Error("Error: ${e.message}", 0)
         }
     }
+
+    data class PaginationMetadata(
+        val page: Int,
+        val pageSize: Int,
+        val total: Int,
+        val totalPages: Int
+    )
+
+    data class PaginatedResponse<T>(
+        val data: List<T>,
+        val pagination: PaginationMetadata?
+    )
+
+    /** Versión que retorna PaginatedResponse<T> */
+    private suspend inline fun <reified T> executePaginated(request: Request): ApiResult<PaginatedResponse<T>> = withContext(Dispatchers.IO) {
+        try {
+            val response = client.newCall(request).execute()
+            val bodyStr = response.body?.string() ?: "{}"
+
+            if (!response.isSuccessful) {
+                val errorMsg = try {
+                    val obj = JsonParser.parseString(bodyStr).asJsonObject
+                    obj.get("error")?.asString ?: "Error ${response.code}"
+                } catch (_: Exception) { "Error HTTP ${response.code}" }
+                return@withContext ApiResult.Error(errorMsg, response.code)
+            }
+
+            val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+            val dataElement = jsonObj.get("data")
+            val pagElement = jsonObj.get("pagination")
+
+            if (dataElement == null || dataElement.isJsonNull) {
+                return@withContext ApiResult.Success(PaginatedResponse(emptyList(), null))
+            }
+
+            val listType = TypeToken.getParameterized(List::class.java, T::class.java).type
+            val data: List<T> = gson.fromJson(dataElement, listType)
+            
+            var pagination: PaginationMetadata? = null
+            if (pagElement != null && !pagElement.isJsonNull) {
+                pagination = gson.fromJson(pagElement, PaginationMetadata::class.java)
+            }
+            
+            ApiResult.Success(PaginatedResponse(data, pagination))
+        } catch (e: Exception) {
+            Log.e(TAG, "Error: ${e.message}", e)
+            ApiResult.Error("Error: ${e.message}", 0)
+        }
+    }
+
+    suspend fun getCoursesPaginated(page: Int = 1, limit: Int = 50, excludeUserId: Long? = null): ApiResult<PaginatedResponse<Course>> {
+        val excludeParam = if (excludeUserId != null && excludeUserId > 0) "&excludeUserId=$excludeUserId" else ""
+        return executePaginated(get("/courses?page=$page&pageSize=$limit$excludeParam"))
+    }
+
+    suspend fun getFreeCoursesPaginated(page: Int = 1, limit: Int = 50, excludeUserId: Long? = null): ApiResult<PaginatedResponse<Course>> {
+        val excludeParam = if (excludeUserId != null && excludeUserId > 0) "&excludeUserId=$excludeUserId" else ""
+        return executePaginated(get("/courses/free?page=$page&pageSize=$limit$excludeParam"))
+    }
+
+    suspend fun getPremiumCoursesPaginated(page: Int = 1, limit: Int = 50, excludeUserId: Long? = null): ApiResult<PaginatedResponse<Course>> {
+        val excludeParam = if (excludeUserId != null && excludeUserId > 0) "&excludeUserId=$excludeUserId" else ""
+        return executePaginated(get("/courses/premium?page=$page&pageSize=$limit$excludeParam"))
+    }
+
+    suspend fun getCoursesByCreatorPaginated(username: String, page: Int = 1, limit: Int = 50): ApiResult<PaginatedResponse<Course>> =
+        executePaginated(get("/courses/creator/$username?page=$page&pageSize=$limit"))
+
+    suspend fun getCoursesByCreatorIdPaginated(userId: Long, page: Int = 1, limit: Int = 50): ApiResult<PaginatedResponse<Course>> =
+        executePaginated(get("/courses/creator-id/$userId?page=$page&pageSize=$limit"))
 
     suspend fun uploadAvatar(context: Context, fileUri: android.net.Uri): ApiResult<String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         try {
@@ -421,6 +491,17 @@ object BackendApiService {
      */
     suspend fun getCoursesMetadata(page: Int = 1, limit: Int = 1): ApiResult<JsonObject> =
         execute(get("/courses/stats"))
+
+    /**
+     * Get filter counts for all course categories in a single server call.
+     * Returns a JsonObject with keys: total, free, premium, myCreated, otherCreators, enrolled, purchased
+     * @param userId optional user ID for user-specific counts (defaults to current user)
+     */
+    suspend fun getCourseFilterCounts(userId: Long? = null): ApiResult<JsonObject> {
+        val uid = userId ?: currentUserId
+        val param = if (uid > 0) "?userId=$uid" else ""
+        return execute(get("/courses/counts$param"))
+    }
 
     suspend fun searchCourses(query: String): ApiResult<List<Course>> =
         executeList(get("/courses/search?q=$query"))
@@ -1096,11 +1177,20 @@ object BackendApiService {
     // ═══════════════════════════════════════════════════════════
 
     suspend fun saveReinforcementSession(
+        userId: Long,
         courseId: Long,
-        questions: List<Map<String, Any?>>
+        questions: List<Map<String, Any?>>,
+        topicId: Long? = null,
+        taskId: Long? = null
     ): ApiResult<JsonObject> {
-        val body = mapOf("courseId" to courseId, "questions" to questions)
-        return execute(post("/reinforcement/session", body))
+        val body = mutableMapOf<String, Any?>(
+            "userId" to userId,
+            "courseId" to courseId,
+            "questions" to questions
+        )
+        if (topicId != null && topicId > 0) body["topicId"] = topicId
+        if (taskId != null && taskId > 0) body["taskId"] = taskId
+        return execute(post("/reinforcement/save-questions", body))
     }
 
     suspend fun getReinforcementHistory(courseId: Long): ApiResult<List<JsonObject>> =

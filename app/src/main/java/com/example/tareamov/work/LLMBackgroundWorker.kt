@@ -268,11 +268,14 @@ class LLMBackgroundWorker(
                 fileUri = null
             )
             
-            val response = microservicioApi.procesarPrompt(request)
+            val responseWrapper = microservicioApi.procesarPrompt(request)
             
-            val responseText = response.respuesta_texto ?: "Sin respuesta del servidor"
-            val nota = response.nota
-            val isGradingResponse = response.esCalificacion == true
+            // Extract inner data from wrapper
+            val response = responseWrapper.data
+            
+            val responseText = response?.respuesta_texto ?: "Sin respuesta del servidor: ${responseWrapper.error ?: "API error"}"
+            val nota = response?.nota
+            val isGradingResponse = response?.esCalificacion == true
             
             // Save bot response to database
             // 🎯 SEMANTIC: Use esCalificacion from backend (LLM decides) instead of nota != null
@@ -372,8 +375,8 @@ class LLMBackgroundWorker(
                 taskId = taskId
             )
             
-            val response = microservicioApi.procesarPrompt(request)
-            val jsonText = response.respuesta_texto ?: ""
+            val responseWrapper = microservicioApi.procesarPrompt(request)
+            val jsonText = responseWrapper.data?.respuesta_texto ?: ""
             
             Log.d(TAG, "✅ Reinforcement task completed")
             
