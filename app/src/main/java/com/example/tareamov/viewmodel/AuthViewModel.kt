@@ -6,21 +6,16 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
-import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Usuario
-import com.example.tareamov.repository.UsuarioRepository
-import com.example.tareamov.repository.PersonaRepository
-import com.example.tareamov.repository.RolRepository
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class AuthViewModel(application: Application) : AndroidViewModel(application) {
-    private val usuarioRepository: UsuarioRepository
     private val sessionManager: SessionManager
-    private val personaRepository: PersonaRepository
-    private val rolRepository: RolRepository
 
     private val _loginResult = MutableLiveData<LoginResult>()
     val loginResult: LiveData<LoginResult> = _loginResult
@@ -29,183 +24,85 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     val currentUserId: LiveData<Long?> = _currentUserId
 
     init {
-        val database = AppDatabase.getDatabase(application)
-        usuarioRepository = UsuarioRepository(database.usuarioDao())
-        personaRepository = PersonaRepository(database.personaDao(), database.usuarioDao())
-        rolRepository = RolRepository(database.rolDao(), database.usuarioDao())
+        // Initialize BackendApiService
+        BackendApiService.initialize(application.applicationContext)
         sessionManager = SessionManager.getInstance(application.applicationContext)
-
         _currentUserId.value = sessionManager.getUserId()
-        
-        // Initialize default roles if needed
-        viewModelScope.launch {
-            rolRepository.initializeDefaultRoles()
-        }
     }
 
     fun login(username: String, password: String) {
         viewModelScope.launch {
             try {
-                Log.d("AuthViewModel", "Attempting login for user: $username")
-                val usuarioWithRole = withContext(Dispatchers.IO) {
-                    usuarioRepository.getUsuarioWithRoleByUsername(username)
+                Log.d("AuthViewModel", "Attempting login for user: $username via BackendApiService")
+
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.login(username, password)
                 }
-                
 
-                if (usuarioWithRole != null) {
-                    Log.d("AuthViewModel", "User found in database: ${usuarioWithRole.username}")
-
-                    fun maskSecret(s: String?): String {
-                        if (s.isNullOrEmpty()) return "<empty>"
-                        if (s.length <= 2) return "*".repeat(s.length)
-                        return s.first() + "*".repeat(s.length - 2) + s.last()
-                    }
-
-                    val storedMaskLocal = maskSecret(usuarioWithRole.contrasena)
-                    Log.d("AuthViewModel", "Stored password mask (local): $storedMaskLocal")
-
-                    // Verify bcrypt hashed password so user enters plain password
-                    val verifyResult = try {
-                        at.favre.lib.crypto.bcrypt.BCrypt.verifyer().verify(password.toCharArray(), usuarioWithRole.contrasena)
-                    } catch (e: Exception) {
-                        // If verify throws, fall back to plain comparison for legacy or malformed values
-                        Log.w("AuthViewModel", "BCrypt verify failed (local), will try plain comparison: ${e.message}")
-                        null
-                    }
-
-                    val passwordMatches = if (verifyResult?.verified == true) {
-                        true
-                    } else {
-                        // Even if verifyResult exists but is not verified, still allow plaintext fallback
-                        val plainMatch = usuarioWithRole.contrasena == password
-                        Log.d("AuthViewModel", "BCrypt verified: ${verifyResult?.verified}, fallback plainMatch: $plainMatch")
-                        plainMatch
-                    }
-
-                    Log.d("AuthViewModel", "Password match: $passwordMatches")
-
-                    if (passwordMatches) {
-                        // Fetch full user to get avatar (now in Usuario table)
-                        val fullUser = withContext(Dispatchers.IO) {
-                            usuarioRepository.getUsuarioById(usuarioWithRole.id)
-                        }
-                        val avatarUri = fullUser?.avatar
-
-                        Log.d("AuthViewModel", "Password match successful. Persona ID: ${usuarioWithRole.persona_id}, Avatar URI: $avatarUri, Role: ${usuarioWithRole.rolNombre}")
-                        
-                        // Save session with user details, including persona_id, avatarUri and role name
-                        sessionManager.createLoginSession(
-                            usuarioWithRole.username, 
-                            usuarioWithRole.id, 
-                            usuarioWithRole.persona_id, 
-                            usuarioWithRole.rolNombre, 
-                            avatarUri
-                        )
-                        
-                        // Add role ID to session for hasRole() checks
-                        val roleId = fullUser?.rol_id?.toInt() ?: 1
-                        sessionManager.addRole(roleId)
-                        
-                        // Ensure admin role (3) is set if the role name is 'admin'
-                        if (usuarioWithRole.rolNombre.equals("admin", ignoreCase = true)) {
-                            sessionManager.addRole(3)
-                        }
-
-                        _loginResult.value = LoginResult(
-                            success = true, 
-                            userId = usuarioWithRole.id, 
-                            userRole = usuarioWithRole.rolNombre
-                        )
-                        _currentUserId.value = usuarioWithRole.id
-                    } else {
-                        Log.d("AuthViewModel", "Password match failed")
-                        _loginResult.value = LoginResult(success = false)
-                        _currentUserId.value = null
-                    }
-                } else {
-                    Log.d("AuthViewModel", "User not found in local database, trying Supabase if configured")
-
-                    try {
-                        val supabaseClient = com.example.tareamov.service.SupabaseClient
-                        if (supabaseClient.isConfigured()) {
-                                val remoteUsuario = withContext(Dispatchers.IO) {
-                                    try {
-                                        supabaseClient.fetchUsuarioByUsername(username)
-                                    } catch (e: Exception) {
-                                        null
-                                    }
-                                }
-
-                            if (remoteUsuario != null) {
-                                fun maskSecret(s: String?): String {
-                                    if (s.isNullOrEmpty()) return "<empty>"
-                                    if (s.length <= 2) return "*".repeat(s.length)
-                                    return s.first() + "*".repeat(s.length - 2) + s.last()
-                                }
-
-                                val storedMaskRemote = maskSecret(remoteUsuario.contrasena)
-                                Log.d("AuthViewModel", "Stored password mask (remote): $storedMaskRemote")
-
-                                val verifyResult = try {
-                                    at.favre.lib.crypto.bcrypt.BCrypt.verifyer().verify(password.toCharArray(), remoteUsuario.contrasena)
-                                } catch (e: Exception) {
-                                    Log.w("AuthViewModel", "BCrypt verify (remote) failed, will try plain comparison: ${e.message}")
-                                    null
-                                }
-
-                                val passwordMatches = if (verifyResult?.verified == true) {
-                                    true
-                                } else {
-                                    val plainMatch = remoteUsuario.contrasena == password
-                                    Log.d("AuthViewModel", "Remote BCrypt verified: ${verifyResult?.verified}, fallback plainMatch: $plainMatch")
-                                    plainMatch
-                                }
-
-                                if (passwordMatches) {
-                                    val avatarUri = remoteUsuario.avatar
-                                    val roleName = withContext(Dispatchers.IO) {
-                                        try {
-                                            supabaseClient.fetchRoles().firstOrNull { r -> r.id == remoteUsuario.rol_id }?.nombre ?: ""
-                                        } catch (e: Exception) { "" }
-                                    }
-
-                                    sessionManager.createLoginSession(
-                                        remoteUsuario.usuario,
-                                        remoteUsuario.id,
-                                        remoteUsuario.persona_id,
-                                        roleName,
-                                        avatarUri
-                                    )
-                                    
-                                    // Save role ID to session for hasRole(id) checks
-                                    // If role ID is not present in remoteUsuario or fetch fails, default to 0
-                                    // Assuming remoteUsuario.rol_id is available and correct
-                                    sessionManager.addRole(remoteUsuario.rol_id.toInt())
-                                    
-                                    // Ensure admin role (3) is set if the role name is 'admin' or ID is 3
-                                    if (roleName.equals("admin", ignoreCase = true) || remoteUsuario.rol_id == 3L) {
-                                        sessionManager.addRole(3)
-                                    }
-
-                                    _loginResult.value = LoginResult(success = true, userId = remoteUsuario.id, userRole = roleName)
-                                    _currentUserId.value = remoteUsuario.id
-                                } else {
-                                    Log.d("AuthViewModel", "Remote password match failed")
-                                    _loginResult.value = LoginResult(success = false)
-                                    _currentUserId.value = null
-                                }
-                            } else {
-                                Log.d("AuthViewModel", "User not found on Supabase")
-                                _loginResult.value = LoginResult(success = false)
-                                _currentUserId.value = null
+                when (result) {
+                    is ApiResult.Success -> {
+                        val authResponse = result.data
+                        if (authResponse?.effectiveToken() != null && authResponse.user != null) {
+                            val user = authResponse.user
+                            val userId = user.get("id")?.asLong ?: -1L
+                            val personaId = user.get("persona_id")?.asLong ?: -1L
+                            val avatarUri = user.get("avatar")?.let {
+                                if (it.isJsonNull) null else it.asString
                             }
+                            val roleName = user.get("rolNombre")?.let {
+                                if (it.isJsonNull) "" else it.asString
+                            } ?: ""
+
+                            Log.d("AuthViewModel", "Login successful. UserId=$userId, PersonaId=$personaId, Role=$roleName")
+
+                            // Save session with user details
+                            sessionManager.createLoginSession(
+                                username,
+                                userId,
+                                personaId,
+                                roleName,
+                                avatarUri
+                            )
+
+                            // Add legacy role ID from user object
+                            val roleId = user.get("rol_id")?.asInt ?: 1
+                            sessionManager.addRole(roleId)
+
+                            // Ensure admin role (3) is set if the role name is 'admin'
+                            if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
+                                sessionManager.addRole(3)
+                            }
+
+                            // Fetch ALL roles from backend
+                            try {
+                                val rolesResult = withContext(Dispatchers.IO) {
+                                    BackendApiService.getUserRoles(userId)
+                                }
+                                if (rolesResult is ApiResult.Success) {
+                                    val allRoleIds = rolesResult.data ?: emptyList()
+                                    Log.d("AuthViewModel", "All roles from backend for userId=$userId: $allRoleIds")
+                                    for (rid in allRoleIds) {
+                                        sessionManager.addRole(rid.toInt())
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w("AuthViewModel", "Could not fetch roles from backend: ${e.message}")
+                            }
+
+                            _loginResult.value = LoginResult(
+                                success = true,
+                                userId = userId,
+                                userRole = roleName
+                            )
+                            _currentUserId.value = userId
                         } else {
-                            Log.d("AuthViewModel", "Supabase not configured")
+                            Log.d("AuthViewModel", "Login response missing token or user data")
                             _loginResult.value = LoginResult(success = false)
                             _currentUserId.value = null
                         }
-                    } catch (e: Exception) {
-                        Log.e("AuthViewModel", "Error while trying Supabase auth: ${e.message}", e)
+                    }
+                    is ApiResult.Error -> {
+                        Log.d("AuthViewModel", "Login failed: ${result.message} (code=${result.code})")
                         _loginResult.value = LoginResult(success = false)
                         _currentUserId.value = null
                     }
@@ -218,26 +115,46 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Method to fetch Usuario by username (if needed elsewhere)
+    // Method to fetch Usuario by username from backend
     suspend fun getUsuarioByUsername(username: String): Usuario? {
         return withContext(Dispatchers.IO) {
-            usuarioRepository.getUsuarioByUsername(username)
+            val result = BackendApiService.getUserByUsername(username)
+            result.getOrNull()
         }
     }
 
-    // Method to fetch UsuarioWithRole by username
+    // Method to fetch UsuarioWithRole by username from backend
     suspend fun getUsuarioWithRoleByUsername(username: String): com.example.tareamov.data.dao.UsuarioWithRole? {
         return withContext(Dispatchers.IO) {
-            usuarioRepository.getUsuarioWithRoleByUsername(username)
+            val result = BackendApiService.getUserByUsername(username)
+            val user = result.getOrNull() ?: return@withContext null
+            val rolesResult = BackendApiService.getUserRoles(user.id)
+            val roleIds = (rolesResult as? ApiResult.Success)?.data ?: emptyList()
+            val roleName = if (roleIds.contains(3L)) "admin"
+                          else if (roleIds.contains(2L)) "docente"
+                          else "estudiante"
+            val rolNivel = if (roleIds.contains(3L)) 3.0f
+                           else if (roleIds.contains(2L)) 2.0f
+                           else 1.0f
+            com.example.tareamov.data.dao.UsuarioWithRole(
+                id = user.id,
+                username = user.usuario,
+                contrasena = user.contrasena,
+                persona_id = user.persona_id,
+                rol_id = user.rol_id,
+                email = user.email,
+                avatar = user.avatar,
+                rolNombre = roleName,
+                rolNivel = rolNivel
+            )
         }
     }
 
-    // Example: Add a logout function that updates currentUserId
     fun logout() {
-        // Perform logout actions (e.g., clear session in SessionManager)
-        sessionManager.logout() // Clear the session
+        sessionManager.logout()
+        BackendApiService.logout()
         _currentUserId.value = null
-        _loginResult.value = LoginResult(success = false) // Optionally update loginResult
+        _loginResult.value = LoginResult(success = false)
     }
 }
 

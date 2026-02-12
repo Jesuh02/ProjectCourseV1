@@ -45,5 +45,5 @@ data class ContentItem(
     @SerializedName("order_index") val orderIndex: Int? = 0,
     val creator_usuario_id: Long? = null,  // ID del usuario creador (FK a usuarios)
     val creator_username: String? = null,  // Username del creador (para búsquedas rápidas)
-    val created_at: Long? = System.currentTimeMillis()
+    val created_at: String? = null
 ) 

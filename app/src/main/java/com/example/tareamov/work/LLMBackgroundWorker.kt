@@ -268,18 +268,23 @@ class LLMBackgroundWorker(
                 fileUri = null
             )
             
-            val response = microservicioApi.procesarPrompt(request)
+            val responseWrapper = microservicioApi.procesarPrompt(request)
             
-            val responseText = response.respuesta_texto ?: "Sin respuesta del servidor"
-            val nota = response.nota
+            // Extract inner data from wrapper
+            val response = responseWrapper.data
+            
+            val responseText = response?.respuesta_texto ?: "Sin respuesta del servidor: ${responseWrapper.error ?: "API error"}"
+            val nota = response?.nota
+            val isGradingResponse = response?.esCalificacion == true
             
             // Save bot response to database
+            // 🎯 SEMANTIC: Use esCalificacion from backend (LLM decides) instead of nota != null
             val botMessage = ChatMessage(
                 message = responseText.replace("#", "").replace("**", ""),
                 isFromUser = false,
                 sessionId = sessionId,
-                hasCalification = nota != null,
-                calificationValue = nota?.let { if (it % 1 == 0f) "${it.toInt()}/10" else String.format("%.1f/10", it) },
+                hasCalification = isGradingResponse,
+                calificationValue = if (isGradingResponse) nota?.let { if (it % 1 == 0f) "${it.toInt()}/10" else String.format("%.1f/10", it) } else null,
                 calificationAdded = false,
                 senderUsername = "DeepSeek",
                 senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
@@ -370,8 +375,8 @@ class LLMBackgroundWorker(
                 taskId = taskId
             )
             
-            val response = microservicioApi.procesarPrompt(request)
-            val jsonText = response.respuesta_texto ?: ""
+            val responseWrapper = microservicioApi.procesarPrompt(request)
+            val jsonText = responseWrapper.data?.respuesta_texto ?: ""
             
             Log.d(TAG, "✅ Reinforcement task completed")
             

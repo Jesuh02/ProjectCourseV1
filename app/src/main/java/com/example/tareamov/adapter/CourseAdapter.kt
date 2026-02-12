@@ -19,8 +19,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.example.tareamov.data.AppDatabase
 import android.util.Log
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 
 class CourseAdapter(
     private val context: Context,
@@ -153,7 +154,8 @@ class CourseAdapter(
         if (currentUserIdCached == null && currentUsername != null) {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                    val userResult = BackendApiService.getUserByUsername(currentUsername!!)
+                    val userId = (userResult as? ApiResult.Success)?.data?.id
                     if (userId != null) {
                         currentUserIdCached = userId
                         val isOwner = userId == course.creatorUserId
@@ -219,18 +221,21 @@ class CourseAdapter(
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val creatorUsername = creatorUsernameCache[course.creatorUserId]
-                        ?: com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)?.also {
-                            creatorUsernameCache[course.creatorUserId] = it
+                        ?: run {
+                            val result = com.example.tareamov.service.BackendApiService.getUserById(course.creatorUserId)
+                            val user = (result as? com.example.tareamov.service.ApiResult.Success)?.data
+                            user?.usuario?.also { creatorUsernameCache[course.creatorUserId] = it }
                         }
                     
                     // Get creator avatar
                     val creatorAvatar = creatorAvatarCache[course.creatorUserId]
-                        ?: com.example.tareamov.service.SupabaseClient.getUserAvatarUrl(course.creatorUserId)?.also {
-                            creatorAvatarCache[course.creatorUserId] = it
+                        ?: run {
+                            val result = com.example.tareamov.service.BackendApiService.getUserById(course.creatorUserId)
+                            val user = (result as? com.example.tareamov.service.ApiResult.Success)?.data
+                            user?.avatar?.also { creatorAvatarCache[course.creatorUserId] = it }
                         }
 
                     withContext(Dispatchers.Main) {
-                        // Fallback: If username matches, treat as creator even if currentUserIdCached was null
                         if (currentUsername != null && creatorUsername == currentUsername) {
                             holder.creatorTextView.text = "Por: $creatorUsername"
                             
@@ -361,65 +366,38 @@ class CourseAdapter(
     }
     
     /**
-     * Enroll user in background without blocking navigation
+     * Enroll user in background without blocking navigation.
+     * Uses BackendApiService to handle enrollment server-side.
      */
     private fun backgroundEnroll(course: Course) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val db = AppDatabase.getDatabase(context)
-                
-                // Get user ID from username (cached if possible)
-                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
-                if (userId == null) {
-                    Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
-                    return@launch
-                }
-
                 // Guard: don't auto-enroll the course creator into their own course
-                if (userId == course.creatorUserId) {
+                if (currentUserIdCached != null && currentUserIdCached == course.creatorUserId) {
                     Log.d("CourseAdapter", "Skipping background enrollment: user is course creator for course ${course.id}")
                     return@launch
                 }
-                
-                // Check if already enrolled
-                val existingProgreso = db.progresoEstudianteDao().getProgreso(userId, course.id)
-                if (existingProgreso != null) {
+
+                // Check if already enrolled via backend
+                val enrolledResult = BackendApiService.isEnrolled(course.id)
+                if (enrolledResult is ApiResult.Success && enrolledResult.data == true) {
                     Log.d("CourseAdapter", "Already enrolled in course ${course.id}")
                     return@launch
                 }
-                
-                // Ensure course exists in local DB
-                val existingCourse = db.courseDao().getCourseById(course.id)
-                if (existingCourse == null) {
-                    db.courseDao().insertCourse(course)
-                }
-                
-                // Get total tasks
-                val topics = db.topicDao().getTopicsByCourse(course.id)
-                val topicIds = topics.map { it.id }
-                val totalTasks = if (topicIds.isNotEmpty()) {
-                    db.taskDao().getTasksByTopicIds(topicIds).size
-                } else 0
-                
-                // Create progress record
-                val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                    usuarioEstudiante = userId,
-                    cursoId = course.id,
-                    tareasCompletadas = 0,
-                    tareasTotales = totalTasks,
-                    porcentajeProgreso = 0f,
-                    calificacionPonderada = null,
-                    promedio = null,
-                    estado = "Perdido",
-                    ultimaCalculadaEn = System.currentTimeMillis()
+
+                // Enroll via backend upsert
+                val data = mapOf<String, Any?>(
+                    "courseId" to course.id,
+                    "completedTasks" to 0,
+                    "progressPercentage" to 0f,
+                    "status" to "Perdido"
                 )
-                
-                db.progresoEstudianteDao().insertProgreso(progreso)
-                Log.d("CourseAdapter", "✅ Background enrolled in course ${course.id}")
-                
-                // Sync to Supabase in background
-                val syncRepo = createSyncRepository(db)
-                syncRepo.syncProgresoToSupabase(progreso)
+                val result = BackendApiService.upsertProgress(data)
+                if (result is ApiResult.Success) {
+                    Log.d("CourseAdapter", "✅ Background enrolled in course ${course.id}")
+                } else {
+                    Log.e("CourseAdapter", "Background enrollment failed: ${(result as? ApiResult.Error)?.message}")
+                }
             } catch (e: Exception) {
                 Log.e("CourseAdapter", "Background enrollment failed", e)
             }
@@ -430,32 +408,8 @@ class CourseAdapter(
      * Auto-enroll user in a free course and navigate to course detail
      */
     private fun autoEnrollAndNavigate(course: Course) {
-        // DEPRECATED: Now using backgroundEnroll + immediate navigation
         onCourseClickListener(course)
         backgroundEnroll(course)
-    }
-    
-    /**
-     * Create SyncRepository instance (extracted to reduce duplication)
-     */
-    private fun createSyncRepository(db: AppDatabase): com.example.tareamov.data.sync.SyncRepository {
-        return com.example.tareamov.data.sync.SyncRepository(
-            db.usuarioDao(),
-            db.personaDao(),
-            db.topicDao(),
-            db.contentItemDao(),
-            db.taskDao(),
-            db.subscriptionDao(),
-            db.taskSubmissionDao(),
-            db.videoDao(),
-            db.courseDao(),
-            db.rolDao(),
-            db.recursoDao(),
-            db.rolRecursoDao(),
-            db.chatMessageDao(),
-            db.fileContextDao(),
-            db.progresoEstudianteDao()
-        )
     }
 
     override fun getItemCount(): Int = courses.size
@@ -524,38 +478,30 @@ class CourseAdapter(
      */
     private suspend fun canUserModifyCourseSuspend(course: Course): Boolean {
         if (currentUsername == null) return false
-        val currentUserId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+        val userResult = BackendApiService.getUserByUsername(currentUsername!!)
+        val currentUserId = (userResult as? ApiResult.Success)?.data?.id
         return currentUserId != null && currentUserId == course.creatorUserId
     }
 
     /**
-     * Load real enrollment count from progreso_estudiante table (Supabase)
+     * Load real enrollment count from backend
      */
     private fun loadEnrollmentCount(holder: CourseViewHolder, course: Course) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Count real enrolled students from progreso_estudiante table in Supabase
-                val enrolledCount = com.example.tareamov.service.SupabaseClient.countStudentsInCourse(course.id)
-                
+                val result = BackendApiService.getEnrolledCount(course.id)
+                val enrolledCount = when (result) {
+                    is ApiResult.Success -> result.data ?: 0
+                    is ApiResult.Error -> 0
+                }
                 withContext(Dispatchers.Main) {
                     val studentsText = if (enrolledCount == 1) "1 estudiante" else "$enrolledCount estudiantes"
                     holder.enrollmentTextView.text = studentsText
                 }
             } catch (e: Exception) {
-                Log.e("CourseAdapter", "Error loading enrollment count from Supabase", e)
-                // Fallback to local Room database
-                try {
-                    val db = AppDatabase.getDatabase(context)
-                    val localCount = db.progresoEstudianteDao().contarEstudiantes(course.id)
-                    withContext(Dispatchers.Main) {
-                        val studentsText = if (localCount == 1) "1 estudiante" else "$localCount estudiantes"
-                        holder.enrollmentTextView.text = studentsText
-                    }
-                } catch (localError: Exception) {
-                    Log.e("CourseAdapter", "Error loading enrollment count from local DB", localError)
-                    withContext(Dispatchers.Main) {
-                        holder.enrollmentTextView.text = "0 estudiantes"
-                    }
+                Log.e("CourseAdapter", "Error loading enrollment count", e)
+                withContext(Dispatchers.Main) {
+                    holder.enrollmentTextView.text = "0 estudiantes"
                 }
             }
         }
@@ -573,21 +519,24 @@ class CourseAdapter(
             return
         }
 
-        // Use Supabase to check real-time subscription status
+        // Use BackendApiService for subscription data
         
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Get current user's ID
-                val currentUserId = if (currentUsername != null) {
-                    com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
-                } else null
+                // Fetch subscriber count from BackendApiService
+                val countResult = com.example.tareamov.service.BackendApiService.getSubscriberCount(creatorUserId)
+                val subscriberCount = when (countResult) {
+                    is com.example.tareamov.service.ApiResult.Success -> countResult.data?.toLong() ?: 0L
+                    is com.example.tareamov.service.ApiResult.Error -> 0L
+                }
                 
-                // Fetch subscriber count from Supabase (always fresh)
-                val subscriberCount = com.example.tareamov.service.SupabaseClient.fetchSubscriberCount(creatorUserId)
-                
-                // Check if current user is subscribed to this creator from Supabase
-                val isSubscribed = if (currentUserId != null && currentUserId != creatorUserId) {
-                    com.example.tareamov.service.SupabaseClient.isSubscribedRemote(currentUserId, creatorUserId)
+                // Check if current user is subscribed to this creator via BackendApiService
+                val isSubscribed = if (currentUserIdCached != null && currentUserIdCached != creatorUserId) {
+                    val checkResult = com.example.tareamov.service.BackendApiService.checkSubscription(creatorUserId)
+                    when (checkResult) {
+                        is com.example.tareamov.service.ApiResult.Success -> checkResult.data ?: false
+                        is com.example.tareamov.service.ApiResult.Error -> false
+                    }
                 } else false
                 
                 Log.d("CourseAdapter", "Subscription status for creator $creatorUserId: isSubscribed=$isSubscribed, count=$subscriberCount")
@@ -597,7 +546,7 @@ class CourseAdapter(
                     val countText = if (subscriberCount == 1L) "1 suscriptor" else "$subscriberCount suscriptores"
                     holder.subscriberCountTextView.text = countText
                     
-                    // Update subscription button based on real-time status from Supabase
+                    // Update subscription button based on real-time status from BackendApiService
                     if (isSubscribed) {
                         holder.subscribeButton.text = "Desuscribirse"
                         holder.subscribeButton.setBackgroundResource(R.drawable.button_subscribed)
@@ -613,10 +562,10 @@ class CourseAdapter(
                         onSubscriptionClickListener?.invoke(course, isSubscribed)
                     }
                     
-                    holder.subscribeButton.isEnabled = currentUserId != null && currentUserId != creatorUserId
+                    holder.subscribeButton.isEnabled = currentUserIdCached != null && currentUserIdCached != creatorUserId
                 }
             } catch (e: Exception) {
-                Log.e("CourseAdapter", "Error loading subscription data from Supabase", e)
+                Log.e("CourseAdapter", "Error loading subscription data from BackendApiService", e)
                 withContext(Dispatchers.Main) {
                     holder.subscriberCountTextView.text = "0 suscriptores"
                     holder.subscribeButton.text = "Suscribirse"
@@ -629,7 +578,8 @@ class CourseAdapter(
     }
     
     /**
-     * Check if user is enrolled in the course and configure button accordingly
+     * Check if user is enrolled in the course and configure button accordingly.
+     * Uses BackendApiService instead of direct Supabase/Room calls.
      */
     private fun checkEnrollmentStatus(holder: CourseViewHolder, course: Course) {
         if (currentUsername == null) {
@@ -649,15 +599,18 @@ class CourseAdapter(
         
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val db = AppDatabase.getDatabase(context)
-                
-                // Get user ID from username
-                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
-                if (userId == null) {
-                    Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
-                    return@launch
+                // Get user ID if not cached
+                if (currentUserIdCached == null) {
+                    val userResult = BackendApiService.getUserByUsername(currentUsername!!)
+                    val userId = (userResult as? ApiResult.Success)?.data?.id
+                    if (userId == null) {
+                        Log.e("CourseAdapter", "Failed to get user ID for username: $currentUsername")
+                        return@launch
+                    }
+                    currentUserIdCached = userId
                 }
-                
+                val userId = currentUserIdCached!!
+
                 // CRITICAL: Double-check if user is the course creator
                 if (userId == course.creatorUserId) {
                     Log.d("CourseAdapter", "User $userId is creator of course ${course.id}, hiding all enrollment UI")
@@ -669,15 +622,13 @@ class CourseAdapter(
                     return@launch
                 }
                 
-                // Check if user is already enrolled (has progreso record)
-                // We check directly against Supabase as requested, avoiding Room cache issues
-                Log.d("CourseAdapter", "Checking enrollment for userId=$userId courseId=${course.id}")
-                val isEnrolled = com.example.tareamov.service.SupabaseClient.isUserEnrolled(userId, course.id)
+                // Check if user is already enrolled via backend
+                val enrolledResult = BackendApiService.isEnrolled(course.id)
+                val isEnrolled = enrolledResult is ApiResult.Success && enrolledResult.data == true
                 Log.d("CourseAdapter", "Enrollment result for userId=$userId courseId=${course.id}: $isEnrolled")
                 
                 withContext(Dispatchers.Main) {
-                    // FIX: Check if user is creator again, in case permissions updated while coroutine was running
-                    // Also check username match as fallback to ensure owner logic is respected
+                    // FIX: Check if user is creator again
                     val creatorName = creatorUsernameCache[course.creatorUserId]
                     val isCreatorByUsername = currentUsername != null && creatorName != null && currentUsername == creatorName
                     
@@ -689,7 +640,7 @@ class CourseAdapter(
                     }
 
                     if (isEnrolled) {
-                        // Already enrolled - Show enrolled status, hide enrollment container
+                        // Already enrolled - Show enrolled status
                         holder.enrollButtonContainer?.visibility = View.GONE
                         holder.enrollButton?.visibility = View.GONE
                         holder.enrolledStatusContainer?.visibility = View.VISIBLE
@@ -698,77 +649,32 @@ class CourseAdapter(
                     } else {
                         // Not enrolled yet - Check if it's a paid course
                         if (course.price > 0) {
-                            // Paid course - Check for successful payments first
-                            val syncRepo = createSyncRepository(db)
-                            val sqlSuccessful = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = ${course.id} AND status = 'successful'"
-                            val txSuccessfulResult = syncRepo.executeRawQuery(sqlSuccessful)
+                            // Paid course - Check purchase status via backend
+                            val hasPurchased = checkIfCoursePurchased(course.id, userId)
                             
-                            var successfulPaidAmount = 0.0
-                            try {
-                                if (txSuccessfulResult.isNotEmpty()) {
-                                    val row = txSuccessfulResult[0]
-                                    // Handle different number types (Int, Long, Double) coming from JSON
-                                    val paidObj = row["paid"]
-                                    if (paidObj != null) {
-                                        successfulPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
-                                    }
-                                }
-                            } catch(e: Exception) {
-                                Log.e("CourseAdapter", "Error parsing successful paid amount", e)
-                            }
-                            
-                            // Check if course is fully purchased with successful transactions
-                            if (successfulPaidAmount >= course.price) {
-                                // Course fully purchased - show purchased status
+                            if (hasPurchased) {
                                 holder.enrolledStatusContainer?.visibility = View.VISIBLE
                                 holder.enrollButtonContainer?.visibility = View.GONE
                                 holder.enrollButton?.visibility = View.GONE
-                                
-                                Log.d("CourseAdapter", "Course ${course.id} fully purchased with successful payment. Amount: $successfulPaidAmount")
+                                Log.d("CourseAdapter", "Course ${course.id} fully purchased")
                             } else {
-                                // Still need payment - Check legacy APPROVED payments too
-                                val sqlApproved = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = ${course.id} AND status = 'APPROVED'"
-                                val txApprovedResult = syncRepo.executeRawQuery(sqlApproved)
-                                
-                                var approvedPaidAmount = 0.0
-                                try {
-                                    if (txApprovedResult.isNotEmpty()) {
-                                        val row = txApprovedResult[0]
-                                        val paidObj = row["paid"]
-                                        if (paidObj != null) {
-                                            approvedPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
-                                        }
-                                    }
-                                } catch(e: Exception) {
-                                    Log.e("CourseAdapter", "Error parsing approved paid amount", e)
-                                }
-                                
-                                val totalPaidAmount = successfulPaidAmount + approvedPaidAmount
-                                val remaining = kotlin.math.max(0.0, course.price - totalPaidAmount)
-                                
                                 holder.enrolledStatusContainer?.visibility = View.GONE
                                 holder.enrollButtonContainer?.visibility = View.VISIBLE
                                 holder.enrollButton?.visibility = View.VISIBLE
                                 
                                 val localeCO = java.util.Locale("es", "CO")
                                 val currencyFormat = java.text.NumberFormat.getCurrencyInstance(localeCO)
-                                
-                                if (totalPaidAmount > 0 && remaining > 0) {
-                                    holder.enrollButton?.text = "Falta: ${currencyFormat.format(remaining)}"
-                                } else {
-                                    holder.enrollButton?.text = "Comprar ${currencyFormat.format(course.price)}"
-                                }
+                                holder.enrollButton?.text = "Comprar ${currencyFormat.format(course.price)}"
                                 
                                 holder.enrollButton?.isEnabled = true
                                 holder.enrollButton?.alpha = 1.0f
                                 holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
                                 
-                                // Enable click to go to details/payment
                                 holder.enrollButton?.setOnClickListener {
-                                    onCourseClickListener(course) // Navigate to detail which handles payment
+                                    onCourseClickListener(course)
                                 }
                                 
-                                Log.d("CourseAdapter", "Course ${course.id} payment status: successful=$successfulPaidAmount, approved=$approvedPaidAmount, remaining=$remaining")
+                                Log.d("CourseAdapter", "Course ${course.id} not purchased yet, showing buy button")
                             }
                         } else {
                             // Free course - Show enrollment section
@@ -780,9 +686,7 @@ class CourseAdapter(
                             holder.enrollButton?.alpha = 1.0f
                             holder.enrollButton?.setBackgroundResource(R.drawable.button_premium)
                             
-                            // Set click listener for enrollment (only once)
                             holder.enrollButton?.setOnClickListener {
-                                // Guard: prevent the course creator from enrolling in their own course
                                 if (canUserModifyCourse(course)) {
                                     Log.w("CourseAdapter", "Creator attempted to enroll in own course ${course.id}; action blocked")
                                     holder.enrollButton?.isEnabled = false
@@ -791,7 +695,6 @@ class CourseAdapter(
                                     return@setOnClickListener
                                 }
 
-                                // Disable button immediately to prevent double-clicks
                                 holder.enrollButton?.isEnabled = false
                                 holder.enrollButton?.alpha = 0.6f
                                 holder.enrollButton?.text = "Inscribiendo..."
@@ -849,67 +752,54 @@ class CourseAdapter(
      * Load course thumbnail image using Glide
      */
     private fun loadCourseThumbnail(holder: CourseViewHolder, course: Course) {
-        // Set placeholder immediately
-        holder.thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
-        
-        val thumbnailUri = course.thumbnailUri
+        val requestOptions = RequestOptions()
+            .placeholder(R.drawable.bg_course_placeholder_card)
+            .error(R.drawable.bg_course_placeholder_card)
+            .centerCrop()
+
+        var thumbnailUri = course.thumbnailUri?.trim()
+
+        // Robust URL handling
         if (!thumbnailUri.isNullOrEmpty()) {
-            val requestOptions = RequestOptions()
-                .placeholder(R.drawable.bg_course_placeholder_card)
-                .error(R.drawable.bg_course_placeholder_card)
-                .centerCrop()
-                // .transform(RoundedCorners(dpToPx(24))) // Removed to rely on CardView clipping
-            
+            if (thumbnailUri!!.startsWith("/")) {
+                thumbnailUri = "${com.example.tareamov.service.BackendApiService.baseUrl}$thumbnailUri"
+            } else if (!thumbnailUri!!.startsWith("http") && !thumbnailUri!!.startsWith("content://") && !thumbnailUri!!.startsWith("file://")) {
+                // Assume relative path missing leading slash
+                thumbnailUri = "${com.example.tareamov.service.BackendApiService.baseUrl}/$thumbnailUri"
+            }
+        }
+        
+        if (!thumbnailUri.isNullOrEmpty()) {
+            Log.d("CourseAdapter", "Loading thumbnail for '${course.title}': $thumbnailUri")
             Glide.with(context)
                 .load(thumbnailUri)
                 .apply(requestOptions)
                 .into(holder.thumbnailImageView)
+        } else if (!course.videoUri.isNullOrEmpty()) {
+            // Fallback: Attempt to load video frame if thumbnail is missing
+            Log.d("CourseAdapter", "No thumbnail for '${course.title}', trying video frame: ${course.videoUri}")
+            Glide.with(context)
+                .asBitmap()
+                .load(course.videoUri)
+                .apply(requestOptions)
+                .into(holder.thumbnailImageView)
+        } else {
+            Log.d("CourseAdapter", "No thumbnail or video for '${course.title}', using placeholder")
+            holder.thumbnailImageView.setImageResource(R.drawable.bg_course_placeholder_card)
         }
     }
     
     /**
-     * Check if course is fully purchased with successful transactions
+     * Check if course is fully purchased with successful transactions.
+     * Uses BackendApiService instead of raw SQL queries.
      */
     private suspend fun checkIfCoursePurchased(courseId: Long, userId: Long): Boolean {
         return try {
             if (userId <= 0) return false
             
-            val db = AppDatabase.getDatabase(context)
-            val syncRepo = createSyncRepository(db)
-            
-            // Check 'successful' status
-            val sqlSuccessful = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = $courseId AND status = 'successful'"
-            val txSuccessfulResult = syncRepo.executeRawQuery(sqlSuccessful)
-            var successfulPaidAmount = 0.0
-            if (txSuccessfulResult.isNotEmpty()) {
-                val row = txSuccessfulResult[0]
-                val paidObj = row["paid"]
-                if (paidObj != null) {
-                    successfulPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
-                }
-            }
-            
-            // Check 'APPROVED' status (Wompi returns uppercase)
-            val sqlApproved = "SELECT SUM(amount) as paid FROM transactions WHERE user_id = $userId AND course_id = $courseId AND status = 'APPROVED'"
-            val txApprovedResult = syncRepo.executeRawQuery(sqlApproved)
-            var approvedPaidAmount = 0.0
-            if (txApprovedResult.isNotEmpty()) {
-                val row = txApprovedResult[0]
-                val paidObj = row["paid"]
-                if (paidObj != null) {
-                    approvedPaidAmount = (paidObj as? Number)?.toDouble() ?: 0.0
-                }
-            }
-            
-            val totalPaidAmount = successfulPaidAmount + approvedPaidAmount
-            
-            // Get course price to compare
-            val course = courses.find { it.id == courseId }
-            val coursePrice = course?.price ?: 0.0
-            
-            val hasPurchased = totalPaidAmount >= coursePrice
-            Log.d("CourseAdapter", "Course $courseId purchase check: successful=$successfulPaidAmount, approved=$approvedPaidAmount, total=$totalPaidAmount, price=$coursePrice, purchased=$hasPurchased")
-            
+            val result = BackendApiService.hasPurchasedCourse(courseId)
+            val hasPurchased = result is ApiResult.Success && result.data == true
+            Log.d("CourseAdapter", "Course $courseId purchase check via backend: purchased=$hasPurchased")
             hasPurchased
         } catch (e: Exception) {
             Log.e("CourseAdapter", "Error checking course purchase status", e)

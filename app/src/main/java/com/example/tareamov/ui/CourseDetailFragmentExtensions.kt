@@ -10,7 +10,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import com.example.tareamov.R
-import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.util.CertificateGenerator
 import com.example.tareamov.util.AnimatedCertificateGenerator
 import com.example.tareamov.util.CourseProgressManager
@@ -23,7 +24,7 @@ import androidx.appcompat.app.AlertDialog
 import org.json.JSONObject
 import android.content.Intent
 import android.net.Uri
-import com.example.tareamov.service.SupabaseClient
+// BackendApiService replaces SupabaseClient
 import android.view.LayoutInflater
 import com.example.tareamov.network.PSEBank
 import android.widget.ArrayAdapter
@@ -44,7 +45,7 @@ private val paymentApi by lazy {
     val baseUrl = if (USE_LOCAL_ENV) {
         "http://10.0.2.2:3001/"
     } else {
-        "https://mcp-backenddeploy-production.up.railway.app/" 
+        com.example.tareamov.BuildConfig.BACKEND_URL.let { if (it.endsWith("/")) it else "$it/" } 
     }
     android.util.Log.d("PaymentSetup", "Payment API initialized with URL: $baseUrl")
     PaymentApi.create(baseUrl)
@@ -183,7 +184,8 @@ fun Fragment.showPaymentOptions(
         
         // 1. Resolve User ID if not provided
         val actualUserId = if (userId != -1L) userId else withContext(Dispatchers.IO) {
-            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
+            val userResult = BackendApiService.getUserByUsername(username)
+            if (userResult is ApiResult.Success) userResult.data?.id else null
         }
 
         if (actualUserId == null || actualUserId == -1L) {
@@ -408,11 +410,15 @@ private fun showCertificateTypeDialog(context: android.content.Context, courseId
 private fun generateCertificate(context: android.content.Context, courseId: Int, username: String, averageGrade: Float, animated: Boolean) {
     CoroutineScope(Dispatchers.IO).launch {
         try {
-            val db = AppDatabase.getDatabase(context)
-            val courseDetails = db.videoDao().getVideoById(courseId.toLong())
-            val creatorUsername = courseDetails?.username ?: ""
-            val courseName = courseDetails?.title ?: "Curso"
-            val topics = db.topicDao().getTopicsByCourse(courseId.toLong())
+            val courseResult = BackendApiService.getCourseById(courseId.toLong())
+            val courseData = if (courseResult is ApiResult.Success) courseResult.data else null
+            val creatorUsername = courseData?.creatorUserId?.let { uid ->
+                val uResult = BackendApiService.getUserById(uid)
+                if (uResult is ApiResult.Success) uResult.data?.usuario ?: "" else ""
+            } ?: ""
+            val courseName = courseData?.title ?: "Curso"
+            val topicsResult = BackendApiService.getTopicsByCourse(courseId.toLong())
+            val topics = if (topicsResult is ApiResult.Success) topicsResult.data ?: emptyList() else emptyList()
             val courseTopic = if (topics.isNotEmpty()) topics[0].name else "General"
             withContext(Dispatchers.Main) {
                 if (animated) {

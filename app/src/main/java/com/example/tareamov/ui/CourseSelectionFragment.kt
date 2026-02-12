@@ -76,7 +76,9 @@ class CourseSelectionFragment : Fragment() {
         // Get current user ID
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val currentUserId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(currentUsername!!)
+                com.example.tareamov.service.BackendApiService.initialize(requireContext())
+                val userResult = com.example.tareamov.service.BackendApiService.getUserByUsername(currentUsername!!)
+                val currentUserId = if (userResult is com.example.tareamov.service.ApiResult.Success) userResult.data?.id else null
                 if (currentUserId == null) {
                     withContext(Dispatchers.Main) {
                         android.widget.Toast.makeText(requireContext(), "❌ Error: No se pudo obtener tu ID de usuario", android.widget.Toast.LENGTH_SHORT).show()
@@ -95,25 +97,18 @@ class CourseSelectionFragment : Fragment() {
                     return@launch
                 }
 
-                // Check if user is enrolled in the course
-                val isEnrolled = com.example.tareamov.service.SupabaseClient.isUserEnrolled(currentUserId, course.id)
-                
                 // Check if user is subscribed to the course creator
-                val db = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
-                val isSubscribed = db.subscriptionDao().isUserSubscribedToCreator(currentUserId, creatorUserId)
+                val subResult = com.example.tareamov.service.BackendApiService.checkSubscription(creatorUserId)
+                val isSubscribed = subResult is com.example.tareamov.service.ApiResult.Success && subResult.data == true
 
                 withContext(Dispatchers.Main) {
                     when {
-                        isEnrolled -> {
-                            // User is enrolled, allow access
-                            navigateToReinforcementLearning(course)
-                        }
                         isSubscribed -> {
                             // User is subscribed to creator, allow access
                             navigateToReinforcementLearning(course)
                         }
                         course.price > 0 -> {
-                            // Paid course and not enrolled/subscribed
+                            // Paid course and not subscribed
                             android.widget.Toast.makeText(requireContext(), "❌ Este es un curso de pago. Debes inscribirte o suscribirte al creador para acceder.", android.widget.Toast.LENGTH_LONG).show()
                         }
                         else -> {
@@ -151,64 +146,14 @@ class CourseSelectionFragment : Fragment() {
     private fun autoEnrollInCourse(course: Course, userId: Long) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val db = com.example.tareamov.data.AppDatabase.getDatabase(requireContext())
-                
-                // Check if already enrolled
-                val existingProgreso = db.progresoEstudianteDao().getProgreso(userId, course.id)
-                if (existingProgreso != null) {
-                    android.util.Log.d("CourseSelectionFragment", "User already enrolled in course ${course.id}")
-                    return@launch
+                com.example.tareamov.service.BackendApiService.initialize(requireContext())
+                // Subscribe to the course creator to mark enrollment
+                val result = com.example.tareamov.service.BackendApiService.subscribe(course.creatorUserId)
+                if (result is com.example.tareamov.service.ApiResult.Success) {
+                    android.util.Log.d("CourseSelectionFragment", "✅ Auto-enrolled in course ${course.id}")
+                } else if (result is com.example.tareamov.service.ApiResult.Error) {
+                    android.util.Log.e("CourseSelectionFragment", "Error auto-enrolling: ${result.message}")
                 }
-                
-                // Ensure course exists in local DB
-                val existingCourse = db.courseDao().getCourseById(course.id)
-                if (existingCourse == null) {
-                    db.courseDao().insertCourse(course)
-                }
-                
-                // Get total tasks for this course
-                val topics = db.topicDao().getTopicsByCourse(course.id)
-                val topicIds = topics.map { it.id }
-                val totalTasks = if (topicIds.isNotEmpty()) {
-                    db.taskDao().getTasksByTopicIds(topicIds).size
-                } else 0
-                
-                // Create initial progress record
-                val progreso = com.example.tareamov.data.entity.ProgresoEstudiante(
-                    usuarioEstudiante = userId,
-                    cursoId = course.id,
-                    tareasCompletadas = 0,
-                    tareasTotales = totalTasks,
-                    porcentajeProgreso = 0f,
-                    calificacionPonderada = null,
-                    promedio = null,
-                    estado = "Perdido",
-                    ultimaCalculadaEn = System.currentTimeMillis()
-                )
-                
-                db.progresoEstudianteDao().insertProgreso(progreso)
-                android.util.Log.d("CourseSelectionFragment", "✅ Auto-enrolled in course ${course.id}")
-                
-                // Sync to Supabase in background
-                val syncRepo = com.example.tareamov.data.sync.SyncRepository(
-                    db.usuarioDao(),
-                    db.personaDao(),
-                    db.topicDao(),
-                    db.contentItemDao(),
-                    db.taskDao(),
-                    db.subscriptionDao(),
-                    db.taskSubmissionDao(),
-                    db.videoDao(),
-                    db.courseDao(),
-                    db.rolDao(),
-                    db.recursoDao(),
-                    db.rolRecursoDao(),
-                    db.chatMessageDao(),
-                    db.fileContextDao(),
-                    db.progresoEstudianteDao()
-                )
-                syncRepo.syncProgresoToSupabase(progreso)
-                
             } catch (e: Exception) {
                 android.util.Log.e("CourseSelectionFragment", "Error auto-enrolling in course", e)
             }

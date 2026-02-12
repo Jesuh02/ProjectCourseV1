@@ -4,9 +4,10 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.tareamov.data.sync.SyncRepository
 import com.example.tareamov.network.MicroservicioApi
 import com.example.tareamov.network.MicroservicioPromptRequest
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ServerEndpointResolver
 import com.example.tareamov.work.BackgroundTaskManager
 import com.google.gson.Gson
@@ -20,13 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
-import com.example.tareamov.service.SupabaseClient
-import com.example.tareamov.service.MCPHttpClient
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 
 data class QuizQuestion(
     val question: String,
@@ -66,8 +61,7 @@ sealed class ReinforcementState {
 }
 
 class ReinforcementLearningViewModel(
-    application: Application,
-    private val syncRepository: SyncRepository
+    application: Application
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow<ReinforcementState>(ReinforcementState.Initial)
@@ -92,59 +86,28 @@ class ReinforcementLearningViewModel(
     private val _analyzedFiles = MutableStateFlow<List<AnalyzedFile>>(emptyList())
     val analyzedFiles: StateFlow<List<AnalyzedFile>> = _analyzedFiles.asStateFlow()
 
-    // Configuration matching ChatBotFragment - prefer discovered local MCP host
+    // Configuration: STRICTLY use BuildConfig.BACKEND_URL per build variant (QA → QA server, Production → Production server)
+    // No local network scanning — each build variant MUST only communicate with its own server.
     private val API_KEY = "tareamov-mcp-api-key-2025-secure"
     private val BASE_URL: String by lazy {
-        ServerEndpointResolver.peekMcpBaseUrl()?.let { peek ->
-            if (peek.endsWith("/")) peek else "$peek/"
-        } ?: run {
-            val fingerprint = try { android.os.Build.FINGERPRINT ?: "" } catch (e: Exception) { "" }
-            val isEmu = fingerprint.startsWith("generic") || fingerprint.startsWith("unknown")
-            if (isEmu) "http://10.0.2.2:3000/" else "https://mcp-backenddeploy-production.up.railway.app/"
-        }
+        val railwayUrl = com.example.tareamov.BuildConfig.BACKEND_URL.ifBlank { "https://mcp-backenddeploy-production.up.railway.app" }
+        if (railwayUrl.endsWith("/")) railwayUrl else "$railwayUrl/"
     }
     private val OLLAMA_URL = BASE_URL.trimEnd('/')
 
     init {
-        // Initialize the ServerEndpointResolver with the application context
+        // Initialize BackendApiService and ServerEndpointResolver
+        BackendApiService.initialize(application.applicationContext)
         ServerEndpointResolver.initialize(application)
-        // Fast-resolve MCP endpoint and prefer local Docker host when available for testing
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                // Honor forced pref if present
-                ServerEndpointResolver.getForcedMcpBaseUrl()?.let { forced ->
-                    try {
-                        if (ServerEndpointResolver.isServiceReachable(forced)) {
-                            MCPHttpClient(application).setForcedBaseUrl(forced)
-                            Log.i("ReinforcementVM", "Using forced MCP URL from prefs: $forced")
-                            return@launch
-                        }
-                    } catch (_: Exception) {}
-                }
-
-                val resolved = ServerEndpointResolver.fastResolveMcpBaseUrl()
-                if (!resolved.isNullOrBlank()) {
-                    MCPHttpClient(application).setForcedBaseUrl(resolved)
-                    Log.i("ReinforcementVM", "Fast-resolved MCP base URL: $resolved")
-                }
-            } catch (e: Exception) {
-                Log.d("ReinforcementVM", "fastResolve/init error: ${e.message}")
-            }
-        }
+        // STRICT BUILD VARIANT ROUTING: Always use BuildConfig.BACKEND_URL
+        Log.i("ReinforcementVM", "Build variant backend URL: ${com.example.tareamov.BuildConfig.BACKEND_URL}")
+        Log.i("ReinforcementVM", "Using strict build variant routing (no local discovery)")
     }
 
     private fun createApi(): MicroservicioApi {
-        // Try a very fast local resolution first (200ms). If found, use it; otherwise use BASE_URL.
-        val resolvedBase = try {
-            kotlinx.coroutines.runBlocking {
-                ServerEndpointResolver.fastResolveMcpBaseUrl()
-            }
-        } catch (e: Exception) { null }
-
-        val effectiveBase = when {
-            !resolvedBase.isNullOrBlank() -> if (resolvedBase.endsWith("/")) resolvedBase else "$resolvedBase/"
-            else -> BASE_URL
-        }
+        // STRICT: Always use BuildConfig.BACKEND_URL — no local resolution
+        // QA build → QA server, Production build → Production server
+        val effectiveBase = BASE_URL
 
         val okHttpClient = okhttp3.OkHttpClient.Builder()
             .connectTimeout(0, TimeUnit.MILLISECONDS) // no connect timeout
@@ -152,17 +115,20 @@ class ReinforcementLearningViewModel(
             .writeTimeout(0, TimeUnit.MILLISECONDS)   // no write timeout
             .addInterceptor { chain ->
                 val originalRequest = chain.request()
-                val requestWithApiKey = originalRequest.newBuilder()
+                val builder = originalRequest.newBuilder()
                     .header("X-API-Key", API_KEY)
-                    .build()
-                chain.proceed(requestWithApiKey)
+                // Per-request Supabase routing for production build variant
+                val supaUrl = com.example.tareamov.BuildConfig.SUPABASE_URL
+                val supaKey = com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY
+                if (supaUrl.isNotBlank()) builder.header("X-Supabase-Url", supaUrl)
+                if (supaKey.isNotBlank()) builder.header("X-Supabase-Key", supaKey)
+                chain.proceed(builder.build())
             }
             .build()
 
-        // Ensure Retrofit backup client targets the CLOUD endpoint when BASE_URL is a local/emulator address.
-        val cloudCandidate = ServerEndpointResolver.RAILWAY_MCP_URL.let { if (it.endsWith("/")) it else "$it/" }
-        val isLocalHost = listOf("10.0.2.2", "127.0.0.1", "localhost", "host.docker.internal").any { BASE_URL.contains(it) }
-        val retrofitBase = if (isLocalHost) cloudCandidate else if (BASE_URL.endsWith("/")) BASE_URL else "$BASE_URL/"
+        // STRICT: Always use the build variant's backend URL (no local/cloud switching)
+        val retrofitBase = effectiveBase
+        Log.d("ReinforcementVM", "Retrofit base URL (strict per build variant): $retrofitBase")
 
         val retrofit = Retrofit.Builder()
             .baseUrl(retrofitBase)
@@ -204,10 +170,13 @@ class ReinforcementLearningViewModel(
                 val sessionManager = com.example.tareamov.util.SessionManager.getInstance(getApplication())
                 val userId = sessionManager.getUserId()
 
-                // 2. Fetch Context from Repository
-                // Use IO dispatcher explicitly for DB operations
+                // 2. Fetch Context from BackendApiService
+                // Use IO dispatcher explicitly for network operations
                 val (topics, tasks, contentItems) = withContext(Dispatchers.IO) {
-                    var t = syncRepository.fetchTopicsByCourseFromSupabase(courseId)
+                    var t = when (val result = BackendApiService.getTopicsByCourse(courseId)) {
+                        is ApiResult.Success -> result.data ?: emptyList()
+                        is ApiResult.Error -> emptyList()
+                    }
 
                     // Filter by Topic if selected
                     if (topicId != -1L) {
@@ -216,7 +185,13 @@ class ReinforcementLearningViewModel(
 
                     val tIds = t.map { it.id }
                     var k = if (tIds.isNotEmpty()) {
-                        syncRepository.fetchTasksByTopicIdsFromSupabase(tIds)
+                        // Fetch tasks for each topic
+                        tIds.flatMap { tid ->
+                            when (val result = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> result.data ?: emptyList()
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                     } else {
                         emptyList()
                     }
@@ -226,21 +201,39 @@ class ReinforcementLearningViewModel(
                         k = k.filter { it.id == taskId }
                     }
 
-                    // Fetch Content Items (Files)
-                    // If taskId is selected, prioritize Task files + Topic general files.
-                    // If only topicId is selected, use all Topic files.
+                    // Fetch Content Items (Files) from backend
                     val c = if (taskId != -1L) {
-                        val taskItems = syncRepository.fetchContentItemsByTaskIdFromSupabase(taskId)
-                        val topicItems = if (tIds.isNotEmpty()) syncRepository.fetchContentItemsByTopicIdsFromSupabase(tIds) else emptyList()
-
-                        // Merge: Task Items + (Topic Items where taskId is null/0/same)
-                        // Note: If topicItems contains the same task items, distinctBy will handle duplicates.
-                        // We filter topicItems to avoid including files from OTHER tasks.
+                        val taskItems = when (val result = BackendApiService.getContentItemsByTask(taskId)) {
+                            is ApiResult.Success -> result.data ?: emptyList()
+                            is ApiResult.Error -> emptyList()
+                        }
+                        // Also get topic-level items
+                        val topicItems = tIds.flatMap { tid ->
+                            // Get tasks for this topic, then content items
+                            when (val tResult = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> (tResult.data ?: emptyList()).flatMap { task ->
+                                    when (val ciResult = BackendApiService.getContentItemsByTask(task.id)) {
+                                        is ApiResult.Success -> ciResult.data ?: emptyList()
+                                        is ApiResult.Error -> emptyList()
+                                    }
+                                }
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                         val relevantTopicItems = topicItems.filter { it.taskId == null || it.taskId == 0L || it.taskId == taskId }
-
                         (taskItems + relevantTopicItems).distinctBy { it.id }
                     } else if (tIds.isNotEmpty()) {
-                        syncRepository.fetchContentItemsByTopicIdsFromSupabase(tIds)
+                        tIds.flatMap { tid ->
+                            when (val tResult = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> (tResult.data ?: emptyList()).flatMap { task ->
+                                    when (val ciResult = BackendApiService.getContentItemsByTask(task.id)) {
+                                        is ApiResult.Success -> ciResult.data ?: emptyList()
+                                        is ApiResult.Error -> emptyList()
+                                    }
+                                }
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                     } else {
                         emptyList()
                     }
@@ -263,9 +256,18 @@ class ReinforcementLearningViewModel(
                     return@launch
                 }
 
-                // Fetch History to avoid repetition
+                // Fetch History to avoid repetition via backend
                 val historyQuestions = if (userId > 0) {
-                    SupabaseClient.fetchReinforcementHistory(userId, courseId, topicId, taskId)
+                    try {
+                        val histResult = BackendApiService.getReinforcementHistory(courseId)
+                        when (histResult) {
+                            is ApiResult.Success -> (histResult.data ?: emptyList()).mapNotNull { it.get("question")?.asString }
+                            is ApiResult.Error -> emptyList()
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ReinforcementVM", "Error fetching history: ${e.message}")
+                        emptyList()
+                    }
                 } else emptyList()
 
                 // 3. Build Prompt (Concise)
@@ -376,108 +378,43 @@ class ReinforcementLearningViewModel(
                 // 4. Call LLM via Backend
                 Log.d("ReinforcementVM", "Invocando MicroservicioPromptRequest con userId=$userId, courseId=$courseId, topicId=$topicId, taskId=$taskId")
 
-                // Quick local attempt: try local Docker MCP endpoints with very short timeout.
-                suspend fun tryLocalQuick(prompt: String, jsonContent: String, ollamaUrl: String, model: String): String? = withContext(Dispatchers.IO) {
-                    try {
-                        val candidates = mutableListOf<String>()
-                        // Small, prioritized list of likely local MCP endpoints (fast probes)
-                        try {
-                            val likely = ServerEndpointResolver.getLikelyMcpCandidates()
-                            candidates.addAll(likely)
-                        } catch (e: Exception) {
-                            ServerEndpointResolver.peekMcpBaseUrl()?.let { candidates.add(it.trimEnd('/')) }
-                        }
-
-                        val client = OkHttpClient.Builder()
-                            .connectTimeout(300, TimeUnit.MILLISECONDS) // very short probe to fallback quickly
-                            .readTimeout(2000, TimeUnit.MILLISECONDS)
-                            .build()
-
-                        val mediaType = "application/json; charset=utf-8".toMediaType()
-
-                        val payload = JSONObject().apply {
-                            put("prompt", prompt)
-                            put("jsonContent", jsonContent)
-                            put("ollamaUrl", ollamaUrl)
-                            put("model", model)
-                            // Pass context IDs so RAG ingestion/filtering works correctly
-                            if (taskId > -1L) put("taskId", taskId)
-                            if (topicId > -1L) put("topicId", topicId)
-                            if (courseId > 0) put("courseId", courseId)
-                            // contentItemId not currently tracked in this scope, but generic RAG works with task/topic
-                        }.toString()
-
-                        for (base in candidates) {
-                            try {
-                                val url = if (base.endsWith("/")) base + "procesar-prompt" else "$base/procesar-prompt"
-                                val req = Request.Builder()
-                                    .url(url)
-                                    .post(payload.toRequestBody(mediaType))
-                                    .header("X-API-Key", API_KEY)
-                                    .header("Connection", "close")
-                                    .build()
-
-                                client.newCall(req).execute().use { resp ->
-                                    val body = resp.body?.string() ?: ""
-                                    if (resp.isSuccessful && body.isNotBlank()) {
-                                        try {
-                                            val j = JSONObject(body)
-                                            return@withContext j.optString("respuesta_texto", j.optString("respuesta", body))
-                                        } catch (e: Exception) {
-                                            return@withContext body
-                                        }
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.d("ReinforcementVM", "Local attempt error for $base: ${e.message}")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.d("ReinforcementVM", "tryLocalQuick error: ${e.message}")
-                    }
-                    return@withContext null
-                }
-
+                // STRICT BUILD VARIANT ROUTING: Call ONLY the cloud API matching this build variant
+                // No local network scanning — QA build → QA server, Production build → Production server
                 var jsonText: String? = null
                 var lastError: String? = null
 
-                // 1) Quick local try
-                try {
-                    val local = tryLocalQuick(prompt, jsonContentString, OLLAMA_URL, "qwen/qwen3-embedding-8b")
-                    if (!local.isNullOrBlank()) {
-                        jsonText = local
-                        Log.d("ReinforcementVM", "Local quick endpoint returned result")
-                    }
-                } catch (e: Exception) {
-                    Log.w("ReinforcementVM", "Local quick attempt threw: ${e.message}")
-                }
+                Log.d("ReinforcementVM", "🔒 Strict routing: sending request to ${BASE_URL}procesar-prompt")
 
-                // 2) If no local result, call cloud API immediately (fast path)
-                if (jsonText.isNullOrBlank()) {
+                try {
+                    val requestBody = MicroservicioPromptRequest(
+                        prompt = prompt,
+                        jsonContent = jsonContentString,
+                        ollamaUrl = OLLAMA_URL,
+                        model = "qwen/qwen3-embedding-8b",
+                        userId = if (userId > 0) userId else null,
+                        courseId = if (courseId > 0) courseId else null,
+                        topicId = if (topicId > -1L) topicId else null,
+                        taskId = if (taskId > -1L) taskId else null
+                    )
                     try {
-                        val requestBody = MicroservicioPromptRequest(
-                            prompt = prompt,
-                            jsonContent = jsonContentString,
-                            ollamaUrl = OLLAMA_URL,
-                            model = "qwen/qwen3-embedding-8b",
-                            userId = if (userId > 0) userId else null,
-                            courseId = if (courseId > 0) courseId else null,
-                            topicId = if (topicId > -1L) topicId else null,
-                            taskId = if (taskId > -1L) taskId else null
-                        )
-                        try {
-                            val cloudResp = withContext(Dispatchers.IO) { api.procesarPrompt(requestBody) }
-                            jsonText = cloudResp.respuesta_texto
-                            lastError = cloudResp.error
-                            Log.d("ReinforcementVM", "Cloud API returned; response error=${cloudResp.error}")
-                        } catch (e: Exception) {
-                            lastError = e.message
-                            Log.e("ReinforcementVM", "Cloud API call failed: ${e.message}")
-                        }
+                        val cloudRespWrapper = withContext(Dispatchers.IO) { api.procesarPrompt(requestBody) }
+                         
+                         if (!cloudRespWrapper.success || cloudRespWrapper.data == null) {
+                             lastError = cloudRespWrapper.error ?: "Unknown error from server wrapper"
+                             Log.e("ReinforcementVM", "API returned success=false or null data: $lastError")
+                         } else {
+                             val cloudResp = cloudRespWrapper.data
+                             jsonText = cloudResp.respuesta_texto
+                             lastError = cloudResp.error
+                             Log.d("ReinforcementVM", "API returned from ${BASE_URL}; response error=${cloudResp.error}")
+                         }
                     } catch (e: Exception) {
                         lastError = e.message
-                        Log.e("ReinforcementVM", "Cloud API call failed: ${e.message}")
+                        Log.e("ReinforcementVM", "API call to ${BASE_URL} failed: ${e.message}")
                     }
+                } catch (e: Exception) {
+                    lastError = e.message
+                    Log.e("ReinforcementVM", "API call failed: ${e.message}")
                 }
 
                 if (jsonText.isNullOrBlank()) {
@@ -587,9 +524,36 @@ class ReinforcementLearningViewModel(
 
                     _uiState.value = ReinforcementState.Success(finalQuestions)
 
-                    // Save to Supabase History via SyncRepository
-                    if (userId > 0) {
-                        syncRepository.saveReinforcementHistory(userId, courseId, topicId, taskId, finalQuestions)
+                    // Save questions to backend via /save-questions endpoint
+                    // This is the SINGLE save point — uses MCPService with full uniqueness flow
+                    // (hash + embedding + semantic dedup) and correctly passes topicId/taskId.
+                    // LLMDomainService.processPrompt does NOT save to avoid duplication.
+                    val isFallbackQuestions = finalQuestions.any { it.question.contains("(Ref:") || it.question.contains("Definición técnica precisa") }
+                    
+                    if (userId > 0 && !isFallbackQuestions) {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                BackendApiService.saveReinforcementSession(
+                                    userId,
+                                    courseId,
+                                    finalQuestions.map { q ->
+                                        mapOf(
+                                            "question" to q.question,
+                                            "options" to q.options,
+                                            "correctIndex" to q.correctIndex,
+                                            "explanation" to (q.explanation ?: "")
+                                        )
+                                    },
+                                    topicId = if (topicId > 0) topicId else null,
+                                    taskId = if (taskId > 0) taskId else null
+                                )
+                            }
+                            Log.d("ReinforcementVM", "✅ Questions saved to backend (session + history + options) via /save-questions")
+                        } catch (e: Exception) {
+                            Log.w("ReinforcementVM", "⚠️ Save to /save-questions failed: ${e.message}")
+                        }
+                    } else if (isFallbackQuestions) {
+                        Log.d("ReinforcementVM", "⏭️ Skipping save for fallback/generic questions (not derived from LLM)")
                     }
                 }
                 
@@ -747,9 +711,12 @@ class ReinforcementLearningViewModel(
     fun loadContextInfo(courseId: Long, topicId: Long = -1L, taskId: Long = -1L) {
         viewModelScope.launch {
             try {
-                // Fetch Context from Repository
+                // Fetch Context from BackendApiService
                 val (topics, tasks, contentItems) = withContext(Dispatchers.IO) {
-                    var t = syncRepository.fetchTopicsByCourseFromSupabase(courseId)
+                    var t = when (val result = BackendApiService.getTopicsByCourse(courseId)) {
+                        is ApiResult.Success -> result.data ?: emptyList()
+                        is ApiResult.Error -> emptyList()
+                    }
 
                     // Filter by Topic if selected
                     if (topicId != -1L) {
@@ -758,7 +725,12 @@ class ReinforcementLearningViewModel(
 
                     val tIds = t.map { it.id }
                     var k = if (tIds.isNotEmpty()) {
-                        syncRepository.fetchTasksByTopicIdsFromSupabase(tIds)
+                        tIds.flatMap { tid ->
+                            when (val result = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> result.data ?: emptyList()
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                     } else {
                         emptyList()
                     }
@@ -768,14 +740,37 @@ class ReinforcementLearningViewModel(
                         k = k.filter { it.id == taskId }
                     }
 
-                    // Fetch Content Items (Files)
+                    // Fetch Content Items (Files) from backend
                     val c = if (taskId != -1L) {
-                        val taskItems = syncRepository.fetchContentItemsByTaskIdFromSupabase(taskId)
-                        val topicItems = if (tIds.isNotEmpty()) syncRepository.fetchContentItemsByTopicIdsFromSupabase(tIds) else emptyList()
+                        val taskItems = when (val result = BackendApiService.getContentItemsByTask(taskId)) {
+                            is ApiResult.Success -> result.data ?: emptyList()
+                            is ApiResult.Error -> emptyList()
+                        }
+                        val topicItems = tIds.flatMap { tid ->
+                            when (val tResult = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> (tResult.data ?: emptyList()).flatMap { task ->
+                                    when (val ciResult = BackendApiService.getContentItemsByTask(task.id)) {
+                                        is ApiResult.Success -> ciResult.data ?: emptyList()
+                                        is ApiResult.Error -> emptyList()
+                                    }
+                                }
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                         val relevantTopicItems = topicItems.filter { it.taskId == null || it.taskId == 0L || it.taskId == taskId }
                         (taskItems + relevantTopicItems).distinctBy { it.id }
                     } else if (tIds.isNotEmpty()) {
-                        syncRepository.fetchContentItemsByTopicIdsFromSupabase(tIds)
+                        tIds.flatMap { tid ->
+                            when (val tResult = BackendApiService.getTasksByTopic(tid)) {
+                                is ApiResult.Success -> (tResult.data ?: emptyList()).flatMap { task ->
+                                    when (val ciResult = BackendApiService.getContentItemsByTask(task.id)) {
+                                        is ApiResult.Success -> ciResult.data ?: emptyList()
+                                        is ApiResult.Error -> emptyList()
+                                    }
+                                }
+                                is ApiResult.Error -> emptyList()
+                            }
+                        }
                     } else {
                         emptyList()
                     }

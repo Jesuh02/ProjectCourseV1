@@ -32,7 +32,7 @@ import androidx.navigation.findNavController
 import coil.compose.AsyncImage
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.Usuario
-import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.launch
 
@@ -76,7 +76,10 @@ fun SubscriptionsScreen(onBackClick: () -> Unit, onUserClick: (String) -> Unit) 
         val sessionManager = SessionManager.getInstance(context)
         val userId = sessionManager.getUserId()
         if (userId != -1L) {
-            subscriptions = SupabaseClient.fetchSubscribedCreators(userId)
+            val creatorIds = BackendApiService.getMySubscribedCreators().getOrNull() ?: emptyList()
+            if (creatorIds.isNotEmpty()) {
+                subscriptions = BackendApiService.getUsersByIds(creatorIds).getOrNull() ?: emptyList()
+            }
         }
         isLoading = false
     }

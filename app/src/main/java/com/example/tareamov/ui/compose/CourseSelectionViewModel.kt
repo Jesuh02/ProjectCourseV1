@@ -1,11 +1,12 @@
 package com.example.tareamov.ui.compose
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Course
-import com.example.tareamov.data.sync.SyncRepository
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -43,37 +44,10 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     private val _refreshTrigger = MutableStateFlow(0)
     val refreshTrigger: StateFlow<Int> = _refreshTrigger.asStateFlow()
     
-    private val database by lazy { AppDatabase.getDatabase(getApplication()) }
-    
-    // Create SyncRepository instance manually since we don't have DI
-    private val syncRepo by lazy {
-        SyncRepository(
-            database.usuarioDao(),
-            database.personaDao(),
-            database.topicDao(),
-            database.contentItemDao(),
-            database.taskDao(),
-            database.subscriptionDao(),
-            database.taskSubmissionDao(),
-            database.videoDao(),
-            database.courseDao(),
-            database.rolDao(),
-            database.recursoDao(),
-            database.rolRecursoDao(),
-            database.chatMessageDao(),
-            database.fileContextDao(),
-            database.progresoEstudianteDao(),
-            database.likeDao(),
-            database.videoCommentDao()
-        ).apply {
-            initWithContext(getApplication())
-        }
-    }
-    
     init {
+        BackendApiService.initialize(application.applicationContext)
         loadCurrentUserId()
         loadEnrolledCourses()
-        loadSubscriptionStatus()
     }
     
     /**
@@ -86,14 +60,13 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                 val username = session.getUsername()
                 _currentUsername.value = username
                 
-                if (username != null) {
-                    val userId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
-                    }
+                // Use session user ID directly (set during login via BackendApiService)
+                val userId = session.getUserId()
+                if (userId > 0L) {
                     _currentUserId.value = userId
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("CourseSelectionVM", "Error loading user ID: ${e.message}")
             }
         }
     }
@@ -104,7 +77,7 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     }
     
     /**
-     * Load subscription status for enrolled courses from Supabase
+     * Load subscription status for enrolled courses from backend
      */
     private fun loadSubscriptionStatus() {
         viewModelScope.launch {
@@ -114,11 +87,11 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                 if (userId > 0L) {
                     val subscriptionMap = mutableMapOf<Long, Boolean>()
                     
-                    // Check subscription status for each course creator from Supabase (real-time)
+                    // Check subscription status for each course creator from backend
                     allEnrolledCourses.forEach { course ->
                         val isSubscribed = withContext(Dispatchers.IO) {
-                            // Use Supabase for real-time subscription status
-                            com.example.tareamov.service.SupabaseClient.isSubscribedRemote(userId, course.creatorUserId)
+                            val result = BackendApiService.checkSubscription(course.creatorUserId)
+                            result.getOrNull() ?: false
                         }
                         subscriptionMap[course.creatorUserId] = isSubscribed
                     }
@@ -126,7 +99,7 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                     _subscriptionStatus.value = subscriptionMap
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("CourseSelectionVM", "Error loading subscription status: ${e.message}")
             }
         }
     }
@@ -139,34 +112,25 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     }
     
     /**
-     * Handle subscription button click
+     * Handle subscription button click via backend
      */
     fun handleSubscriptionClick(course: Course, isCurrentlySubscribed: Boolean) {
         viewModelScope.launch {
             try {
                 val userId = _currentUserId.value ?: return@launch
                 
-                if (userId <= 0L) {
-                    // Handle error - user not logged in
-                    return@launch
-                }
+                if (userId <= 0L) return@launch
                 
                 val creatorUserId = course.creatorUserId
                 
                 // Prevent self-subscription
-                if (userId == creatorUserId) {
-                    return@launch
-                }
+                if (userId == creatorUserId) return@launch
                 
                 withContext(Dispatchers.IO) {
                     if (isCurrentlySubscribed) {
-                        // Unsubscribe - sync to local DB and Supabase
-                        database.subscriptionDao().unsubscribeFromCreator(userId, creatorUserId)
-                        com.example.tareamov.service.SupabaseClient.unsubscribeFromCreator(userId, creatorUserId)
+                        BackendApiService.unsubscribe(creatorUserId)
                     } else {
-                        // Subscribe - sync to local DB and Supabase
-                        database.subscriptionDao().subscribeToCreator(userId, creatorUserId)
-                        com.example.tareamov.service.SupabaseClient.subscribeToCreator(userId, creatorUserId)
+                        BackendApiService.subscribe(creatorUserId)
                     }
                 }
                 
@@ -179,7 +143,7 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                 _refreshTrigger.value = _refreshTrigger.value + 1
                 
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("CourseSelectionVM", "Error toggling subscription: ${e.message}")
             }
         }
     }
@@ -205,35 +169,38 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                 val userId = session.getUserId()
                 _currentUsername.value = session.getUsername()
                 
-                // Also fetch and store the actual user ID from Supabase for accurate subscription checks
-                if (_currentUsername.value != null && _currentUserId.value == null) {
-                    val supabaseUserId = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(_currentUsername.value!!)
-                    }
-                    _currentUserId.value = supabaseUserId
+                if (_currentUserId.value == null && userId > 0L) {
+                    _currentUserId.value = userId
                 }
                 
                 if (userId > 0L) {
-                    // 1. Fetch ALL courses from Supabase (all creators, including current user)
+                    // Fetch ALL courses from backend
                     val allCourses = try {
                         withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.SupabaseClient.fetchCourses()
+                            val result = BackendApiService.getCourses(page = 1, limit = 200)
+                            when (result) {
+                                is ApiResult.Success -> result.data ?: emptyList()
+                                is ApiResult.Error -> {
+                                    Log.e("CourseSelectionVM", "Error fetching courses: ${result.message}")
+                                    emptyList()
+                                }
+                            }
                         }
                     } catch (e: Exception) {
+                        Log.e("CourseSelectionVM", "Exception fetching courses: ${e.message}")
                         emptyList()
                     }
 
-                    // 2. Show ALL courses sorted by newest first (no filter by creator or enrollment)
+                    // Show ALL courses sorted by newest first
                     val coursesList = allCourses.sortedByDescending { it.timestamp }
                     
-                    // Update master list and displayed list
                     allEnrolledCourses = coursesList
                     _enrolledCourses.value = coursesList
                     
                     // Update subscription status after loading courses
                     loadSubscriptionStatus()
                     
-                    // 3. Update completion status
+                    // Update completion status
                     updateCompletedStatus(coursesList)
                 } else {
                     allEnrolledCourses = emptyList()
@@ -241,7 +208,7 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                     _completedCourseIds.value = emptySet()
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("CourseSelectionVM", "Error loading courses: ${e.message}")
                 _enrolledCourses.value = emptyList()
             } finally {
                 _isLoading.value = false
@@ -257,10 +224,14 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
         try {
             val completedIds = mutableSetOf<Long>()
             
-            // For each course, check if progress is 100%
+            // Fetch progress from backend
             val progresos = try {
                 withContext(Dispatchers.IO) {
-                    syncRepo.fetchProgresosByUsuarioFromSupabase(userId)
+                    val result = BackendApiService.getMyProgress()
+                    when (result) {
+                        is ApiResult.Success -> result.data ?: emptyList()
+                        is ApiResult.Error -> emptyList()
+                    }
                 }
             } catch (e: Exception) {
                 emptyList()
@@ -274,7 +245,7 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
             
             _completedCourseIds.value = completedIds
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("CourseSelectionVM", "Error updating completed status: ${e.message}")
         }
     }
 }

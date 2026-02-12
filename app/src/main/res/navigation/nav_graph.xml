@@ -53,6 +53,14 @@
             app:argType="string"
             app:nullable="true"
             android:defaultValue="@null" />
+        <argument
+            android:name="openComments"
+            app:argType="boolean"
+            android:defaultValue="false" />
+        <argument
+            android:name="targetCommentId"
+            app:argType="long"
+            android:defaultValue="-1L" />
         <!-- Self-navigation action for safety -->
         <action
             android:id="@+id/action_videoHomeFragment_to_videoHomeFragment"
@@ -135,8 +143,15 @@
         android:label="Notificaciones"
         tools:layout="@layout/fragment_notificaciones">
         <action
+            android:id="@+id/action_notificacionesFragment_to_taskSubmissionFragment"
+            app:destination="@id/taskSubmissionFragment" />
+        <action
+            android:id="@+id/action_notificacionesFragment_to_videoDetailsFragment"
+            app:destination="@id/videoDetailsFragment" />
+        <action
             android:id="@+id/action_notificacionesFragment_to_videoHomeFragment"
             app:destination="@id/videoHomeFragment" />
+        <!-- restored missing actions -->
         <action
             android:id="@+id/action_notificacionesFragment_to_exploreFragment"
             app:destination="@id/exploreFragment" />
@@ -152,12 +167,6 @@
         <action
             android:id="@+id/action_notificacionesFragment_to_courseDetailFragment"
             app:destination="@id/courseDetailFragment" />
-        <action
-            android:id="@+id/action_notificacionesFragment_to_videoDetailsFragment"
-            app:destination="@id/videoDetailsFragment" />
-        <action
-            android:id="@+id/action_notificacionesFragment_to_taskSubmissionFragment"
-            app:destination="@id/taskSubmissionFragment" />
     </fragment>
 
     <!-- Single registerFragment definition -->

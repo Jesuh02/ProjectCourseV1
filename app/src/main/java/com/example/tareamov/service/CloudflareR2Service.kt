@@ -385,11 +385,18 @@ object CloudflareR2Service {
             val sanitizedName = customFileName?.replace(Regex("[^a-zA-Z0-9._-]"), "_")
                 ?: UUID.randomUUID().toString()
             
-            // Avoid double extensions
-            val finalFileName = if (extension.isNotEmpty() && !sanitizedName.endsWith(".$extension", ignoreCase = true)) 
-                "$sanitizedName.$extension" 
-            else 
+            // Avoid double extensions: Ensure name ends with extension exactly once
+            val finalFileName = if (extension.isNotEmpty()) {
+                // Remove extension from end of sanitizedName if present (case insensitive)
+                val baseName = if (sanitizedName.lowercase().endsWith(".$extension")) {
+                    sanitizedName.substring(0, sanitizedName.length - (extension.length + 1))
+                } else {
+                    sanitizedName
+                }
+                "$baseName.$extension"
+            } else {
                 sanitizedName
+            }
                 
             val objectKey = "$folder/$finalFileName"
             
@@ -544,11 +551,17 @@ object CloudflareR2Service {
             val sanitizedName = customFileName?.replace(Regex("[^a-zA-Z0-9._-]"), "_")
                 ?: UUID.randomUUID().toString()
                 
-            // Avoid double extensions
-            val finalFileName = if (extension.isNotEmpty() && !sanitizedName.endsWith(".$extension", ignoreCase = true)) 
-                "$sanitizedName.$extension" 
-            else 
+            // Avoid double extensions: Ensure name ends with extension exactly once
+            val finalFileName = if (extension.isNotEmpty()) {
+                val baseName = if (sanitizedName.lowercase().endsWith(".$extension")) {
+                    sanitizedName.substring(0, sanitizedName.length - (extension.length + 1))
+                } else {
+                    sanitizedName
+                }
+                "$baseName.$extension"
+            } else {
                 sanitizedName
+            }
                 
             val objectKey = "$folder/$finalFileName"
             

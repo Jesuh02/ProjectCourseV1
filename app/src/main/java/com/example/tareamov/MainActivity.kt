@@ -19,6 +19,8 @@ import com.example.tareamov.viewmodel.PersonaViewModel
 import com.example.tareamov.data.AppDatabase // Added
 import com.example.tareamov.data.sync.SyncRepository // Added
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import androidx.lifecycle.lifecycleScope
 import com.example.tareamov.service.SupabaseClient
 
 
@@ -121,19 +123,22 @@ class MainActivity : AppCompatActivity() {
                 println("MainActivity: injected Supabase API key from BuildConfig at runtime")
             } else {
                 // Fallback: try to read an assets file named 'supabase_key.txt' (debug convenience)
-                try {
-                    val am = assets
-                    if (am != null) {
-                        am.open("supabase_key.txt").bufferedReader().use { r ->
-                            val txt = r.readText().trim()
-                            if (txt.isNotEmpty()) {
-                                SupabaseClient.setApiKeyAtRuntime(txt)
-                                println("MainActivity: injected Supabase API key from assets/supabase_key.txt at runtime")
+                // DONE ASYNC to avoid I/O on main thread
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val am = assets
+                        if (am != null) {
+                            am.open("supabase_key.txt").bufferedReader().use { r ->
+                                val txt = r.readText().trim()
+                                if (txt.isNotEmpty()) {
+                                    SupabaseClient.setApiKeyAtRuntime(txt)
+                                    println("MainActivity: injected Supabase API key from assets/supabase_key.txt at runtime")
+                                }
                             }
                         }
+                    } catch (t: Throwable) {
+                        // ignore missing asset - developer can provide local.properties instead
                     }
-                } catch (t: Throwable) {
-                    // ignore missing asset - developer can provide local.properties instead
                 }
             }
         } catch (t: Throwable) {

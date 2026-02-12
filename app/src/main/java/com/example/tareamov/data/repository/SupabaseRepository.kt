@@ -599,7 +599,7 @@ class SupabaseRepository(
                 
                 if (!resp.isSuccessful) {
                     Log.e("SupabaseRepository", "SQL execution failed: code=${resp.code} body=$body")
-                    throw Exception("SQL execution failed: ${resp.message}")
+                    throw Exception("SQL execution failed: ${resp.code} - $body")
                 }
                 
                 // Parse the response as JSON array
@@ -684,7 +684,7 @@ class SupabaseRepository(
      */
     suspend fun verifyTransactionStatus(transactionId: String): Map<String, Any> {
         // Backend URL
-        val backendUrl = "https://mcp-backenddeploy-production.up.railway.app"
+        val backendUrl = com.example.tareamov.BuildConfig.BACKEND_URL
         val url = "$backendUrl/payment/status/$transactionId"
         
         Log.d("SupabaseRepo", "Verifying transaction: $url")
@@ -1081,30 +1081,179 @@ class SupabaseRepository(
     }
     
     /**
-     * Fetch all submissions for a course including student usernames
-     * This uses a raw SQL query to join task_submissions, tasks, topics, and usuarios tables
+     * Fetch all submissions for a course including student usernames.
+     * Strategy:
+     *  1. Try backend API endpoint (handles JOINs server-side)
+     *  2. Fallback to PostgREST individual queries (no execute_sql RPC needed)
      */
     suspend fun fetchCourseSubmissionsWithUsernames(courseId: Long): List<Map<String, Any?>> {
+        // 1. Try backend API (preferred - handles JOINs server-side)
+        try {
+            val backendUrl = com.example.tareamov.BuildConfig.BACKEND_URL
+            if (backendUrl.isNotBlank()) {
+                val url = "${backendUrl.trimEnd('/')}/courses/$courseId/submissions"
+                Log.d("SupabaseRepository", "Fetching submissions via backend: $url")
+
+                val request = Request.Builder()
+                    .url(url)
+                    .get()
+                    .addHeader("Accept", "application/json")
+                    .build()
+
+                client.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string() ?: "[]"
+                        val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
+                        val resultList = mutableListOf<Map<String, Any?>>()
+                        for (element in jsonArray) {
+                            if (element.isJsonObject) {
+                                val obj = element.asJsonObject
+                                val map = mutableMapOf<String, Any?>()
+                                for ((key, value) in obj.entrySet()) {
+                                    map[key] = when {
+                                        value.isJsonNull -> null
+                                        value.isJsonPrimitive -> {
+                                            val p = value.asJsonPrimitive
+                                            when {
+                                                p.isBoolean -> p.asBoolean
+                                                p.isNumber -> p.asNumber
+                                                p.isString -> p.asString
+                                                else -> value.toString()
+                                            }
+                                        }
+                                        else -> value.toString()
+                                    }
+                                }
+                                resultList.add(map)
+                            }
+                        }
+                        Log.d("SupabaseRepository", "Backend returned ${resultList.size} submissions for course $courseId")
+                        return resultList
+                    } else {
+                        Log.w("SupabaseRepository", "Backend submissions endpoint failed: ${resp.code}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseRepository", "Backend submissions request failed, trying PostgREST fallback", e)
+        }
+
+        // 2. Fallback: PostgREST individual queries (no execute_sql RPC needed)
         return try {
-            val sql = """
-                SELECT 
-                    ts.id as submission_id,
-                    ts.task_id,
-                    tk.title as task_title,
-                    ts.student_id,
-                    u.username as student_username,
-                    ts.grade,
-                    ts.submission_date,
-                    ts.file_uri
-                FROM task_submissions ts
-                JOIN tasks tk ON ts.task_id = tk.id
-                JOIN topics t ON tk.topic_id = t.id
-                LEFT JOIN usuarios u ON ts.student_id = u.id
-                WHERE t.course_id = $courseId
-                ORDER BY ts.submission_date DESC
-            """.trimIndent()
-            
-            executeRawQuery(sql)
+            Log.d("SupabaseRepository", "Using PostgREST fallback for course $courseId submissions")
+
+            // Step A: Get topic IDs for this course
+            val topicsUrl = "${supabaseUrl.trimEnd('/')}/rest/v1/topics?course_id=eq.$courseId&select=id"
+            val topicsReq = Request.Builder()
+                .url(topicsUrl).get()
+                .addHeader("apikey", supabaseKey)
+                .addHeader("Authorization", "Bearer $supabaseKey")
+                .addHeader("Accept", "application/json")
+                .build()
+            val topicIds = mutableListOf<Long>()
+            client.newCall(topicsReq).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val arr = gson.fromJson(resp.body?.string() ?: "[]", com.google.gson.JsonArray::class.java)
+                    for (el in arr) {
+                        val id = el.asJsonObject.get("id")?.asLong
+                        if (id != null) topicIds.add(id)
+                    }
+                }
+            }
+            if (topicIds.isEmpty()) return emptyList()
+
+            // Step B: Get tasks for those topics
+            val topicIdsCsv = topicIds.joinToString(",")
+            val tasksUrl = "${supabaseUrl.trimEnd('/')}/rest/v1/tasks?topic_id=in.($topicIdsCsv)&select=id,title,topic_id"
+            val tasksReq = Request.Builder()
+                .url(tasksUrl).get()
+                .addHeader("apikey", supabaseKey)
+                .addHeader("Authorization", "Bearer $supabaseKey")
+                .addHeader("Accept", "application/json")
+                .build()
+            val taskMap = mutableMapOf<Long, String>() // taskId -> title
+            client.newCall(tasksReq).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val arr = gson.fromJson(resp.body?.string() ?: "[]", com.google.gson.JsonArray::class.java)
+                    for (el in arr) {
+                        val obj = el.asJsonObject
+                        val id = obj.get("id")?.asLong ?: continue
+                        val title = obj.get("title")?.asString ?: "Unknown"
+                        taskMap[id] = title
+                    }
+                }
+            }
+            if (taskMap.isEmpty()) return emptyList()
+
+            // Step C: Get submissions for those tasks
+            val taskIdsCsv = taskMap.keys.joinToString(",")
+            val subsUrl = "${supabaseUrl.trimEnd('/')}/rest/v1/task_submissions?task_id=in.($taskIdsCsv)&select=id,task_id,student_id,grade,submission_date,file_uri&order=submission_date.desc"
+            val subsReq = Request.Builder()
+                .url(subsUrl).get()
+                .addHeader("apikey", supabaseKey)
+                .addHeader("Authorization", "Bearer $supabaseKey")
+                .addHeader("Accept", "application/json")
+                .build()
+            data class SubRow(val id: Long, val taskId: Long, val studentId: Long?, val grade: Any?, val submissionDate: Any?, val fileUri: String?)
+            val submissions = mutableListOf<SubRow>()
+            client.newCall(subsReq).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val arr = gson.fromJson(resp.body?.string() ?: "[]", com.google.gson.JsonArray::class.java)
+                    for (el in arr) {
+                        val obj = el.asJsonObject
+                        submissions.add(SubRow(
+                            id = obj.get("id")?.asLong ?: continue,
+                            taskId = obj.get("task_id")?.asLong ?: continue,
+                            studentId = if (obj.has("student_id") && !obj.get("student_id").isJsonNull) obj.get("student_id").asLong else null,
+                            grade = if (obj.has("grade") && !obj.get("grade").isJsonNull) obj.get("grade").asNumber else null,
+                            submissionDate = if (obj.has("submission_date") && !obj.get("submission_date").isJsonNull) obj.get("submission_date").asLong else null,
+                            fileUri = if (obj.has("file_uri") && !obj.get("file_uri").isJsonNull) obj.get("file_uri").asString else null
+                        ))
+                    }
+                }
+            }
+            if (submissions.isEmpty()) return emptyList()
+
+            // Step D: Fetch usernames for unique student IDs
+            val studentIds = submissions.mapNotNull { it.studentId }.distinct()
+            val userMap = mutableMapOf<Long, String>() // userId -> username
+            if (studentIds.isNotEmpty()) {
+                val studentIdsCsv = studentIds.joinToString(",")
+                val usersUrl = "${supabaseUrl.trimEnd('/')}/rest/v1/usuarios?id=in.($studentIdsCsv)&select=id,username"
+                val usersReq = Request.Builder()
+                    .url(usersUrl).get()
+                    .addHeader("apikey", supabaseKey)
+                    .addHeader("Authorization", "Bearer $supabaseKey")
+                    .addHeader("Accept", "application/json")
+                    .build()
+                client.newCall(usersReq).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val arr = gson.fromJson(resp.body?.string() ?: "[]", com.google.gson.JsonArray::class.java)
+                        for (el in arr) {
+                            val obj = el.asJsonObject
+                            val id = obj.get("id")?.asLong ?: continue
+                            val username = obj.get("username")?.asString ?: "Unknown"
+                            userMap[id] = username
+                        }
+                    }
+                }
+            }
+
+            // Step E: Combine into result
+            val resultList = submissions.map { sub ->
+                mapOf<String, Any?>(
+                    "submission_id" to sub.id,
+                    "task_id" to sub.taskId,
+                    "task_title" to (taskMap[sub.taskId] ?: "Unknown"),
+                    "student_id" to sub.studentId,
+                    "student_username" to (userMap[sub.studentId] ?: "Unknown"),
+                    "grade" to sub.grade,
+                    "submission_date" to sub.submissionDate,
+                    "file_uri" to sub.fileUri
+                )
+            }
+            Log.d("SupabaseRepository", "PostgREST fallback returned ${resultList.size} submissions for course $courseId")
+            resultList
         } catch (e: Exception) {
             Log.e("SupabaseRepository", "Error fetching course submissions with usernames", e)
             emptyList()

@@ -208,31 +208,43 @@ class VideoPlayerActivity : AppCompatActivity() {
         CoroutineScope(Dispatchers.Main).launch {
             val streamUri = withContext(Dispatchers.IO) {
                 try {
-                    val client = OkHttpClient()
-                    val baseUrl = "https://mcp-backenddeploy-production.up.railway.app"
-                    val url = "$baseUrl/video/stream-info?username=$username&videoId=$videoId&directUrl=${originalUri}"
+                    // Use the backend's signed URL endpoint to get a presigned R2 URL
+                    val baseUrl = com.example.tareamov.BuildConfig.BACKEND_URL
+                    val apiBase = if (baseUrl.endsWith("/")) baseUrl.dropLast(1) else baseUrl
+                    val url = "$apiBase/api/v1/videos/$videoId/signed-url"
                     
-                    Log.d("VideoPlayerActivity", "Fetching stream info from: $url")
-                    val request = Request.Builder().url(url).build()
-                    val response = client.newCall(request).execute()
+                    Log.d("VideoPlayerActivity", "Fetching signed URL from: $url")
+                    
+                    // Build request with JWT auth header
+                    val token = com.example.tareamov.service.BackendApiService.jwtToken
+                    val requestBuilder = Request.Builder().url(url)
+                    if (!token.isNullOrBlank()) {
+                        requestBuilder.addHeader("Authorization", "Bearer $token")
+                    }
+                    
+                    val client = OkHttpClient.Builder()
+                        .connectTimeout(10, TimeUnit.SECONDS)
+                        .readTimeout(10, TimeUnit.SECONDS)
+                        .build()
+                    val response = client.newCall(requestBuilder.build()).execute()
                     
                     if (response.isSuccessful) {
                         val body = response.body?.string()
                         if (body != null) {
                             val json = org.json.JSONObject(body)
                             if (json.optBoolean("success")) {
-                                val info = json.getJSONObject("streamingInfo")
-                                val newUrl = info.optString("url")
-                                Log.d("VideoPlayerActivity", "Backend returned stream URL: $newUrl (Type: ${info.optString("type")})")
+                                val data = json.getJSONObject("data")
+                                val newUrl = data.optString("videoUriString", "")
+                                Log.d("VideoPlayerActivity", "Backend returned signed URL: ${newUrl.take(80)}...")
                                 if (newUrl.isNotEmpty()) Uri.parse(newUrl) else null
                             } else null
                         } else null
                     } else {
-                        Log.e("VideoPlayerActivity", "Backend stream info failed: ${response.code}")
+                        Log.e("VideoPlayerActivity", "Backend signed URL failed: ${response.code}")
                         null
                     }
                 } catch (e: Exception) {
-                    Log.e("VideoPlayerActivity", "Error fetching stream info", e)
+                    Log.e("VideoPlayerActivity", "Error fetching signed URL", e)
                     null
                 }
             }

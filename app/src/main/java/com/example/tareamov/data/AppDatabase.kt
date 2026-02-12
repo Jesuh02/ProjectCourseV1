@@ -72,7 +72,7 @@ import kotlinx.coroutines.launch
         Like::class,  // Polymorphic likes table (replaces VideoLike and UserVideoLike)
         Notification::class  // Add Notification entity
     ],
-    version = 36, // Updated version - added Notification entity with metadata field
+    version = 37, // Added dueDate field to Task entity for proper backend mapping
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -123,24 +123,10 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                // Check if we need to reset the database due to integrity issues
-                try {
-                    val testDb = Room.databaseBuilder(
-                        context.applicationContext,
-                        AppDatabase::class.java,
-                        "app_database"
-                    )
-                        .allowMainThreadQueries() // Only for this check
-                        .build()
-
-                    // Try to open and verify integrity
-                    testDb.openHelper.readableDatabase
-                    testDb.close()
-
-                } catch (e: Exception) {
-                    Log.w(TAG, "Database integrity issue detected, will recreate: ${e.message}")
-                    // Delete the problematic database
-                    context.deleteDatabase("app_database")
+                // Return instance if already created inside synchronized block
+                val checkInstance = INSTANCE
+                if (checkInstance != null) {
+                    return checkInstance
                 }
 
                 val instance = Room.databaseBuilder(

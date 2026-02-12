@@ -15,7 +15,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
-import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.databinding.FragmentDatabaseQueryBinding
 
 
@@ -85,7 +86,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     private val binding get() = _binding!!
 
     private lateinit var resultTextView: TextView
-    private lateinit var database: AppDatabase
+    // database property removed – all data now fetched via BackendApiService
     private var currentChart: View? = null
     private lateinit var chatAdapter: DatabaseChatAdapter
 
@@ -408,7 +409,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         currentUser = sessionManager.getUsername()
 
 
-        database = AppDatabase.getDatabase(requireContext())
+        // BackendApiService initialized globally (no local database needed)
         
         // Initialize TTS Service
         ttsService = com.example.tareamov.service.TTSService.getInstance(requireContext())
@@ -571,7 +572,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         lifecycleScope.launch {
                 try {
                     currentUser?.let { username ->
-                        val avatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(username)
+                        val userResult = withContext(Dispatchers.IO) { BackendApiService.getUserByUsername(username) }
+                        val avatar = if (userResult is ApiResult.Success) userResult.data?.avatar else null
                         if (!avatar.isNullOrBlank()) {
                             currentUserAvatar = avatar
                             sessionManager.saveUserAvatar(avatar) // Persist so getUserAvatar() works next time
@@ -585,18 +587,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         // Setup floating action buttons
         setupFloatingActionButtons()
 
-        // Register SupabaseClient request listener so we can surface the last query URL in the UI
-        com.example.tareamov.service.SupabaseClient.setRequestListener { url ->
-            // We're possibly on a background thread; post to main thread
-            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
-                try {
-                    // Store the last Supabase GET URL so it can be appended when results are shown
-                    lastSupabaseUrl = url
-                } catch (t: Throwable) {
-                    Log.w("DatabaseQueryFragment", "Failed to update Supabase URL display", t)
-                }
-            }
-        }
+        // Request listener removed – no longer using SupabaseClient directly;
+        // all data is fetched via BackendApiService.
 
         // Set up enhanced UI interactions
         setupEnhancedUI()
@@ -1085,6 +1077,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
                 val request = okhttp3.Request.Builder()
                     .url("$baseUrl/excel/generate-excel")
+                    .header("X-Supabase-Url", com.example.tareamov.BuildConfig.SUPABASE_URL)
+                    .header("X-Supabase-Key", com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY)
                     .post(body)
                     .build()
                 
@@ -1909,12 +1903,12 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
      * 3. RAGDatabaseService:
      *    - Analiza intención de la consulta
      *    - Identifica tablas y columnas relevantes
-     *    - **CONSULTA SUPABASE DIRECTAMENTE** (SupabaseClient.fetchXXX())
+     *    - **CONSULTA BACKEND API** (BackendApiService calls)
      *    - Obtiene JSON real ordenado por ID
      *    - Filtra datos relevantes
      *    - Genera respuesta con LLM
-     * 4. SupabaseClient notifica la URL usada via requestListener
-     * 5. Este fragment muestra respuesta + URL de Supabase
+     * 4. BackendApiService returns data from the backend
+     * 5. Este fragment muestra respuesta
      */
 
 
@@ -2013,7 +2007,8 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             }
             
             withContext(Dispatchers.IO) {
-                val videos = database.videoDao().getAllVideos()
+                val videosResult = BackendApiService.getVideos(limit = 500)
+                val videos = if (videosResult is ApiResult.Success) videosResult.data ?: emptyList() else emptyList()
                 val userVideoCounts = videos.groupBy { it.username }
                     .mapValues { it.value.size }
                     .toList()
@@ -2050,8 +2045,23 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             }
             
             withContext(Dispatchers.IO) {
-                val topics = database.topicDao().getAllTopics()
-                val contentItems = database.contentItemDao().getAllContentItems()
+                // Aggregate topics and content items from all courses via API
+                val coursesResult = BackendApiService.getCourses()
+                val allCourses = if (coursesResult is ApiResult.Success) coursesResult.data ?: emptyList() else emptyList()
+                val topics = mutableListOf<com.example.tareamov.data.entity.Topic>()
+                for (c in allCourses) {
+                    val tr = BackendApiService.getTopicsByCourse(c.id)
+                    if (tr is ApiResult.Success) topics.addAll(tr.data ?: emptyList())
+                }
+                val contentItems = mutableListOf<com.example.tareamov.data.entity.ContentItem>()
+                for (t in topics) {
+                    val tasksR = BackendApiService.getTasksByTopic(t.id)
+                    val tasks = if (tasksR is ApiResult.Success) tasksR.data ?: emptyList() else emptyList()
+                    for (task in tasks) {
+                        val ciR = BackendApiService.getContentItemsByTask(task.id)
+                        if (ciR is ApiResult.Success) contentItems.addAll(ciR.data ?: emptyList())
+                    }
+                }
 
                 withContext(Dispatchers.Main) {
                     val chartText = buildString {
@@ -2086,12 +2096,14 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             }
             
             withContext(Dispatchers.IO) {
-                val videos = database.videoDao().getAllVideos()
+                val videosResult = BackendApiService.getVideos(limit = 500)
+                val videos = if (videosResult is ApiResult.Success) videosResult.data ?: emptyList() else emptyList()
                 val videoTopicCounts = ArrayList<Pair<String, Int>>()
 
                 videos.forEach { video ->
                     val videoTitle = video.title ?: "Video ${video.id}"
-                    val topicCount = database.topicDao().getTopicsByCourse(video.id).size
+                    val topicsResult = BackendApiService.getTopicsByCourse(video.id)
+                    val topicCount = if (topicsResult is ApiResult.Success) topicsResult.data?.size ?: 0 else 0
                     videoTopicCounts.add(Pair(videoTitle, topicCount))
                 }
 
@@ -2128,8 +2140,19 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             }
             
             withContext(Dispatchers.IO) {
-                val topics = database.topicDao().getAllTopics()
-                val tasks = database.taskDao().getAllTasks()
+                // Aggregate topics and tasks from all courses via API
+                val coursesResult = BackendApiService.getCourses()
+                val allCourses = if (coursesResult is ApiResult.Success) coursesResult.data ?: emptyList() else emptyList()
+                val topics = mutableListOf<com.example.tareamov.data.entity.Topic>()
+                for (c in allCourses) {
+                    val tr = BackendApiService.getTopicsByCourse(c.id)
+                    if (tr is ApiResult.Success) topics.addAll(tr.data ?: emptyList())
+                }
+                val tasks = mutableListOf<com.example.tareamov.data.entity.Task>()
+                for (t in topics) {
+                    val tkR = BackendApiService.getTasksByTopic(t.id)
+                    if (tkR is ApiResult.Success) tasks.addAll(tkR.data ?: emptyList())
+                }
                 val topicTaskCounts = topics.map { topic ->
                     topic.name to tasks.count { it.topicId == topic.id }
                 }.filter { it.second > 0 }
@@ -2167,12 +2190,10 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             }
             
             withContext(Dispatchers.IO) {
-                val subscriptions = database.subscriptionDao().getAllSubscriptions()
-                val creatorCounts = subscriptions.groupBy { it.creatorId }
-                    .mapValues { it.value.size }
-                    .toList()
-                    .sortedByDescending { it.second }
-                    .take(10)
+                val subsResult = BackendApiService.getMySubscriptions()
+                // TODO: getMySubscriptions returns JsonObject list; adapt field access as needed
+                val subscriptionCount = if (subsResult is ApiResult.Success) subsResult.data?.size ?: 0 else 0
+                val creatorCounts = listOf(Pair("My Subscriptions", subscriptionCount))
 
                 withContext(Dispatchers.Main) {
                     val chartText = buildString {
@@ -2236,24 +2257,30 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         val tables = JSONObject()
 
         try {
+            // --- usuarios (no list-all endpoint) ---
             try {
-                val usuarios = database.usuarioDao().getAllUsuarios()
+                // TODO: No getAllUsuarios endpoint; profile endpoint only returns current user
+                val myProfile = BackendApiService.getMyProfile()
                 val obj = JSONObject()
-                obj.put("count", usuarios.size)
+                obj.put("count", if (myProfile is ApiResult.Success) 1 else 0)
                 obj.put("exists", true)
+                obj.put("note", "Only current user available via API")
                 tables.put("usuarios", obj)
             } catch (_: Exception) { /* ignore */ }
 
+            // --- personas (no list-all endpoint) ---
             try {
-                val personas = database.personaDao().getAllPersonasList()
+                // TODO: No getAllPersonas endpoint available
                 val obj = JSONObject()
-                obj.put("count", personas.size)
+                obj.put("count", -1)
                 obj.put("exists", true)
+                obj.put("note", "No bulk personas endpoint")
                 tables.put("personas", obj)
             } catch (_: Exception) { /* ignore */ }
 
             try {
-                val videos = database.videoDao().getAllVideos()
+                val videosResult = BackendApiService.getVideos(limit = 500)
+                val videos = if (videosResult is ApiResult.Success) videosResult.data ?: emptyList() else emptyList()
                 val obj = JSONObject()
                 obj.put("count", videos.size)
                 obj.put("exists", true)
@@ -2261,7 +2288,8 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             } catch (_: Exception) { /* ignore */ }
 
             try {
-                val courses = database.courseDao().getAllCourses()
+                val coursesResult = BackendApiService.getCourses()
+                val courses = if (coursesResult is ApiResult.Success) coursesResult.data ?: emptyList() else emptyList()
                 val obj = JSONObject()
                 obj.put("count", courses.size)
                 obj.put("exists", true)
@@ -2269,39 +2297,80 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             } catch (_: Exception) { /* ignore */ }
 
             try {
-                val topics = database.topicDao().getAllTopics()
+                // Aggregate topics from all courses
+                val cResult = BackendApiService.getCourses()
+                val allC = if (cResult is ApiResult.Success) cResult.data ?: emptyList() else emptyList()
+                var topicCount = 0
+                for (c in allC) {
+                    val tr = BackendApiService.getTopicsByCourse(c.id)
+                    if (tr is ApiResult.Success) topicCount += (tr.data?.size ?: 0)
+                }
                 val obj = JSONObject()
-                obj.put("count", topics.size)
+                obj.put("count", topicCount)
                 obj.put("exists", true)
                 tables.put("topics", obj)
             } catch (_: Exception) { /* ignore */ }
 
             try {
-                val contentItems = database.contentItemDao().getAllContentItems()
+                // Aggregate content items from all courses -> topics -> tasks
+                val cResult = BackendApiService.getCourses()
+                val allC = if (cResult is ApiResult.Success) cResult.data ?: emptyList() else emptyList()
+                var ciCount = 0
+                for (c in allC) {
+                    val tr = BackendApiService.getTopicsByCourse(c.id)
+                    val topics = if (tr is ApiResult.Success) tr.data ?: emptyList() else emptyList()
+                    for (t in topics) {
+                        val tkR = BackendApiService.getTasksByTopic(t.id)
+                        val tasks = if (tkR is ApiResult.Success) tkR.data ?: emptyList() else emptyList()
+                        for (task in tasks) {
+                            val ciR = BackendApiService.getContentItemsByTask(task.id)
+                            if (ciR is ApiResult.Success) ciCount += (ciR.data?.size ?: 0)
+                        }
+                    }
+                }
                 val obj = JSONObject()
-                obj.put("count", contentItems.size)
+                obj.put("count", ciCount)
                 obj.put("exists", true)
                 tables.put("content_items", obj)
             } catch (_: Exception) { /* ignore */ }
 
             try {
-                val tasks = database.taskDao().getAllTasks()
+                // Aggregate tasks from all courses -> topics
+                val cResult = BackendApiService.getCourses()
+                val allC = if (cResult is ApiResult.Success) cResult.data ?: emptyList() else emptyList()
+                var taskCount = 0
+                for (c in allC) {
+                    val tr = BackendApiService.getTopicsByCourse(c.id)
+                    val topics = if (tr is ApiResult.Success) tr.data ?: emptyList() else emptyList()
+                    for (t in topics) {
+                        val tkR = BackendApiService.getTasksByTopic(t.id)
+                        if (tkR is ApiResult.Success) taskCount += (tkR.data?.size ?: 0)
+                    }
+                }
                 val obj = JSONObject()
-                obj.put("count", tasks.size)
+                obj.put("count", taskCount)
                 obj.put("exists", true)
                 tables.put("tasks", obj)
             } catch (_: Exception) { /* ignore */ }
 
             try {
-                val submissions = database.taskSubmissionDao().getAllTaskSubmissions()
+                // Aggregate submissions from all courses
+                val cResult = BackendApiService.getCourses()
+                val allC = if (cResult is ApiResult.Success) cResult.data ?: emptyList() else emptyList()
+                var subCount = 0
+                for (c in allC) {
+                    val sr = BackendApiService.getSubmissionsByCourse(c.id)
+                    if (sr is ApiResult.Success) subCount += (sr.data?.size ?: 0)
+                }
                 val obj = JSONObject()
-                obj.put("count", submissions.size)
+                obj.put("count", subCount)
                 obj.put("exists", true)
                 tables.put("task_submissions", obj)
             } catch (_: Exception) { /* ignore */ }
 
             try {
-                val subs = database.subscriptionDao().getAllSubscriptions()
+                val subsResult = BackendApiService.getMySubscriptions()
+                val subs = if (subsResult is ApiResult.Success) subsResult.data ?: emptyList() else emptyList()
                 val obj = JSONObject()
                 obj.put("count", subs.size)
                 obj.put("exists", true)
@@ -2389,6 +2458,8 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
                         .post(payload.toRequestBody(mediaType))
                         .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
                         .header("Connection", "close")
+                        .header("X-Supabase-Url", com.example.tareamov.BuildConfig.SUPABASE_URL)
+                        .header("X-Supabase-Key", com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY)
                         .build()
 
                     client.newCall(req).execute().use { resp ->
@@ -2558,7 +2629,8 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         lifecycleScope.launch {
             try {
                 currentUser?.let { username ->
-                    val avatar = com.example.tareamov.service.SupabaseClient.fetchUsuarioAvatarByUsername(username)
+                    val userResult = withContext(Dispatchers.IO) { BackendApiService.getUserByUsername(username) }
+                    val avatar = if (userResult is ApiResult.Success) userResult.data?.avatar else null
                     if (!avatar.isNullOrBlank()) {
                         currentUserAvatar = avatar
                         sessionManager.saveUserAvatar(avatar)
@@ -2876,8 +2948,7 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
             Log.e(TAG, "Error in onDestroyView", e)
         }
 
-    // Unregister Supabase request listener to avoid leaking fragment
-    com.example.tareamov.service.SupabaseClient.setRequestListener(null)
+    // No SupabaseClient listener to unregister – using BackendApiService
         
         super.onDestroyView()
         _binding = null

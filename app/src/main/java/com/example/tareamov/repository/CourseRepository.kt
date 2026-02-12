@@ -2,553 +2,279 @@ package com.example.tareamov.repository
 
 import android.content.Context
 import android.util.Log
-import com.example.tareamov.data.AppDatabase
-import com.example.tareamov.data.dao.CourseDao
 import com.example.tareamov.data.entity.Course
 import com.example.tareamov.data.entity.VideoData
-// import com.example.tareamov.util.ThumbnailManager
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.*
 
 /**
- * Repository for handling course-related data operations
+ * Repository for handling course-related data operations via BackendApiService.
+ * All data is fetched from the backend Node.js API.
  */
 class CourseRepository(private val context: Context) {
 
-    private val database = AppDatabase.getDatabase(context)
-    private val videoDao = database.videoDao()
-    // private val thumbnailManager = ThumbnailManager(context)
-    
-    // Try to get courseDao, fall back to VideoData if not available
-    private val courseDao: CourseDao? by lazy {
-        try {
-            database.courseDao()
-        } catch (e: Exception) {
-            null
-        }
+    init {
+        BackendApiService.initialize(context)
     }
 
-    // Course operations using new Course entity
+    // ═══════════════════════════════════════════════════════════
+    // COURSE OPERATIONS
+    // ═══════════════════════════════════════════════════════════
+
     suspend fun getAllCourses(): List<Course> = withContext(Dispatchers.IO) {
-        return@withContext if (courseDao != null) {
-            courseDao!!.getAllCourses()
-        } else {
-            // Fallback to VideoData conversion
-            val videos = videoDao.getAllVideos()
-            videos.map { convertVideoDataToCourse(it) }
+        return@withContext when (val result = BackendApiService.getCourses()) {
+            is ApiResult.Success -> result.data ?: emptyList()
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error fetching courses: ${result.message}")
+                emptyList()
+            }
         }
     }
 
     suspend fun getCourseById(courseId: Long): Course? = withContext(Dispatchers.IO) {
-        return@withContext if (courseDao != null) {
-            courseDao!!.getCourseById(courseId)
-        } else {
-            val video = videoDao.getVideoById(courseId)
-            video?.let { convertVideoDataToCourse(it) }
+        return@withContext when (val result = BackendApiService.getCourseById(courseId)) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error fetching course $courseId: ${result.message}")
+                null
+            }
         }
     }
 
-    suspend fun getCoursesByCreator(userId: Long): List<Course> = withContext(Dispatchers.IO) {
-        return@withContext if (courseDao != null) {
-            courseDao!!.getCoursesByCreator(userId)
-        } else {
-            // Fallback: get username from userId, then fetch videos
-            val username = com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(userId) ?: ""
-            val videos = videoDao.getVideosByUsername(username)
-            videos.map { convertVideoDataToCourse(it) }
+    suspend fun getCoursesByCreator(username: String): List<Course> = withContext(Dispatchers.IO) {
+        return@withContext when (val result = BackendApiService.getCoursesByCreator(username)) {
+            is ApiResult.Success -> result.data ?: emptyList()
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error fetching courses by creator: ${result.message}")
+                emptyList()
+            }
         }
     }
 
-    suspend fun getPublishedCourses(): List<Course> = withContext(Dispatchers.IO) {
-        return@withContext if (courseDao != null) {
-            courseDao!!.getPublishedCourses()
-        } else {
-            val videos = videoDao.getAllVideos()
-            videos.map { convertVideoDataToCourse(it) }
+    suspend fun getCoursesByCreatorId(userId: Long): List<Course> = withContext(Dispatchers.IO) {
+        return@withContext when (val result = BackendApiService.getCoursesByCreatorId(userId)) {
+            is ApiResult.Success -> result.data ?: emptyList()
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error fetching courses by creator ID: ${result.message}")
+                emptyList()
+            }
         }
     }
 
     suspend fun searchCourses(query: String): List<Course> = withContext(Dispatchers.IO) {
-        return@withContext if (courseDao != null) {
-            courseDao!!.searchCourses("%$query%")
-        } else {
-            val videos = videoDao.getAllVideos()
-            val filtered = videos.filter { 
-                it.title.contains(query, ignoreCase = true) || 
-                (it.description?.contains(query, ignoreCase = true) ?: false) 
+        return@withContext when (val result = BackendApiService.searchCourses(query)) {
+            is ApiResult.Success -> result.data ?: emptyList()
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error searching courses: ${result.message}")
+                emptyList()
             }
-            filtered.map { convertVideoDataToCourse(it) }
-        }
-    }
-
-    suspend fun getCoursesByCategory(category: String): List<Course> = withContext(Dispatchers.IO) {
-        return@withContext if (courseDao != null) {
-            courseDao!!.getCoursesByCategory(category)
-        } else {
-            emptyList() // VideoData doesn't have category
         }
     }
 
     suspend fun getFreeCourses(): List<Course> = withContext(Dispatchers.IO) {
-        return@withContext if (courseDao != null) {
-            courseDao!!.getFreeCourses()
-        } else {
-            val videos = videoDao.getAllVideos()
-            val freeVideos = videos.filter { !it.isPaid }
-            freeVideos.map { convertVideoDataToCourse(it) }
+        return@withContext when (val result = BackendApiService.getFreeCourses()) {
+            is ApiResult.Success -> result.data ?: emptyList()
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error fetching free courses: ${result.message}")
+                emptyList()
+            }
         }
     }
 
-    suspend fun getPremiumCourses(): List<Course> = withContext(Dispatchers.IO) {
-        return@withContext if (courseDao != null) {
-            courseDao!!.getPremiumCourses()
-        } else {
-            val videos = videoDao.getAllVideos()
-            val premiumVideos = videos.filter { it.isPaid }
-            premiumVideos.map { convertVideoDataToCourse(it) }
+    suspend fun getPublishedCourses(): List<Course> = withContext(Dispatchers.IO) {
+        return@withContext when (val result = BackendApiService.getCourses()) {
+            is ApiResult.Success -> (result.data ?: emptyList()).filter { it.isPublished }
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error fetching published courses: ${result.message}")
+                emptyList()
+            }
         }
     }
 
-    suspend fun saveCourse(course: Course): Long = withContext(Dispatchers.IO) {
-        return@withContext if (courseDao != null) {
-            val courseWithDate = course.copy(
-                creationDate = getCurrentTimestamp(),
-                lastModifiedDate = getCurrentTimestamp()
-            )
-            courseDao!!.insertCourse(courseWithDate)
-        } else {
-            // IMPORTANT: Do NOT create a VideoData entry when saving a Course.
-            // Creating courses must not write to the videos table. Log and return -1.
-            Log.w("CourseRepository", "CourseDao unavailable: refusing to save Course as VideoData to enforce separation (course != video)")
-            -1L
+    suspend fun insertCourse(course: Course): Long = withContext(Dispatchers.IO) {
+        return@withContext when (val result = BackendApiService.createCourse(course)) {
+            is ApiResult.Success -> result.data?.id ?: -1L
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error creating course: ${result.message}")
+                -1L
+            }
         }
     }
 
     suspend fun updateCourse(course: Course) = withContext(Dispatchers.IO) {
-        if (courseDao != null) {
-            val updatedCourse = course.copy(lastModifiedDate = getCurrentTimestamp())
-            courseDao!!.updateCourse(updatedCourse)
-        } else {
-            Log.w("CourseRepository", "CourseDao unavailable: cannot update Course; no fallback to VideoData to enforce separation")
+        val updates = mapOf(
+            "title" to course.title,
+            "description" to course.description,
+            "category" to course.category,
+            "thumbnailUri" to course.thumbnailUri,
+            "price" to course.price,
+            "isPublished" to course.isPublished
+        )
+        val result = BackendApiService.updateCourse(course.id, updates)
+        if (result is ApiResult.Error) {
+            Log.e("CourseRepository", "Error updating course: ${result.message}")
         }
     }
 
-    suspend fun deleteCourse(course: Course) = withContext(Dispatchers.IO) {
-        if (courseDao != null) {
-            courseDao!!.deleteCourse(course)
-        } else {
-            Log.w("CourseRepository", "CourseDao unavailable: cannot delete Course; no fallback to VideoData")
+    suspend fun deleteCourse(courseId: Long) = withContext(Dispatchers.IO) {
+        val result = BackendApiService.deleteCourse(courseId)
+        if (result is ApiResult.Error) {
+            Log.e("CourseRepository", "Error deleting course: ${result.message}")
         }
     }
 
-    suspend fun deleteCourseById(courseId: Long) = withContext(Dispatchers.IO) {
-        if (courseDao != null) {
-            courseDao!!.deleteCourseById(courseId)
-        } else {
-            Log.w("CourseRepository", "CourseDao unavailable: cannot delete Course by id; no fallback to VideoData")
-        }
-    }
+    // ═══════════════════════════════════════════════════════════
+    // VIDEO OPERATIONS
+    // ═══════════════════════════════════════════════════════════
 
-    suspend fun incrementEnrollmentCount(courseId: Long) = withContext(Dispatchers.IO) {
-        if (courseDao != null) {
-            courseDao!!.incrementEnrollmentCount(courseId)
-        }
-        // else: not available in VideoData
-    }
-
-    suspend fun updateCourseRating(courseId: Long, rating: Float) = withContext(Dispatchers.IO) {
-        if (courseDao != null) {
-            courseDao!!.updateCourseRating(courseId, rating)
-        }
-        // else: not available in VideoData
-    }
-
-    // Flow-based operations for real-time updates
-    fun getAllCoursesFlow(): Flow<List<Course>> = 
-        courseDao?.getAllCoursesFlow() ?: kotlinx.coroutines.flow.flowOf(emptyList())
-
-    fun getCoursesByCreatorFlow(userId: Long): Flow<List<Course>> = 
-        courseDao?.getCoursesByCreatorFlow(userId) ?: kotlinx.coroutines.flow.flowOf(emptyList())
-
-    // Method to observe course changes and convert to VideoData for UI compatibility
-    fun observeCoursesAsVideoData(): Flow<List<VideoData>> = 
-        kotlinx.coroutines.flow.flow {
-            if (courseDao != null) {
-                courseDao!!.getAllCoursesFlow().collect { courses ->
-                    val videoDataList = courses.map { course ->
-                        // Fetch username from user_id
-                        val username = com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId) ?: "unknown"
-                        VideoData(
-                            id = course.id,
-                            username = username,
-                            description = course.description,
-                            title = course.title,
-                            videoUriString = course.videoUri,
-                            localFilePath = course.localFilePath,
-                            timestamp = course.timestamp,
-                            isPaid = course.isPremium,
-                            thumbnailUri = course.thumbnailUri,
-                            price = course.price
-                        )
-                    }
-                    emit(videoDataList)
-                }
-            } else {
-                // Fallback to VideoData flow
-                emit(videoDao.getAllVideos())
+    suspend fun getAllVideos(): List<VideoData> = withContext(Dispatchers.IO) {
+        return@withContext when (val result = BackendApiService.getVideos()) {
+            is ApiResult.Success -> result.data ?: emptyList()
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error fetching videos: ${result.message}")
+                emptyList()
             }
         }
-
-    // Legacy VideoData operations (for backward compatibility)
-    suspend fun getAllVideos(): List<VideoData> = withContext(Dispatchers.IO) {
-        return@withContext videoDao.getAllVideos()
     }
 
-    suspend fun getVideoById(courseId: Long): VideoData? = withContext(Dispatchers.IO) {
-        return@withContext videoDao.getVideoById(courseId)
+    suspend fun getVideoById(videoId: Long): VideoData? = withContext(Dispatchers.IO) {
+        return@withContext when (val result = BackendApiService.getVideoById(videoId)) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error fetching video: ${result.message}")
+                null
+            }
+        }
     }
 
     suspend fun getVideosByCreator(username: String): List<VideoData> = withContext(Dispatchers.IO) {
-        return@withContext videoDao.getVideosByUsername(username)
-    }
-
-    suspend fun saveVideo(course: VideoData): VideoData = withContext(Dispatchers.IO) {
-        val id = videoDao.insertVideo(course)
-        return@withContext course.copy(id = id)
-    }
-
-    suspend fun updateVideo(course: VideoData) = withContext(Dispatchers.IO) {
-        videoDao.updateVideo(course)
-    }
-
-    suspend fun deleteVideo(course: VideoData) = withContext(Dispatchers.IO) {
-        videoDao.deleteVideo(course.id)
-    }
-
-    // Migration helpers - Convert VideoData to Course
-    suspend fun migrateVideoDataToCourses() = withContext(Dispatchers.IO) {
-        if (courseDao != null) {
-            val allVideos = videoDao.getAllVideos()
-            allVideos.forEach { video ->
-                val course = convertVideoDataToCourse(video)
-                courseDao!!.insertCourse(course)
+        return@withContext when (val result = BackendApiService.getVideosByCreator(username)) {
+            is ApiResult.Success -> result.data ?: emptyList()
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error fetching creator videos: ${result.message}")
+                emptyList()
             }
         }
     }
 
-    // Method to populate Course table with all VideoData
-    suspend fun populateCoursesFromVideoData() = withContext(Dispatchers.IO) {
-        if (courseDao != null) {
-            // Check if courses table is empty
-            val existingCourses = courseDao!!.getAllCourses()
-            if (existingCourses.isEmpty()) {
-                val allVideos = videoDao.getAllVideos()
-                Log.d("CourseRepository", "Migrating ${allVideos.size} videos to courses table")
-                allVideos.forEach { video ->
-                    try {
-                        // Ensure thumbnail exists for this video
-                        val thumbnailPath = ensureThumbnailForVideo(video)
-                        
-                        val course = convertVideoDataToCourseWithCategory(video).copy(
-                            thumbnailUri = thumbnailPath
-                        )
-                        courseDao!!.insertCourse(course)
-                        Log.d("CourseRepository", "Migrated course: ${course.title} - Category: ${course.category} - Thumbnail: $thumbnailPath")
-                    } catch (e: Exception) {
-                        Log.e("CourseRepository", "Error migrating course: ${video.title}", e)
-                    }
-                }
-                Log.d("CourseRepository", "Migration completed")
-            } else {
-                // If courses exist, ensure they all have thumbnails
-                Log.d("CourseRepository", "Courses table not empty, ensuring thumbnails exist")
-                existingCourses.forEach { course ->
-                    try {
-                        if (course.thumbnailUri.isNullOrEmpty()) {
-                            val video = videoDao.getVideoById(course.id)
-                            if (video != null) {
-                                val thumbnailPath = ensureThumbnailForVideo(video)
-                                if (thumbnailPath != null) {
-                                    val updatedCourse = course.copy(thumbnailUri = thumbnailPath)
-                                    courseDao!!.updateCourse(updatedCourse)
-                                    Log.d("CourseRepository", "Added thumbnail to existing course: ${course.title}")
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e("CourseRepository", "Error adding thumbnail to course: ${course.title}", e)
-                    }
-                }
+    suspend fun getVideosByCourse(courseId: Long): List<VideoData> = withContext(Dispatchers.IO) {
+        return@withContext when (val result = BackendApiService.getVideosByCourse(courseId)) {
+            is ApiResult.Success -> result.data ?: emptyList()
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error fetching course videos: ${result.message}")
+                emptyList()
             }
         }
     }
 
-    // Enhanced conversion that includes automatic categorization
-    private suspend fun convertVideoDataToCourseWithCategory(video: VideoData): Course {
-        // Get user ID from username OR from courseId (new approach)
-        val userId = if (video.courseId != null && video.courseId!! > 0) {
-            // Nuevo: obtener userId desde courseId
-            val course = com.example.tareamov.service.SupabaseClient.fetchCourseById(video.courseId!!)
-            course?.creatorUserId ?: 0L
-        } else if (!video.username.isNullOrEmpty()) {
-            // Fallback: obtener userId desde username (compatibilidad)
-            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
-        } else {
-            0L
+    suspend fun insertVideo(video: VideoData): Long = withContext(Dispatchers.IO) {
+        return@withContext when (val result = BackendApiService.createVideo(video)) {
+            is ApiResult.Success -> result.data?.id ?: -1L
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error creating video: ${result.message}")
+                -1L
+            }
         }
-        
-        return Course(
-            id = video.id,
-            title = video.title,
-            description = video.description ?: "",
-            creatorUserId = userId,
-            thumbnailUri = video.thumbnailUri,
-            videoUri = video.videoUriString,
-            localFilePath = video.localFilePath,
-            duration = null,
-            category = determineCourseCategory(video.title, video.description ?: ""), // Auto-categorize
-            price = video.price ?: 0.0,
-            isPremium = video.isPaid,
-            isPublished = true,
-            creationDate = formatTimestamp(video.timestamp),
-            lastModifiedDate = getCurrentTimestamp(),
-            enrollmentCount = 0,
-            rating = 0.0f,
-            tags = null,
-            timestamp = video.timestamp
+    }
+
+    suspend fun updateVideo(video: VideoData) = withContext(Dispatchers.IO) {
+        val updates = mapOf(
+            "title" to video.title,
+            "description" to video.description,
+            "videoUriString" to video.videoUriString,
+            "thumbnailUri" to video.thumbnailUri
         )
-    }
-
-    // Helper function to determine course category/sector based on title and description
-    private fun determineCourseCategory(title: String, description: String): String {
-        val content = "${title.lowercase()} ${description.lowercase()}"
-        
-        return when {
-            content.contains("programacion") || content.contains("codigo") || content.contains("desarrollo") || 
-            content.contains("software") || content.contains("app") || content.contains("web") -> "Tecnología"
-            
-            content.contains("marketing") || content.contains("ventas") || content.contains("negocio") || 
-            content.contains("emprendimiento") -> "Negocios"
-            
-            content.contains("diseño") || content.contains("arte") || content.contains("grafico") || 
-            content.contains("creativo") -> "Diseño"
-            
-            content.contains("idioma") || content.contains("ingles") || content.contains("frances") || 
-            content.contains("lenguaje") -> "Idiomas"
-            
-            content.contains("musica") || content.contains("instrumento") || content.contains("canto") || 
-            content.contains("audio") -> "Música"
-            
-            content.contains("salud") || content.contains("fitness") || content.contains("ejercicio") || 
-            content.contains("medicina") -> "Salud y Bienestar"
-            
-            content.contains("cocina") || content.contains("receta") || content.contains("comida") || 
-            content.contains("gastronomia") -> "Cocina"
-            
-            content.contains("fotografia") || content.contains("video") || content.contains("camara") || 
-            content.contains("edicion") -> "Fotografía y Video"
-            
-            else -> "General"
+        val result = BackendApiService.updateVideo(video.id, updates)
+        if (result is ApiResult.Error) {
+            Log.e("CourseRepository", "Error updating video: ${result.message}")
         }
     }
 
-    private suspend fun convertVideoDataToCourse(video: VideoData): Course {
-        // Get user ID from username OR from courseId (new approach)
-        val userId = if (video.courseId != null && video.courseId!! > 0) {
-            // Nuevo: obtener userId desde courseId
-            val course = com.example.tareamov.service.SupabaseClient.fetchCourseById(video.courseId!!)
-            course?.creatorUserId ?: 0L
-        } else if (!video.username.isNullOrEmpty()) {
-            // Fallback: obtener userId desde username (compatibilidad)
-            com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(video.username) ?: 0L
-        } else {
-            0L
+    suspend fun deleteVideo(videoId: Long) = withContext(Dispatchers.IO) {
+        val result = BackendApiService.deleteVideo(videoId)
+        if (result is ApiResult.Error) {
+            Log.e("CourseRepository", "Error deleting video: ${result.message}")
         }
-        
-        return Course(
-            id = video.id,
-            title = video.title,
-            description = video.description ?: "",
-            creatorUserId = userId,
-            thumbnailUri = video.thumbnailUri,
-            videoUri = video.videoUriString, // VideoData uses 'videoUriString' not 'videoPath'
-            localFilePath = video.localFilePath,
-            duration = null, // VideoData doesn't have duration field
-            category = null, // VideoData doesn't have category
-            price = video.price ?: 0.0, // Handle nullable price
-            isPremium = video.isPaid, // VideoData uses 'isPaid' not 'isPremium'
-            isPublished = true,
-            creationDate = formatTimestamp(video.timestamp), // Convert timestamp to string
-            lastModifiedDate = getCurrentTimestamp(),
-            enrollmentCount = 0,
-            rating = 0.0f,
-            tags = null,
-            timestamp = video.timestamp // Direct mapping from VideoData.timestamp
-        )
     }
-    
-    // Public method for external conversion needs
-    suspend fun convertVideoDataToCoursePublic(video: VideoData): Course {
-        return convertVideoDataToCourse(video)
-    }
-    
-    // Method to automatically sync new VideoData to Course table
-    suspend fun syncVideoDataToCoursesTable() = withContext(Dispatchers.IO) {
-        if (courseDao != null) {
-            try {
-                val allVideos = videoDao.getAllVideos()
-                val existingCourses = courseDao!!.getAllCourses()
-                val existingCourseIds = existingCourses.map { it.id }.toSet()
-                
-                // Find VideoData that doesn't exist in Course table
-                val newVideos = allVideos.filter { it.id !in existingCourseIds }
-                
-                Log.d("CourseRepository", "Found ${newVideos.size} new videos to sync to Course table")
-                
-                newVideos.forEach { video ->
-                    try {
-                        // Ensure thumbnail exists for this video
-                        val thumbnailPath = ensureThumbnailForVideo(video)
-                        
-                        val course = convertVideoDataToCourseWithCategory(video).copy(
-                            thumbnailUri = thumbnailPath
-                        )
-                        courseDao!!.insertCourse(course)
-                        Log.d("CourseRepository", "Synced new video to course: ${course.title} with thumbnail: $thumbnailPath")
-                    } catch (e: Exception) {
-                        Log.e("CourseRepository", "Error syncing video: ${video.title}", e)
-                    }
-                }
-                
-                // Update existing courses that might have changed
-                allVideos.filter { it.id in existingCourseIds }.forEach { video ->
-                    try {
-                        val existingCourse = courseDao!!.getCourseById(video.id)
-                        if (existingCourse != null) {
-                            // Ensure thumbnail exists if not already set
-                            val thumbnailPath = if (existingCourse.thumbnailUri.isNullOrEmpty()) {
-                                ensureThumbnailForVideo(video)
-                            } else {
-                                existingCourse.thumbnailUri
-                            }
-                            
-                            val updatedCourse = convertVideoDataToCourseWithCategory(video).copy(
-                                id = existingCourse.id,
-                                creationDate = existingCourse.creationDate, // Keep original creation date
-                                enrollmentCount = existingCourse.enrollmentCount, // Keep enrollment count
-                                rating = existingCourse.rating, // Keep rating
-                                thumbnailUri = thumbnailPath
-                            )
-                            courseDao!!.updateCourse(updatedCourse)
-                            Log.d("CourseRepository", "Updated existing course: ${updatedCourse.title} with thumbnail: $thumbnailPath")
-                        }
-                    } catch (e: Exception) {
-                        Log.e("CourseRepository", "Error updating course for video: ${video.title}", e)
-                    }
-                }
-                
-                Log.d("CourseRepository", "VideoData to Course sync completed")
-            } catch (e: Exception) {
-                Log.e("CourseRepository", "Error during VideoData to Course sync", e)
+
+    suspend fun searchVideos(query: String): List<VideoData> = withContext(Dispatchers.IO) {
+        return@withContext when (val result = BackendApiService.searchVideos(query)) {
+            is ApiResult.Success -> result.data ?: emptyList()
+            is ApiResult.Error -> {
+                Log.e("CourseRepository", "Error searching videos: ${result.message}")
+                emptyList()
             }
         }
     }
-    
+
+    // ═══════════════════════════════════════════════════════════
+    // UTILITY
+    // ═══════════════════════════════════════════════════════════
+
     /**
-     * Ensure thumbnail exists for a video, generate if necessary - REMOVED (Obsolete)
+     * Converts a VideoData object into a Course object for display purposes.
      */
-    private suspend fun ensureThumbnailForVideo(video: VideoData): String? {
-        return video.thumbnailUri
-        /*
-        return try {
-            // Check if video already has a thumbnail
-            if (!video.thumbnailUri.isNullOrEmpty()) {
-                Log.d("CourseRepository", "Video ${video.id} already has thumbnail: ${video.thumbnailUri}")
-                return video.thumbnailUri
-            }
-            
-            // Try to generate thumbnail
-            val videoUri = video.getBestVideoUri()?.toString() ?: video.videoUriString
-            if (!videoUri.isNullOrEmpty()) {
-                val thumbnailPath = thumbnailManager.ensureThumbnailExists(videoUri, video.id)
-                if (thumbnailPath != null) {
-                    // Update VideoData with the new thumbnail
-                    val updatedVideo = video.copy(thumbnailUri = "file://$thumbnailPath")
-                    videoDao.updateVideo(updatedVideo)
-                    Log.d("CourseRepository", "Generated and updated thumbnail for video ${video.id}: $thumbnailPath")
-                    return "file://$thumbnailPath"
-                }
-            }
-            
-            Log.w("CourseRepository", "Could not generate thumbnail for video ${video.id}")
-            return null
-        } catch (e: Exception) {
-            Log.e("CourseRepository", "Error ensuring thumbnail for video ${video.id}", e)
-            return null
-        }
-        */
-    }
-
-    private suspend fun convertCourseToVideoData(course: Course): VideoData {
-        // Fetch username from user_id
-        val username = com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId) ?: "unknown"
-        
-        return VideoData(
-            id = course.id,
-            username = username,
-            description = course.description,
-            title = course.title,
-            videoUriString = course.videoUri,
-            localFilePath = course.localFilePath,
-            timestamp = course.timestamp, // Use Course.timestamp instead of current time
-            isPaid = course.isPremium,
-            thumbnailUri = course.thumbnailUri,
-            price = if (course.price > 0.0) course.price else null
+    fun convertVideoDataToCoursePublic(videoData: VideoData): Course {
+        return Course(
+            id = videoData.courseId ?: videoData.id,
+            title = videoData.title,
+            description = videoData.description ?: "",
+            creatorUserId = 0L, // Will be resolved separately if needed
+            thumbnailUri = videoData.thumbnailUri,
+            videoUri = videoData.videoUriString,
+            localFilePath = videoData.localFilePath,
+            price = videoData.price ?: 0.0,
+            isPremium = videoData.isPaid,
+            timestamp = videoData.timestamp
         )
     }
 
-    // Public helper methods for external use
-    fun getCurrentTimestamp(): String {
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-        return dateFormat.format(Date())
+    /**
+     * Saves a course to the backend (creates or updates).
+     */
+    suspend fun saveCourse(course: Course) = withContext(Dispatchers.IO) {
+        if (course.id > 0) {
+            val existing = BackendApiService.getCourseById(course.id)
+            if (existing is ApiResult.Success && existing.data != null) {
+                updateCourse(course)
+            } else {
+                insertCourse(course)
+            }
+        } else {
+            insertCourse(course)
+        }
     }
 
-    fun formatTimestamp(timestamp: Long): String {
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-        return dateFormat.format(Date(timestamp))
+    /**
+     * Deletes a course by its ID.
+     */
+    suspend fun deleteCourseById(courseId: Long) = withContext(Dispatchers.IO) {
+        deleteCourse(courseId)
     }
 
-    // Helper methods for filtering and sorting
-    suspend fun getCoursesSortedByDate(): List<Course> = withContext(Dispatchers.IO) {
-        val courses = getAllCourses()
-        return@withContext courses.sortedByDescending { it.creationDate }
+    /**
+     * Deletes a video by VideoData object.
+     */
+    suspend fun deleteVideo(videoData: VideoData) = withContext(Dispatchers.IO) {
+        deleteVideo(videoData.id)
     }
 
-    suspend fun getCoursesSortedByRating(): List<Course> = withContext(Dispatchers.IO) {
-        val courses = getAllCourses()
-        return@withContext courses.sortedByDescending { it.rating }
+    /**
+     * Syncs VideoData entries to courses table via backend.
+     * Since all data now comes from the backend, this is effectively a no-op.
+     */
+    suspend fun syncVideoDataToCoursesTable() = withContext(Dispatchers.IO) {
+        // Data is managed via the backend API; no local sync needed.
+        Log.d("CourseRepository", "syncVideoDataToCoursesTable called - backend manages data")
     }
 
-    suspend fun getCoursesSortedByEnrollment(): List<Course> = withContext(Dispatchers.IO) {
-        val courses = getAllCourses()
-        return@withContext courses.sortedByDescending { it.enrollmentCount }
+    suspend fun getCourseCount(): Int = withContext(Dispatchers.IO) {
+        getAllCourses().size
     }
 
-    suspend fun getPopularCourses(limit: Int = 10): List<Course> = withContext(Dispatchers.IO) {
-        val courses = getAllCourses()
-        return@withContext courses
-            .sortedByDescending { it.enrollmentCount }
-            .take(limit)
-    }
-
-    suspend fun getTopRatedCourses(limit: Int = 10): List<Course> = withContext(Dispatchers.IO) {
-        val courses = getAllCourses()
-        return@withContext courses
-            .filter { it.rating > 0 }
-            .sortedByDescending { it.rating }
-            .take(limit)
+    suspend fun getVideoCount(): Int = withContext(Dispatchers.IO) {
+        getAllVideos().size
     }
 }

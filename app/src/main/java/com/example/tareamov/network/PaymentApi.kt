@@ -56,7 +56,8 @@ interface PaymentApi {
     ): Response<PaymentStatusResponse>
 
     companion object {
-        const val BASE_URL = "https://mcp-backenddeploy-production.up.railway.app/"
+        val BASE_URL: String
+            get() = com.example.tareamov.BuildConfig.BACKEND_URL.let { if (it.endsWith("/")) it else "$it/" }
 
         fun create(baseUrl: String): PaymentApi {
             // Security: Use Level.NONE for production to avoid logging PII

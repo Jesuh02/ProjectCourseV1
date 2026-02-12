@@ -36,7 +36,8 @@ import android.os.Vibrator
 import android.os.VibrationEffect
 import android.os.Build
 import com.example.tareamov.util.SessionManager
-import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.TTSService
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
@@ -317,20 +318,27 @@ fun ReinforcementLearningScreen(
                     try {
                         val state = uiState as ReinforcementState.Success
                         val questions = state.questions
-                        // Obtain current user id via SessionManager + SupabaseClient
+                        // Obtain current user id via SessionManager + BackendApiService
                         val sessionManager = SessionManager.getInstance(context)
                         val username = sessionManager.getUsername()
                         var userId: Long? = null
                         if (!username.isNullOrBlank()) {
-                            userId = withContext(Dispatchers.IO) { SupabaseClient.getUserIdFromUsername(username) }
+                            BackendApiService.initialize(context)
+                            val userResult = withContext(Dispatchers.IO) { BackendApiService.getUserByUsername(username) }
+                            if (userResult is ApiResult.Success) {
+                                userId = userResult.data?.id
+                            }
                         }
 
                         // Try to resolve courseId by searching courses by title
                         var courseIdResolved: Long? = null
                         if (courseName.isNotBlank()) {
-                            val found = withContext(Dispatchers.IO) { SupabaseClient.searchCourses(courseName, 5) }
-                            val exact = found.firstOrNull { it.title?.trim()?.equals(courseName.trim(), true) == true }
-                            courseIdResolved = exact?.id ?: found.firstOrNull()?.id
+                            val searchResult = withContext(Dispatchers.IO) { BackendApiService.searchCourses(courseName) }
+                            if (searchResult is ApiResult.Success) {
+                                val found = searchResult.data ?: emptyList()
+                                val exact = found.firstOrNull { it.title.trim().equals(courseName.trim(), true) }
+                                courseIdResolved = exact?.id ?: found.firstOrNull()?.id
+                            }
                         }
 
                         if (userId != null && courseIdResolved != null) {

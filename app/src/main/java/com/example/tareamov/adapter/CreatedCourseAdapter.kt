@@ -420,10 +420,20 @@ class CreatedCourseAdapter(
             // videoView is not available in item_course_card layout
             thumbnailImageView.visibility = View.VISIBLE
             // stopAutoPlay() // No video playback in card view            // ASYNC: Load thumbnail in background (non-blocking)
-            if (!course.thumbnailUri.isNullOrEmpty()) {
+            var thumbnailUri = course.thumbnailUri?.trim()
+            if (!thumbnailUri.isNullOrEmpty()) {
+                // Robust URL handling
+                if (thumbnailUri!!.startsWith("/")) {
+                    thumbnailUri = "${com.example.tareamov.service.BackendApiService.baseUrl}$thumbnailUri"
+                } else if (!thumbnailUri!!.startsWith("http") && !thumbnailUri!!.startsWith("content://") && !thumbnailUri!!.startsWith("file://")) {
+                     // Assume relative path missing leading slash
+                     thumbnailUri = "${com.example.tareamov.service.BackendApiService.baseUrl}/$thumbnailUri"
+                }
+
                 try {
+                    Log.d("CreatedCourseAdapter", "Loading thumbnail: $thumbnailUri")
                     Glide.with(context)
-                        .load(Uri.parse(course.thumbnailUri))
+                        .load(thumbnailUri)
                         .placeholder(R.drawable.bg_course_placeholder_card)
                         .error(R.drawable.bg_course_placeholder_card)
                         .centerCrop()

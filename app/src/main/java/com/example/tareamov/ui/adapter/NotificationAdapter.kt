@@ -16,7 +16,7 @@ import com.bumptech.glide.load.resource.bitmap.RoundedCorners
 import com.bumptech.glide.request.RequestOptions
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.Notification
-import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.service.BackendApiService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -94,7 +94,15 @@ class NotificationAdapter(
                     notificationIcon.setImageResource(R.drawable.ic_comment)
                     iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
                 }
+                Notification.TYPE_VIDEO_COMMENT, Notification.TYPE_COMMENT_REPLY -> {
+                    notificationIcon.setImageResource(R.drawable.ic_comment)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
+                }
                 Notification.TYPE_LIKE -> {
+                    notificationIcon.setImageResource(R.drawable.ic_favorite)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
+                }
+                Notification.TYPE_VIDEO_LIKE, Notification.TYPE_COMMENT_LIKE -> {
                     notificationIcon.setImageResource(R.drawable.ic_favorite)
                     iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
                 }
@@ -104,6 +112,23 @@ class NotificationAdapter(
                 }
             }
 
+            // Load sender avatar if available
+            if (!notification.senderAvatarUrl.isNullOrEmpty()) {
+                senderAvatar.visibility = View.VISIBLE
+                var avatarUrl = notification.senderAvatarUrl
+                if (avatarUrl!!.startsWith("/")) {
+                    avatarUrl = "${BackendApiService.baseUrl}$avatarUrl"
+                }
+                Glide.with(itemView.context)
+                    .load(avatarUrl)
+                    .placeholder(R.drawable.ic_profile_placeholder)
+                    .error(R.drawable.ic_profile_placeholder)
+                    .circleCrop()
+                    .into(senderAvatar)
+            } else {
+                senderAvatar.visibility = View.GONE
+            }
+
             // Determine thumbnail URL based on notification type
             val isTaskRelated = notification.type in listOf(
                 Notification.TYPE_TASK_GRADED,
@@ -111,13 +136,25 @@ class NotificationAdapter(
                 Notification.TYPE_NEW_TASK
             )
             
-            if (isTaskRelated && notification.relatedId != null) {
+            if (!notification.thumbnailUrl.isNullOrEmpty()) {
+                // Use the provided thumbnail_url from DB (highest priority)
+                Log.d("NotificationAdapter", "Loading thumbnail from notification.thumbnailUrl: ${notification.thumbnailUrl}")
+                loadThumbnail(notification.thumbnailUrl)
+            } else if (isTaskRelated && notification.relatedId != null) {
                 // For task-related notifications, load the course thumbnail
                 loadCourseThumbnailForTask(notification.relatedId, thumbnailCache)
+            } else if (notification.type == Notification.TYPE_NEW_COURSE && notification.relatedId != null) {
+                // For course notifications without thumbnail, fetch from course
+                loadCourseThumbnailById(notification.relatedId, thumbnailCache)
+            } else if (notification.type == Notification.TYPE_NEW_VIDEO && notification.relatedId != null) {
+                // For video notifications without thumbnail, fetch from video
+                loadVideoThumbnailById(notification.relatedId, thumbnailCache)
+            } else if (!notification.senderAvatarUrl.isNullOrEmpty()) {
+                // Fallback to sender avatar
+                loadThumbnail(notification.senderAvatarUrl)
             } else {
-                // For other notifications, use the provided thumbnail or avatar
-                val thumbnailUrl = notification.thumbnailUrl ?: notification.senderAvatarUrl
-                loadThumbnail(thumbnailUrl)
+                // No thumbnail available, show placeholder
+                thumbnailImage.setImageResource(R.drawable.bg_course_placeholder_card)
             }
 
             itemView.setOnClickListener {
@@ -147,10 +184,13 @@ class NotificationAdapter(
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     // Get task -> topic -> course -> thumbnail
-                    val courseThumbnail = SupabaseClient.getCourseThumbnailForTask(taskId)
+                    val task = BackendApiService.getTaskById(taskId).getOrNull()
+                    val topic = task?.let { BackendApiService.getTopicById(it.topicId).getOrNull() }
+                    val course = topic?.let { BackendApiService.getCourseById(it.courseId).getOrNull() }
+                    val courseThumbnail = course?.thumbnailUri
                     
-                    // Cache the result (even if null)
-                    thumbnailCache[taskId] = courseThumbnail
+                    // Cache the result (ConcurrentHashMap doesn't allow nulls, use empty string)
+                    thumbnailCache[taskId] = courseThumbnail ?: ""
                     
                     // Update UI on main thread
                     withContext(Dispatchers.Main) {
@@ -158,8 +198,74 @@ class NotificationAdapter(
                     }
                 } catch (e: Exception) {
                     Log.e("NotificationAdapter", "Error loading course thumbnail for task $taskId", e)
-                    // Cache null to avoid repeated failed requests
-                    thumbnailCache[taskId] = null
+                    // Cache empty string to avoid repeated failed requests
+                    thumbnailCache[taskId] = ""
+                }
+            }
+        }
+
+        /**
+         * Load course thumbnail by course ID for new_course notifications
+         */
+        private fun loadCourseThumbnailById(
+            courseId: Long,
+            thumbnailCache: java.util.concurrent.ConcurrentHashMap<Long, String?>
+        ) {
+            val cacheKey = -courseId // Negative key to distinguish from task IDs
+            if (thumbnailCache.containsKey(cacheKey)) {
+                val cachedUrl = thumbnailCache[cacheKey]
+                loadThumbnail(cachedUrl)
+                return
+            }
+
+            thumbnailImage.setImageResource(R.drawable.bg_course_placeholder_card)
+
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val course = BackendApiService.getCourseById(courseId).getOrNull()
+                    val courseThumbnail = course?.thumbnailUri
+                    thumbnailCache[cacheKey] = courseThumbnail ?: ""
+
+                    withContext(Dispatchers.Main) {
+                        loadThumbnail(courseThumbnail)
+                    }
+                } catch (e: Exception) {
+                    Log.e("NotificationAdapter", "Error loading thumbnail for course $courseId", e)
+                    thumbnailCache[cacheKey] = ""
+                }
+            }
+        }
+
+        /**
+         * Load video thumbnail by video ID for new_video notifications
+         */
+        private fun loadVideoThumbnailById(
+            videoId: Long,
+            thumbnailCache: java.util.concurrent.ConcurrentHashMap<Long, String?>
+        ) {
+            val cacheKey = -(videoId + 1_000_000) // Unique key space to avoid collisions
+            if (thumbnailCache.containsKey(cacheKey)) {
+                val cachedUrl = thumbnailCache[cacheKey]
+                loadThumbnail(cachedUrl)
+                return
+            }
+
+            thumbnailImage.setImageResource(R.drawable.bg_course_placeholder_card)
+
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val result = BackendApiService.getVideoById(videoId)
+                    val thumbnailUrl = if (result is com.example.tareamov.service.ApiResult.Success) {
+                        result.data?.thumbnailUri
+                    } else null
+                    thumbnailCache[cacheKey] = thumbnailUrl ?: ""
+
+                    withContext(Dispatchers.Main) {
+                        loadThumbnail(thumbnailUrl)
+                    }
+                } catch (e: Exception) {
+                    Log.e("NotificationAdapter", "Error loading thumbnail for video $videoId", e)
+                    thumbnailCache[cacheKey] = ""
                 }
             }
         }
@@ -168,11 +274,20 @@ class NotificationAdapter(
          * Load thumbnail image with Glide
          */
         private fun loadThumbnail(url: String?) {
+            var finalUrl = url?.trim()
+            if (!finalUrl.isNullOrEmpty()) {
+                if (finalUrl!!.startsWith("/")) {
+                     finalUrl = "${BackendApiService.baseUrl}$finalUrl"
+                } else if (!finalUrl!!.startsWith("http") && !finalUrl!!.startsWith("content://") && !finalUrl!!.startsWith("file://")) {
+                     finalUrl = "${BackendApiService.baseUrl}/$finalUrl"
+                }
+            }
+
             Glide.with(itemView.context)
-                .load(url)
+                .load(finalUrl)
                 .apply(RequestOptions().transform(RoundedCorners(16)))
-                .placeholder(R.drawable.placeholder_image)
-                .error(R.drawable.placeholder_image)
+                .placeholder(R.drawable.bg_course_placeholder_card)
+                .error(R.drawable.bg_course_placeholder_card)
                 .centerCrop()
                 .into(thumbnailImage)
         }

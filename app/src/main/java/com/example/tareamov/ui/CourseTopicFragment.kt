@@ -20,7 +20,10 @@ import kotlinx.coroutines.withContext
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import com.example.tareamov.data.entity.Task // Import Task entity
-import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.data.entity.Topic
+import com.example.tareamov.data.entity.ContentItem
+import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.CloudflareR2Service
 import java.io.File
 import java.io.FileOutputStream
@@ -36,26 +39,20 @@ class CourseTopicFragment : Fragment() {
 
     // Add this method at the class level, not inside another function
     private suspend fun ensureValidCourseId(courseId: Long): Long {
-        // Check if the provided courseId exists in Supabase
         return try {
-            val activity = requireActivity()
-            if (activity is com.example.tareamov.MainActivity) {
-                val course = withContext(Dispatchers.IO) {
-                    activity.syncRepository.fetchCourseById(courseId)
-                }
-                if (course != null) {
-                    Log.d("CourseTopicFragment", "Course id $courseId found in Supabase")
-                    courseId
-                } else {
-                    Log.w("CourseTopicFragment", "Course id $courseId not found in Supabase")
-                    -1L
-                }
+            BackendApiService.initialize(requireContext())
+            val result = withContext(Dispatchers.IO) {
+                BackendApiService.getCourseById(courseId)
+            }
+            if (result is ApiResult.Success && result.data != null) {
+                Log.d("CourseTopicFragment", "Course id $courseId found")
+                courseId
             } else {
-                Log.w("CourseTopicFragment", "Invalid activity context")
+                Log.w("CourseTopicFragment", "Course id $courseId not found")
                 -1L
             }
         } catch (e: Exception) {
-            Log.e("CourseTopicFragment", "Error checking course in Supabase", e)
+            Log.e("CourseTopicFragment", "Error checking course", e)
             -1L
         }
     }
@@ -187,16 +184,13 @@ class CourseTopicFragment : Fragment() {
         
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val activity = requireActivity()
-                if (activity !is com.example.tareamov.MainActivity) {
-                    Log.e("CourseTopicFragment", "Invalid activity context")
-                    return@launch
-                }
+                BackendApiService.initialize(requireContext())
                 
-                // Fetch topic from Supabase
-                val topic = withContext(Dispatchers.IO) {
-                    activity.syncRepository.fetchTopicByIdFromSupabase(topicId)
+                // Fetch topic from backend
+                val topicResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getTopicById(topicId)
                 }
+                val topic = if (topicResult is ApiResult.Success) topicResult.data else null
                 
                 if (topic != null) {
                     // Update UI with topic data
@@ -207,9 +201,13 @@ class CourseTopicFragment : Fragment() {
                     
                     Log.d("CourseTopicFragment", "✅ Loaded topic data: name='${topic.name}', description='${topic.description}'")
                     
-                    // Load content items for this topic
-                    val contentItems = withContext(Dispatchers.IO) {
-                        activity.syncRepository.fetchContentItemsByTopicIdsFromSupabase(listOf(topicId))
+                    // Load content items for this topic via tasks
+                    val tasksResult = withContext(Dispatchers.IO) { BackendApiService.getTasksByTopic(topicId) }
+                    val tasks = if (tasksResult is ApiResult.Success) tasksResult.data ?: emptyList() else emptyList()
+                    val contentItems = mutableListOf<com.example.tareamov.data.entity.ContentItem>()
+                    for (task in tasks) {
+                        val ciResult = withContext(Dispatchers.IO) { BackendApiService.getContentItemsByTask(task.id) }
+                        if (ciResult is ApiResult.Success) contentItems.addAll(ciResult.data ?: emptyList())
                     }
                     
                     // Filter only topic-level content (not task content)
@@ -269,7 +267,7 @@ class CourseTopicFragment : Fragment() {
             // Delete from Supabase
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    com.example.tareamov.service.SupabaseClient.deleteContentItem(contentItem.id)
+                    BackendApiService.deleteContentItem(contentItem.id)
                     Log.d("CourseTopicFragment", "✅ Deleted content item ${contentItem.id} from Supabase")
                     
                     // Also delete from R2 if applicable
@@ -310,23 +308,12 @@ class CourseTopicFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val activity = requireActivity()
-                if (activity !is com.example.tareamov.MainActivity) {
-                    if (isAdded && context != null) {
-                        Toast.makeText(requireContext(), "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
+                BackendApiService.initialize(requireContext())
 
-                // Validate course exists in Supabase
+                // Validate course exists
                 val validCourseId = withContext(Dispatchers.IO) {
-                    val course = activity.syncRepository.fetchCourseById(courseId)
-                    if (course != null) {
-                        course.id
-                    } else {
-                        Log.e("CourseTopicFragment", "Course $courseId not found in Supabase")
-                        -1L
-                    }
+                    val result = BackendApiService.getCourseById(courseId)
+                    if (result is ApiResult.Success && result.data != null) result.data.id else -1L
                 }
 
                 if (validCourseId <= 0) {
@@ -338,17 +325,18 @@ class CourseTopicFragment : Fragment() {
 
                 Log.d("CourseTopicFragment", "Using validated courseId: $validCourseId")
 
-                // Create topic directly in Supabase
+                // Create topic via backend API
                 val remoteTopicId = withContext(Dispatchers.IO) {
-                    val topicToPush = com.example.tareamov.data.entity.Topic(
-                        id = 0,
+                    val topicData = Topic(
                         courseId = validCourseId,
                         name = topicName,
                         description = topicDescription,
                         orderIndex = topicNumber
                     )
-                    // Use the regular insert method since we already have the correct courseId
-                    activity.syncRepository.insertTopicRemote(topicToPush)
+                    val result = BackendApiService.createTopic(topicData)
+                    if (result is ApiResult.Success) {
+                        result.data?.id
+                    } else null
                 }
 
                 if (remoteTopicId != null && remoteTopicId > 0) {
@@ -625,22 +613,12 @@ class CourseTopicFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val activity = requireActivity()
-                if (activity !is com.example.tareamov.MainActivity) {
-                    if (isAdded && context != null) {
-                        Toast.makeText(requireContext(), "Error: Contexto inválido", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
+                BackendApiService.initialize(requireContext())
 
-                // Validate course exists in Supabase
+                // Validate course exists
                 val validCourseId = withContext(Dispatchers.IO) {
-                    val course = activity.syncRepository.fetchCourseById(courseId)
-                    if (course != null) {
-                        course.id
-                    } else {
-                        Log.e("CourseTopicFragment", "Course $courseId not found in Supabase")
-                        -1L
-                    }
+                    val result = BackendApiService.getCourseById(courseId)
+                    if (result is ApiResult.Success && result.data != null) result.data.id else -1L
                 }
 
                 if (validCourseId <= 0) {
@@ -652,20 +630,17 @@ class CourseTopicFragment : Fragment() {
 
                 Log.d("CourseTopicFragment", "Using validated courseId: $validCourseId")
 
-                // Create or update topic in Supabase
-                val topicToSave = com.example.tareamov.data.entity.Topic(
-                    id = if (topicId > 0) topicId else 0,
-                    courseId = validCourseId,
-                    name = topicName,
-                    description = topicDescription,
-                    orderIndex = this@CourseTopicFragment.topicNumber
-                )
-
+                // Create or update topic via backend API
                 val savedTopicId = withContext(Dispatchers.IO) {
                     if (topicId > 0) {
-                        // Update existing topic in Supabase
-                        val updateSuccess = com.example.tareamov.service.SupabaseClient.updateTopic(topicToSave)
-                        if (updateSuccess) {
+                        // Update existing topic
+                        val updates = mapOf(
+                            "name" to topicName,
+                            "description" to topicDescription,
+                            "orderIndex" to this@CourseTopicFragment.topicNumber
+                        )
+                        val result = BackendApiService.updateTopic(topicId, updates)
+                        if (result is ApiResult.Success) {
                             Log.d("CourseTopicFragment", "✅ Topic $topicId updated successfully")
                             topicId
                         } else {
@@ -673,8 +648,17 @@ class CourseTopicFragment : Fragment() {
                             -1L
                         }
                     } else {
-                        // Insert new topic to Supabase using regular insert (we already have correct courseId)
-                        activity.syncRepository.insertTopicRemote(topicToSave)
+                        // Insert new topic
+                        val topicData = Topic(
+                            courseId = validCourseId,
+                            name = topicName,
+                            description = topicDescription,
+                            orderIndex = this@CourseTopicFragment.topicNumber
+                        )
+                        val result = BackendApiService.createTopic(topicData)
+                        if (result is ApiResult.Success) {
+                            result.data?.id ?: -1L
+                        } else -1L
                     }
                 }
 
@@ -685,24 +669,7 @@ class CourseTopicFragment : Fragment() {
                     return@launch
                 }
 
-                    // Ensure local DB stores the topic with the remote id
-                    try {
-                        val db = AppDatabase.getDatabase(requireContext())
-                        val localTopic = com.example.tareamov.data.entity.Topic(
-                            id = savedTopicId,
-                            courseId = validCourseId,
-                            name = topicName,
-                            description = topicDescription,
-                            orderIndex = this@CourseTopicFragment.topicNumber
-                        )
-                        withContext(Dispatchers.IO) {
-                            db.topicDao().insertTopic(localTopic)
-                        }
-                    } catch (e: Exception) {
-                        Log.w("CourseTopicFragment", "Could not insert topic locally after remote save: $savedTopicId", e)
-                    }
-
-                // Save content items to Supabase
+                // Save content items via backend API
                 val contentContainer = view?.findViewById<LinearLayout>(R.id.contentContainer)
                 if (contentContainer != null) {
                     val itemCount = contentContainer.childCount
@@ -743,7 +710,17 @@ class CourseTopicFragment : Fragment() {
                             )
 
                             val savedId = withContext(Dispatchers.IO) {
-                                activity.syncRepository.insertContentItemRemote(contentItem)
+                                val ciData = ContentItem(
+                                    topicId = savedTopicId,
+                                    name = contentName,
+                                    uriString = contentUri.toString(),
+                                    contentType = contentType,
+                                    orderIndex = i
+                                )
+                                val result = BackendApiService.createContentItem(ciData)
+                                if (result is ApiResult.Success) {
+                                    result.data?.id
+                                } else null
                             }
                             
                             if (savedId != null && savedId > 0) {
@@ -764,7 +741,7 @@ class CourseTopicFragment : Fragment() {
                     Toast.makeText(requireContext(), "Tema guardado correctamente en Supabase", Toast.LENGTH_SHORT).show()
                 }
 
-                // Notify CourseDetailFragment to refresh from Supabase and force reload
+                // Notify CourseDetailFragment to refresh from backend and force reload
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("topic_created", savedTopicId)
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("refresh_from_supabase", true)
                 findNavController().previousBackStackEntry?.savedStateHandle?.set("force_reload_topics", true)

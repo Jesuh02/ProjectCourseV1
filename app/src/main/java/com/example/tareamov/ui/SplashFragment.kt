@@ -61,18 +61,14 @@ class SplashFragment : Fragment() {
         initializeKeyboardSound()
         startSpectacularAnimation()
 
-        // Start Supabase sync in background. We'll wait for both the animation
-        // timeout and the sync to finish before navigating forward.
+        // Initialize BackendApiService and mark sync as complete (data comes from backend on-demand)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val ma = activity as? com.example.tareamov.MainActivity
-                ma?.syncRepository?.let { repo ->
-                    // syncSupabaseToLocal may perform network/DB work; run off UI thread
-                    try {
-                        repo.syncSupabaseToLocal()
-                    } catch (t: Throwable) {
-                        t.printStackTrace()
-                    }
+                com.example.tareamov.service.BackendApiService.initialize(requireContext())
+                // Restore auth token from session if available
+                val sm = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                com.example.tareamov.service.BackendApiService.jwtToken?.let { _ ->
+                    // Token already restored from SharedPreferences by BackendApiService
                 }
             } catch (t: Throwable) {
                 t.printStackTrace()

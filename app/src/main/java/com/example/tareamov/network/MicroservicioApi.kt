@@ -55,6 +55,8 @@ data class MicroservicioPromptRequest(
 data class SaveReinforcementHistoryRequest(
     val userId: Long,
     val courseId: Long,
+    val topicId: Long? = null,
+    val taskId: Long? = null,
     val questions: Any // JSON serializable (List/Array of questions)
 )
 
@@ -158,9 +160,16 @@ data class NotificationResult(
     val sentCount: Int? = null
 )
 
+// Wrapper para respuestas estándar { success: true, data: T }
+data class McpApiResponse<T>(
+    val success: Boolean,
+    val data: T?,
+    val error: String? = null
+)
+
 interface MicroservicioApi {
     @POST("/procesar-prompt")
-    suspend fun procesarPrompt(@Body request: MicroservicioPromptRequest): MicroservicioPromptResponse
+    suspend fun procesarPrompt(@Body request: MicroservicioPromptRequest): McpApiResponse<MicroservicioPromptResponse>
 
         @POST("/analizar-entrega")
     suspend fun analizarEntrega(@Body request: AnalizarEntregaRequest): AnalizarEntregaResponse

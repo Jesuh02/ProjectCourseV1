@@ -20,8 +20,12 @@ import com.google.gson.annotations.SerializedName
 )
 data class Task(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @SerializedName("topic_id")
     val topicId: Long = 0,
     @SerializedName("title") val name: String = "",
     val description: String? = null,
-    val orderIndex: Int = 0
+    @SerializedName("order_index")
+    val orderIndex: Int = 0,
+    @SerializedName("due_date")
+    val dueDate: String? = null
 )

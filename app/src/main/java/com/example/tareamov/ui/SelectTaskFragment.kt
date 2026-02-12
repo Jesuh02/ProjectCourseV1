@@ -21,13 +21,10 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tareamov.R
 import com.example.tareamov.adapter.TaskSelectionAdapter
-import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.Task
-import com.example.tareamov.data.sync.SyncRepository
-import com.example.tareamov.service.SupabaseClient
-import kotlinx.coroutines.Dispatchers
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class SelectTaskFragment : Fragment() {
 
@@ -135,36 +132,18 @@ class SelectTaskFragment : Fragment() {
         // Load tasks from DB and render as polished card items
         lifecycleScope.launch {
             try {
-                val db = AppDatabase.getDatabase(requireContext())
-                val syncRepo = SyncRepository(
-                    db.usuarioDao(), db.personaDao(), db.topicDao(), db.contentItemDao(), db.taskDao(),
-                    db.subscriptionDao(), db.taskSubmissionDao(), db.videoDao(), db.courseDao(), db.rolDao(),
-                    db.recursoDao(), db.rolRecursoDao(), db.chatMessageDao(), db.fileContextDao(), db.progresoEstudianteDao()
-                )
-
-                var tasks: List<Task> = emptyList()
-
-                // Try fetching from Supabase first if configured
-                if (SupabaseClient.isConfigured()) {
-                    try {
-                        tasks = withContext(Dispatchers.IO) {
-                            syncRepo.fetchTasksByTopicIdsFromSupabase(listOf(topicId))
-                        }
-                        Log.d("SelectTaskFragment", "Fetched ${tasks.size} tasks from Supabase")
-                    } catch (e: Exception) {
-                        Log.w("SelectTaskFragment", "Failed to fetch tasks from Supabase", e)
+                BackendApiService.initialize(requireContext())
+                val result = BackendApiService.getTasksByTopic(topicId)
+                val tasks: List<Task> = when (result) {
+                    is ApiResult.Success -> result.data
+                    is ApiResult.Error -> {
+                        Log.w("SelectTaskFragment", "Failed to fetch tasks: ${result.message}")
+                        emptyList()
                     }
                 }
+                Log.d("SelectTaskFragment", "Fetched ${tasks.size} tasks from BackendApiService")
 
-                // Fallback to local DB if Supabase failed or returned empty
                 if (tasks.isEmpty()) {
-                    tasks = withContext(Dispatchers.IO) {
-                        db.taskDao().getTasksByTopic(topicId)
-                    }
-                    Log.d("SelectTaskFragment", "Fetched ${tasks.size} tasks from local DB")
-                }
-
-                if (tasks.isNullOrEmpty()) {
                     // show empty state
                     emptyStateLayout?.visibility = View.VISIBLE
                     noTasksSelectionTextView?.visibility = View.VISIBLE

@@ -1,8 +1,14 @@
 {
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
+    "axios": "^1.13.5",
+    "cross-env": "^10.1.0",
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "firebase-admin": "^13.6.1",
     "langchain": "^0.3.30",
     "ndjson": "^2.0.0",
-    "nodemailer": "^7.0.11"
+    "nodemailer": "^7.0.13",
+    "supabase-js": "^0.0.1-security"
   }
 }
