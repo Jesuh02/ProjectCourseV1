@@ -86,7 +86,7 @@ data class VideoData(
     // Get the best available URI for playback
     fun getBestVideoUri(): Uri? {
         // Optimization: Avoid blocking network calls here.
-        // The VideoPlayerActivity will handle fetching the streaming URL asynchronously.
+        // The VideoAdapter will handle fetching the signed streaming URL asynchronously.
         
         // 1. If videoUriString is a remote HTTP/HTTPS URL, use it directly (highest priority for cloud videos)
         if (!videoUriString.isNullOrEmpty()) {

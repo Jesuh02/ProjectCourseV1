@@ -395,9 +395,11 @@ object SupabaseClient {
                 map["course_id"] = video.courseId
             }
             
-            // Include id if provided (calculated via getNextVideoId)
+            // NOTE: Do NOT include 'id' in the payload.
+            // The videos.id column is GENERATED ALWAYS AS IDENTITY;
+            // PostgreSQL will auto-generate it and return it in the response.
             if (video.id > 0) {
-                map["id"] = video.id
+                Log.d("SupabaseClient", "Calculated nextVideoId=${video.id} (for reference only, DB auto-generates)")
             }
 
             val body = gson.toJson(map).toRequestBody(jsonMedia)

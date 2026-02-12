@@ -76,7 +76,7 @@ android {
     buildFeatures {
         buildConfig = true
         viewBinding = true
-        dataBinding = true
+        dataBinding = false  // Desactivado: ningún layout usa <layout> tag. Ahorra indexación.
         // Enable Jetpack Compose
         compose = true
     }
@@ -193,6 +193,23 @@ android {
     // `./gradlew :app:updateLintBaseline` after this change.
     lint {
         baseline = file("lint-baseline.xml")
+    }
+}
+
+// ── Desactivar variants que no se necesiten para reducir carga del IDE ──
+// Por defecto solo se habilita el flavor seleccionado en local.properties (ACTIVE_FLAVOR).
+// Si no se define, se habilitan todos.
+// Para usar: agregar ACTIVE_FLAVOR=qa  o  ACTIVE_FLAVOR=production  en local.properties
+val activeFlavor = localPropsMap["ACTIVE_FLAVOR"] ?: ""
+
+androidComponents {
+    beforeVariants { variantBuilder ->
+        if (activeFlavor.isNotBlank()) {
+            // Solo habilitar el flavor activo (ej: qaDebug, qaRelease)
+            if (!variantBuilder.flavorName.equals(activeFlavor, ignoreCase = true)) {
+                variantBuilder.enable = false
+            }
+        }
     }
 }
 

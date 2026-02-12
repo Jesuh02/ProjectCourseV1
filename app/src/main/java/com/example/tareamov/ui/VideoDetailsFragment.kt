@@ -729,16 +729,15 @@ class VideoDetailsFragment : Fragment() {
                             
                             when (uploadResult) {
                                 is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
-                                    finalVideoUri = uploadResult.url
-                                    Log.d("VideoDetailsFragment", "✅ Video uploaded to R2: $finalVideoUri")
-                                    Log.d("VideoDetailsFragment", "   Object Key: ${uploadResult.objectKey}")
-                                    Log.d("VideoDetailsFragment", "   File Size: ${uploadResult.fileSize} bytes")
-                                    Log.d("VideoDetailsFragment", "   MIME Type: ${uploadResult.mimeType}")
+                                    // SECURITY FIX: Ahora guardamos solo el Object Key (ruta relativa), no la URL completa
+                                    finalVideoUri = uploadResult.objectKey
+                                    Log.d("VideoDetailsFragment", "✅ Video uploaded to R2. Storing Object Key: $finalVideoUri")
+                                    Log.d("VideoDetailsFragment", "   Full URL (temporary): ${uploadResult.url}")
                                     updateLoadingProgress(70, "Video subido exitosamente ✓", false)
                                     withContext(Dispatchers.Main) {
                                         android.widget.Toast.makeText(
                                             requireContext(),
-                                            "✅ Video subido a la nube",
+                                            "✅ Video subido a la nube (Privado)",
                                             android.widget.Toast.LENGTH_SHORT
                                         ).show()
                                     }
@@ -845,11 +844,11 @@ class VideoDetailsFragment : Fragment() {
                         }
                     }
                     
-                    // Get next available video ID (> 82)
+                    // Get next available video ID for reference/logging
                     updateLoadingProgress(87, "Generando identificadores...", false)
                     val nextVideoId = 0L // Backend auto-assigns the real ID on creation
                     
-                    Log.d("VideoDetailsFragment", "Creating new video with ID: $nextVideoId")
+                    Log.d("VideoDetailsFragment", "Creating new video with calculated ID: $nextVideoId")
 
                     // Variable to hold course ID (null if not creating a course)
                     var courseRemoteId: Long? = null

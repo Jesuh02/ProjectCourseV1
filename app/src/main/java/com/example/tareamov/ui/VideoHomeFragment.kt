@@ -2189,28 +2189,30 @@ class VideoHomeFragment : Fragment() {
      * Esta función puede ser llamada desde cualquier parte del fragmento
      */
     private fun shareVideoFromFragment(videoData: VideoData) {
-        try {
-            val context = requireContext()
+        // Lanzar corrutina porque obtener la URL firmada ahora es una operación de red async
+        lifecycleScope.launch {
+            try {
+                val context = requireContext()
 
-            // ESTRATEGIA 1: Intentar obtener URL pública de Cloudflare R2
-            val r2PublicUrl = com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(videoData.videoUriString)
+                // ESTRATEGIA 1: Intentar obtener URL firmada de Cloudflare R2
+                val r2PublicUrl = com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, videoData.videoUriString)
 
-            if (r2PublicUrl != null && (r2PublicUrl.startsWith("http://") || r2PublicUrl.startsWith("https://"))) {
-                // Compartir usando URL pública - MÉTODO PREFERIDO
-                Log.d("VideoHomeFragment", "📤 Compartiendo video usando URL pública de R2: $r2PublicUrl")
+                if (r2PublicUrl != null && (r2PublicUrl.startsWith("http://") || r2PublicUrl.startsWith("https://"))) {
+                    // Compartir usando URL pública/firmada - MÉTODO PREFERIDO
+                    Log.d("VideoHomeFragment", "📤 Compartiendo video usando URL de R2: $r2PublicUrl")
 
-                // Copiar URL al portapapeles
-                try {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    val clip = android.content.ClipData.newPlainText("URL del video", r2PublicUrl)
-                    clipboard.setPrimaryClip(clip)
-                    Log.d("VideoHomeFragment", "📋 URL copiada al portapapeles")
-                } catch (e: Exception) {
-                    Log.w("VideoHomeFragment", "⚠️ No se pudo copiar al portapapeles: ${e.message}")
-                }
+                    // Copiar URL al portapapeles
+                    try {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        val clip = android.content.ClipData.newPlainText("URL del video", r2PublicUrl)
+                        clipboard.setPrimaryClip(clip)
+                        Log.d("VideoHomeFragment", "📋 URL copiada al portapapeles")
+                    } catch (e: Exception) {
+                        Log.w("VideoHomeFragment", "⚠️ No se pudo copiar al portapapeles: ${e.message}")
+                    }
 
-                val shareText = buildString {
-                    appendLine("🎥 ${videoData.title}")
+                    val shareText = buildString {
+                        appendLine("🎥 ${videoData.title}")
                     appendLine()
                     if (!videoData.description.isNullOrEmpty()) {
                         appendLine(videoData.description)
@@ -2241,7 +2243,7 @@ class VideoHomeFragment : Fragment() {
                 ).show()
 
                 Log.d("VideoHomeFragment", "✅ Video compartido con URL pública")
-                return
+                return@launch
             }
 
             // ESTRATEGIA 2: Compartir información del video si no hay URL pública
@@ -2278,10 +2280,9 @@ class VideoHomeFragment : Fragment() {
                     Toast.LENGTH_LONG
                 ).show()
             }
-
         } catch (e: Exception) {
-            Log.e("VideoHomeFragment", "❌ Error compartiendo video: ${e.message}", e)
-            context?.let { Toast.makeText(it, "Error al compartir video: ${e.message}", Toast.LENGTH_SHORT).show() }
+            Log.e("VideoHomeFragment", "Error al compartir video", e)
+        }
         }
     }
 

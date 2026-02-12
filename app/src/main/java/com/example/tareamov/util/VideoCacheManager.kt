@@ -144,6 +144,8 @@ object VideoCacheManager {
     
     /**
      * Create a cached MediaSource for a video URL.
+     * Uses a stable cache key based on the object key (not the full signed URL)
+     * so ExoPlayer reuses cached data across different signed URL generations.
      */
     fun createCachedMediaSource(context: Context, url: String): MediaSource {
         val mediaItemBuilder = MediaItem.Builder().setUri(url)
@@ -158,8 +160,38 @@ object VideoCacheManager {
             Log.w(TAG, "Forcing VIDEO_MP4 mime type for extensionless R2 URL: $url")
             mediaItemBuilder.setMimeType(androidx.media3.common.MimeTypes.VIDEO_MP4)
         }
+        
+        // CRITICAL: Use a stable custom cache key for signed URLs.
+        // Signed URLs change every time (different signature/expiry), but the
+        // underlying content is the same. By using the object key as cache key,
+        // ExoPlayer will reuse previously cached video data.
+        val stableCacheKey = extractStableCacheKey(url)
+        if (stableCacheKey != null) {
+            mediaItemBuilder.setCustomCacheKey(stableCacheKey)
+            Log.d(TAG, "Using stable cache key: $stableCacheKey for signed URL")
+        }
 
         return createMediaSourceFactory(context).createMediaSource(mediaItemBuilder.build())
+    }
+    
+    /**
+     * Extract a stable cache key from a signed R2 URL.
+     * Strips the query string (which contains the signature) and uses only the path.
+     * Example: "https://xxx.r2.dev/videos/my_video?X-Amz-..." → "videos/my_video"
+     * Returns null for non-R2 URLs (they use the default URL as cache key).
+     */
+    private fun extractStableCacheKey(url: String): String? {
+        val isSignedR2 = (url.contains("r2.dev") || url.contains("r2.cloudflarestorage.com")) 
+                         && url.contains("X-Amz-")
+        if (!isSignedR2) return null
+        
+        return try {
+            val uri = android.net.Uri.parse(url)
+            uri.path?.trimStart('/') // e.g. "videos/my_video"
+        } catch (e: Exception) {
+            Log.e(TAG, "Error extracting stable cache key from URL", e)
+            null
+        }
     }
     
     /**
