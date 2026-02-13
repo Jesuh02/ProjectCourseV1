@@ -293,35 +293,21 @@ object CertificateGenerator {
                 db.progresoEstudianteDao().upsert(updated)
                 Log.d(TAG, "✅ Certificado guardado localmente (primera vez)")
                 
-                // Sincronizar a Supabase usando upsert completo
-                val syncSuccess = com.example.tareamov.service.SupabaseClient.upsertProgresoEstudiante(updated)
-                
-                if (syncSuccess) {
-                    Log.i(TAG, "✅ Certificado sincronizado a Supabase para $studentUsername en curso $courseId")
+                // Emitir certificado vía backend (upsert progreso + fecha)
+                val certResult = com.example.tareamov.service.BackendApiService.issueCertificate(courseId, userId)
+                if (certResult.isSuccess) {
+                    Log.i(TAG, "✅ Certificado emitido vía backend para $studentUsername en curso $courseId")
                 } else {
-                    Log.w(TAG, "⚠️ No se pudo sincronizar certificado a Supabase")
+                    Log.w(TAG, "⚠️ No se pudo emitir certificado vía backend: ${certResult.errorMessage()}")
                 }
 
-                // Actualizar fecha remota
-                val remoteUpdated = com.example.tareamov.service.SupabaseClient.updateCertificateIssuedDate(
-                    userId,
-                    courseId
-                )
-                if (remoteUpdated) {
-                    Log.i(TAG, "✅ Fecha de certificado actualizada en Supabase")
-                }
-                
-                // Si hay URL del certificado, guardarla en Supabase
+                // Si hay URL del certificado, guardarla vía backend
                 if (certificateUrl != null) {
-                    val urlUpdated = com.example.tareamov.service.SupabaseClient.updateCertificateUrl(
-                        userId,
-                        courseId,
-                        certificateUrl
-                    )
-                    if (urlUpdated) {
-                        Log.i(TAG, "✅ URL del certificado guardada en Supabase: $certificateUrl")
+                    val urlResult = com.example.tareamov.service.BackendApiService.updateCertificateUrl(courseId, certificateUrl, userId)
+                    if (urlResult.isSuccess) {
+                        Log.i(TAG, "✅ URL del certificado guardada vía backend: $certificateUrl")
                     } else {
-                        Log.w(TAG, "⚠️ No se pudo guardar la URL del certificado en Supabase")
+                        Log.w(TAG, "⚠️ No se pudo guardar URL del certificado: ${urlResult.errorMessage()}")
                     }
                 }
                 

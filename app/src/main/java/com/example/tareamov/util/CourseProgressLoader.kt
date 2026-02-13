@@ -149,24 +149,33 @@ class CourseProgressLoader(private val context: Context) {
     }
     
     /**
-     * Sincroniza el progreso con Supabase de forma asíncrona
+     * Sincroniza el progreso con el backend de forma asíncrona
      */
     private fun sincronizarProgresoConSupabase(progreso: ProgresoEstudiante) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                    Log.w(TAG, "Supabase not configured, skipping sync")
+                if (!com.example.tareamov.service.BackendApiService.isAuthenticated) {
+                    Log.w(TAG, "Backend not authenticated, skipping sync")
                     return@launch
                 }
                 
-                val exito = com.example.tareamov.service.SupabaseClient.upsertProgresoEstudiante(progreso)
-                if (exito) {
-                    Log.d(TAG, "Progreso sincronizado exitosamente para ${progreso.usuarioEstudiante} en curso ${progreso.cursoId}")
+                val data = mapOf(
+                    "userId" to progreso.usuarioEstudiante,
+                    "courseId" to progreso.cursoId,
+                    "tareasCompletadas" to progreso.tareasCompletadas,
+                    "tareasTotales" to progreso.tareasTotales,
+                    "porcentajeProgreso" to progreso.porcentajeProgreso,
+                    "calificacionPonderada" to progreso.calificacionPonderada,
+                    "estado" to progreso.estado
+                )
+                val result = com.example.tareamov.service.BackendApiService.upsertProgress(data)
+                if (result.isSuccess) {
+                    Log.d(TAG, "Progreso sincronizado vía backend para ${progreso.usuarioEstudiante} en curso ${progreso.cursoId}")
                 } else {
-                    Log.w(TAG, "No se pudo sincronizar el progreso con Supabase")
+                    Log.w(TAG, "No se pudo sincronizar el progreso: ${result.errorMessage()}")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error sincronizando progreso con Supabase", e)
+                Log.e(TAG, "Error sincronizando progreso", e)
             }
         }
     }

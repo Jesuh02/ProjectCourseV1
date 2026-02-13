@@ -127,6 +127,7 @@ object SupabaseClient {
      * @param payload The data to insert as a Map
      * @return The ID of the inserted record, or null on failure
      */
+    @Deprecated("Use BackendApiService instead", level = DeprecationLevel.WARNING)
     private suspend fun insertRecord(table: String, payload: Map<String, Any?>): Long? = withContext(Dispatchers.IO) {
         try {
             val body = gson.toJson(payload).toRequestBody(jsonMedia)
@@ -177,6 +178,7 @@ object SupabaseClient {
      * @param payload The data to update
      * @return true on success, false on failure
      */
+    @Deprecated("Use BackendApiService instead", level = DeprecationLevel.WARNING)
     private suspend fun updateRecord(table: String, id: Long, payload: Map<String, Any?>): Boolean = withContext(Dispatchers.IO) {
         try {
             val body = gson.toJson(payload).toRequestBody(jsonMedia)
@@ -206,6 +208,7 @@ object SupabaseClient {
     }
 
     // Update an existing Task by id. Returns true on success.
+    @Deprecated("Use BackendApiService.updateTask() instead", level = DeprecationLevel.WARNING)
     suspend fun updateTask(task: com.example.tareamov.data.entity.Task): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseClient", "updateTask called: id=${task.id}, topicId=${task.topicId}, name='${task.name}', desc='${task.description}'")
@@ -250,6 +253,7 @@ object SupabaseClient {
         }
     }
 
+    @Deprecated("Use BackendApiService.registerUser() instead", level = DeprecationLevel.WARNING)
     suspend fun insertPersona(persona: Persona): Long? {
         val payload = mapOf(
             "identificacion" to persona.identificacion,
@@ -317,6 +321,7 @@ object SupabaseClient {
      */
 
 
+    @Deprecated("Use BackendApiService.registerUser() instead", level = DeprecationLevel.WARNING)
     suspend fun insertUsuario(usuario: Usuario): Long? {
         Log.d("SupabaseClient", "insertUsuario called for username: ${usuario.usuario}, email: ${usuario.email}, persona_id: ${usuario.persona_id}")
         // Only include fields that exist in the Supabase usuarios table
@@ -335,6 +340,7 @@ object SupabaseClient {
         return result
     }
 
+    @Deprecated("Use BackendApiService.assignRole() instead", level = DeprecationLevel.WARNING)
     suspend fun insertUsuarioRole(userId: Long, roleId: Int): Boolean = withContext(Dispatchers.IO) {
         try {
             val payload = mapOf(
@@ -519,6 +525,7 @@ object SupabaseClient {
      * This creates a new row instead of updating an existing one, preserving history.
      * 🛠️ AUTO-REPAIRS: Auto-generates explanations if missing before inserting
      */
+    @Deprecated("Use BackendApiService.insertReinforcementHistory() instead", level = DeprecationLevel.WARNING)
     suspend fun insertReinforcementHistory(
         userId: Long, 
         courseId: Long, 
@@ -752,6 +759,7 @@ object SupabaseClient {
         return@withContext emptyList()
     }
 
+    @Deprecated("Use BackendApiService.createCourse() instead", level = DeprecationLevel.WARNING)
     suspend fun insertCourse(course: com.example.tareamov.data.entity.Course): Long? = withContext(Dispatchers.IO) {
         try {
             // Build map with creator_user_id as foreign key (NOT NULL required)
@@ -813,6 +821,7 @@ object SupabaseClient {
     }
 
     // Update a course by id (PATCH). Returns true on success.
+    @Deprecated("Use BackendApiService.updateCourse() instead", level = DeprecationLevel.WARNING)
     suspend fun updateCourseById(id: Long, course: com.example.tareamov.data.entity.Course): Boolean = withContext(Dispatchers.IO) {
         try {
             val map = mapOf(
@@ -861,6 +870,7 @@ object SupabaseClient {
     }
 
     // Delete a course by id
+    @Deprecated("Use BackendApiService.deleteCourse() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteCourseById(id: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             // Embed the numeric id value directly into the request URL
@@ -891,6 +901,7 @@ object SupabaseClient {
     }
 
     // Delete a video by id from the videos table
+    @Deprecated("Use BackendApiService.deleteVideo() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteVideoById(id: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             val url = "$baseUrl/rest/v1/videos?id=eq.${id}"
@@ -920,6 +931,7 @@ object SupabaseClient {
         }
     }
 
+    @Deprecated("Use BackendApiService.createTopic() instead", level = DeprecationLevel.WARNING)
     suspend fun insertTopic(topic: com.example.tareamov.data.entity.Topic): Long? = withContext(Dispatchers.IO) {
         try {
             val map = mapOf(
@@ -972,6 +984,7 @@ object SupabaseClient {
 
     // Insert a Task (belongs to a Topic) with optional creator metadata
     // NOTE: Creator fields are accepted but ignored since tasks table doesn't have those columns
+    @Deprecated("Use BackendApiService.createTask() instead", level = DeprecationLevel.WARNING)
     suspend fun insertTask(
         task: com.example.tareamov.data.entity.Task,
         creatorUsername: String? = null,
@@ -1114,6 +1127,7 @@ object SupabaseClient {
     }
 
     // Insert a ContentItem (belongs to a Task/Topic)
+    @Deprecated("Use BackendApiService.createContentItem() instead", level = DeprecationLevel.WARNING)
     suspend fun insertContentItem(contentItem: com.example.tareamov.data.entity.ContentItem): Long? = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseClient", "📤 ========== INSERT CONTENT ITEM ==========")
@@ -1214,6 +1228,7 @@ object SupabaseClient {
      * @param id The ID of the content item to delete
      * @return true on success, false on failure
      */
+    @Deprecated("Use BackendApiService.deleteContentItem() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteContentItem(id: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseClient", "🗑️ Deleting content item id=$id")
@@ -1250,6 +1265,7 @@ object SupabaseClient {
      * @param id The ID of the task to delete
      * @return true on success, false on failure
      */
+    @Deprecated("Use BackendApiService.deleteTask() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteTask(id: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseClient", "🗑️ Deleting task id=$id")
@@ -1282,6 +1298,7 @@ object SupabaseClient {
      * @param id The ID of the topic to delete
      * @return true on success, false on failure
      */
+    @Deprecated("Use BackendApiService.deleteTopic() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteTopic(id: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseClient", "🗑️ Deleting topic id=$id")
@@ -1314,6 +1331,7 @@ object SupabaseClient {
      * @param taskId The ID of the parent task
      * @return true on success
      */
+    @Deprecated("Use BackendApiService.deleteContentItemsByTaskId() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteContentItemsByTaskId(taskId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseClient", "🗑️ Deleting content items for task_id=$taskId")
@@ -1342,6 +1360,7 @@ object SupabaseClient {
     }
 
     // Update an existing Persona by id. Returns true on success.
+    @Deprecated("Use BackendApiService.updatePersona() instead", level = DeprecationLevel.WARNING)
     suspend fun updatePersona(persona: Persona): Boolean = withContext(Dispatchers.IO) {
         try {
             val map = mutableMapOf<String, Any?>()
@@ -1379,6 +1398,7 @@ object SupabaseClient {
     }
 
     // Update an existing Usuario by id. Returns true on success.
+    @Deprecated("Use BackendApiService.updateUsuario() instead", level = DeprecationLevel.WARNING)
     suspend fun updateUsuario(usuario: Usuario): Boolean = withContext(Dispatchers.IO) {
         try {
             val map = mutableMapOf<String, Any?>()
@@ -1419,6 +1439,7 @@ object SupabaseClient {
     }
 
     // Update only profile fields (username, avatar) to avoid issues with other fields
+    @Deprecated("Use BackendApiService.updateUsuarioProfile() instead", level = DeprecationLevel.WARNING)
     suspend fun updateUsuarioProfile(userId: Long, username: String, avatarUrl: String?): Boolean = withContext(Dispatchers.IO) {
         try {
             val map = mutableMapOf<String, Any?>()
@@ -1454,6 +1475,7 @@ object SupabaseClient {
         }
     }
 
+    @Deprecated("Use BackendApiService.submitTask() instead", level = DeprecationLevel.WARNING)
     suspend fun insertTaskSubmission(submission: com.example.tareamov.data.entity.TaskSubmission): Long? = withContext(Dispatchers.IO) {
         try {
             if (!isConfigured()) {
@@ -1627,6 +1649,7 @@ object SupabaseClient {
         }
     }
 
+    @Deprecated("Use BackendApiService.uploadFileContext() instead", level = DeprecationLevel.WARNING)
     suspend fun insertFileContext(fileContext: com.example.tareamov.data.entity.FileContext): Long? = withContext(Dispatchers.IO) {
         try {
             // Do NOT send local 'id' to server - let Postgres sequence generate primary key
@@ -1692,6 +1715,7 @@ object SupabaseClient {
         }
     }
 
+    @Deprecated("Use BackendApiService.gradeSubmission() instead", level = DeprecationLevel.WARNING)
     suspend fun updateTaskSubmissionRemote(submissionId: Long, grade: Float?, feedback: String?): Boolean = withContext(Dispatchers.IO) {
         try {
             val map = mutableMapOf<String, Any?>()
@@ -1755,6 +1779,7 @@ object SupabaseClient {
 
     // Overload that accepts the full TaskSubmission object and attempts to PATCH by id first,
     // then falls back to matching by task_id, student_username and submission_date.
+    @Deprecated("Use BackendApiService.gradeSubmission() instead", level = DeprecationLevel.WARNING)
     suspend fun updateTaskSubmissionRemote(submission: com.example.tareamov.data.entity.TaskSubmission): Boolean = withContext(Dispatchers.IO) {
         try {
             val grade = submission.grade
@@ -2718,6 +2743,7 @@ object SupabaseClient {
         }
 
     // Insert a subscription record into Supabase
+    @Deprecated("Use BackendApiService.subscribe() instead", level = DeprecationLevel.WARNING)
     suspend fun insertSubscriptionToSupabase(sub: Subscription): Boolean = withContext(Dispatchers.IO) {
         try {
             val map = mapOf(
@@ -2755,6 +2781,7 @@ object SupabaseClient {
 
 
     // Delete a subscription (unsubscribe) from Supabase
+    @Deprecated("Use BackendApiService.unsubscribe() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteSubscriptionFromSupabase(subscriberId: Long, creatorId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             val url = "$baseUrl/rest/v1/subscriptions?subscriber_id=eq.$subscriberId&creator_id=eq.$creatorId"
@@ -3642,6 +3669,7 @@ object SupabaseClient {
      * This is NOT a true SQL executor due to REST API limits, but used for flexibility
      * For actual raw SQL, you need an RPC function like 'exec_sql'
      */
+    @Deprecated("Use BackendApiService instead", level = DeprecationLevel.WARNING)
     suspend fun executeRawQuery(queryOrPath: String): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
         // If it starts with SELECT, it's SQL. We can't run SQL directly without RPC.
         // Assuming we have an RPC function 'exec_sql' or similar, or we map it to REST.
@@ -3739,6 +3767,7 @@ object SupabaseClient {
      * Legacy method for raw SQL (kept to avoid breaking changes if used elsewhere)
      * Calls executeRawQuery internally
      */
+    @Deprecated("Use BackendApiService instead", level = DeprecationLevel.WARNING)
     suspend fun executeRawSql(sql: String): List<Map<String, Any?>> {
          return executeRawQuery(sql)
     }
@@ -3768,6 +3797,7 @@ object SupabaseClient {
     /**
      * Update Topic in Supabase
      */
+    @Deprecated("Use BackendApiService.updateTopic() instead", level = DeprecationLevel.WARNING)
     suspend fun updateTopic(topic: Topic): Boolean = withContext(Dispatchers.IO) {
         try {
             val path = "topics?id=eq.${topic.id}"
@@ -4394,6 +4424,7 @@ object SupabaseClient {
     /**
      * Insert Topic using trigger (returns generated ID)
      */
+    @Deprecated("Use BackendApiService.createTopic() instead", level = DeprecationLevel.WARNING)
     suspend fun insertTopicUsingTrigger(topic: Topic, courseTitle: String? = null): Long? = withContext(Dispatchers.IO) {
         try {
             val map = mutableMapOf<String, Any?>(
@@ -4447,6 +4478,7 @@ object SupabaseClient {
     /**
      * Update Video
      */
+    @Deprecated("Use BackendApiService.updateVideo() instead", level = DeprecationLevel.WARNING)
     suspend fun updateVideo(video: VideoData): Boolean = withContext(Dispatchers.IO) {
         try {
             val map = mutableMapOf<String, Any?>()
@@ -4497,6 +4529,7 @@ object SupabaseClient {
     /**
      * Upsert student progress to Supabase progreso_estudiante table
      */
+    @Deprecated("Use BackendApiService.upsertProgress() instead", level = DeprecationLevel.WARNING)
     suspend fun upsertProgresoEstudiante(progreso: com.example.tareamov.data.entity.ProgresoEstudiante): Boolean = withContext(Dispatchers.IO) {
         try {
             if (!isConfigured()) return@withContext false
@@ -4914,6 +4947,7 @@ object SupabaseClient {
     /**
      * Insert a subscription to Supabase
      */
+    @Deprecated("Use BackendApiService.subscribe() instead", level = DeprecationLevel.WARNING)
     suspend fun subscribeToCreator(subscriberId: Long, creatorId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             val subscription = Subscription(
@@ -4951,6 +4985,7 @@ object SupabaseClient {
     /**
      * Delete a subscription from Supabase
      */
+    @Deprecated("Use BackendApiService.unsubscribe() instead", level = DeprecationLevel.WARNING)
     suspend fun unsubscribeFromCreator(subscriberId: Long, creatorId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
@@ -4978,6 +5013,7 @@ object SupabaseClient {
     /**
      * Actualiza el campo certificado_emitido_en cuando se genera un certificado
      */
+    @Deprecated("Use BackendApiService.updateCertificate() instead", level = DeprecationLevel.WARNING)
     suspend fun updateCertificateIssuedDate(
         studentUserId: Long,
         courseId: Long
@@ -5023,6 +5059,7 @@ object SupabaseClient {
     /**
      * Actualiza la URL del certificado en progreso_estudiante
      */
+    @Deprecated("Use BackendApiService.updateCertificateUrl() instead", level = DeprecationLevel.WARNING)
     suspend fun updateCertificateUrl(
         studentUserId: Long,
         courseId: Long,
@@ -5473,6 +5510,7 @@ object SupabaseClient {
      * Increment like count for a video (DEPRECATED - use addLike with entity_type='video')
      * Kept for backward compatibility, now uses polymorphic likes table
      */
+    @Deprecated("Use BackendApiService.addLike() instead", level = DeprecationLevel.WARNING)
     suspend fun incrementVideoLike(videoId: Long): Boolean = withContext(Dispatchers.IO) {
         // No-op: With polymorphic likes, the count is derived from COUNT(*)
         // This method is kept for backward compatibility but does nothing
@@ -5484,6 +5522,7 @@ object SupabaseClient {
      * Decrement like count for a video (DEPRECATED - use removeLike with entity_type='video')
      * Kept for backward compatibility, now uses polymorphic likes table
      */
+    @Deprecated("Use BackendApiService.removeLike() instead", level = DeprecationLevel.WARNING)
     suspend fun decrementVideoLike(videoId: Long): Boolean = withContext(Dispatchers.IO) {
         // No-op: With polymorphic likes, the count is derived from COUNT(*)
         Log.d("SupabaseClient", "decrementVideoLike called - using polymorphic likes table (no separate counter needed)")
@@ -5493,6 +5532,7 @@ object SupabaseClient {
     /**
      * Add a user like to a video (using polymorphic likes table)
      */
+    @Deprecated("Use BackendApiService.addLike() instead", level = DeprecationLevel.WARNING)
     suspend fun addUserVideoLike(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseClient", "Adding like for video $videoId by user $usuarioId")
@@ -5506,6 +5546,7 @@ object SupabaseClient {
     /**
      * Remove a user like from a video (using polymorphic likes table)
      */
+    @Deprecated("Use BackendApiService.removeLike() instead", level = DeprecationLevel.WARNING)
     suspend fun removeUserVideoLike(videoId: Long, usuarioId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseClient", "Removing like for video $videoId by user $usuarioId")
@@ -5516,6 +5557,7 @@ object SupabaseClient {
         }
     }
 
+    @Deprecated("Use BackendApiService.registerFcmToken() instead", level = DeprecationLevel.WARNING)
     suspend fun registerFcmToken(userId: Long, token: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val url = "$baseUrl/rest/v1/user_fcm_tokens"
@@ -5646,6 +5688,7 @@ object SupabaseClient {
     /**
      * Add a comment to a video
      */
+    @Deprecated("Use BackendApiService.addVideoComment() instead", level = DeprecationLevel.WARNING)
     suspend fun addVideoComment(videoId: Long, usuarioId: Long, comment: String, parentId: Long? = null): Long? = withContext(Dispatchers.IO) {
         try {
             val payload = mutableMapOf<String, Any>(
@@ -5785,6 +5828,7 @@ object SupabaseClient {
     /**
      * Delete a comment
      */
+    @Deprecated("Use BackendApiService.deleteVideoComment() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteVideoComment(commentId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             val url = "$baseUrl/rest/v1/video_comments?id=eq.$commentId"
@@ -5906,6 +5950,7 @@ object SupabaseClient {
      * Add a like to any entity (polymorphic)
      * Returns true if like was inserted, false if already exists or error
      */
+    @Deprecated("Use BackendApiService.addLike() instead", level = DeprecationLevel.WARNING)
     suspend fun addLike(usuarioId: Long, entityType: String, entityId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseClient", "Adding like: user=$usuarioId, type=$entityType, id=$entityId")
@@ -5947,6 +5992,7 @@ object SupabaseClient {
     /**
      * Remove a like from any entity
      */
+    @Deprecated("Use BackendApiService.removeLike() instead", level = DeprecationLevel.WARNING)
     suspend fun removeLike(usuarioId: Long, entityType: String, entityId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseClient", "Removing like: user=$usuarioId, type=$entityType, id=$entityId")
@@ -5976,6 +6022,7 @@ object SupabaseClient {
      * Toggle like on any entity
      * Returns Pair(isNowLiked, newLikeCount)
      */
+    @Deprecated("Use BackendApiService.toggleLike() instead", level = DeprecationLevel.WARNING)
     suspend fun toggleLike(usuarioId: Long, entityType: String, entityId: Long): Pair<Boolean, Int> = withContext(Dispatchers.IO) {
         try {
             val isCurrentlyLiked = hasUserLiked(usuarioId, entityType, entityId)
@@ -6286,6 +6333,7 @@ object SupabaseClient {
     /**
      * Promote user to docente role
      */
+    @Deprecated("Use BackendApiService.promoteToDocente() instead", level = DeprecationLevel.WARNING)
     suspend fun promoteToDocente(userId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             // First get the docente role id
@@ -6358,6 +6406,7 @@ object SupabaseClient {
     /**
      * Mark a notification as read
      */
+    @Deprecated("Use BackendApiService.markNotificationAsRead() instead", level = DeprecationLevel.WARNING)
     suspend fun markNotificationAsRead(notificationId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
             return@withContext updateRecord("notifications", notificationId, mapOf("is_read" to true))
@@ -6892,6 +6941,7 @@ object SupabaseClient {
      * Returns the notification ID on success, null on failure
      * After successful insertion, also sends push notification and email to the user
      */
+    @Deprecated("Use BackendApiService.sendNotification() instead", level = DeprecationLevel.WARNING)
     suspend fun insertNotification(notification: com.example.tareamov.data.entity.Notification): Long? = withContext(Dispatchers.IO) {
         try {
             if (!isConfigured()) {
@@ -7061,6 +7111,7 @@ object SupabaseClient {
      * Notify all subscribers of a creator about a new course
      * Creates notifications for each subscriber
      */
+    @Deprecated("Use BackendApiService.notifySubscribers() instead", level = DeprecationLevel.WARNING)
     suspend fun notifySubscribersOfNewCourse(
         creatorUserId: Long,
         creatorUsername: String,
@@ -7107,6 +7158,7 @@ object SupabaseClient {
      * Notify all enrolled students of a course about a new task
      * Creates notifications for each enrolled student (excluding the creator)
      */
+    @Deprecated("Use BackendApiService.notifyStudents() instead", level = DeprecationLevel.WARNING)
     suspend fun notifyEnrolledStudentsOfNewTask(
         courseId: Long,
         creatorUserId: Long,
@@ -7392,6 +7444,7 @@ object SupabaseClient {
     /**
      * Combined method: Notify subscribers using the Backend Endpoint (Email + In-App + Push)
      */
+    @Deprecated("Use BackendApiService.notifySubscribers() instead", level = DeprecationLevel.WARNING)
     suspend fun notifySubscribersOfNewCourseWithPush(
         creatorUserId: Long,
         creatorUsername: String,

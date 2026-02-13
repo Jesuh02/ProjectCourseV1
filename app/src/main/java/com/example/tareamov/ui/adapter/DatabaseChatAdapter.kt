@@ -476,15 +476,22 @@ class DatabaseChatAdapter(
                             hashCount++
                             j++
                         }
-                        // Skip any spaces after #
-                        while (j < processedText.length && processedText[j] == ' ') j++
-                        // Find end of line
-                        val lineEnd = processedText.indexOf('\n', j).let { if (it == -1) processedText.length else it }
-                        val startPos = result.length
-                        val headerContent = processedText.substring(j, lineEnd)
-                        result.append(headerContent)
-                        boldRanges.add(Pair(startPos, result.length))
-                        i = lineEnd
+                        
+                        // Check if it's a valid header (must be followed by space)
+                        if (j < processedText.length && processedText[j] == ' ') {
+                            // Skip any spaces after #
+                            while (j < processedText.length && processedText[j] == ' ') j++
+                            // Find end of line
+                            val lineEnd = processedText.indexOf('\n', j).let { if (it == -1) processedText.length else it }
+                            val startPos = result.length
+                            val headerContent = processedText.substring(j, lineEnd)
+                            result.append(headerContent)
+                            boldRanges.add(Pair(startPos, result.length))
+                            i = lineEnd
+                        } else {
+                            result.append(processedText[i])
+                            i++
+                        }
                     }
                     else -> {
                         result.append(processedText[i])

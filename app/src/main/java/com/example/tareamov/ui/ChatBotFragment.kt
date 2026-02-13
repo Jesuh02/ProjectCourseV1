@@ -114,6 +114,27 @@ class ChatBotFragment : Fragment() {
             gradedTaskOverlayAdapter.updateGradedTasks(emptyList())
         }
     }
+
+    /**
+     * Sincroniza un ChatMessage al backend de forma asíncrona (fire-and-forget).
+     * Reemplaza los upserts directos a Supabase.
+     */
+    private fun syncChatMessageToBackend(chatMessage: ChatMessage, savedId: Long) {
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val toSync = chatMessage.copy(id = savedId)
+                val result = BackendApiService.upsertChatMessage(toSync)
+                if (result.isSuccess) {
+                    Log.i("ChatBotFragment", "ChatMessage $savedId synced to backend.")
+                } else {
+                    Log.w("ChatBotFragment", "Failed to sync ChatMessage $savedId: ${result.errorMessage()}")
+                }
+            } catch (e: Exception) {
+                Log.w("ChatBotFragment", "Exception syncing chat message to backend: ${e.message}")
+            }
+        }
+    }
+
     /**
      * Envía la entrega al microservicio de análisis y luego consulta el feedback conversacional.
      * Usa submissionId para cache y eficiencia.
@@ -772,28 +793,7 @@ class ChatBotFragment : Fragment() {
 
                     withContext(Dispatchers.IO) {
                         val savedId = database.chatMessageDao().insertMessage(errorChatMessage)
-                        try {
-                            val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                            val toSend = com.example.tareamov.data.entity.ChatMessage(
-                                id = savedId,
-                                message = errorChatMessage.message,
-                                isFromUser = errorChatMessage.isFromUser,
-                                timestamp = errorChatMessage.timestamp,
-                                sessionId = errorChatMessage.sessionId,
-                                hasCalification = errorChatMessage.hasCalification,
-                                calificationValue = errorChatMessage.calificationValue,
-                                calificationAdded = errorChatMessage.calificationAdded
-                                , senderUsername = errorChatMessage.senderUsername,
-                                senderAvatar = errorChatMessage.senderAvatar
-                            )
-                            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                val ok = supabaseRepo.upsert("chat_messages", toSend)
-                                if (ok) Log.i("ChatBotFragment", "ChatMessage $savedId upserted to Supabase.")
-                                else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedId to Supabase.")
-                            }
-                        } catch (e: Exception) {
-                            Log.w("ChatBotFragment", "Exception sending chat message to Supabase: ${e.message}")
-                        }
+                        syncChatMessageToBackend(errorChatMessage, savedId)
                     }
                 }
 
@@ -900,17 +900,7 @@ class ChatBotFragment : Fragment() {
 
                 withContext(Dispatchers.IO) {
                     val savedIdCtx = database.chatMessageDao().insertMessage(contextMessage)
-                    try {
-                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = contextMessage.copy(id = savedIdCtx, senderUsername = contextMessage.senderUsername, senderAvatar = contextMessage.senderAvatar)
-                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            val ok = supabaseRepo.upsert("chat_messages", toSend)
-                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedIdCtx upserted to Supabase.")
-                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedIdCtx to Supabase.")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("ChatBotFragment", "Exception sending chat context to Supabase: ${e.message}")
-                    }
+                    syncChatMessageToBackend(contextMessage, savedIdCtx)
                 }
             }
         }
@@ -1284,13 +1274,7 @@ class ChatBotFragment : Fragment() {
                 )
                 withContext(Dispatchers.IO) {
                     val savedBotId = database.chatMessageDao().insertMessage(botMessage)
-                    try {
-                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = botMessage.copy(id = savedBotId)
-                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            supabaseRepo.upsert("chat_messages", toSend)
-                        }
-                    } catch (e: Exception) { }
+                    syncChatMessageToBackend(botMessage, savedBotId)
                 }
 
                 loadMessages()
@@ -1318,21 +1302,7 @@ class ChatBotFragment : Fragment() {
             )
             withContext(Dispatchers.IO) {
                 val savedUserId = database.chatMessageDao().insertMessage(userMessage)
-                try {
-                    val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                    val toSend = userMessage.copy(
-                        id = savedUserId,
-                        senderUsername = userMessage.senderUsername,
-                        senderAvatar = userMessage.senderAvatar
-                    )
-                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        val ok = supabaseRepo.upsert("chat_messages", toSend)
-                        if (ok) Log.i("ChatBotFragment", "ChatMessage $savedUserId upserted to Supabase.")
-                        else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedUserId to Supabase.")
-                    }
-                } catch (e: Exception) {
-                    Log.w("ChatBotFragment", "Exception sending user chat to Supabase: ${e.message}")
-                }
+                syncChatMessageToBackend(userMessage, savedUserId)
             }
             loadingProgressBar.visibility = View.VISIBLE
 
@@ -2039,7 +2009,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     }
                 }
 
-                val response = llmResponse.text.replace("#", "").replace("**", "")
+                val response = llmResponse.text
 
                 // 🎯 SEMANTIC: Solo el LLM decide si mostrar botones de calificación (via esCalificacion del backend)
                 // NO usamos heurísticas locales que causan falsos positivos (ej: "que se nota al hablar de Marie Curie?")
@@ -2071,17 +2041,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 )
                 withContext(Dispatchers.IO) {
                     val savedBotId = database.chatMessageDao().insertMessage(botMessage)
-                    try {
-                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = botMessage.copy(id = savedBotId, senderUsername = botMessage.senderUsername, senderAvatar = botMessage.senderAvatar)
-                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            val ok = supabaseRepo.upsert("chat_messages", toSend)
-                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedBotId upserted to Supabase.")
-                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedBotId to Supabase.")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("ChatBotFragment", "Exception sending bot chat to Supabase: ${e.message}")
-                    }
+                    syncChatMessageToBackend(botMessage, savedBotId)
                 }
             } catch (e: Exception) {
                 val errorMessage = ChatMessage(
@@ -2093,17 +2053,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 )
                 withContext(Dispatchers.IO) {
                     val savedErrId = database.chatMessageDao().insertMessage(errorMessage)
-                    try {
-                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = errorMessage.copy(id = savedErrId, senderUsername = errorMessage.senderUsername, senderAvatar = errorMessage.senderAvatar)
-                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            val ok = supabaseRepo.upsert("chat_messages", toSend)
-                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedErrId upserted to Supabase.")
-                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedErrId to Supabase.")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("ChatBotFragment", "Exception sending error chat to Supabase: ${e.message}")
-                    }
+                    syncChatMessageToBackend(errorMessage, savedErrId)
                 }
             } finally {
                 loadingProgressBar.visibility = View.GONE

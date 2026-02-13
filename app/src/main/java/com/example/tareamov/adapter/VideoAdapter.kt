@@ -22,6 +22,7 @@ import com.example.tareamov.service.ApiResult
 import java.io.File
 import kotlinx.coroutines.*
 import kotlinx.coroutines.delay
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.abs // Use kotlin.math.abs to avoid ambiguity
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -33,8 +34,17 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 
 /**
- * Adaptador para mostrar videos en un ViewPager2 con estilo
- * Uses ExoPlayer with aggressive buffering and caching for INSTANT video loading
+ * Adaptador para mostrar videos en un ViewPager2 con estilo.
+ * Uses ExoPlayer with aggressive disk-caching and pre-loading
+ * for INSTANT video playback when scrolling.
+ *
+ * Performance strategy:
+ *  1. [VideoCacheManager] pre-fetches first 2 MB of adjacent videos to disk.
+ *  2. [VideoPreloader] batch-signs URLs in a single request.
+ *  3. ExoPlayer is configured with tiny min-buffer (500 ms) so playback
+ *     starts from cache almost instantly.
+ *  4. Thumbnails are shown with 0-alpha crossfade the moment the first frame
+ *     is decoded.
  */
 @UnstableApi
 class VideoAdapter(
@@ -52,6 +62,9 @@ class VideoAdapter(
 
     private var currentUserId: Long = -1L
     private val pendingSeeks = mutableMapOf<String, Int>()
+
+    /** Optional preloader to resolve pre-signed URLs instantly */
+    var videoPreloader: com.example.tareamov.util.VideoPreloader? = null
     
     // Track the currently active (playing with audio) video position
     private var currentActivePosition: Int = -1
@@ -127,6 +140,8 @@ class VideoAdapter(
         private val premiumBadge: TextView? = itemView.findViewById(R.id.premiumBadge)
         
         private var currentJob: Job? = null
+        // Managed scope for all coroutines in this ViewHolder — cancelled on rebind
+        private var viewHolderScope: CoroutineScope? = null
         private var mediaPlayer: MediaPlayer? = null
         private var mediaPlayerPrepared: Boolean = false
         private var isVideoPaused = false
@@ -155,6 +170,10 @@ class VideoAdapter(
                 return
             }
             
+            // Cancel all previous coroutines from the old bind
+            viewHolderScope?.cancel()
+            viewHolderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+            
             currentVideoData = videoData
             currentBoundVideoUri = newVideoUri
             isVideoSetup = false
@@ -167,7 +186,7 @@ class VideoAdapter(
             
             // Also check course isPremium from backend for accurate premium badge display
             if (videoData.courseId != null && videoData.courseId!! > 0) {
-                CoroutineScope(Dispatchers.IO).launch {
+                viewHolderScope?.launch(Dispatchers.IO) {
                     try {
                         val courseResult = BackendApiService.getCourseById(videoData.courseId!!)
                         val course = courseResult.getOrNull()
@@ -175,6 +194,8 @@ class VideoAdapter(
                         withContext(Dispatchers.Main) {
                             premiumBadge?.visibility = if (isPremium) View.VISIBLE else View.GONE
                         }
+                    } catch (e: CancellationException) {
+                        throw e // propagate cancellation
                     } catch (e: Exception) {
                         Log.w("VideoAdapter", "Error checking course premium status: ${e.message}")
                     }
@@ -221,7 +242,7 @@ class VideoAdapter(
             val userId = currentUserId
             
             if (userId > 0) {
-                CoroutineScope(Dispatchers.Main).launch {
+                viewHolderScope?.launch {
                     try {
                         // Check like state directly via callback (uses polymorphic likes table)
                         val remoteLiked = withContext(Dispatchers.IO) {
@@ -230,6 +251,8 @@ class VideoAdapter(
                         isLiked = remoteLiked
                         updateLikeButton()
                         Log.d("VideoAdapter", "Video ${videoData.id}: Like state check - liked=$isLiked")
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         Log.e("VideoAdapter", "Error checking like state for video ${videoData.id}", e)
                     }
@@ -237,7 +260,7 @@ class VideoAdapter(
             }
             
             // Fetch like count from backend (polymorphic likes table)
-            CoroutineScope(Dispatchers.Main).launch {
+            viewHolderScope?.launch {
                 try {
                     // Get like count from polymorphic likes table via backend
                     val likeCount = withContext(Dispatchers.IO) {
@@ -268,6 +291,8 @@ class VideoAdapter(
                     
                     // Update comment button state (activated if there are comments)
                     commentButton?.isActivated = commentCount > 0
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.e("VideoAdapter", "Error loading likes/comments for video ${videoData.id}", e)
                 }
@@ -282,7 +307,7 @@ class VideoAdapter(
             usernameText.text = "Cargando..." // Placeholder mientras se carga
             currentCreatorId = -1L // Reset creator ID
 
-            currentJob = CoroutineScope(Dispatchers.Main).launch {
+            currentJob = viewHolderScope?.launch {
                 try {
                     // Obtener username desde course_id o remote_id (from backend API)
                     val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
@@ -302,6 +327,8 @@ class VideoAdapter(
                                 } else {
                                     videoData.username
                                 }
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 Log.e("VideoAdapter", "Error fetching course from backend", e)
                                 videoData.username
@@ -402,41 +429,68 @@ class VideoAdapter(
                         Log.d("VideoAdapter", "No avatar found for username=$username, id=$currentCreatorId")
                         profileButton.setImageResource(R.drawable.ic_profile)
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     profileButton.setImageResource(R.drawable.ic_profile)
                 }
             }
 
             // Setup video playback
-            // Use Coroutine to resolve signed URL if needed
-            CoroutineScope(Dispatchers.Main).launch {
-                var bestUri = videoData.getBestVideoUri()
+            // OPTIMIZATION: Resolve video URL with tiered strategy for instant loading.
+            // Priority:
+            //  1. VideoPreloader signed URL cache (instant, no network)
+            //  2. HTTP URL already in VideoData (from streaming endpoint, already signed)
+            //  3. CloudflareR2Service fallback (last resort, individual signing)
+            viewHolderScope?.launch {
                 val context = itemView.context.applicationContext
-                
-                // Si la URI es null y tenemos videoUriString, intentar resolver vía Signed URL
-                // Esto cubre: object keys ("videos/xxx"), URLs antiguas de R2, y archivos file:// que ya no existen localmente
-                if (bestUri == null && !videoData.videoUriString.isNullOrEmpty()) {
-                     val signedUrl = withContext(Dispatchers.IO) {
-                         com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, videoData.videoUriString)
-                     }
-                     if (signedUrl != null) {
-                         bestUri = Uri.parse(signedUrl)
-                         Log.d("VideoAdapter", "✅ URL firmada obtenida para reproducción (cache-backed)")
-                     }
+                var bestUri: Uri? = null
+
+                // Tier 1: VideoPreloader cache (instant — no coroutine switch needed)
+                val preSigned = videoPreloader?.getPreSignedUrl(videoData.id)
+                if (preSigned != null) {
+                    bestUri = Uri.parse(preSigned)
+                    Log.d("VideoAdapter", "⚡ Instant URL from VideoPreloader cache")
                 }
-                // Si ya teníamos una URI válida (ej. local o external http), verificar si necesitamos firmarla
-                else if (bestUri != null) {
-                     val uriString = bestUri.toString()
-                     // Solo intentar firmar si parece ser de R2 o es un path relativo
-                     if (com.example.tareamov.service.CloudflareR2Service.isR2Url(uriString) || (!uriString.contains("://") && !uriString.startsWith("/"))) {
-                         val signedUrl = withContext(Dispatchers.IO) {
-                             com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, uriString)
-                         }
-                         if (signedUrl != null && signedUrl != uriString) {
-                             bestUri = Uri.parse(signedUrl)
-                             Log.d("VideoAdapter", "✅ URL firmada obtenida para reproducción (resolved from existing URI)")
-                         }
-                     }
+
+                // Tier 2: HTTP URL already in the model (streaming endpoint returned pre-signed)
+                if (bestUri == null) {
+                    val modelUrl = videoData.videoUriString
+                    if (modelUrl != null && modelUrl.startsWith("http")) {
+                        bestUri = Uri.parse(modelUrl)
+                        Log.d("VideoAdapter", "⚡ Using pre-signed HTTP URL from model")
+                    }
+                }
+
+                // Tier 3: getBestVideoUri may resolve to a local file or R2 fallback
+                if (bestUri == null) {
+                    bestUri = videoData.getBestVideoUri()
+                }
+
+                // Tier 4: If we still have a non-HTTP URI (relative R2 key), sign it
+                if (bestUri != null) {
+                    val uriStr = bestUri.toString()
+                    val needsSigning = !uriStr.startsWith("http") && !uriStr.startsWith("file") && !uriStr.startsWith("content")
+                    val isUnsignedR2 = uriStr.startsWith("http") && com.example.tareamov.service.CloudflareR2Service.isR2Url(uriStr) && !uriStr.contains("X-Amz-Signature")
+
+                    if (needsSigning || isUnsignedR2) {
+                        val signedUrl = withContext(Dispatchers.IO) {
+                            com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, uriStr)
+                        }
+                        if (signedUrl != null) {
+                            bestUri = Uri.parse(signedUrl)
+                            Log.d("VideoAdapter", "✅ URL signed via CloudflareR2Service")
+                        }
+                    }
+                } else if (!videoData.videoUriString.isNullOrEmpty()) {
+                    // Last resort: try to sign the raw videoUriString
+                    val signedUrl = withContext(Dispatchers.IO) {
+                        com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, videoData.videoUriString)
+                    }
+                    if (signedUrl != null) {
+                        bestUri = Uri.parse(signedUrl)
+                        Log.d("VideoAdapter", "✅ URL signed via fallback for: ${videoData.videoUriString}")
+                    }
                 }
 
                 if (bestUri != null) {
@@ -447,14 +501,11 @@ class VideoAdapter(
                         val isRemoteUrl = bestUri!!.scheme == "http" || bestUri!!.scheme == "https"
                         useExoPlayer = isRemoteUrl
                         
-                        // Force unwrap locally to avoid smart cast issues
                         val safeUri = bestUri!!
                         
                         if (useExoPlayer) {
-                            Log.d("VideoAdapter", "Using ExoPlayer for remote URL: $safeUri")
                             setupExoPlayer(safeUri)
                         } else {
-                            Log.d("VideoAdapter", "Using VideoView for local file: $safeUri")
                             setupVideoView(safeUri)
                         }
                     } catch (e: Exception) {
@@ -462,7 +513,7 @@ class VideoAdapter(
                         loadingProgressBar?.visibility = View.GONE
                     }
                 } else {
-                    Log.e("VideoAdapter", "No valid video URI available. videoUriString='${videoData.videoUriString}', localFilePath='${videoData.localFilePath}'")
+                    Log.e("VideoAdapter", "No valid video URI. videoUriString='${videoData.videoUriString}', localFilePath='${videoData.localFilePath}'")
                     loadingProgressBar?.visibility = View.GONE
                 }
             }
@@ -504,10 +555,15 @@ class VideoAdapter(
                 // Initialize video cache with application context
                 com.example.tareamov.util.VideoCacheManager.initialize(appContext)
 
-                // Conservative LoadControl to avoid excessive memory per-player
-                // minBufferMs = 1500ms, maxBufferMs = 10000ms, bufferForPlaybackMs = 250ms
+                // AGGRESSIVE LoadControl for INSTANT playback:
+                //  - minBufferMs   = 500  → start preparing with only 500 ms buffered
+                //  - maxBufferMs   = 15000 → buffer up to 15 s for smooth playback
+                //  - bufferForPlaybackMs = 100  → start playing after only 100 ms  
+                //  - bufferForPlaybackAfterRebufferMs = 500 → quick recovery after stall
+                // With VideoCacheManager pre-fetching 2 MB, the first 100 ms is
+                // already on disk → effectively zero network wait.
                 val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(1500, 10000, 250, 500)
+                    .setBufferDurationsMs(500, 15_000, 100, 500)
                     .setPrioritizeTimeOverSizeThresholds(true)
                     .build()
 
@@ -732,7 +788,7 @@ class VideoAdapter(
                         // Use signed URL via coroutine instead of public URL
                         val objectKey = "videos/$fileName"
                         Log.d("VideoAdapter", "Resolving signed URL for R2 fallback: $objectKey")
-                        CoroutineScope(Dispatchers.Main).launch {
+                        viewHolderScope?.launch {
                             val context = itemView.context.applicationContext
                             val signedUrl = withContext(Dispatchers.IO) {
                                 com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, objectKey)
@@ -968,6 +1024,8 @@ class VideoAdapter(
          */
         fun releasePlayer() {
             isVideoPaused = true
+            viewHolderScope?.cancel()
+            viewHolderScope = null
             currentJob?.cancel()
             
             // Release ExoPlayer
@@ -1209,7 +1267,7 @@ class VideoAdapter(
                 
                 // Sync with database in background
                 currentVideoData?.let { videoData ->
-                    CoroutineScope(Dispatchers.Main).launch {
+                    viewHolderScope?.launch {
                         try {
                             Log.d("VideoAdapter", "Calling onLikeToggle callback for video ${videoData.id}")
                             // Call the toggle callback
@@ -1457,7 +1515,7 @@ class VideoAdapter(
                     intent.putExtra("video_title", videoData.title)
                     intent.putExtra("video_description", videoData.description)
                     // Fetch data asynchronously to prevent UI freeze
-                    CoroutineScope(Dispatchers.Main).launch {
+                    viewHolderScope?.launch {
                         // Obtener username desde course_id via backend
                         val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
                             withContext(Dispatchers.IO) {
@@ -1513,7 +1571,7 @@ class VideoAdapter(
          * Muestra un menú contextual con opciones avanzadas de compartir
          */
         private fun showShareOptionsMenu() {
-            CoroutineScope(Dispatchers.Main).launch {
+            viewHolderScope?.launch {
                 try {
                     val context = itemView.context
                     val currentPosition = adapterPosition
@@ -1690,7 +1748,7 @@ class VideoAdapter(
         }
         
         private fun shareVideo() {
-            CoroutineScope(Dispatchers.Main).launch {
+            viewHolderScope?.launch {
                 try {
                     val context = itemView.context
                     val currentPosition = adapterPosition

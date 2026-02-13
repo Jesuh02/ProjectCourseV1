@@ -73,6 +73,7 @@ class VideoHomeFragment : Fragment() {
     private lateinit var sessionManager: SessionManager // Add SessionManager instance
     private lateinit var skeletonContainer: ShimmerFrameLayout // Skeleton container
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private lateinit var videoPreloader: com.example.tareamov.util.VideoPreloader // Video pre-fetcher for instant loading
 
     private lateinit var homeIconImageView: ImageView
     private lateinit var exploreIconImageView: ImageView
@@ -150,9 +151,13 @@ class VideoHomeFragment : Fragment() {
         // Initialize VideoManager
         videoManager = VideoManager(requireContext())
         sessionManager = SessionManager.getInstance(requireContext()) // Initialize SessionManager
+        videoPreloader = com.example.tareamov.util.VideoPreloader(requireContext()) // Initialize video pre-fetcher
 
         // Initialize BackendApiService
         BackendApiService.initialize(requireContext())
+
+        // Initialize video cache early so pre-fetching can start immediately
+        com.example.tareamov.util.VideoCacheManager.initialize(requireContext())
 
         // Refresh session info from backend in background so role checks are current
         lifecycleScope.launch {
@@ -254,6 +259,13 @@ class VideoHomeFragment : Fragment() {
             
             if (::videoAdapter.isInitialized) {
                 videoAdapter.updateVideos(videos)
+
+                // Warm the pre-signed URL cache with URLs from the streaming feed
+                // so VideoAdapter gets instant URL resolution (no network call)
+                if (videos.isNotEmpty() && ::videoPreloader.isInitialized) {
+                    videoPreloader.warmCache(videos)
+                    videoPreloader.onPageSelected(0, videos)
+                }
                 
                 val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
                 
@@ -1294,6 +1306,9 @@ class VideoHomeFragment : Fragment() {
 
         // Set current user ID
         videoAdapter.setCurrentUserId(currentUserId)
+
+        // Wire the VideoPreloader for instant adjacent-video loading
+        videoAdapter.videoPreloader = videoPreloader
         
         // Set initial active position to 0 (first video)
         videoAdapter.setActivePosition(0)
@@ -1337,6 +1352,11 @@ class VideoHomeFragment : Fragment() {
                 
                 currentVideoIndex = position
                 viewModel.currentVideoIndex = position
+
+                // INSTANT LOADING: Trigger pre-fetch of adjacent videos
+                // This batch-signs URLs and downloads first 2 MB of N±2 videos
+                // so they are ready to play instantly when scrolled to.
+                videoPreloader.onPageSelected(position, videoList)
 
                 // NOTE: Premium badge is now shown per-video in item_video.xml
 
@@ -1491,6 +1511,11 @@ class VideoHomeFragment : Fragment() {
     override fun onDestroyView() {
         // Release all video players before destroying view
         releaseAllVideos()
+
+        // Cancel all in-flight pre-fetch work
+        if (::videoPreloader.isInitialized) {
+            videoPreloader.cancel()
+        }
         
         // Clear video list to release references
         videoList.clear()

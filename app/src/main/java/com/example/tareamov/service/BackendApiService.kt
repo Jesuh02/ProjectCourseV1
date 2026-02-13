@@ -14,9 +14,15 @@ import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import com.example.tareamov.service.network.FallbackDnsResolver
+import com.example.tareamov.service.network.NetworkConnectivityChecker
 
 /**
  * BackendApiService — Servicio centralizado que reemplaza todas las llamadas
@@ -29,13 +35,19 @@ import java.util.concurrent.TimeUnit
  *   BackendApiService.initialize(context)
  *   BackendApiService.login(username, password)
  *   val courses = BackendApiService.getCourses()
+ * 
  */
 object BackendApiService {
 
     private const val TAG = "BackendApiService"
     private const val PREFS_NAME = "backend_api_prefs"
     private const val KEY_JWT_TOKEN = "jwt_token"
+    private const val KEY_REFRESH_TOKEN = "refresh_token"
     private const val KEY_USER_ID = "user_id"
+
+    /** Guards concurrent refresh attempts — only one refresh at a time */
+    private val refreshMutex = kotlinx.coroutines.sync.Mutex()
+    @Volatile private var isRefreshing = false
 
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
@@ -44,10 +56,16 @@ object BackendApiService {
         .serializeNulls()
         .create()
 
+    private const val MAX_RETRIES = 2
+    private const val INITIAL_BACKOFF_MS = 2000L
+
     private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        .dns(FallbackDnsResolver)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private lateinit var prefs: SharedPreferences
@@ -87,10 +105,19 @@ object BackendApiService {
             }
         }
 
+    var refreshToken: String?
+        get() = if (::prefs.isInitialized) prefs.getString(KEY_REFRESH_TOKEN, null) else null
+        set(value) {
+            if (::prefs.isInitialized) {
+                prefs.edit().putString(KEY_REFRESH_TOKEN, value).apply()
+            }
+        }
+
     val isAuthenticated: Boolean get() = !jwtToken.isNullOrBlank()
 
     fun logout() {
         jwtToken = null
+        refreshToken = null
         currentUserId = 0L
     }
 
@@ -109,6 +136,17 @@ object BackendApiService {
         return Request.Builder()
             .url("$apiBase$path")
             .headers(authHeaders().build())
+            .get()
+            .build()
+    }
+
+    /**
+     * GET sin cabecera Authorization — para rutas publicas (public).
+     */
+    private fun publicGet(path: String): Request {
+        return Request.Builder()
+            .url("$apiBase$path")
+            .header("Content-Type", "application/json")
             .get()
             .build()
     }
@@ -144,72 +182,191 @@ object BackendApiService {
      * El backend siempre retorna { success: Boolean, data: T }
      */
     private suspend inline fun <reified T> execute(request: Request): ApiResult<T> = withContext(Dispatchers.IO) {
-        try {
-            val response = client.newCall(request).execute()
-            val bodyStr = response.body?.string() ?: "{}"
-
-            if (!response.isSuccessful) {
-                val errorMsg = try {
-                    val obj = JsonParser.parseString(bodyStr).asJsonObject
-                    obj.get("error")?.asString ?: obj.get("message")?.asString ?: "Error ${response.code}"
-                } catch (_: Exception) { "Error HTTP ${response.code}" }
-                return@withContext ApiResult.Error(errorMsg, response.code)
+        var lastException: Exception? = null
+        for (attempt in 0..MAX_RETRIES) {
+            if (attempt > 0) {
+                val backoff = INITIAL_BACKOFF_MS * attempt
+                Log.w(TAG, "Retry attempt $attempt after ${backoff}ms for ${request.url}")
+                delay(backoff)
             }
+            try {
+                val response = client.newCall(request).execute()
+                val bodyStr = response.body?.string() ?: "{}"
 
-            val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
-            val success = jsonObj.get("success")?.asBoolean ?: false
+                if (!response.isSuccessful) {
+                    val errorMsg = try {
+                        val obj = JsonParser.parseString(bodyStr).asJsonObject
+                        obj.get("error")?.asString ?: obj.get("message")?.asString ?: "Error ${response.code}"
+                    } catch (_: Exception) { "Error HTTP ${response.code}" }
+                    // On 401, attempt token refresh and retry once
+                    if (response.code == 401 && attempt == 0 && !refreshToken.isNullOrBlank()) {
+                        Log.i(TAG, "Got 401 on ${request.url} — attempting token refresh")
+                        val refreshed = refreshAccessToken()
+                        if (refreshed) {
+                            // Rebuild request with new token and retry
+                            val newRequest = request.newBuilder()
+                                .headers(authHeaders().build())
+                                .build()
+                            try {
+                                val retryResponse = client.newCall(newRequest).execute()
+                                val retryBody = retryResponse.body?.string() ?: "{}"
+                                if (retryResponse.isSuccessful) {
+                                    val retryJson = JsonParser.parseString(retryBody).asJsonObject
+                                    val retrySuccess = retryJson.get("success")?.asBoolean ?: false
+                                    if (retrySuccess) {
+                                        val dataElement = retryJson.get("data")
+                                        if (dataElement == null || dataElement.isJsonNull) {
+                                            @Suppress("UNCHECKED_CAST")
+                                            return@withContext ApiResult.Success(null as T)
+                                        }
+                                        val data: T = gson.fromJson(dataElement, object : TypeToken<T>() {}.type)
+                                        return@withContext ApiResult.Success(data)
+                                    }
+                                }
+                                Log.w(TAG, "Retry after refresh also failed: ${retryResponse.code}")
+                            } catch (retryEx: Exception) {
+                                Log.w(TAG, "Retry after refresh threw: ${retryEx.message}")
+                            }
+                        }
+                    }
+                    // Don't retry other client errors (4xx)
+                    if (response.code in 400..499) {
+                        return@withContext ApiResult.Error(errorMsg, response.code)
+                    }
+                    lastException = IOException(errorMsg)
+                    continue
+                }
 
-            if (!success) {
-                val errorMsg = jsonObj.get("error")?.asString ?: "Unknown error"
-                return@withContext ApiResult.Error(errorMsg, response.code)
+                val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+                val success = jsonObj.get("success")?.asBoolean ?: false
+
+                if (!success) {
+                    val errorMsg = jsonObj.get("error")?.asString ?: "Unknown error"
+                    return@withContext ApiResult.Error(errorMsg, response.code)
+                }
+
+                val dataElement = jsonObj.get("data")
+                if (dataElement == null || dataElement.isJsonNull) {
+                    @Suppress("UNCHECKED_CAST")
+                    return@withContext ApiResult.Success(null as T)
+                }
+
+                val data: T = gson.fromJson(dataElement, object : TypeToken<T>() {}.type)
+                return@withContext ApiResult.Success(data)
+            } catch (e: SocketTimeoutException) {
+                Log.w(TAG, "Timeout attempt $attempt for ${request.url}: ${e.message}")
+                lastException = e
+                continue
+            } catch (e: UnknownHostException) {
+                Log.w(TAG, "DNS resolution failed (attempt $attempt) for ${request.url}: ${e.message}")
+                FallbackDnsResolver.clearCache()
+                lastException = e
+                continue
+            } catch (e: IOException) {
+                Log.w(TAG, "Network error attempt $attempt for ${request.url}: ${e.message}")
+                lastException = e
+                continue
+            } catch (e: Exception) {
+                Log.e(TAG, "Parse error: ${e.message}", e)
+                return@withContext ApiResult.Error("Error: ${e.message}", 0)
             }
-
-            val dataElement = jsonObj.get("data")
-            if (dataElement == null || dataElement.isJsonNull) {
-                // Para tipos que pueden ser null o Unit
-                @Suppress("UNCHECKED_CAST")
-                return@withContext ApiResult.Success(null as T)
-            }
-
-            val data: T = gson.fromJson(dataElement, object : TypeToken<T>() {}.type)
-            ApiResult.Success(data)
-        } catch (e: IOException) {
-            Log.e(TAG, "Network error: ${e.message}", e)
-            ApiResult.Error("Error de red: ${e.message}", 0)
-        } catch (e: Exception) {
-            Log.e(TAG, "Parse error: ${e.message}", e)
-            ApiResult.Error("Error: ${e.message}", 0)
         }
+        Log.e(TAG, "All ${MAX_RETRIES + 1} attempts failed for ${request.url}", lastException)
+        val userMessage = when (lastException) {
+            is UnknownHostException -> "No se pudo conectar al servidor. Verifica tu conexión a internet."
+            is SocketTimeoutException -> "El servidor tardó demasiado en responder. Intenta de nuevo."
+            else -> "Error de red: ${lastException?.message ?: "timeout"}"
+        }
+        ApiResult.Error(userMessage, 0)
     }
 
     /** Versión que retorna List<T> */
     private suspend inline fun <reified T> executeList(request: Request): ApiResult<List<T>> = withContext(Dispatchers.IO) {
-        try {
-            val response = client.newCall(request).execute()
-            val bodyStr = response.body?.string() ?: "{}"
-
-            if (!response.isSuccessful) {
-                val errorMsg = try {
-                    val obj = JsonParser.parseString(bodyStr).asJsonObject
-                    obj.get("error")?.asString ?: "Error ${response.code}"
-                } catch (_: Exception) { "Error HTTP ${response.code}" }
-                return@withContext ApiResult.Error(errorMsg, response.code)
+        var lastException: Exception? = null
+        for (attempt in 0..MAX_RETRIES) {
+            if (attempt > 0) {
+                val backoff = INITIAL_BACKOFF_MS * attempt
+                Log.w(TAG, "Retry list attempt $attempt after ${backoff}ms for ${request.url}")
+                delay(backoff)
             }
+            try {
+                val response = client.newCall(request).execute()
+                val bodyStr = response.body?.string() ?: "{}"
 
-            val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
-            val dataElement = jsonObj.get("data")
+                if (!response.isSuccessful) {
+                    val errorMsg = try {
+                        val obj = JsonParser.parseString(bodyStr).asJsonObject
+                        obj.get("error")?.asString ?: "Error ${response.code}"
+                    } catch (_: Exception) { "Error HTTP ${response.code}" }
+                    // On 401, attempt token refresh and retry once
+                    if (response.code == 401 && attempt == 0 && !refreshToken.isNullOrBlank()) {
+                        Log.i(TAG, "Got 401 on ${request.url} (list) — attempting token refresh")
+                        val refreshed = refreshAccessToken()
+                        if (refreshed) {
+                            val newRequest = request.newBuilder()
+                                .headers(authHeaders().build())
+                                .build()
+                            try {
+                                val retryResponse = client.newCall(newRequest).execute()
+                                val retryBody = retryResponse.body?.string() ?: "{}"
+                                if (retryResponse.isSuccessful) {
+                                    val retryJson = JsonParser.parseString(retryBody).asJsonObject
+                                    val dataElement = retryJson.get("data")
+                                    if (dataElement == null || dataElement.isJsonNull) {
+                                        return@withContext ApiResult.Success(emptyList())
+                                    }
+                                    val listType = TypeToken.getParameterized(List::class.java, T::class.java).type
+                                    val data: List<T> = gson.fromJson(dataElement, listType)
+                                    return@withContext ApiResult.Success(data)
+                                }
+                                Log.w(TAG, "Retry list after refresh failed: ${retryResponse.code}")
+                            } catch (retryEx: Exception) {
+                                Log.w(TAG, "Retry list after refresh threw: ${retryEx.message}")
+                            }
+                        }
+                    }
+                    if (response.code in 400..499) {
+                        return@withContext ApiResult.Error(errorMsg, response.code)
+                    }
+                    lastException = IOException(errorMsg)
+                    continue
+                }
 
-            if (dataElement == null || dataElement.isJsonNull) {
-                return@withContext ApiResult.Success(emptyList())
+                val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+                val dataElement = jsonObj.get("data")
+
+                if (dataElement == null || dataElement.isJsonNull) {
+                    return@withContext ApiResult.Success(emptyList())
+                }
+
+                val listType = TypeToken.getParameterized(List::class.java, T::class.java).type
+                val data: List<T> = gson.fromJson(dataElement, listType)
+                return@withContext ApiResult.Success(data)
+            } catch (e: SocketTimeoutException) {
+                Log.w(TAG, "Timeout list attempt $attempt for ${request.url}: ${e.message}")
+                lastException = e
+                continue
+            } catch (e: UnknownHostException) {
+                Log.w(TAG, "DNS resolution failed (attempt $attempt) for ${request.url}: ${e.message}")
+                FallbackDnsResolver.clearCache() // Forzar re-resolución en el próximo intento
+                lastException = e
+                continue
+            } catch (e: IOException) {
+                Log.w(TAG, "Network error list attempt $attempt for ${request.url}: ${e.message}")
+                lastException = e
+                continue
+            } catch (e: Exception) {
+                Log.e(TAG, "Error: ${e.message}", e)
+                return@withContext ApiResult.Error("Error: ${e.message}", 0)
             }
-
-            val listType = TypeToken.getParameterized(List::class.java, T::class.java).type
-            val data: List<T> = gson.fromJson(dataElement, listType)
-            ApiResult.Success(data)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error: ${e.message}", e)
-            ApiResult.Error("Error: ${e.message}", 0)
         }
+        Log.e(TAG, "All ${MAX_RETRIES + 1} list attempts failed for ${request.url}", lastException)
+        val userMessage = when (lastException) {
+            is UnknownHostException -> "No se pudo conectar al servidor. Verifica tu conexión a internet."
+            is SocketTimeoutException -> "El servidor tardó demasiado en responder. Intenta de nuevo."
+            else -> "Error de red: ${lastException?.message ?: "timeout"}"
+        }
+        ApiResult.Error(userMessage, 0)
     }
 
     data class PaginationMetadata(
@@ -226,39 +383,103 @@ object BackendApiService {
 
     /** Versión que retorna PaginatedResponse<T> */
     private suspend inline fun <reified T> executePaginated(request: Request): ApiResult<PaginatedResponse<T>> = withContext(Dispatchers.IO) {
-        try {
-            val response = client.newCall(request).execute()
-            val bodyStr = response.body?.string() ?: "{}"
-
-            if (!response.isSuccessful) {
-                val errorMsg = try {
-                    val obj = JsonParser.parseString(bodyStr).asJsonObject
-                    obj.get("error")?.asString ?: "Error ${response.code}"
-                } catch (_: Exception) { "Error HTTP ${response.code}" }
-                return@withContext ApiResult.Error(errorMsg, response.code)
+        var lastException: Exception? = null
+        for (attempt in 0..MAX_RETRIES) {
+            if (attempt > 0) {
+                val backoff = INITIAL_BACKOFF_MS * attempt
+                Log.w(TAG, "Retry paginated attempt $attempt after ${backoff}ms for ${request.url}")
+                delay(backoff)
             }
+            try {
+                val response = client.newCall(request).execute()
+                val bodyStr = response.body?.string() ?: "{}"
 
-            val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
-            val dataElement = jsonObj.get("data")
-            val pagElement = jsonObj.get("pagination")
+                if (!response.isSuccessful) {
+                    val errorMsg = try {
+                        val obj = JsonParser.parseString(bodyStr).asJsonObject
+                        obj.get("error")?.asString ?: "Error ${response.code}"
+                    } catch (_: Exception) { "Error HTTP ${response.code}" }
+                    // On 401, attempt token refresh and retry once
+                    if (response.code == 401 && attempt == 0 && !refreshToken.isNullOrBlank()) {
+                        Log.i(TAG, "Got 401 on ${request.url} (paginated) — attempting token refresh")
+                        val refreshed = refreshAccessToken()
+                        if (refreshed) {
+                            val newRequest = request.newBuilder()
+                                .headers(authHeaders().build())
+                                .build()
+                            try {
+                                val retryResponse = client.newCall(newRequest).execute()
+                                val retryBody = retryResponse.body?.string() ?: "{}"
+                                if (retryResponse.isSuccessful) {
+                                    val retryJson = JsonParser.parseString(retryBody).asJsonObject
+                                    val dataEl = retryJson.get("data")
+                                    val pagEl = retryJson.get("pagination")
+                                    if (dataEl == null || dataEl.isJsonNull) {
+                                        return@withContext ApiResult.Success(PaginatedResponse(emptyList(), null))
+                                    }
+                                    val listType = TypeToken.getParameterized(List::class.java, T::class.java).type
+                                    val data: List<T> = gson.fromJson(dataEl, listType)
+                                    var pagination: PaginationMetadata? = null
+                                    if (pagEl != null && !pagEl.isJsonNull) {
+                                        pagination = gson.fromJson(pagEl, PaginationMetadata::class.java)
+                                    }
+                                    return@withContext ApiResult.Success(PaginatedResponse(data, pagination))
+                                }
+                                Log.w(TAG, "Retry paginated after refresh failed: ${retryResponse.code}")
+                            } catch (retryEx: Exception) {
+                                Log.w(TAG, "Retry paginated after refresh threw: ${retryEx.message}")
+                            }
+                        }
+                    }
+                    if (response.code in 400..499) {
+                        return@withContext ApiResult.Error(errorMsg, response.code)
+                    }
+                    lastException = IOException(errorMsg)
+                    continue
+                }
 
-            if (dataElement == null || dataElement.isJsonNull) {
-                return@withContext ApiResult.Success(PaginatedResponse(emptyList(), null))
+                val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+                val dataElement = jsonObj.get("data")
+                val pagElement = jsonObj.get("pagination")
+
+                if (dataElement == null || dataElement.isJsonNull) {
+                    return@withContext ApiResult.Success(PaginatedResponse(emptyList(), null))
+                }
+
+                val listType = TypeToken.getParameterized(List::class.java, T::class.java).type
+                val data: List<T> = gson.fromJson(dataElement, listType)
+
+                var pagination: PaginationMetadata? = null
+                if (pagElement != null && !pagElement.isJsonNull) {
+                    pagination = gson.fromJson(pagElement, PaginationMetadata::class.java)
+                }
+
+                return@withContext ApiResult.Success(PaginatedResponse(data, pagination))
+            } catch (e: SocketTimeoutException) {
+                Log.w(TAG, "Timeout paginated attempt $attempt for ${request.url}: ${e.message}")
+                lastException = e
+                continue
+            } catch (e: UnknownHostException) {
+                Log.w(TAG, "DNS resolution failed (attempt $attempt) for ${request.url}: ${e.message}")
+                FallbackDnsResolver.clearCache()
+                lastException = e
+                continue
+            } catch (e: IOException) {
+                Log.w(TAG, "Network error paginated attempt $attempt for ${request.url}: ${e.message}")
+                lastException = e
+                continue
+            } catch (e: Exception) {
+                Log.e(TAG, "Error: ${e.message}", e)
+                return@withContext ApiResult.Error("Error: ${e.message}", 0)
             }
-
-            val listType = TypeToken.getParameterized(List::class.java, T::class.java).type
-            val data: List<T> = gson.fromJson(dataElement, listType)
-            
-            var pagination: PaginationMetadata? = null
-            if (pagElement != null && !pagElement.isJsonNull) {
-                pagination = gson.fromJson(pagElement, PaginationMetadata::class.java)
-            }
-            
-            ApiResult.Success(PaginatedResponse(data, pagination))
-        } catch (e: Exception) {
-            Log.e(TAG, "Error: ${e.message}", e)
-            ApiResult.Error("Error: ${e.message}", 0)
         }
+        Log.e(TAG, "All ${MAX_RETRIES + 1} paginated attempts failed for ${request.url}", lastException)
+        val userMessage = when (lastException) {
+            is UnknownHostException -> "No se pudo conectar al servidor. Verifica tu conexión a internet."
+            is SocketTimeoutException -> "El servidor tardó demasiado en responder. Intenta de nuevo."
+            else -> "Error de red: ${lastException?.message ?: "timeout"}"
+        }
+        ApiResult.Error(userMessage, 0)
     }
 
     suspend fun getCoursesPaginated(page: Int = 1, limit: Int = 50, excludeUserId: Long? = null): ApiResult<PaginatedResponse<Course>> {
@@ -367,8 +588,14 @@ object BackendApiService {
         val email: String,
         val personaId: Long? = null
     )
+    data class RefreshTokenRequest(val refreshToken: String)
+    data class RefreshTokenResponse(
+        val accessToken: String?,
+        val refreshToken: String?
+    )
     data class AuthResponse(
         val accessToken: String?,
+        val refreshToken: String? = null,
         val token: String? = null,
         val user: JsonObject?
     ) {
@@ -380,6 +607,7 @@ object BackendApiService {
         val result = execute<AuthResponse>(post("/auth/login", LoginRequest(username, password)))
         if (result is ApiResult.Success && result.data?.effectiveToken() != null) {
             jwtToken = result.data.effectiveToken()
+            result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
         }
         return result
@@ -396,9 +624,78 @@ object BackendApiService {
         )
         if (result is ApiResult.Success && result.data?.effectiveToken() != null) {
             jwtToken = result.data.effectiveToken()
+            result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
         }
         return result
+    }
+
+    /**
+     * Attempt to refresh the access token using the stored refresh token.
+     * Returns true if a new access token was obtained, false otherwise.
+     * Thread-safe: concurrent callers will wait for the first refresh to complete.
+     */
+    private suspend fun refreshAccessToken(): Boolean {
+        val storedRefresh = refreshToken
+        if (storedRefresh.isNullOrBlank()) {
+            Log.w(TAG, "No refresh token available — cannot refresh")
+            return false
+        }
+
+        return refreshMutex.withLock {
+            // Double-check: if another coroutine already refreshed while we waited
+            if (isRefreshing) return@withLock false
+            isRefreshing = true
+            try {
+                Log.i(TAG, "Attempting token refresh...")
+                val body = gson.toJson(RefreshTokenRequest(storedRefresh))
+                val request = Request.Builder()
+                    .url("$apiBase/auth/refresh-token")
+                    .header("Content-Type", "application/json")
+                    .post(body.toRequestBody(JSON_MEDIA))
+                    .build()
+
+                val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
+                val bodyStr = response.body?.string() ?: "{}"
+
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "Token refresh failed: HTTP ${response.code}")
+                    // If refresh token is also expired/invalid, clear everything
+                    if (response.code == 401 || response.code == 403) {
+                        Log.w(TAG, "Refresh token rejected — clearing auth state")
+                        jwtToken = null
+                        refreshToken = null
+                    }
+                    return@withLock false
+                }
+
+                val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+                val success = jsonObj.get("success")?.asBoolean ?: false
+                if (!success) {
+                    Log.e(TAG, "Token refresh returned success=false")
+                    return@withLock false
+                }
+
+                val dataObj = jsonObj.getAsJsonObject("data")
+                val newAccess = dataObj?.get("accessToken")?.asString
+                val newRefresh = dataObj?.get("refreshToken")?.asString
+
+                if (newAccess.isNullOrBlank()) {
+                    Log.e(TAG, "Token refresh returned no accessToken")
+                    return@withLock false
+                }
+
+                jwtToken = newAccess
+                if (!newRefresh.isNullOrBlank()) refreshToken = newRefresh
+                Log.i(TAG, "Token refreshed successfully")
+                return@withLock true
+            } catch (e: Exception) {
+                Log.e(TAG, "Token refresh exception: ${e.message}", e)
+                return@withLock false
+            } finally {
+                isRefreshing = false
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -473,6 +770,12 @@ object BackendApiService {
 
     suspend fun promoteToDocente(userId: Long): ApiResult<JsonObject> =
         execute(post("/roles/user/$userId/promote-docente", null))
+
+    suspend fun ensureCreatorRole(userId: Long): ApiResult<JsonObject> =
+        execute(post("/roles/user/$userId/ensure-creator", null))
+
+    suspend fun syncAllCreatorRoles(): ApiResult<JsonObject> =
+        execute(post("/roles/sync-creator-roles", null))
 
     // ═══════════════════════════════════════════════════════════
     // RECURSOS
@@ -576,8 +879,22 @@ object BackendApiService {
     // VIDEOS
     // ═══════════════════════════════════════════════════════════
 
-    suspend fun getVideos(page: Int = 1, limit: Int = 50): ApiResult<List<VideoData>> =
-        executeList(get("/videos?page=$page&pageSize=$limit"))
+    suspend fun getVideos(page: Int = 1, limit: Int = 50): ApiResult<List<VideoData>> {
+        // Intenta primero la ruta autenticada; si falla con 401, usa la ruta pública
+        val authResult = executeList<VideoData>(get("/videos?page=$page&pageSize=$limit"))
+        if (authResult is ApiResult.Error && authResult.code == 401) {
+            Log.d(TAG, "Auth required for /videos, falling back to /public/videos")
+            return executeList(publicGet("/public/videos?page=$page&pageSize=$limit"))
+        }
+        return authResult
+    }
+
+    /**
+     * Feed público de videos — no requiere autenticación.
+     * Útil para browsing inicial antes de login.
+     */
+    suspend fun getPublicVideos(page: Int = 1, limit: Int = 50): ApiResult<List<VideoData>> =
+        executeList(publicGet("/public/videos?page=$page&pageSize=$limit"))
 
     suspend fun searchVideos(query: String): ApiResult<List<VideoData>> =
         executeList(get("/videos/search?q=$query"))
@@ -602,6 +919,213 @@ object BackendApiService {
 
     suspend fun deleteVideo(id: Long): ApiResult<JsonObject> =
         execute(delete("/videos/$id"))
+
+    /**
+     * Batch-fetch pre-signed URLs for multiple video IDs in a single request.
+     * Used by [VideoPreloader] to resolve adjacent video URLs in one round-trip
+     * instead of N individual calls.
+     *
+     * @param videoIds List of video IDs to sign.
+     * @return JsonObject keyed by video ID, each value containing { videoUrl, thumbnailUrl }.
+     */
+    suspend fun batchSignedUrls(videoIds: List<Long>): ApiResult<JsonObject> =
+        execute(post("/videos/batch-signed-urls", mapOf("videoIds" to videoIds)))
+
+    // ═══════════════════════════════════════════════════════════
+    // STREAMING — Optimized video feed for instant playback
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Optimized video feed — returns videos with ALL URLs pre-signed
+     * and ready for immediate playback. Backed by server-side URL cache.
+     *
+     * Uses the /streaming/feed endpoint which:
+     *  1. Signs ALL URLs (including relative R2 keys) in parallel
+     *  2. Caches signed URLs in memory (50-min TTL)
+     *  3. Returns Cache-Control headers for client-side caching
+     *
+     * Falls back to public endpoint if auth fails.
+     */
+    suspend fun getStreamingFeed(page: Int = 1, limit: Int = 20): ApiResult<List<VideoData>> {
+        val authResult = executeList<VideoData>(get("/streaming/feed?page=$page&pageSize=$limit"))
+        if (authResult is ApiResult.Error && authResult.code == 401) {
+            return executeList(publicGet("/public/streaming/feed?page=$page&pageSize=$limit"))
+        }
+        return authResult
+    }
+
+    /**
+     * Public streaming feed — no auth required, for browsing before login.
+     */
+    suspend fun getPublicStreamingFeed(page: Int = 1, limit: Int = 20): ApiResult<List<VideoData>> =
+        executeList(publicGet("/public/streaming/feed?page=$page&pageSize=$limit"))
+
+    /**
+     * Batch-sign URLs via the streaming service (with server-side caching).
+     * Faster than the regular batchSignedUrls because of in-memory cache.
+     */
+    suspend fun streamingBatchSign(videoIds: List<Long>): ApiResult<JsonObject> =
+        execute(post("/streaming/batch-sign", mapOf("videoIds" to videoIds)))
+
+    /**
+     * Upload a video file (and optional thumbnail) via multipart to the backend.
+     * The backend handles all R2 storage operations — the client never talks to R2 directly.
+     *
+     * @param context Android context for content resolver
+     * @param videoUri URI of the video file to upload
+     * @param thumbnailUri URI of the thumbnail image (optional)
+     * @param title Video title
+     * @param description Video description
+     * @param isPaid Whether the video is paid content
+     * @param price Price (if paid)
+     * @param courseId Associated course ID (optional)
+     * @param onProgress Progress callback (0-100)
+     */
+    suspend fun uploadVideoWithFiles(
+        context: Context,
+        videoUri: android.net.Uri,
+        thumbnailUri: android.net.Uri? = null,
+        title: String,
+        description: String = "",
+        isPaid: Boolean = false,
+        price: Double? = null,
+        courseId: Long? = null,
+        onProgress: ((Int) -> Unit)? = null
+    ): ApiResult<VideoData> = withContext(Dispatchers.IO) {
+        try {
+            ensureTokenLoaded(context)
+            if (jwtToken == null) return@withContext ApiResult.Error("Not logged in", 401)
+
+            onProgress?.invoke(5)
+
+            val resolver = context.contentResolver
+
+            // Read video bytes
+            val videoMime = resolver.getType(videoUri) ?: "video/mp4"
+            val videoStream = resolver.openInputStream(videoUri)
+                ?: return@withContext ApiResult.Error("Cannot open video file", 0)
+            val videoBytes = videoStream.readBytes()
+            videoStream.close()
+
+            onProgress?.invoke(15)
+
+            // Build multipart body
+            val multipartBuilder = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart(
+                    "video",
+                    "${title.replace(Regex("[^a-zA-Z0-9]"), "_")}.mp4",
+                    createProgressRequestBody(videoBytes, videoMime.toMediaType()) { progress ->
+                        // Map upload progress from 20% to 85%
+                        val mapped = 20 + (progress * 0.65).toInt()
+                        onProgress?.invoke(mapped)
+                    }
+                )
+                .addFormDataPart("title", title)
+                .addFormDataPart("description", description)
+                .addFormDataPart("isPaid", isPaid.toString())
+                .apply {
+                    price?.let { addFormDataPart("price", it.toString()) }
+                    courseId?.let { addFormDataPart("courseId", it.toString()) }
+                    addFormDataPart("timestamp", System.currentTimeMillis().toString())
+                }
+
+            // Attach thumbnail if provided
+            if (thumbnailUri != null) {
+                val thumbMime = resolver.getType(thumbnailUri) ?: "image/jpeg"
+                val thumbStream = resolver.openInputStream(thumbnailUri)
+                if (thumbStream != null) {
+                    val thumbBytes = thumbStream.readBytes()
+                    thumbStream.close()
+                    multipartBuilder.addFormDataPart(
+                        "thumbnail",
+                        "thumbnail.jpg",
+                        thumbBytes.toRequestBody(thumbMime.toMediaType())
+                    )
+                }
+            }
+
+            val requestBody = multipartBuilder.build()
+
+            // Use a longer-timeout client for large video uploads
+            val uploadClient = OkHttpClient.Builder()
+                .connectTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(600, TimeUnit.SECONDS)
+                .readTimeout(120, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+
+            val request = Request.Builder()
+                .url("$apiBase/videos/upload")
+                .headers(Headers.Builder().apply {
+                    jwtToken?.let { add("Authorization", "Bearer $it") }
+                }.build())
+                .post(requestBody)
+                .build()
+
+            onProgress?.invoke(20)
+
+            val response = uploadClient.newCall(request).execute()
+            val bodyStr = response.body?.string() ?: "{}"
+
+            onProgress?.invoke(90)
+
+            if (!response.isSuccessful) {
+                val errorMsg = try {
+                    val obj = JsonParser.parseString(bodyStr).asJsonObject
+                    obj.get("error")?.asString ?: "Error ${response.code}"
+                } catch (_: Exception) { "Error HTTP ${response.code}" }
+                return@withContext ApiResult.Error(errorMsg, response.code)
+            }
+
+            val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+            val success = jsonObj.get("success")?.asBoolean ?: false
+            if (!success) {
+                val errorMsg = jsonObj.get("error")?.asString ?: "Unknown error"
+                return@withContext ApiResult.Error(errorMsg, response.code)
+            }
+
+            val dataElement = jsonObj.get("data")
+            if (dataElement == null || dataElement.isJsonNull) {
+                return@withContext ApiResult.Error("No data returned", 0)
+            }
+
+            val video: VideoData = gson.fromJson(dataElement, VideoData::class.java)
+            onProgress?.invoke(100)
+            return@withContext ApiResult.Success(video)
+        } catch (e: Exception) {
+            Log.e(TAG, "uploadVideoWithFiles error", e)
+            return@withContext ApiResult.Error("Upload error: ${e.message}", 0)
+        }
+    }
+
+    /**
+     * Creates a RequestBody that reports write progress.
+     */
+    private fun createProgressRequestBody(
+        bytes: ByteArray,
+        mediaType: okhttp3.MediaType,
+        onProgress: (Int) -> Unit
+    ): okhttp3.RequestBody {
+        return object : okhttp3.RequestBody() {
+            override fun contentType() = mediaType
+            override fun contentLength() = bytes.size.toLong()
+            override fun writeTo(sink: okio.BufferedSink) {
+                val total = bytes.size.toLong()
+                var written = 0L
+                val chunkSize = 8192
+                var offset = 0
+                while (offset < bytes.size) {
+                    val len = minOf(chunkSize, bytes.size - offset)
+                    sink.write(bytes, offset, len)
+                    offset += len
+                    written += len
+                    val progress = ((written * 100) / total).toInt()
+                    onProgress(progress)
+                }
+            }
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════
     // TOPICS
@@ -849,6 +1373,9 @@ object BackendApiService {
         if (userId != null) body["userId"] = userId
         return execute(put("/progress/course/$courseId/certificate-url", body))
     }
+
+    suspend fun recalculateProgress(courseId: Long): ApiResult<JsonObject> =
+        execute(post("/progress/course/$courseId/recalculate", null))
 
     // ═══════════════════════════════════════════════════════════
     // LIKES
@@ -1245,6 +1772,37 @@ object BackendApiService {
         val payload = mapOf("query" to query, "userId" to (userId ?: currentUserId.toString()))
         return execute(post("/excel/generate-excel", payload))
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // CHAT MESSAGES
+    // ═══════════════════════════════════════════════════════════
+
+    suspend fun upsertChatMessage(chatMessage: ChatMessage): ApiResult<JsonObject> {
+        val body = mutableMapOf<String, Any?>(
+            "message" to chatMessage.message,
+            "isFromUser" to chatMessage.isFromUser,
+            "timestamp" to chatMessage.timestamp,
+            "sessionId" to chatMessage.sessionId,
+            "hasCalification" to chatMessage.hasCalification,
+            "calificationValue" to chatMessage.calificationValue,
+            "calificationAdded" to chatMessage.calificationAdded,
+            "username" to chatMessage.senderUsername
+        )
+        if (chatMessage.id > 0) body["id"] = chatMessage.id
+        return execute(post("/chat-messages/upsert", body))
+    }
+
+    suspend fun getChatMessagesBySession(sessionId: String): ApiResult<List<JsonObject>> =
+        executeList(get("/chat-messages/session/$sessionId"))
+
+    suspend fun getMyChatMessages(): ApiResult<List<JsonObject>> =
+        executeList(get("/chat-messages/my"))
+
+    suspend fun deleteChatMessage(id: Long): ApiResult<JsonObject> =
+        execute(delete("/chat-messages/$id"))
+
+    suspend fun deleteChatSession(sessionId: String): ApiResult<JsonObject> =
+        execute(delete("/chat-messages/session/$sessionId"))
 }
 
 // ═══════════════════════════════════════════════════════════

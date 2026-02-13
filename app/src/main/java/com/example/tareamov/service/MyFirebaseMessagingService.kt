@@ -89,8 +89,12 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         if (userId != -1L) {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    SupabaseClient.registerFcmToken(userId, token)
-                    Log.d(TAG, "Token registered for user $userId")
+                    val result = BackendApiService.registerFCMToken(token)
+                    if (result.isSuccess) {
+                        Log.d(TAG, "Token registered via backend for user $userId")
+                    } else {
+                        Log.w(TAG, "Failed to register token via backend: ${result.errorMessage()}")
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to register token", e)
                 }

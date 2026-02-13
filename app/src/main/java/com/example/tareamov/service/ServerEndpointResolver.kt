@@ -430,6 +430,8 @@ object ServerEndpointResolver {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 Log.d(TAG, "Network available: $network")
+                // Limpiar cache DNS al cambiar de red para forzar re-resolución
+                com.example.tareamov.service.network.FallbackDnsResolver.clearCache()
                 scope.launch {
                     refreshForActiveNetwork()
                 }
