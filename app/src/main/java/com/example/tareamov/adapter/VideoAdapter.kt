@@ -180,258 +180,164 @@ class VideoAdapter(
             descriptionText.text = videoData.description
             titleText.text = videoData.title
             
-            // Show premium badge - check course premium status, not just videoData.isPaid
-            // Start with videoData.isPaid but also check course in background
+            // Show premium badge optimistically from local data
             premiumBadge?.visibility = if (videoData.isPaid) View.VISIBLE else View.GONE
-            
-            // Also check course isPremium from backend for accurate premium badge display
-            if (videoData.courseId != null && videoData.courseId!! > 0) {
-                viewHolderScope?.launch(Dispatchers.IO) {
-                    try {
-                        val courseResult = BackendApiService.getCourseById(videoData.courseId!!)
-                        val course = courseResult.getOrNull()
-                        val isPremium = course?.isPremium == true || (course?.price ?: 0.0) > 0
-                        withContext(Dispatchers.Main) {
-                            premiumBadge?.visibility = if (isPremium) View.VISIBLE else View.GONE
-                        }
-                    } catch (e: CancellationException) {
-                        throw e // propagate cancellation
-                    } catch (e: Exception) {
-                        Log.w("VideoAdapter", "Error checking course premium status: ${e.message}")
-                    }
-                }
-            }
 
             // Reset views and states
             videoView.visibility = View.VISIBLE
-            loadingProgressBar?.visibility = View.GONE // Hide initially, show only if needed
+            loadingProgressBar?.visibility = View.GONE
             playPauseOverlay?.visibility = View.GONE
             isVideoPaused = false
             isMuted = false
             isSubscribed = false
-            isLiked = false // CRITICAL FIX: Reset like state for recycled views
-            
+            isLiked = false
+
             // Reset button states
             updateSoundButton()
             updateSubscribeButton()
-            
+
             // Initialize counts
             likeCountText?.text = "0"
             commentCountText?.text = "0"
-            
+
             // OPTIMIZATION: Show thumbnail IMMEDIATELY for instant perceived load
-            // Use Glide with aggressive caching for instant thumbnail display
             thumbnailView?.visibility = View.VISIBLE
-            thumbnailView?.alpha = 1f // Reset alpha in case it was animated out
+            thumbnailView?.alpha = 1f
             if (!videoData.thumbnailUri.isNullOrEmpty()) {
                 Glide.with(itemView)
                     .load(videoData.thumbnailUri)
                     .placeholder(android.R.color.black)
-                    .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL) // Cache everything
-                    .priority(com.bumptech.glide.Priority.IMMEDIATE) // Highest priority loading
-                    .override(1080, 1920) // Limit size to save memory (Full HD resolution)
-                    .format(com.bumptech.glide.load.DecodeFormat.PREFER_RGB_565) // Use 50% less memory
+                    .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
+                    .priority(com.bumptech.glide.Priority.IMMEDIATE)
+                    .override(1080, 1920)
+                    .format(com.bumptech.glide.load.DecodeFormat.PREFER_RGB_565)
                     .into(thumbnailView!!)
             } else {
-                // Generate thumbnail from video URL if no thumbnail
                 thumbnailView?.setImageResource(android.R.color.black)
             }
-            
-            // Load like state ASYNCHRONOUSLY from backend (polymorphic likes table)
-            val context = itemView.context.applicationContext
-            val userId = currentUserId
-            
-            if (userId > 0) {
-                viewHolderScope?.launch {
-                    try {
-                        // Check like state directly via callback (uses polymorphic likes table)
-                        val remoteLiked = withContext(Dispatchers.IO) {
-                            checkUserLikedVideo?.invoke(videoData.id) ?: false
-                        }
-                        isLiked = remoteLiked
-                        updateLikeButton()
-                        Log.d("VideoAdapter", "Video ${videoData.id}: Like state check - liked=$isLiked")
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        Log.e("VideoAdapter", "Error checking like state for video ${videoData.id}", e)
-                    }
-                }
-            }
-            
-            // Fetch like count from backend (polymorphic likes table)
-            viewHolderScope?.launch {
-                try {
-                    // Get like count from polymorphic likes table via backend
-                    val likeCount = withContext(Dispatchers.IO) {
-                        getLikeCount?.invoke(videoData.id) ?: 0
-                    }
-                    likeCountText?.text = formatCount(likeCount)
-                    Log.d("VideoAdapter", "Video ${videoData.id}: Like count from likes table = $likeCount")
-                    
-                    // Double-check like state via callback (uses polymorphic likes table)
-                    val likedByUser = withContext(Dispatchers.IO) {
-                        checkUserLikedVideo?.invoke(videoData.id) ?: false
-                    }
-                    
-                    // Only update if state changed (to avoid unnecessary redraws)
-                    if (isLiked != likedByUser) {
-                        isLiked = likedByUser
-                        updateLikeButton()
-                        Log.d("VideoAdapter", "Video ${videoData.id}: Like state updated - liked=$isLiked")
-                    }
-                    
-                    Log.d("VideoAdapter", "Video ${videoData.id}: FINAL STATE - liked=$isLiked, count=$likeCount (POLYMORPHIC LIKES)")
-                    
-                    // Get comment count from database
-                    val commentCount = withContext(Dispatchers.IO) {
-                        getCommentCount?.invoke(videoData.id) ?: 0
-                    }
-                    commentCountText?.text = formatCount(commentCount)
-                    
-                    // Update comment button state (activated if there are comments)
-                    commentButton?.isActivated = commentCount > 0
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.e("VideoAdapter", "Error loading likes/comments for video ${videoData.id}", e)
-                }
-            }
 
-            // Setup button listeners
+            // Setup button listeners (synchronous, no network)
             setupButtonListeners()
 
-            // --- OBTENER USERNAME DESDE COURSE_ID ---
+            // ── METADATA: single coroutine, ALL API calls in parallel ─────
+            // Eliminates duplicate calls (was 9-12 calls, now max 4 unique).
+            // Uses async for parallel execution so metadata loads in ~1 RTT.
             currentJob?.cancel()
             profileButton.setImageResource(R.drawable.ic_profile)
-            usernameText.text = "Cargando..." // Placeholder mientras se carga
-            currentCreatorId = -1L // Reset creator ID
+            usernameText.text = videoData.username ?: "usuario"
+            currentCreatorId = -1L
 
+            val userId = currentUserId
             currentJob = viewHolderScope?.launch {
                 try {
-                    // Obtener username desde course_id o remote_id (from backend API)
-                    val username = if (videoData.courseId != null && videoData.courseId!! > 0) {
-                        withContext(Dispatchers.IO) {
-                            try {
-                                val courseResult = BackendApiService.getCourseById(videoData.courseId!!)
-                                val course = courseResult.getOrNull()
-                                if (course != null) {
-                                    currentCreatorId = course.creatorUserId
-                                    // Get creator username from backend
-                                    if (course.creatorUserId > 0) {
-                                        val userResult = BackendApiService.getUserById(course.creatorUserId)
-                                        userResult.getOrNull()?.usuario ?: videoData.username
-                                    } else {
-                                        videoData.username
-                                    }
-                                } else {
-                                    videoData.username
-                                }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                Log.e("VideoAdapter", "Error fetching course from backend", e)
-                                videoData.username
-                            }
+                    // ── Fire ALL independent API calls in parallel ──
+                    val courseDeferred = if (videoData.courseId != null && videoData.courseId!! > 0) {
+                        async(Dispatchers.IO) {
+                            try { BackendApiService.getCourseById(videoData.courseId!!).getOrNull() }
+                            catch (_: CancellationException) { throw CancellationException() }
+                            catch (_: Exception) { null }
                         }
-                    } else if (videoData.remoteId != null && videoData.remoteId!! > 0) {
-                        // remote_id is a userId; get USERNAME from backend
-                        withContext(Dispatchers.IO) {
-                            try {
-                                currentCreatorId = videoData.remoteId!!
-                                val userResult = BackendApiService.getUserById(videoData.remoteId!!)
-                                userResult.getOrNull()?.usuario ?: videoData.username
-                            } catch (e: Exception) {
-                                videoData.username
-                            }
+                    } else null
+
+                    val likeStateDeferred = if (userId > 0) {
+                        async(Dispatchers.IO) {
+                            try { checkUserLikedVideo?.invoke(videoData.id) ?: false }
+                            catch (_: CancellationException) { throw CancellationException() }
+                            catch (_: Exception) { false }
                         }
-                    } else {
-                        videoData.username // Fallback para compatibilidad
+                    } else null
+
+                    val likeCountDeferred = async(Dispatchers.IO) {
+                        try { getLikeCount?.invoke(videoData.id) ?: 0 }
+                        catch (_: CancellationException) { throw CancellationException() }
+                        catch (_: Exception) { 0 }
                     }
 
-                    // If creatorId is still not set but we have a username, try to find the user via backend
-                    if (currentCreatorId == -1L && !username.isNullOrEmpty()) {
-                        withContext(Dispatchers.IO) {
-                            try {
-                                val userResult = BackendApiService.getUserByUsername(username)
-                                val user = userResult.getOrNull()
-                                if (user != null) {
-                                    currentCreatorId = user.id
-                                }
-                                Unit
-                            } catch (e: Exception) {
-                                Log.w("VideoAdapter", "Error fetching user by username from backend", e)
-                            }
-                        }
+                    val commentCountDeferred = async(Dispatchers.IO) {
+                        try { getCommentCount?.invoke(videoData.id) ?: 0 }
+                        catch (_: CancellationException) { throw CancellationException() }
+                        catch (_: Exception) { 0 }
                     }
-                    
-                    // Check subscription status if we have a valid creatorId
-                    if (currentCreatorId != -1L && checkSubscriptionStatus != null) {
+
+                    // ── Await likes & comments first (fast, no dependencies) ──
+                    val likeCount = likeCountDeferred.await()
+                    val commentCount = commentCountDeferred.await()
+                    val liked = likeStateDeferred?.await() ?: false
+
+                    likeCountText?.text = formatCount(likeCount)
+                    commentCountText?.text = formatCount(commentCount)
+                    commentButton?.isActivated = commentCount > 0
+                    isLiked = liked
+                    updateLikeButton()
+                    Log.d("VideoAdapter", "Video ${videoData.id}: liked=$isLiked, likes=$likeCount, comments=$commentCount")
+
+                    // ── Await course (needed for creatorId, premium badge) ──
+                    val course = courseDeferred?.await()
+                    if (course != null) {
+                        currentCreatorId = course.creatorUserId
+                        val isPremium = course.isPremium == true || (course.price ?: 0.0) > 0
+                        premiumBadge?.visibility = if (isPremium) View.VISIBLE else View.GONE
+                    }
+
+                    // ── Resolve creator user (username + avatar) — single call ──
+                    val creatorUser: com.example.tareamov.data.entity.Usuario? = withContext(Dispatchers.IO) {
+                        try {
+                            // Priority 1: from course.creatorUserId
+                            if (currentCreatorId > 0) {
+                                val result = BackendApiService.getUserById(currentCreatorId).getOrNull()
+                                if (result != null) return@withContext result
+                            }
+                            // Priority 2: from videoData.remoteId
+                            if (videoData.remoteId != null && videoData.remoteId!! > 0) {
+                                currentCreatorId = videoData.remoteId!!
+                                val result = BackendApiService.getUserById(videoData.remoteId!!).getOrNull()
+                                if (result != null) return@withContext result
+                            }
+                            // Priority 3: from username string
+                            val fallbackName = videoData.username
+                            if (!fallbackName.isNullOrEmpty()) {
+                                val result = BackendApiService.getUserByUsername(fallbackName).getOrNull()
+                                if (result != null) {
+                                    currentCreatorId = result.id
+                                    return@withContext result
+                                }
+                            }
+                            null
+                        } catch (_: CancellationException) { throw CancellationException() }
+                        catch (_: Exception) { null }
+                    }
+
+                    // ── Apply resolved user data to UI ──
+                    val resolvedUsername = creatorUser?.usuario ?: videoData.username ?: "usuario"
+                    usernameText.text = resolvedUsername
+                    audioText?.text = "Original Audio - $resolvedUsername"
+
+                    profileButton.setOnClickListener { onProfileClick?.invoke(resolvedUsername) }
+                    usernameText.setOnClickListener { onUsernameClick?.invoke(videoData) }
+                    titleText.setOnClickListener { onUsernameClick?.invoke(videoData) }
+
+                    // Avatar
+                    if (creatorUser != null && !creatorUser.avatar.isNullOrEmpty()) {
+                        Glide.with(itemView)
+                            .load(creatorUser.avatar)
+                            .placeholder(R.drawable.ic_profile)
+                            .error(R.drawable.ic_profile)
+                            .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
+                            .override(200, 200)
+                            .circleCrop()
+                            .into(profileButton)
+                    }
+
+                    // Subscription status (needs creatorId resolved above)
+                    if (currentCreatorId > 0 && checkSubscriptionStatus != null) {
                         isSubscribed = checkSubscriptionStatus.invoke(currentCreatorId)
                         updateSubscribeButton()
                     }
 
-                    // Show resolved username (not numeric remote_id)
-                    usernameText.text = (username ?: "usuario")
-                    
-                    // Update audio text with username
-                    audioText?.text = "Original Audio - ${username ?: "usuario"}"
-
-                    // Setup profile button click con el username correcto
-                    profileButton.setOnClickListener {
-                        onProfileClick?.invoke(username ?: "")
-                    }
-
-                    // Setup username text click to navigate to course
-                    usernameText.setOnClickListener {
-                        onUsernameClick?.invoke(videoData)
-                    }
-
-                    // Also make the title clickable to navigate to the course details
-                    titleText.setOnClickListener {
-                        onUsernameClick?.invoke(videoData)
-                    }
-
-                    // --- AVATAR LOADING LOGIC (from backend) ---
-                    val usuario = withContext(Dispatchers.IO) {
-                        try {
-                            var user: com.example.tareamov.data.entity.Usuario? = null
-                            
-                            // Get user from backend API
-                            if (currentCreatorId > 0) {
-                                val userResult = BackendApiService.getUserById(currentCreatorId)
-                                user = userResult.getOrNull()
-                            }
-                            // Fallback to username if ID didn't work
-                            if (user == null && !username.isNullOrEmpty()) {
-                                val userResult = BackendApiService.getUserByUsername(username)
-                                user = userResult.getOrNull()
-                            }
-                            
-                            user
-                        } catch (e: Exception) {
-                            Log.e("VideoAdapter", "Error fetching avatar user from backend", e)
-                            null
-                        }
-                    }
-
-                    if (usuario != null && !usuario.avatar.isNullOrEmpty()) {
-                        Log.d("VideoAdapter", "Loading avatar for ${usuario.usuario}: ${usuario.avatar}")
-                        Glide.with(itemView)
-                            .load(usuario.avatar)
-                            .placeholder(R.drawable.ic_profile)
-                            .error(R.drawable.ic_profile)
-                            .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
-                            .override(200, 200) // Limit avatar size to save memory
-                            .circleCrop()
-                            .into(profileButton)
-                    } else {
-                        Log.d("VideoAdapter", "No avatar found for username=$username, id=$currentCreatorId")
-                        profileButton.setImageResource(R.drawable.ic_profile)
-                    }
-                } catch (e: CancellationException) {
-                    throw e
+                } catch (_: CancellationException) {
+                    // ViewHolder recycled — silently cancel
                 } catch (e: Exception) {
+                    Log.w("VideoAdapter", "Metadata load error for video ${videoData.id}", e)
                     profileButton.setImageResource(R.drawable.ic_profile)
                 }
             }
@@ -441,7 +347,7 @@ class VideoAdapter(
             // Priority:
             //  1. VideoPreloader signed URL cache (instant, no network)
             //  2. HTTP URL already in VideoData (from streaming endpoint, already signed)
-            //  3. CloudflareR2Service fallback (last resort, individual signing)
+            //  3. StorageHelper fallback (last resort, individual signing)
             viewHolderScope?.launch {
                 val context = itemView.context.applicationContext
                 var bestUri: Uri? = null
@@ -471,21 +377,21 @@ class VideoAdapter(
                 if (bestUri != null) {
                     val uriStr = bestUri.toString()
                     val needsSigning = !uriStr.startsWith("http") && !uriStr.startsWith("file") && !uriStr.startsWith("content")
-                    val isUnsignedR2 = uriStr.startsWith("http") && com.example.tareamov.service.CloudflareR2Service.isR2Url(uriStr) && !uriStr.contains("X-Amz-Signature")
+                    val isUnsignedR2 = uriStr.startsWith("http") && com.example.tareamov.service.StorageHelper.isR2Url(uriStr) && !uriStr.contains("X-Amz-Signature")
 
                     if (needsSigning || isUnsignedR2) {
                         val signedUrl = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, uriStr)
+                            com.example.tareamov.service.StorageHelper.getVideoStreamUrl(context, uriStr)
                         }
                         if (signedUrl != null) {
                             bestUri = Uri.parse(signedUrl)
-                            Log.d("VideoAdapter", "✅ URL signed via CloudflareR2Service")
+                            Log.d("VideoAdapter", "✅ URL signed via StorageHelper")
                         }
                     }
                 } else if (!videoData.videoUriString.isNullOrEmpty()) {
                     // Last resort: try to sign the raw videoUriString
                     val signedUrl = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, videoData.videoUriString)
+                        com.example.tareamov.service.StorageHelper.getVideoStreamUrl(context, videoData.videoUriString)
                     }
                     if (signedUrl != null) {
                         bestUri = Uri.parse(signedUrl)
@@ -791,7 +697,7 @@ class VideoAdapter(
                         viewHolderScope?.launch {
                             val context = itemView.context.applicationContext
                             val signedUrl = withContext(Dispatchers.IO) {
-                                com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, objectKey)
+                                com.example.tareamov.service.StorageHelper.getVideoStreamUrl(context, objectKey)
                             }
                             if (signedUrl != null) {
                                 useExoPlayer = true
@@ -1579,7 +1485,7 @@ class VideoAdapter(
                     
                     val videoData = videos[currentPosition]
                     val r2PublicUrl = withContext(Dispatchers.IO) {
-                        com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, videoData.videoUriString)
+                        com.example.tareamov.service.StorageHelper.getVideoStreamUrl(context, videoData.videoUriString)
                     }
                     
                     val options = mutableListOf<String>()
@@ -1755,9 +1661,9 @@ class VideoAdapter(
                     if (currentPosition != RecyclerView.NO_POSITION && currentPosition < videos.size) {
                         val videoData = videos[currentPosition]
                         
-                        // ESTRATEGIA 1: Intentar obtener URL pública de Cloudflare R2
+                        // ESTRATEGIA 1: Intentar obtener URL firmada del backend
                         val r2PublicUrl = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, videoData.videoUriString)
+                            com.example.tareamov.service.StorageHelper.getVideoStreamUrl(context, videoData.videoUriString)
                         }
                     
                         if (r2PublicUrl != null && (r2PublicUrl.startsWith("http://") || r2PublicUrl.startsWith("https://"))) {

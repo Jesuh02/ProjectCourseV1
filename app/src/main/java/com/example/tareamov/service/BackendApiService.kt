@@ -21,6 +21,7 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import okhttp3.ConnectionPool
 import com.example.tareamov.service.network.FallbackDnsResolver
 import com.example.tareamov.service.network.NetworkConnectivityChecker
 
@@ -57,14 +58,22 @@ object BackendApiService {
         .create()
 
     private const val MAX_RETRIES = 2
-    private const val INITIAL_BACKOFF_MS = 2000L
+    private const val INITIAL_BACKOFF_MS = 1000L
 
+    /**
+     * OkHttpClient optimizado para conexiones rápidas:
+     *   - Timeouts agresivos (conectar: 10s, leer: 20s) para fail-fast
+     *   - Connection pool que reutiliza hasta 8 conexiones idle (5 min TTL)
+     *   - DNS con fallback DoH + UDP para emuladores con DNS roto
+     *   - Retry automático en fallas de conexión
+     */
     private val client = OkHttpClient.Builder()
         .dns(FallbackDnsResolver)
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .callTimeout(90, TimeUnit.SECONDS)
+        .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(45, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
@@ -87,6 +96,23 @@ object BackendApiService {
 
     fun initialize(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // Warmup DNS en background para resolución instantánea en la primera request
+        warmupDns()
+    }
+
+    /**
+     * Pre-resuelve el hostname del backend en background para que
+     * la primera llamada HTTP no tenga que esperar resolución DNS.
+     * Principio: Fail-fast — si el DNS falla aquí, el FallbackDnsResolver
+     * intentará DoH y UDP en la primera request real.
+     */
+    private fun warmupDns() {
+        Thread {
+            try {
+                val host = android.net.Uri.parse(baseUrl).host ?: return@Thread
+                FallbackDnsResolver.lookup(host)
+            } catch (_: Exception) { /* non-fatal warmup */ }
+        }.start()
     }
 
     var jwtToken: String?
@@ -177,6 +203,31 @@ object BackendApiService {
             .build()
     }
 
+    private fun parseErrorResponse(bodyStr: String, statusCode: Int): Pair<String, String?> {
+        return try {
+            val obj = JsonParser.parseString(bodyStr).asJsonObject
+            val errorElement = obj.get("error")
+
+            when {
+                errorElement == null || errorElement.isJsonNull -> {
+                    Pair(obj.get("message")?.takeIf { !it.isJsonNull }?.asString ?: "Error $statusCode", null)
+                }
+                errorElement.isJsonPrimitive -> Pair(errorElement.asString, null)
+                errorElement.isJsonObject -> {
+                    val errorObj = errorElement.asJsonObject
+                    val code = errorObj.get("code")?.takeIf { !it.isJsonNull }?.asString
+                    val message = errorObj.get("message")?.takeIf { !it.isJsonNull }?.asString
+                        ?: obj.get("message")?.takeIf { !it.isJsonNull }?.asString
+                        ?: "Error $statusCode"
+                    Pair(message, code)
+                }
+                else -> Pair("Error $statusCode", null)
+            }
+        } catch (_: Exception) {
+            Pair("Error HTTP $statusCode", null)
+        }
+    }
+
     /**
      * Ejecuta la request y parsea la respuesta como ApiResponse<T>.
      * El backend siempre retorna { success: Boolean, data: T }
@@ -194,10 +245,18 @@ object BackendApiService {
                 val bodyStr = response.body?.string() ?: "{}"
 
                 if (!response.isSuccessful) {
-                    val errorMsg = try {
-                        val obj = JsonParser.parseString(bodyStr).asJsonObject
-                        obj.get("error")?.asString ?: obj.get("message")?.asString ?: "Error ${response.code}"
-                    } catch (_: Exception) { "Error HTTP ${response.code}" }
+                    val (errorMsg, errorCode) = parseErrorResponse(bodyStr, response.code)
+                    val isWhatsAppLinkPath = request.url.encodedPath.endsWith("/whatsapp/link")
+                    val isWhatsAppBusinessRuleError =
+                        errorCode == "WHATSAPP_OTP_SEND_FAILED" ||
+                        errorCode == "WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE" ||
+                        errorCode == "WHATSAPP_ACCOUNT_NOT_REGISTERED" ||
+                        errorMsg.contains("código de verificación por WhatsApp", ignoreCase = true) ||
+                        errorMsg.contains("recipient phone number not in allowed list", ignoreCase = true) ||
+                        errorMsg.contains("número no está permitido", ignoreCase = true) ||
+                        errorMsg.contains("cuenta de WhatsApp activa", ignoreCase = true) ||
+                        errorMsg.contains("account not registered", ignoreCase = true)
+
                     // On 401, attempt token refresh and retry once
                     if (response.code == 401 && attempt == 0 && !refreshToken.isNullOrBlank()) {
                         Log.i(TAG, "Got 401 on ${request.url} — attempting token refresh")
@@ -229,8 +288,12 @@ object BackendApiService {
                             }
                         }
                     }
+                    // WhatsApp test-mode / business-rule errors should not be retried
+                    if (isWhatsAppLinkPath && isWhatsAppBusinessRuleError) {
+                        return@withContext ApiResult.Error(errorMsg, response.code)
+                    }
                     // Don't retry other client errors (4xx)
-                    if (response.code in 400..499) {
+                    if (response.code in 400..499 || errorCode == "WHATSAPP_UNAVAILABLE") {
                         return@withContext ApiResult.Error(errorMsg, response.code)
                     }
                     lastException = IOException(errorMsg)
@@ -1741,6 +1804,40 @@ object BackendApiService {
     suspend fun getAllReinforcementHistory(): ApiResult<List<JsonObject>> =
         executeList(get("/reinforcement/history"))
 
+    /**
+     * Get existing questions for a user+course+topic+task to enable client-side dedup
+     * before generating new questions via LLM.
+     * Returns full question objects (question, options, correctIndex, explanation).
+     */
+    suspend fun getExistingQuestions(
+        courseId: Long,
+        topicId: Long? = null,
+        taskId: Long? = null
+    ): ApiResult<JsonObject> {
+        val params = mutableListOf("courseId=$courseId")
+        if (topicId != null && topicId > 0) params.add("topicId=$topicId")
+        if (taskId != null && taskId > 0) params.add("taskId=$taskId")
+        val queryString = params.joinToString("&")
+        return execute(get("/reinforcement/existing-questions?$queryString"))
+    }
+
+    /**
+     * Get raw text content from rag_documents for a task/topic/course.
+     * Used to build RAG-grounded prompts that prevent LLM hallucination.
+     * Returns { content: string, chunks: number, files: string[] }
+     */
+    suspend fun getRagContent(
+        courseId: Long,
+        topicId: Long? = null,
+        taskId: Long? = null
+    ): ApiResult<JsonObject> {
+        val params = mutableListOf("courseId=$courseId")
+        if (topicId != null && topicId > 0) params.add("topicId=$topicId")
+        if (taskId != null && taskId > 0) params.add("taskId=$taskId")
+        val queryString = params.joinToString("&")
+        return execute(get("/reinforcement/rag-content?$queryString"))
+    }
+
     // ═══════════════════════════════════════════════════════════
     // RAG (Document Ingestion)
     // ═══════════════════════════════════════════════════════════
@@ -1803,6 +1900,22 @@ object BackendApiService {
 
     suspend fun deleteChatSession(sessionId: String): ApiResult<JsonObject> =
         execute(delete("/chat-messages/session/$sessionId"))
+
+    // ═══════════════════════════════════════════════════════════
+    // WHATSAPP
+    // ═══════════════════════════════════════════════════════════
+
+    suspend fun linkWhatsApp(phoneNumber: String): ApiResult<JsonObject> =
+        execute(post("/whatsapp/link", mapOf("phoneNumber" to phoneNumber)))
+
+    suspend fun verifyWhatsApp(code: String): ApiResult<JsonObject> =
+        execute(post("/whatsapp/verify", mapOf("code" to code)))
+
+    suspend fun unlinkWhatsApp(): ApiResult<JsonObject> =
+        execute(post("/whatsapp/unlink", null))
+
+    suspend fun getWhatsAppStatus(): ApiResult<JsonObject> =
+        execute(get("/whatsapp/status"))
 }
 
 // ═══════════════════════════════════════════════════════════

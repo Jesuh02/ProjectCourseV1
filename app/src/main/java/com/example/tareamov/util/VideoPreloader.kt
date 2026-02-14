@@ -177,7 +177,7 @@ class VideoPreloader(private val context: Context) {
         // 3. Fallback: individual R2 signing
         if (!modelUrl.isNullOrEmpty()) {
             return try {
-                val signed = com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, modelUrl)
+                val signed = com.example.tareamov.service.StorageHelper.getVideoStreamUrl(context, modelUrl)
                 if (signed != null) {
                     signedUrlCache[video.id] = CachedUrl(signed, System.currentTimeMillis())
                 }

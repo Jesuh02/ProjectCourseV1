@@ -2219,8 +2219,8 @@ class VideoHomeFragment : Fragment() {
             try {
                 val context = requireContext()
 
-                // ESTRATEGIA 1: Intentar obtener URL firmada de Cloudflare R2
-                val r2PublicUrl = com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, videoData.videoUriString)
+                // ESTRATEGIA 1: Intentar obtener URL firmada del backend
+                val r2PublicUrl = com.example.tareamov.service.StorageHelper.getVideoStreamUrl(context, videoData.videoUriString)
 
                 if (r2PublicUrl != null && (r2PublicUrl.startsWith("http://") || r2PublicUrl.startsWith("https://"))) {
                     // Compartir usando URL pública/firmada - MÉTODO PREFERIDO

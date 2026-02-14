@@ -72,6 +72,10 @@ class DatabaseChatAdapter(
         notifyItemInserted(position)
     }
 
+    fun getPositionOfMessage(messageId: String): Int {
+        return messages.indexOfFirst { it.messageId == messageId }
+    }
+
     fun updateMessage(messageId: String, newText: String) {
         val index = messages.indexOfFirst { it.messageId == messageId }
         if (index != -1) {

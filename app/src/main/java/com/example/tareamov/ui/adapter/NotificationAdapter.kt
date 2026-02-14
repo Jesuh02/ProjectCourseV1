@@ -106,6 +106,10 @@ class NotificationAdapter(
                     notificationIcon.setImageResource(R.drawable.ic_favorite)
                     iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
                 }
+                Notification.TYPE_CHAT_RESPONSE -> {
+                    notificationIcon.setImageResource(R.drawable.ic_ai_robot)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
+                }
                 else -> {
                     notificationIcon.setImageResource(R.drawable.ic_notifications)
                     iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)

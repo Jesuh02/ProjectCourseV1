@@ -16,7 +16,6 @@ import android.util.Log
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.example.tareamov.data.AppDatabase
-import com.example.tareamov.service.CloudflareR2Service
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch

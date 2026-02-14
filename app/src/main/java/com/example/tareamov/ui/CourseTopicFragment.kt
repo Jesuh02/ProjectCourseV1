@@ -24,7 +24,7 @@ import com.example.tareamov.data.entity.Topic
 import com.example.tareamov.data.entity.ContentItem
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
-import com.example.tareamov.service.CloudflareR2Service
+import com.example.tareamov.service.StorageHelper
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -242,7 +242,7 @@ class CourseTopicFragment : Fragment() {
         val deleteButton = contentView.findViewById<ImageButton>(R.id.deleteContentButton)
         
         // Show cloud emoji if it's an R2 URL
-        val isR2Url = CloudflareR2Service.isR2Url(contentItem.uriString)
+        val isR2Url = StorageHelper.isR2Url(contentItem.uriString)
         val displayName = if (isR2Url) "☁️ ${contentItem.name ?: "Archivo adjunto"}" else contentItem.name ?: "Archivo adjunto"
         contentNameView.text = displayName
         
@@ -266,7 +266,7 @@ class CourseTopicFragment : Fragment() {
                     
                     // Also delete from R2 if applicable
                     if (isR2Url) {
-                        CloudflareR2Service.deleteFile(contentItem.uriString)
+                        StorageHelper.deleteFile(contentItem.uriString)
                     }
                 } catch (e: Exception) {
                     Log.e("CourseTopicFragment", "Error deleting content item", e)
@@ -416,15 +416,15 @@ class CourseTopicFragment : Fragment() {
                 var r2Url: String? = null
                 
                 // Subir a Cloudflare R2 si está configurado
-                if (CloudflareR2Service.isConfigured()) {
-                    Log.d("CourseTopicFragment", "☁️ Uploading to Cloudflare R2: $contentUri")
+                if (StorageHelper.isConfigured()) {
+                    Log.d("CourseTopicFragment", "☁️ Uploading to backend: $contentUri")
                     if (isAdded && context != null) {
                         Toast.makeText(requireContext(), "Subiendo archivo a la nube...", Toast.LENGTH_SHORT).show()
                     }
                     
                     val folder = if (contentType == "video") "videos" else "documents"
                     val result = withContext(Dispatchers.IO) {
-                        CloudflareR2Service.uploadFile(
+                        StorageHelper.uploadFile(
                             context = requireContext(),
                             fileUri = contentUri,
                             folder = "topics/$folder",
@@ -435,16 +435,16 @@ class CourseTopicFragment : Fragment() {
                     }
                     
                     when (result) {
-                        is CloudflareR2Service.UploadResult.Success -> {
+                        is StorageHelper.UploadResult.Success -> {
                             r2Url = result.url
                             finalUri = Uri.parse(r2Url)
-                            Log.d("CourseTopicFragment", "✅ R2 Upload successful: $r2Url")
+                            Log.d("CourseTopicFragment", "✅ Upload successful: $r2Url")
                             if (isAdded && context != null) {
                                 Toast.makeText(requireContext(), "Archivo subido a la nube ✓", Toast.LENGTH_SHORT).show()
                             }
                         }
-                        is CloudflareR2Service.UploadResult.Error -> {
-                            Log.e("CourseTopicFragment", "❌ R2 Upload failed: ${result.message}")
+                        is StorageHelper.UploadResult.Error -> {
+                            Log.e("CourseTopicFragment", "❌ Upload failed: ${result.message}")
                             if (isAdded && context != null) {
                                 Toast.makeText(requireContext(), "Error subiendo a nube, usando copia local", Toast.LENGTH_SHORT).show()
                             }
@@ -498,7 +498,7 @@ class CourseTopicFragment : Fragment() {
                         // Si es URL de R2, podríamos eliminar del servidor (opcional)
                         if (r2Url != null) {
                             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                                CloudflareR2Service.deleteFile(r2Url!!)
+                                StorageHelper.deleteFile(r2Url!!)
                             }
                         }
                     }

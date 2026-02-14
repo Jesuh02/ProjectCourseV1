@@ -42,7 +42,7 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
-import com.example.tareamov.service.CloudflareR2Service
+import com.example.tareamov.service.StorageHelper
 import com.example.tareamov.service.ServerEndpointResolver
 import de.hdodenhof.circleimageview.CircleImageView
 import android.view.ViewOutlineProvider
@@ -1941,12 +1941,12 @@ class UserProfileViewFragment : Fragment() {
         currentCourseForThumbnailChange?.let { course ->
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
-                    // Subir miniatura a Cloudflare R2 si está configurado
+                    // Subir miniatura al backend si está configurado
                     var finalThumbnailUri = imageUri.toString()
-                    if (CloudflareR2Service.isConfigured()) {
+                    if (StorageHelper.isConfigured()) {
                         Toast.makeText(requireContext(), "Subiendo miniatura a la nube...", Toast.LENGTH_SHORT).show()
                         val result = withContext(Dispatchers.IO) {
-                            CloudflareR2Service.uploadFile(
+                            StorageHelper.uploadFile(
                                 context = requireContext(),
                                 fileUri = imageUri,
                                 folder = "thumbnails/courses",
@@ -1954,11 +1954,11 @@ class UserProfileViewFragment : Fragment() {
                             )
                         }
                         when (result) {
-                            is CloudflareR2Service.UploadResult.Success -> {
+                            is StorageHelper.UploadResult.Success -> {
                                 finalThumbnailUri = result.url
-                                Log.d("UserProfileView", "☁️ Thumbnail uploaded to R2: $finalThumbnailUri")
+                                Log.d("UserProfileView", "☁️ Thumbnail uploaded: $finalThumbnailUri")
                             }
-                            is CloudflareR2Service.UploadResult.Error -> {
+                            is StorageHelper.UploadResult.Error -> {
                                 Log.e("UserProfileView", "❌ Failed to upload thumbnail: ${result.message}")
                                 Toast.makeText(requireContext(), "Error subiendo a nube, usando local", Toast.LENGTH_SHORT).show()
                             }

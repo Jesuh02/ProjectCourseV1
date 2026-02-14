@@ -24,7 +24,7 @@ import com.example.tareamov.data.entity.TaskSubmission
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.viewmodel.CourseCreationViewModel
-import com.example.tareamov.service.CloudflareR2Service
+import com.example.tareamov.service.StorageHelper
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -94,15 +94,15 @@ class CourseTaskFragment : Fragment() {
                 var finalUri: Uri = uri
                 var r2Url: String? = null
 
-                // Subir a Cloudflare R2 si está configurado
-                if (CloudflareR2Service.isConfigured()) {
-                    Log.d("CourseTaskFragment", "☁️ Uploading document to Cloudflare R2: $uri")
+                // Subir al backend si está configurado
+                if (StorageHelper.isConfigured()) {
+                    Log.d("CourseTaskFragment", "☁️ Uploading document to backend: $uri")
                     if (isAdded && context != null) {
                         Toast.makeText(requireContext(), "Subiendo documento a la nube...", Toast.LENGTH_SHORT).show()
                     }
                     
                     val result = withContext(Dispatchers.IO) {
-                        CloudflareR2Service.uploadDocument(
+                        StorageHelper.uploadDocument(
                             context = requireContext(),
                             documentUri = uri,
                             onProgress = { progress ->
@@ -112,16 +112,16 @@ class CourseTaskFragment : Fragment() {
                     }
                     
                     when (result) {
-                        is CloudflareR2Service.UploadResult.Success -> {
+                        is StorageHelper.UploadResult.Success -> {
                             r2Url = result.url
                             finalUri = Uri.parse(r2Url)
-                            Log.d("CourseTaskFragment", "✅ R2 Document Upload successful: $r2Url")
+                            Log.d("CourseTaskFragment", "✅ Document Upload successful: $r2Url")
                             if (isAdded && context != null) {
                                 Toast.makeText(requireContext(), "Documento subido a la nube ✓", Toast.LENGTH_SHORT).show()
                             }
                         }
-                        is CloudflareR2Service.UploadResult.Error -> {
-                            Log.e("CourseTaskFragment", "❌ R2 Document Upload failed: ${result.message}")
+                        is StorageHelper.UploadResult.Error -> {
+                            Log.e("CourseTaskFragment", "❌ Document Upload failed: ${result.message}")
                             if (isAdded && context != null) {
                                 Toast.makeText(requireContext(), "Error subiendo documento a nube, usando copia local", Toast.LENGTH_SHORT).show()
                             }
@@ -289,7 +289,7 @@ class CourseTaskFragment : Fragment() {
 
                 // Add content items to the UI
                 for (contentItem in contentItems) {
-                    val r2Url = if (CloudflareR2Service.isR2Url(contentItem.uriString)) contentItem.uriString else null
+                    val r2Url = if (StorageHelper.isR2Url(contentItem.uriString)) contentItem.uriString else null
                     addContentItemView(
                         Uri.parse(contentItem.uriString),
                         contentItem.contentType,
@@ -339,7 +339,7 @@ class CourseTaskFragment : Fragment() {
         val typeView = contentView.findViewById<TextView>(R.id.contentTypeView)
 
         // Show cloud icon if it's an R2 URL
-        val displayName = if (CloudflareR2Service.isR2Url(item.uriString)) {
+        val displayName = if (StorageHelper.isR2Url(item.uriString)) {
             "☁️ ${item.name ?: "Archivo adjunto"}"
         } else {
             item.name ?: "Archivo adjunto"
@@ -395,7 +395,7 @@ class CourseTaskFragment : Fragment() {
                 startActivity(intent)
             } else {
                 // For documents and other content types
-                val uri = if (CloudflareR2Service.isR2Url(item.uriString) || 
+                val uri = if (StorageHelper.isR2Url(item.uriString) || 
                              item.uriString.startsWith("http://") || 
                              item.uriString.startsWith("https://")) {
                     Uri.parse(item.uriString)
@@ -751,15 +751,15 @@ class CourseTaskFragment : Fragment() {
                 var finalUri: Uri = uri
                 var r2Url: String? = null
 
-                // Subir a Cloudflare R2 si está configurado
-                if (CloudflareR2Service.isConfigured()) {
-                    Log.d("CourseTaskFragment", "☁️ Uploading video to Cloudflare R2: $uri")
+                // Subir al backend si está configurado
+                if (StorageHelper.isConfigured()) {
+                    Log.d("CourseTaskFragment", "☁️ Uploading video to backend: $uri")
                     if (isAdded && context != null) {
                         Toast.makeText(requireContext(), "Subiendo video a la nube...", Toast.LENGTH_SHORT).show()
                     }
                     
                     val result = withContext(Dispatchers.IO) {
-                        CloudflareR2Service.uploadVideo(
+                        StorageHelper.uploadVideo(
                             context = requireContext(),
                             videoUri = uri,
                             onProgress = { progress ->
@@ -769,16 +769,16 @@ class CourseTaskFragment : Fragment() {
                     }
                     
                     when (result) {
-                        is CloudflareR2Service.UploadResult.Success -> {
+                        is StorageHelper.UploadResult.Success -> {
                             r2Url = result.url
                             finalUri = Uri.parse(r2Url)
-                            Log.d("CourseTaskFragment", "✅ R2 Video Upload successful: $r2Url")
+                            Log.d("CourseTaskFragment", "✅ Video Upload successful: $r2Url")
                             if (isAdded && context != null) {
                                 Toast.makeText(requireContext(), "Video subido a la nube ✓", Toast.LENGTH_SHORT).show()
                             }
                         }
-                        is CloudflareR2Service.UploadResult.Error -> {
-                            Log.e("CourseTaskFragment", "❌ R2 Video Upload failed: ${result.message}")
+                        is StorageHelper.UploadResult.Error -> {
+                            Log.e("CourseTaskFragment", "❌ Video Upload failed: ${result.message}")
                             if (isAdded && context != null) {
                                 Toast.makeText(requireContext(), "Error subiendo video a nube, usando copia local", Toast.LENGTH_SHORT).show()
                             }
@@ -938,7 +938,7 @@ class CourseTaskFragment : Fragment() {
             if (r2Url != null) {
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     try {
-                        CloudflareR2Service.deleteFile(r2Url)
+                        StorageHelper.deleteFile(r2Url)
                         Log.d("CourseTaskFragment", "🗑️ Deleted from R2: $r2Url")
                     } catch (e: Exception) {
                         Log.e("CourseTaskFragment", "Error deleting from R2", e)
@@ -952,7 +952,7 @@ class CourseTaskFragment : Fragment() {
             try {
                 // Check if it's an R2/HTTP URL
                 val uriString = r2Url ?: uri.toString()
-                if (CloudflareR2Service.isR2Url(uriString) || 
+                if (StorageHelper.isR2Url(uriString) || 
                     uriString.startsWith("http://") || 
                     uriString.startsWith("https://")) {
                     
