@@ -92,9 +92,7 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Enable RenderScript for BlurView
-        renderscriptTargetApi = 31
-        renderscriptSupportModeEnabled = true
+        // RenderScript removed: deprecated y BlurView 2.0.x no lo necesita
 
     // Exponer variables de Supabase y HOST_IP como BuildConfig
     buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
@@ -204,8 +202,8 @@ val activeFlavor = localPropsMap["ACTIVE_FLAVOR"] ?: ""
 
 androidComponents {
     beforeVariants { variantBuilder ->
+        // Solo filtrar por flavor, mantener Debug y Release activos
         if (activeFlavor.isNotBlank()) {
-            // Solo habilitar el flavor activo (ej: qaDebug, qaRelease)
             if (!variantBuilder.flavorName.equals(activeFlavor, ignoreCase = true)) {
                 variantBuilder.enable = false
             }
