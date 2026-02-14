@@ -1388,6 +1388,9 @@ object BackendApiService {
     suspend fun getProgressByCourse(courseId: Long): ApiResult<ProgresoEstudiante> =
         execute(get("/progress/course/$courseId"))
 
+    suspend fun getProgressByCourseRaw(courseId: Long): ApiResult<JsonObject> =
+        execute(get("/progress/course/$courseId"))
+
     suspend fun getAllProgressByCourse(courseId: Long): ApiResult<List<ProgresoEstudiante>> =
         executeList(get("/progress/course/$courseId/all"))
 
