@@ -1189,13 +1189,6 @@ class ExploreFragment : Fragment() {
                         // Delete from both Course table and VideoData table for complete cleanup
                         courseRepository.deleteCourseById(courseId)
 
-                        // Also delete from VideoData table to ensure complete removal
-                        val videoData = courseRepository.getVideoById(courseId)
-                        if (videoData != null) {
-                            courseRepository.deleteVideo(videoData)
-                            Log.d("ExploreFragment", "Course also deleted from VideoData table: $courseId")
-                        }
-
                         // Clean up any related thumbnails - REMOVED (Obsolete)
                         // val thumbnailManager = com.example.tareamov.util.ThumbnailManager(requireContext())
                         // thumbnailManager.deleteThumbnail(courseId)
