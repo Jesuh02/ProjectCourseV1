@@ -34,6 +34,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import android.util.Log
+import android.app.AlertDialog
+import android.widget.EditText
 
 class ProfileFragment : Fragment() {
     private lateinit var usernameTextView: TextView
@@ -43,6 +45,11 @@ class ProfileFragment : Fragment() {
     private lateinit var editProfileButton: Button
     private lateinit var avatarContainer: FrameLayout
     private lateinit var skeletonLayout: FrameLayout
+    
+    // WhatsApp Views
+    private var whatsappStatusText: TextView? = null
+    private var whatsappStatusBadge: TextView? = null
+    private var isWhatsAppChannelAvailable: Boolean = true
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let { handleImageSelection(it) }
@@ -132,6 +139,9 @@ class ProfileFragment : Fragment() {
         // Set up menu item clicks
         setupMenuItems(view)
 
+        // Set up WhatsApp link/unlink
+        setupWhatsAppItem(view)
+
         // Load user data
         loadUserData()
 
@@ -141,8 +151,37 @@ class ProfileFragment : Fragment() {
             findNavController().navigate(R.id.action_profileFragment_to_editProfileFragment)
         }
 
+        // Listeners for WhatsApp
+        setupFragmentListeners()
+
         // Initial entrance animation
         animateEntrance()
+    }
+
+    private fun setupFragmentListeners() {
+        parentFragmentManager.setFragmentResultListener("whatsapp_link_request", viewLifecycleOwner) { _, bundle ->
+            val phoneNumber = bundle.getString("input")
+            val normalizedPhone = normalizePhoneToE164(phoneNumber)
+            if (normalizedPhone == null) {
+                Toast.makeText(
+                    requireContext(),
+                    "Número inválido. Usa formato internacional, por ejemplo: +573001234567",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@setFragmentResultListener
+            }
+
+            if (whatsappStatusText != null && whatsappStatusBadge != null) {
+                linkWhatsApp(normalizedPhone, whatsappStatusText!!, whatsappStatusBadge!!)
+            }
+        }
+
+        parentFragmentManager.setFragmentResultListener("whatsapp_verify_request", viewLifecycleOwner) { _, bundle ->
+            val code = bundle.getString("input")
+            if (!code.isNullOrEmpty() && whatsappStatusText != null && whatsappStatusBadge != null) {
+                verifyWhatsAppOtp(code, whatsappStatusText!!, whatsappStatusBadge!!)
+            }
+        }
     }
 
     private fun handleImageSelection(uri: Uri) {
@@ -323,6 +362,240 @@ class ProfileFragment : Fragment() {
                     animateButtonPress(it)
                     Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
                 }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // WhatsApp Integration — Vincular / Desvincular
+    // ═══════════════════════════════════════════════════════════
+
+    private fun setupWhatsAppItem(view: View) {
+        val whatsappItem = view.findViewById<LinearLayout>(R.id.whatsappItem) ?: return
+        whatsappStatusText = view.findViewById<TextView>(R.id.whatsappItemText)
+        whatsappStatusBadge = view.findViewById<TextView>(R.id.whatsappStatusBadge)
+        
+        if (whatsappStatusText == null || whatsappStatusBadge == null) return
+
+        // Check current WhatsApp status
+        checkWhatsAppStatus(whatsappStatusText!!, whatsappStatusBadge!!)
+
+        whatsappItem.setOnClickListener {
+            animateButtonPress(it)
+
+            if (!isWhatsAppChannelAvailable) {
+                Toast.makeText(
+                    requireContext(),
+                    "Servicio de WhatsApp no disponible temporalmente. Intenta más tarde.",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@setOnClickListener
+            }
+
+            val currentText = whatsappStatusText!!.text.toString()
+            if (currentText.contains("Desvincular")) {
+                showUnlinkWhatsAppDialog(whatsappStatusText!!, whatsappStatusBadge!!)
+            } else if (currentText.contains("Verificar")) {
+                // Si está pendiente de verificación, permitir reingresar/cambiar número
+                // para reenviar OTP y evitar bloqueo en el flujo.
+                showLinkWhatsAppDialog()
+            } else {
+                showLinkWhatsAppDialog()
+            }
+        }
+    }
+
+    private fun checkWhatsAppStatus(textView: TextView, badge: TextView) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                BackendApiService.initialize(requireContext())
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getWhatsAppStatus()
+                }
+                when (result) {
+                    is ApiResult.Success -> {
+                        val data = result.data
+                        val isLinked = runCatching {
+                            data?.get("isLinked")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                        }.getOrDefault(false)
+                        val phone = runCatching {
+                            data?.get("phoneNumber")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                        }.getOrDefault("")
+                        val otpPending = runCatching {
+                            data?.get("otpPending")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                        }.getOrDefault(false)
+                        val channelAvailable = runCatching {
+                            data?.get("channelAvailable")?.takeIf { !it.isJsonNull }?.asBoolean ?: true
+                        }.getOrDefault(true)
+
+                        isWhatsAppChannelAvailable = channelAvailable
+
+                        if (!channelAvailable) {
+                            textView.text = "WhatsApp no disponible"
+                            badge.text = "INTENTA MÁS TARDE"
+                            badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                            badge.visibility = View.VISIBLE
+                            return@launch
+                        }
+
+                        if (isLinked) {
+                            textView.text = "Desvincular WhatsApp"
+                            badge.text = phone
+                            badge.setTextColor(android.graphics.Color.parseColor("#25D366"))
+                            badge.visibility = View.VISIBLE
+                        } else if (otpPending && phone.isNotEmpty()) {
+                            textView.text = "Verificar WhatsApp"
+                            badge.text = phone
+                            badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                            badge.visibility = View.VISIBLE
+                        } else {
+                            textView.text = "Vincular WhatsApp"
+                            badge.text = "NO VINCULADO"
+                            badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                            badge.visibility = View.VISIBLE
+                        }
+                    }
+                    is ApiResult.Error -> {
+                        isWhatsAppChannelAvailable = true
+                        textView.text = "Vincular WhatsApp"
+                        badge.text = "NO VINCULADO"
+                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                    }
+                }
+            } catch (e: Exception) {
+                isWhatsAppChannelAvailable = true
+                Log.w("ProfileFragment", "Error checking WhatsApp status", e)
+            }
+        }
+    }
+
+    private fun showLinkWhatsAppDialog() {
+        WhatsAppInputDialogFragment.newInstance("whatsapp_link_request", isVerify = false)
+            .show(parentFragmentManager, "whatsapp_link")
+    }
+
+    private fun normalizePhoneToE164(rawPhone: String?): String? {
+        if (rawPhone.isNullOrBlank()) return null
+
+        var normalized = rawPhone.trim().replace(Regex("[^0-9+]"), "")
+        if (!normalized.startsWith("+") && normalized.length == 10 && normalized.startsWith("3")) {
+            normalized = "+57$normalized"
+        }
+        if (normalized.startsWith("00")) {
+            normalized = "+" + normalized.substring(2)
+        }
+        if (!normalized.startsWith("+")) {
+            normalized = "+$normalized"
+        }
+
+        val e164Regex = Regex("^\\+[1-9]\\d{6,14}$")
+        return if (e164Regex.matches(normalized)) normalized else null
+    }
+
+    private fun linkWhatsApp(phoneNumber: String, textView: TextView, badge: TextView) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                Toast.makeText(requireContext(), "Enviando código de verificación...", Toast.LENGTH_SHORT).show()
+                BackendApiService.initialize(requireContext())
+
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.linkWhatsApp(phoneNumber)
+                }
+
+                when (result) {
+                    is ApiResult.Success -> {
+                        Toast.makeText(requireContext(), "✅ Código enviado a WhatsApp", Toast.LENGTH_SHORT).show()
+                        textView.text = "Verificar WhatsApp"
+                        badge.text = phoneNumber
+                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                        badge.visibility = View.VISIBLE
+                        showVerifyOtpDialog()
+                    }
+                    is ApiResult.Error -> {
+                        if (result.message.contains("no disponible", ignoreCase = true)) {
+                            isWhatsAppChannelAvailable = false
+                            textView.text = "WhatsApp no disponible"
+                            badge.text = "INTENTA MÁS TARDE"
+                            badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                            badge.visibility = View.VISIBLE
+                        } else if (result.message.contains("cuenta de WhatsApp activa", ignoreCase = true) ||
+                            result.message.contains("account not registered", ignoreCase = true)) {
+                            badge.text = "SIN WHATSAPP"
+                            badge.setTextColor(android.graphics.Color.parseColor("#E74C3C"))
+                            badge.visibility = View.VISIBLE
+                        }
+                        Toast.makeText(requireContext(), "❌ ${result.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ProfileFragment", "Error linking WhatsApp", e)
+                Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun showVerifyOtpDialog() {
+        WhatsAppInputDialogFragment.newInstance("whatsapp_verify_request", isVerify = true)
+            .show(parentFragmentManager, "whatsapp_verify")
+    }
+
+    private fun verifyWhatsAppOtp(code: String, textView: TextView, badge: TextView) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                BackendApiService.initialize(requireContext())
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.verifyWhatsApp(code)
+                }
+
+                when (result) {
+                    is ApiResult.Success -> {
+                        Toast.makeText(requireContext(), "✅ WhatsApp vinculado correctamente", Toast.LENGTH_LONG).show()
+                        checkWhatsAppStatus(textView, badge)
+                    }
+                    is ApiResult.Error -> {
+                        Toast.makeText(requireContext(), "❌ ${result.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ProfileFragment", "Error verifying WhatsApp", e)
+                Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun showUnlinkWhatsAppDialog(textView: TextView, badge: TextView) {
+        AlertDialog.Builder(requireContext(), R.style.Theme_TareaMov_Dialog)
+            .setTitle("Desvincular WhatsApp")
+            .setMessage("¿Estás seguro de que deseas desvincular tu cuenta de WhatsApp? Ya no recibirás mensajes del asistente.")
+            .setPositiveButton("Desvincular") { _, _ ->
+                unlinkWhatsApp(textView, badge)
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun unlinkWhatsApp(textView: TextView, badge: TextView) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                BackendApiService.initialize(requireContext())
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.unlinkWhatsApp()
+                }
+
+                when (result) {
+                    is ApiResult.Success -> {
+                        Toast.makeText(requireContext(), "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
+                        textView.text = "Vincular WhatsApp"
+                        badge.text = "NO VINCULADO"
+                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                    }
+                    is ApiResult.Error -> {
+                        Toast.makeText(requireContext(), "❌ ${result.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ProfileFragment", "Error unlinking WhatsApp", e)
+                Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }

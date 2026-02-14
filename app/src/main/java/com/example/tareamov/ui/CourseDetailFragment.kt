@@ -1153,11 +1153,21 @@ class CourseDetailFragment : Fragment() {
                             
                             if (topicIds.isNotEmpty()) {
                                 Log.d("CourseDetailFragment", "📚 Querying backend for content with topic_ids IN (${topicIds.joinToString(",")})")
-                                // TODO: BackendApiService needs a getContentItemsByTopic endpoint
-                                // For now, topic-level content items are not available via the API
-                                // Task-level content items are loaded per-task in addTaskView
-                                contentByTopic = emptyMap()
-                                Log.d("CourseDetailFragment", "📦 Topic-level content items: backend endpoint pending (showing empty)")
+                                
+                                val allContent = mutableListOf<ContentItem>()
+                                for (topicId in topicIds) {
+                                    val contentResult = withContext(Dispatchers.IO) { BackendApiService.getContentItemsByTopic(topicId) }
+                                    if (contentResult is ApiResult.Success) {
+                                        val items = contentResult.data ?: emptyList()
+                                        Log.d("CourseDetailFragment", "📦 Loaded ${items.size} content items for topic $topicId")
+                                        allContent.addAll(items)
+                                    } else {
+                                        Log.w("CourseDetailFragment", "⚠️ Failed to load content for topic $topicId")
+                                    }
+                                }
+                                
+                                contentByTopic = allContent.groupBy { it.topicId }
+                                Log.d("CourseDetailFragment", "📦 Top level content items loaded: ${contentByTopic.size} topics with content")
                             } else {
                                 Log.w("CourseDetailFragment", "⚠️ No topicIds to fetch content for!")
                             }

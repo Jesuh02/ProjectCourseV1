@@ -24,7 +24,7 @@ import com.example.tareamov.util.VideoManager
 import com.example.tareamov.data.entity.Course
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
-import com.example.tareamov.service.CloudflareR2Service
+import com.example.tareamov.service.StorageHelper
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -271,12 +271,12 @@ class CourseCreationFragment : Fragment() {
                     return@launch
                 }
 
-                // Subir miniatura a Cloudflare R2 si está seleccionada
+                // Subir miniatura al backend si está seleccionada
                 var thumbnailUriString = selectedThumbnailUri?.toString()
-                if (selectedThumbnailUri != null && CloudflareR2Service.isConfigured()) {
+                if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {
                     Toast.makeText(context, "Subiendo miniatura a la nube...", Toast.LENGTH_SHORT).show()
                     val result = withContext(Dispatchers.IO) {
-                        CloudflareR2Service.uploadFile(
+                        StorageHelper.uploadFile(
                             context = requireContext(),
                             fileUri = selectedThumbnailUri!!,
                             folder = "thumbnails/courses",
@@ -284,11 +284,11 @@ class CourseCreationFragment : Fragment() {
                         )
                     }
                     when (result) {
-                        is CloudflareR2Service.UploadResult.Success -> {
+                        is StorageHelper.UploadResult.Success -> {
                             thumbnailUriString = result.url
-                            Log.d("CourseCreationFragment", "☁️ Thumbnail uploaded to R2: $thumbnailUriString")
+                            Log.d("CourseCreationFragment", "☁️ Thumbnail uploaded: $thumbnailUriString")
                         }
-                        is CloudflareR2Service.UploadResult.Error -> {
+                        is StorageHelper.UploadResult.Error -> {
                             Log.e("CourseCreationFragment", "❌ Failed to upload thumbnail: ${result.message}")
                             // Continuar con URI local como fallback
                         }
@@ -408,12 +408,12 @@ class CourseCreationFragment : Fragment() {
                     return@launch
                 }
 
-                // Subir miniatura a Cloudflare R2 si está seleccionada
+                // Subir miniatura al backend si está seleccionada
                 var thumbnailUriString = selectedThumbnailUri?.toString()
-                if (selectedThumbnailUri != null && CloudflareR2Service.isConfigured()) {
+                if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {
                     Toast.makeText(context, "Subiendo miniatura a la nube...", Toast.LENGTH_SHORT).show()
                     val result = withContext(Dispatchers.IO) {
-                        CloudflareR2Service.uploadFile(
+                        StorageHelper.uploadFile(
                             context = requireContext(),
                             fileUri = selectedThumbnailUri!!,
                             folder = "thumbnails/courses",
@@ -421,11 +421,11 @@ class CourseCreationFragment : Fragment() {
                         )
                     }
                     when (result) {
-                        is CloudflareR2Service.UploadResult.Success -> {
+                        is StorageHelper.UploadResult.Success -> {
                             thumbnailUriString = result.url
-                            Log.d("CourseCreationFragment", "☁️ Thumbnail uploaded to R2: $thumbnailUriString")
+                            Log.d("CourseCreationFragment", "☁️ Thumbnail uploaded: $thumbnailUriString")
                         }
-                        is CloudflareR2Service.UploadResult.Error -> {
+                        is StorageHelper.UploadResult.Error -> {
                             Log.e("CourseCreationFragment", "❌ Failed to upload thumbnail: ${result.message}")
                             // Continuar con URI local como fallback
                         }

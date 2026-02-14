@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.animation.ObjectAnimator
 import androidx.appcompat.app.AlertDialog
 import org.json.JSONObject
 import android.content.Intent
@@ -76,7 +77,7 @@ fun Fragment.initializeAndLoadCourseProgress(
     val certificateButton = view.findViewById<Button>(R.id.certificateButton)
 
     // Only show progress for students (non-creators) who are logged in
-    if (isCurrentUserCreator || username == null || userId == -1L) {
+    if (isCurrentUserCreator || username == null) {
         progressContainer.visibility = View.GONE
         return
     }
@@ -86,14 +87,52 @@ fun Fragment.initializeAndLoadCourseProgress(
 
     // Calculate and display progress
     viewLifecycleOwner.lifecycleScope.launch {
-        val averageGrade = progressManager.calculateAndDisplayCourseProgress(
+        val effectiveUserId = if (userId > 0L) {
+            userId
+        } else {
+            val userResult = withContext(Dispatchers.IO) {
+                BackendApiService.getUserByUsername(username)
+            }
+            (userResult as? ApiResult.Success)?.data?.id ?: -1L
+        }
+
+        if (effectiveUserId <= 0L) {
+            Log.w("CourseDetailExt", "No se pudo resolver userId para progreso. username=$username")
+            progressContainer.visibility = View.VISIBLE
+            progressBar.progress = 0
+            progressPercentTextView.text = "0% completado"
+            progressStatusTextView.text = "Calificación: 0/10"
+            progressStatusTextView.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+            certificateButtonContainer?.visibility = View.GONE
+            certificateButtonContainer?.alpha = 0f
+            return@launch
+        }
+
+        val progressState = progressManager.calculateAndDisplayCourseProgress(
             courseId = courseId,
-            userId = userId,
+            userId = effectiveUserId,
             progressContainer = progressContainer,
             progressBar = progressBar,
             progressPercentTextView = progressPercentTextView,
             progressStatusTextView = progressStatusTextView
         )
+
+        val targetProgress = progressState.progressPercent.coerceIn(0, 100)
+        val currentProgress = progressBar.progress.coerceIn(0, 100)
+        val startProgress = if (targetProgress == currentProgress) 0 else currentProgress
+        progressBar.progress = startProgress
+        ObjectAnimator.ofInt(progressBar, "progress", startProgress, targetProgress).apply {
+            duration = 650L
+            start()
+        }
+
+        if (progressContainer.visibility != View.VISIBLE) {
+            progressContainer.visibility = View.VISIBLE
+            progressBar.progress = 0
+            progressPercentTextView.text = "0% completado"
+            progressStatusTextView.text = "Calificación: 0/10"
+            progressStatusTextView.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+        }
 
         if (!isAdded) return@launch
 
@@ -110,7 +149,7 @@ fun Fragment.initializeAndLoadCourseProgress(
         }
 
         // Show certificate button if student passed the course (grade >= 6)
-        if (averageGrade >= 6.0f) {
+        if (progressState.canDownloadCertificate) {
             certificateButtonContainer?.visibility = View.VISIBLE
             certificateButtonContainer?.alpha = 0f
             certificateButtonContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
@@ -122,7 +161,7 @@ fun Fragment.initializeAndLoadCourseProgress(
                 ?.start()
             certificateButton?.setOnClickListener {
                 // Show dialog to choose certificate type
-                showCertificateTypeDialog(requireContext(), courseId.toInt(), username, averageGrade)
+                showCertificateTypeDialog(requireContext(), courseId.toInt(), username, progressState.averageGrade)
             }
         } else {
             certificateButtonContainer?.visibility = View.GONE

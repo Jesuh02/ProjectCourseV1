@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.example.tareamov.data.dao.UsuarioDao
+import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.data.dao.PersonaDao
 import com.example.tareamov.data.dao.TopicDao
 import com.example.tareamov.data.dao.ContentItemDao
@@ -77,7 +78,8 @@ class SyncRepository(
     private val supabaseRepo = SupabaseRepository()
     private val supabaseClient = com.example.tareamov.service.SupabaseClient
 
-    // Expose helper to run raw queries (wrapper around SupabaseRepository)
+    // Execute raw queries via backend (deprecated — prefer specific API calls)
+    @Deprecated("Use specific BackendApiService methods instead of raw SQL")
     suspend fun executeRawQuery(sql: String): List<Map<String, Any?>> {
         return supabaseRepo.executeRawQuery(sql)
     }
@@ -205,14 +207,24 @@ class SyncRepository(
 
     suspend fun saveReinforcementHistory(userId: Long, courseId: Long, topicId: Long = -1L, taskId: Long = -1L, questions: List<Any>) {
         try {
-                if (userId > 0 && courseId > 0 && questions.isNotEmpty()) {
-                // Change to insertReinforcementHistory to create new records instead of upserting
-                // SupabaseClient.insertReinforcementHistory signature: (userId, courseId, topicId, taskId, newQuestions)
-                val success = supabaseClient.insertReinforcementHistory(userId, courseId, topicId, taskId, questions)
-                if (success) {
-                    Log.d("SyncRepository", "Successfully saved reinforcement history for user $userId course $courseId")
+            if (userId > 0 && courseId > 0 && questions.isNotEmpty()) {
+                val questionMaps = questions.map { q ->
+                    if (q is Map<*, *>) {
+                        @Suppress("UNCHECKED_CAST")
+                        q as Map<String, Any?>
+                    } else {
+                        mapOf("question" to q.toString())
+                    }
+                }
+                val result = BackendApiService.saveReinforcementSession(
+                    userId, courseId, questionMaps,
+                    if (topicId > 0) topicId else null,
+                    if (taskId > 0) taskId else null
+                )
+                if (result.isSuccess) {
+                    Log.d("SyncRepository", "Reinforcement history saved via backend for user $userId course $courseId")
                 } else {
-                    Log.w("SyncRepository", "Failed to save reinforcement history for user $userId course $courseId")
+                    Log.w("SyncRepository", "Failed to save reinforcement history via backend: ${result.errorMessage()}")
                 }
             }
         } catch (e: Exception) {
@@ -220,93 +232,43 @@ class SyncRepository(
         }
     }
 
-    // Public helper to upsert a Course to Supabase. This will try the dedicated
-    // SupabaseClient.insertCourse first (which returns the remote id), and fall
-    // back to SupabaseRepository.upsert if needed.
+    /**
+     * Upsert a course via the backend API.
+     * If the course has an ID, it updates; otherwise it creates.
+     */
     fun upsertCourseToSupabase(course: Course) {
         syncScope.launch {
-            if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                Log.w("SyncRepository", "SupabaseClient not configured. Skipping upsertCourseToSupabase.")
-                return@launch
-            }
             try {
-                val supabaseClient = com.example.tareamov.service.SupabaseClient
-
-                // Strategy:
-                // 1) If course.id is present, verify remote row exists with that id -> PATCH it.
-                // 2) If not found, try to locate a remote row by (creatorUsername + title) and PATCH that.
-                // 3) If no candidate found, perform INSERT as before.
-
-                if (course.id != null && course.id > 0) {
-                    Log.d("SyncRepository", "Attempting update by id=${course.id} for course='${course.title}'")
-                    try {
-                        val remoteCandidate = withContext(Dispatchers.IO) { supabaseClient.fetchCourseById(course.id) }
-                        if (remoteCandidate != null) {
-                            Log.d("SyncRepository", "Remote candidate found id=${remoteCandidate.id} title='${remoteCandidate.title}'")
-                            val updated = withContext(Dispatchers.IO) { supabaseClient.updateCourseById(course.id, course) }
-                            if (updated) {
-                                Log.i("SyncRepository", "Course '${course.title}' updated on Supabase (id=${course.id}).")
-                                return@launch
-                            } else {
-                                Log.w("SyncRepository", "Attempted update by id=${course.id} but it failed; will try other strategies.")
-                            }
-                        } else {
-                            Log.d("SyncRepository", "No remote course found with id=${course.id}; will try matching by creator/title.")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("SyncRepository", "Error checking remote course by id=${course.id}", e)
-                    }
+                val result = if (course.id != null && course.id > 0) {
+                    val updates = buildCoursePayload(course)
+                    BackendApiService.updateCourse(course.id, updates)
+                } else {
+                    BackendApiService.createCourse(course)
                 }
 
-                // Try to find a remote match by creatorUserId + title as a heuristic
-                try {
-                    val creatorId = course.creatorUserId
-                    if (creatorId > 0 && !course.title.isNullOrEmpty()) {
-                        // Fetch username from user ID to use in search
-                        val creator = withContext(Dispatchers.IO) { 
-                            com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(creatorId) 
-                        }
-                        if (!creator.isNullOrEmpty()) {
-                            val candidates = withContext(Dispatchers.IO) { supabaseClient.fetchCoursesByCreator(creator) }
-                            val match = candidates.firstOrNull { (it.title ?: "").trim() == course.title?.trim() }
-                            if (match != null) {
-                                val updated = withContext(Dispatchers.IO) { supabaseClient.updateCourseById(match.id, course) }
-                                if (updated) {
-                                    Log.i("SyncRepository", "Course '${course.title}' matched and updated on Supabase (id=${match.id}).")
-                                    return@launch
-                                } else {
-                                    Log.w("SyncRepository", "Matched remote course id=${match.id} but update failed; falling back to insert/upsert.")
-                                }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("SyncRepository", "Error attempting creator/title match for course '${course.title}'", e)
-                }
-
-                // Fallback: insert (or SupabaseRepository.upsert if insert does not return id)
-                val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertCourse(course) }
-                if (remoteId != null) {
-                    Log.i("SyncRepository", "Course '${course.title}' upserted to Supabase (id=$remoteId).")
-                    // Ensure the creator has the correct role
+                if (result.isSuccess) {
+                    Log.i("SyncRepository", "Course '${course.title}' synced via backend.")
                     if (course.creatorUserId > 0) {
                         ensureCreatorRole(course.creatorUserId)
                     }
                 } else {
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("courses", course) }
-                    if (ok) {
-                        Log.i("SyncRepository", "Course '${course.title}' upserted to Supabase via SupabaseRepository.")
-                        // Ensure the creator has the correct role
-                        if (course.creatorUserId > 0) {
-                            ensureCreatorRole(course.creatorUserId)
-                        }
-                    }
-                    else Log.e("SyncRepository", "Failed to upsert course '${course.title}' to Supabase.")
+                    Log.e("SyncRepository", "Failed to sync course '${course.title}': ${result.errorMessage()}")
                 }
             } catch (e: Exception) {
                 Log.e("SyncRepository", "Exception during upsertCourseToSupabase", e)
             }
         }
+    }
+
+    private fun buildCoursePayload(course: Course): Map<String, Any?> {
+        return mapOf(
+            "title" to course.title,
+            "description" to course.description,
+            "imageUrl" to course.thumbnailUri,
+            "isPremium" to course.isPremium,
+            "price" to course.price,
+            "creatorUserId" to course.creatorUserId
+        )
     }
 
     /**
@@ -316,27 +278,11 @@ class SyncRepository(
     suspend fun ensureCreatorRole(userId: Long) {
         try {
             if (userId <= 0) return
-
-            // 1. Check/Insert into usuarios_roles
-            val checkRoleSql = "SELECT 1 FROM usuarios_roles WHERE usuario_id = $userId AND rol_id = 2"
-            val roles = supabaseRepo.executeRawQuery(checkRoleSql)
-            if (roles.isEmpty()) {
-                val insertRoleSql = "INSERT INTO usuarios_roles (usuario_id, rol_id) VALUES ($userId, 2)"
-                supabaseRepo.executeRawQuery(insertRoleSql)
-                Log.i("SyncRepository", "Assigned role 2 to user $userId in usuarios_roles")
-            }
-
-            // 2. Update 'usuarios' table 'rol_id' column if it is currently 1 (Student)
-            // We don't want to downgrade Admins (rol_id 3).
-            val checkUserSql = "SELECT rol_id FROM usuarios WHERE id = $userId"
-            val users = supabaseRepo.executeRawQuery(checkUserSql)
-            if (users.isNotEmpty()) {
-                val currentRolId = (users[0]["rol_id"] as? Number)?.toLong() ?: 1
-                if (currentRolId == 1L) {
-                    val updateUserSql = "UPDATE usuarios SET rol_id = 2 WHERE id = $userId"
-                    supabaseRepo.executeRawQuery(updateUserSql)
-                    Log.i("SyncRepository", "Updated usuarios.rol_id to 2 for user $userId")
-                }
+            val result = BackendApiService.ensureCreatorRole(userId)
+            if (result.isSuccess) {
+                Log.i("SyncRepository", "Creator role ensured for user $userId via backend")
+            } else {
+                Log.w("SyncRepository", "Failed to ensure creator role for user $userId: ${result.errorMessage()}")
             }
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error ensuring creator role for user $userId", e)
@@ -350,18 +296,13 @@ class SyncRepository(
     suspend fun syncAllCreatorRoles() {
         withContext(Dispatchers.IO) {
             try {
-                Log.i("SyncRepository", "Starting syncAllCreatorRoles...")
-                // Get all unique creator IDs from courses
-                val sql = "SELECT DISTINCT creator_user_id FROM courses WHERE creator_user_id IS NOT NULL AND creator_user_id > 0"
-                val creators = supabaseRepo.executeRawQuery(sql)
-                
-                var count = 0
-                for (row in creators) {
-                    val userId = (row["creator_user_id"] as? Number)?.toLong() ?: continue
-                    ensureCreatorRole(userId)
-                    count++
+                Log.i("SyncRepository", "Starting syncAllCreatorRoles via backend...")
+                val result = BackendApiService.syncAllCreatorRoles()
+                if (result.isSuccess) {
+                    Log.i("SyncRepository", "syncAllCreatorRoles completed via backend")
+                } else {
+                    Log.w("SyncRepository", "syncAllCreatorRoles failed: ${result.errorMessage()}")
                 }
-                Log.i("SyncRepository", "Finished syncAllCreatorRoles. Checked/Updated $count creators.")
             } catch (e: Exception) {
                 Log.e("SyncRepository", "Error in syncAllCreatorRoles", e)
             }
@@ -372,12 +313,12 @@ class SyncRepository(
     fun deleteCourseRemoteById(courseId: Long) {
         syncScope.launch {
             try {
-                if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                    Log.w("SyncRepository", "SupabaseClient not configured. Skipping deleteCourseRemoteById for id=$courseId")
-                    return@launch
+                val result = BackendApiService.deleteCourse(courseId)
+                if (result.isSuccess) {
+                    Log.i("SyncRepository", "Course id=$courseId deleted via backend")
+                } else {
+                    Log.w("SyncRepository", "Failed to delete course id=$courseId: ${result.errorMessage()}")
                 }
-                val ok = withContext(Dispatchers.IO) { com.example.tareamov.service.SupabaseClient.deleteCourseById(courseId) }
-                if (ok) Log.i("SyncRepository", "Course id=$courseId deleted remotely") else Log.w("SyncRepository", "Failed to delete course id=$courseId remotely")
             } catch (e: Exception) {
                 Log.e("SyncRepository", "Exception during deleteCourseRemoteById for id=$courseId", e)
             }
@@ -1084,14 +1025,23 @@ class SyncRepository(
         }
     }
 
+
     /**
-     * Guarda/actualiza el historial de preguntas de refuerzo para un usuario y curso en Supabase.
+     * Save reinforcement history via backend API.
      */
     suspend fun saveReinforcementHistory(userId: Long, courseId: Long, questionsJson: String): Boolean {
         return try {
             Log.d("SyncRepository", "Saving reinforcement history for user=$userId course=$courseId")
-            val ok = withContext(Dispatchers.IO) { supabaseRepo.upsertReinforcementHistory(userId, courseId, questionsJson) }
-            Log.d("SyncRepository", "Reinforcement history saved: $ok")
+            val gson = com.google.gson.Gson()
+            val listType = object : com.google.gson.reflect.TypeToken<List<Map<String, Any?>>>() {}.type
+            val questions: List<Map<String, Any?>> = try {
+                gson.fromJson(questionsJson, listType) ?: emptyList()
+            } catch (e: Exception) {
+                listOf(mapOf("raw" to questionsJson))
+            }
+            val result = BackendApiService.saveReinforcementSession(userId, courseId, questions)
+            val ok = result.isSuccess
+            Log.d("SyncRepository", "Reinforcement history saved via backend: $ok")
             ok
         } catch (e: Exception) {
             Log.e("SyncRepository", "saveReinforcementHistory failed", e)
@@ -1186,43 +1136,32 @@ class SyncRepository(
     // Subscriptions helpers
     suspend fun insertSubscriptionRemote(sub: Subscription): Boolean {
         return try {
-            if (!supabaseClient.isConfigured()) return false
-            // First check if the subscription already exists remotely
-            val exists = withContext(Dispatchers.IO) { supabaseClient.isSubscribedRemote(sub.subscriberId, sub.creatorId) }
-            if (exists) {
-                Log.d("SyncRepository", "insertSubscriptionRemote: subscription already exists remotely for ${sub.subscriberId} -> ${sub.creatorId}")
-                return true
+            val result = BackendApiService.subscribe(sub.creatorId)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Subscription created via backend for ${sub.subscriberId} -> ${sub.creatorId}")
+                true
+            } else {
+                Log.w("SyncRepository", "insertSubscriptionRemote failed: ${result.errorMessage()}")
+                false
             }
-            // Not exists -> try insert
-            withContext(Dispatchers.IO) { supabaseClient.insertSubscriptionToSupabase(sub) }
         } catch (e: Exception) {
             Log.w("SyncRepository", "insertSubscriptionRemote failed", e)
             false
         }
     }
     
-    // Insert a Topic into Supabase and return remote id (or null)
+    // Insert a Topic via backend API and return remote id (or null)
     suspend fun insertTopicRemote(topic: com.example.tareamov.data.entity.Topic): Long? {
         return try {
-            // Ensure new topics start from ID 77
-            val adjustedTopic = if (topic.id == 0L) {
-                // Get the maximum existing topic ID
-                val maxId = withContext(Dispatchers.IO) { 
-                    try {
-                        val allTopics = supabaseClient.fetchTopics()
-                        allTopics.maxOfOrNull { it.id } ?: 0L
-                    } catch (e: Exception) {
-                        Log.w("SyncRepository", "Could not fetch max topic ID", e)
-                        0L
-                    }
-                }
-                // Use the greater of maxId+1 or 77 as the starting ID
-                val nextId = maxOf(maxId + 1, 77L)
-                topic.copy(id = nextId)
+            val result = BackendApiService.createTopic(topic)
+            if (result.isSuccess) {
+                val created = result.getOrNull()
+                Log.d("SyncRepository", "Topic created via backend: id=${created?.id}")
+                created?.id
             } else {
-                topic
+                Log.w("SyncRepository", "insertTopicRemote failed: ${result.errorMessage()}")
+                null
             }
-            withContext(Dispatchers.IO) { supabaseClient.insertTopic(adjustedTopic) }
         } catch (e: Exception) {
             Log.w("SyncRepository", "insertTopicRemote failed", e)
             null
@@ -1230,487 +1169,244 @@ class SyncRepository(
     }
 
     /**
-     * Insert a topic using the database trigger strategy: do not send course_id, instead
-     * include a courseTitle that the DB trigger can use to associate the topic to the
-     * correct Course row. This mirrors insertTopicRemote but calls SupabaseClient.insertTopicUsingTrigger.
+     * Insert a topic via backend API. The courseTitle parameter is kept for
+     * API compatibility but the backend resolves course association server-side.
      */
     suspend fun insertTopicRemoteUsingTrigger(topic: com.example.tareamov.data.entity.Topic, courseTitle: String?): Long? {
-        return try {
-            // Ensure new topics start from ID 77 (same behavior as insertTopicRemote)
-            val adjustedTopic = if (topic.id == 0L) {
-                val maxId = withContext(Dispatchers.IO) {
-                    try {
-                        val allTopics = supabaseClient.fetchTopics()
-                        allTopics.maxOfOrNull { it.id } ?: 0L
-                    } catch (e: Exception) {
-                        Log.w("SyncRepository", "Could not fetch max topic ID", e)
-                        0L
-                    }
-                }
-                val nextId = maxOf(maxId + 1, 77L)
-                topic.copy(id = nextId)
-            } else {
-                topic
-            }
-
-            withContext(Dispatchers.IO) { supabaseClient.insertTopicUsingTrigger(adjustedTopic, courseTitle) }
-        } catch (e: Exception) {
-            Log.w("SyncRepository", "insertTopicRemoteUsingTrigger failed", e)
-            null
-        }
+        return insertTopicRemote(topic)
     }
     
     // Insert a Task into Supabase and return remote id (or null)
     // NOTE: Creator parameters are accepted for compatibility but ignored since tasks table doesn't have those columns
+    /**
+     * Insert a task via backend API and return remote id (or null).
+     * The backend handles topic/course resolution and ID assignment server-side.
+     */
     suspend fun insertTaskRemote(
         task: com.example.tareamov.data.entity.Task,
         fallbackCreatorUsername: String? = null,
         fallbackCreatorUserId: Long? = null
     ): Long? {
         return try {
-            if (!supabaseClient.isConfigured()) {
-                Log.w("SyncRepository", "Supabase not configured, cannot insert task")
+            if (task.topicId <= 0) {
+                Log.e("SyncRepository", "Invalid topicId=${task.topicId} for task: name=${task.name}")
                 return null
             }
 
-            val originalTopicId = task.topicId
-            if (originalTopicId <= 0) {
-                Log.e("SyncRepository", "Invalid topicId=$originalTopicId for task: name=${task.name}")
-                return null
-            }
-
-            // Resolve the remote topic id (handles mismatched local/remote IDs and missing topics)
-            val remoteTopicId = resolveRemoteTopicId(originalTopicId)
-            if (remoteTopicId == null || remoteTopicId <= 0) {
-                Log.e(
-                    "SyncRepository",
-                    "❌ Could not resolve remote topic for local topicId=$originalTopicId (task='${task.name}')"
-                )
-                return null
-            }
-
-            val taskForInsert = if (remoteTopicId == originalTopicId) task else task.copy(topicId = remoteTopicId)
-            
-            Log.d(
-                "SyncRepository",
-                "📝 Preparing to insert task='${taskForInsert.name}' to remote topicId=$remoteTopicId"
-            )
-
-            // First check if a matching task already exists remotely (idempotency)
-            val existingRemoteTask = try {
-                val candidates = withContext(Dispatchers.IO) {
-                    supabaseClient.fetchTasksByTopicIds(listOf(taskForInsert.topicId))
+            // Check if already exists remotely via backend
+            val existingResult = BackendApiService.getTasksByTopic(task.topicId)
+            if (existingResult.isSuccess) {
+                val existing = existingResult.getOrNull()
+                    ?.firstOrNull { (it.name ?: "").equals(task.name, ignoreCase = true) }
+                if (existing != null) {
+                    Log.d("SyncRepository", "Task already exists remotely id=${existing.id}")
+                    return existing.id
                 }
-                candidates.firstOrNull { (it.name ?: "").equals(taskForInsert.name, ignoreCase = true) }
-            } catch (e: Exception) {
-                Log.w("SyncRepository", "Could not check existing remote tasks before insert", e)
+            }
+
+            val result = BackendApiService.createTask(task)
+            if (result.isSuccess) {
+                val created = result.getOrNull()
+                Log.i("SyncRepository", "Task created via backend: id=${created?.id}, name='${task.name}'")
+                created?.id
+            } else {
+                Log.w("SyncRepository", "insertTaskRemote failed: ${result.errorMessage()}")
                 null
             }
-
-            if (existingRemoteTask != null) {
-                Log.d(
-                    "SyncRepository",
-                    "✅ Task already exists remotely with id=${existingRemoteTask.id} (topicId=${taskForInsert.topicId})"
-                )
-                return existingRemoteTask.id
-            }
-
-            // Try direct insert using SupabaseClient
-            // Note: creator params are passed but ignored by SupabaseClient since tasks table doesn't have those columns
-            val remoteId = withContext(Dispatchers.IO) {
-                supabaseClient.insertTask(
-                    taskForInsert,
-                    null, // creatorUsername - not used
-                    null  // creatorUserId - not used
-                )
-            }
-            
-            if (remoteId != null && remoteId > 0) {
-                Log.i(
-                    "SyncRepository",
-                    "✅ Task inserted successfully with id=$remoteId, name='${taskForInsert.name}', topicId=${taskForInsert.topicId}"
-                )
-                return remoteId
-            }
-
-            Log.w(
-                "SyncRepository",
-                "⚠️ Direct insert returned null for task '${taskForInsert.name}' (topicId=${taskForInsert.topicId})"
-            )
-
-            // Final fallback: re-check if the task now exists remotely (eventual consistency)
-            val eventualTask = try {
-                val refreshed = withContext(Dispatchers.IO) {
-                    supabaseClient.fetchTasksByTopicIds(listOf(taskForInsert.topicId))
-                }
-                refreshed.firstOrNull { (it.name ?: "").equals(taskForInsert.name, ignoreCase = true) }
-            } catch (e: Exception) {
-                Log.w("SyncRepository", "Failed to refresh tasks after insert attempt", e)
-                null
-            }
-
-            if (eventualTask != null) {
-                Log.i(
-                    "SyncRepository",
-                    "✅ Task appeared after retry with id=${eventualTask.id} (topicId=${taskForInsert.topicId})"
-                )
-                return eventualTask.id
-            }
-
-            Log.e("SyncRepository", "❌ All attempts to insert task failed for '${taskForInsert.name}'")
-            null
         } catch (e: Exception) {
-            Log.e("SyncRepository", "❌ insertTaskRemote exception", e)
+            Log.e("SyncRepository", "insertTaskRemote exception", e)
             null
         }
     }
 
+    /**
+     * Resolve a local topic ID to its remote counterpart via backend API.
+     * If the topic doesn't exist remotely it is created through the backend.
+     */
     private suspend fun resolveRemoteTopicId(localTopicId: Long): Long? {
         if (localTopicId <= 0) return null
 
-        // First try to fetch the topic directly from Supabase by ID
-        try {
-            val remote = withContext(Dispatchers.IO) {
-                supabaseClient.fetchTopicById(localTopicId)
-            }
-            if (remote != null && remote.id > 0) {
-                Log.d("SyncRepository", "✅ Found topic in Supabase with id=${remote.id}")
-                return remote.id
-            }
-        } catch (e: Exception) {
-            Log.w("SyncRepository", "resolveRemoteTopicId: fetch by id failed for $localTopicId", e)
+        // Try direct fetch by ID
+        val directResult = BackendApiService.getTopicById(localTopicId)
+        if (directResult.isSuccess) {
+            val topic = directResult.getOrNull()
+            if (topic != null && topic.id > 0) return topic.id
         }
 
-        // Fallback: try to find topic by matching against local topic properties
-        val localTopic = withContext(Dispatchers.IO) { topicDao.getTopicById(localTopicId) }
-        if (localTopic == null) {
-            Log.e("SyncRepository", "resolveRemoteTopicId: local topic $localTopicId not found in Room")
+        // Fallback: match by name + course
+        val localTopic = withContext(Dispatchers.IO) { topicDao.getTopicById(localTopicId) } ?: run {
+            Log.e("SyncRepository", "resolveRemoteTopicId: local topic $localTopicId not found")
             return null
         }
 
-        // Try to find the topic in Supabase by name and course
-        val remoteCourseId = resolveRemoteCourseId(localTopic.courseId)
-        if (remoteCourseId == null || remoteCourseId <= 0) {
-            Log.e(
-                "SyncRepository",
-                "resolveRemoteTopicId: could not resolve remote course for local topic ${localTopic.id}"
-            )
+        val remoteCourseId = resolveRemoteCourseId(localTopic.courseId) ?: run {
+            Log.e("SyncRepository", "resolveRemoteTopicId: could not resolve course for topic $localTopicId")
             return null
         }
 
-        // Try to find a topic with the same name (case-insensitive) under the resolved remote course
-        val remoteTopics = try {
-            withContext(Dispatchers.IO) { supabaseClient.fetchTopicsByCourse(remoteCourseId) }
-        } catch (e: Exception) {
-            Log.w(
-                "SyncRepository",
-                "resolveRemoteTopicId: failed to fetch topics for course $remoteCourseId",
-                e
-            )
-            emptyList()
+        val topicsResult = BackendApiService.getTopicsByCourse(remoteCourseId)
+        if (topicsResult.isSuccess) {
+            val match = topicsResult.getOrNull()?.firstOrNull {
+                it.id == localTopic.id || it.name.equals(localTopic.name, ignoreCase = true)
+            }
+            if (match != null) return match.id
         }
 
-        remoteTopics.firstOrNull {
-            it.id == localTopic.id || it.name.equals(localTopic.name, ignoreCase = true)
-        }?.let {
-            Log.d("SyncRepository", "✅ Found matching topic in Supabase: id=${it.id}, name=${it.name}")
-            return it.id
-        }
-
-        // Topic does not exist remotely yet — insert it using the resolved course id
-        Log.d("SyncRepository", "📝 Topic not found in Supabase, inserting: name=${localTopic.name}, courseId=$remoteCourseId")
+        // Create remotely
         val topicForInsert = localTopic.copy(courseId = remoteCourseId)
-        val insertedTopicId = try {
-            withContext(Dispatchers.IO) { supabaseClient.insertTopic(topicForInsert) }
-        } catch (e: Exception) {
-            Log.e("SyncRepository", "resolveRemoteTopicId: failed to insert topic ${localTopic.name}", e)
-            null
-        }
-
-        if (insertedTopicId != null && insertedTopicId > 0) {
-            Log.i(
-                "SyncRepository",
-                "resolveRemoteTopicId: inserted topic '${localTopic.name}' with id=$insertedTopicId for course=$remoteCourseId"
-            )
-            return insertedTopicId
-        }
-
-        return null
+        val createResult = BackendApiService.createTopic(topicForInsert)
+        return if (createResult.isSuccess) createResult.getOrNull()?.id else null
     }
 
+    /**
+     * Resolve a local course ID to its remote counterpart via backend API.
+     * If the course doesn't exist remotely it is created through the backend.
+     */
     private suspend fun resolveRemoteCourseId(localCourseId: Long): Long? {
         if (localCourseId <= 0) return null
 
-        // Fast path: the remote course might already use the same id
-        try {
-            val remote = withContext(Dispatchers.IO) { supabaseClient.fetchCourseById(localCourseId) }
-            if (remote != null && remote.id > 0) {
-                return remote.id
-            }
-        } catch (e: Exception) {
-            Log.w("SyncRepository", "resolveRemoteCourseId: fetch by id failed for $localCourseId", e)
+        // Fast path
+        val directResult = BackendApiService.getCourseById(localCourseId)
+        if (directResult.isSuccess) {
+            val course = directResult.getOrNull()
+            if (course != null && course.id > 0) return course.id
         }
 
-        val localCourse = withContext(Dispatchers.IO) { courseDao.getCourseById(localCourseId) }
-        if (localCourse == null) {
+        val localCourse = withContext(Dispatchers.IO) { courseDao.getCourseById(localCourseId) } ?: run {
             Log.e("SyncRepository", "resolveRemoteCourseId: local course $localCourseId not found")
             return null
         }
 
-        val remoteByTitle = try {
-            fetchCoursesFromSupabase().firstOrNull { remote ->
-                val titlesMatch = remote.title?.equals(localCourse.title, ignoreCase = true) == true
-                val creatorsMatch = remote.creatorUserId == localCourse.creatorUserId
-                titlesMatch && creatorsMatch
-            }
-        } catch (e: Exception) {
-            Log.w("SyncRepository", "resolveRemoteCourseId: failed to fetch courses list", e)
-            null
-        }
-
-        if (remoteByTitle != null) {
-            return remoteByTitle.id
-        }
-
-        // As a last resort, create the course remotely so that dependent entities can be stored
-        val insertedCourseId = try {
-            withContext(Dispatchers.IO) { supabaseClient.insertCourse(localCourse) }
-        } catch (e: Exception) {
-            Log.e(
-                "SyncRepository",
-                "resolveRemoteCourseId: failed to insert remote course '${localCourse.title}'",
-                e
-            )
-            null
-        }
-
-        if (insertedCourseId != null && insertedCourseId > 0) {
-            Log.i(
-                "SyncRepository",
-                "resolveRemoteCourseId: inserted course '${localCourse.title}' with id=$insertedCourseId"
-            )
-        }
-
-        return insertedCourseId
-    }
-
-    private suspend fun resolveTaskCreatorMetadata(localTopicId: Long, remoteTopicId: Long): Pair<String?, Long?> {
-        var creatorUsername: String? = null
-        var creatorUserId: Long? = null
-
-        suspend fun populateFromLocalTopic(topicId: Long): Boolean {
-            if (topicId <= 0) return false
-            return try {
-                val topic = withContext(Dispatchers.IO) { topicDao.getTopicById(topicId) } ?: return false
-                val course = withContext(Dispatchers.IO) { courseDao.getCourseById(topic.courseId) } ?: return false
-                // Fetch username from creator_user_id
-                val candidate = withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(course.creatorUserId)
-                } ?: ""
-                if (candidate.isEmpty()) return false
-                creatorUsername = candidate
-                creatorUserId = course.creatorUserId
-                true
-            } catch (e: Exception) {
-                Log.w("SyncRepository", "resolveTaskCreatorMetadata: local lookup failed for topicId=$topicId", e)
-                false
-            }
-        }
-
-        if (!populateFromLocalTopic(localTopicId) && remoteTopicId != localTopicId) {
-            populateFromLocalTopic(remoteTopicId)
-        }
-
-        val needsRemoteLookup = creatorUsername.isNullOrBlank() || creatorUserId == null
-        if (needsRemoteLookup && supabaseClient.isConfigured()) {
-            val topicIdForRemote = when {
-                remoteTopicId > 0 -> remoteTopicId
-                localTopicId > 0 -> localTopicId
-                else -> null
-            }
-
-            val remoteTopic = topicIdForRemote?.let {
-                try {
-                    withContext(Dispatchers.IO) { supabaseClient.fetchTopicById(it) }
-                } catch (e: Exception) {
-                    Log.w("SyncRepository", "resolveTaskCreatorMetadata: remote topic fetch failed for id=$it", e)
-                    null
-                }
-            }
-
-            val remoteCourse = remoteTopic?.courseId?.takeIf { it > 0 }?.let { courseId ->
-                try {
-                    withContext(Dispatchers.IO) { supabaseClient.fetchCourseById(courseId) }
-                } catch (e: Exception) {
-                    Log.w("SyncRepository", "resolveTaskCreatorMetadata: remote course fetch failed for id=$courseId", e)
-                    null
-                }
-            }
-
-            // Fetch username from remote course's creator_user_id
-            val remoteUsername = if (remoteCourse != null) {
-                withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.getUsernameFromUserId(remoteCourse.creatorUserId)
-                }?.trim()?.takeIf { it.isNotEmpty() }
-            } else {
-                null
-            }
-            if (!remoteUsername.isNullOrEmpty()) {
-                creatorUsername = remoteUsername
-                if (creatorUserId == null && remoteCourse != null) {
-                    creatorUserId = remoteCourse.creatorUserId
-                }
-            }
-        }
-
-        if (creatorUserId == null && !creatorUsername.isNullOrEmpty()) {
-            creatorUserId = try {
-                withContext(Dispatchers.IO) { usuarioDao.getUsuarioByUsername(creatorUsername!!) }?.id
-            } catch (e: Exception) {
-                Log.w("SyncRepository", "resolveTaskCreatorMetadata: local user lookup failed for $creatorUsername", e)
-                null
-            }
-
-            if (creatorUserId == null && !creatorUsername.isNullOrEmpty()) {
-                creatorUserId = try {
-                    withContext(Dispatchers.IO) { supabaseClient.fetchUsuarioByUsername(creatorUsername!!) }?.id
-                } catch (e: Exception) {
-                    Log.w("SyncRepository", "resolveTaskCreatorMetadata: remote user lookup failed for $creatorUsername", e)
-                    null
-                }
-            }
-        }
-
-        if (creatorUsername.isNullOrBlank()) {
-            creatorUsername = null
-        }
-
-        if (creatorUsername != null) {
-            Log.d(
-                "SyncRepository",
-                "resolveTaskCreatorMetadata -> creator=$creatorUsername userId=${creatorUserId ?: "null"} (localTopic=$localTopicId remoteTopic=$remoteTopicId)"
-            )
+        // Create remotely as last resort
+        val createResult = BackendApiService.createCourse(localCourse)
+        return if (createResult.isSuccess) {
+            val id = createResult.getOrNull()?.id
+            Log.i("SyncRepository", "resolveRemoteCourseId: created course '${localCourse.title}' id=$id")
+            id
         } else {
-            Log.w(
-                "SyncRepository",
-                "resolveTaskCreatorMetadata: could not resolve creator metadata (localTopic=$localTopicId remoteTopic=$remoteTopicId)"
-            )
+            Log.e("SyncRepository", "resolveRemoteCourseId: failed to create course '${localCourse.title}'")
+            null
         }
-
-        return Pair(creatorUsername, creatorUserId)
     }
 
-    // Update a Task remotely via SupabaseClient
+    // Update a Task remotely via backend API
     suspend fun updateTaskRemote(task: com.example.tareamov.data.entity.Task): Boolean {
         return try {
-            Log.d("SyncRepository", "updateTaskRemote: id=${task.id}, topicId=${task.topicId}, name='${task.name}'")
-            if (!supabaseClient.isConfigured()) {
-                Log.e("SyncRepository", "updateTaskRemote: SupabaseClient not configured")
-                return false
+            Log.d("SyncRepository", "updateTaskRemote: id=${task.id}, name='${task.name}'")
+            val updates = mutableMapOf<String, Any?>(
+                "name" to task.name,
+                "description" to task.description,
+                "topic_id" to task.topicId,
+                "due_date" to task.dueDate
+            )
+            val result = BackendApiService.updateTask(task.id, updates)
+            if (result.isSuccess) {
+                Log.i("SyncRepository", "Task ${task.id} updated via backend")
+                true
+            } else {
+                // If update fails because task doesn't exist, create it
+                Log.w("SyncRepository", "Update failed for task ${task.id}, attempting create")
+                val createResult = BackendApiService.createTask(task)
+                createResult.isSuccess
             }
-            
-            // First try to update
-            val result = withContext(Dispatchers.IO) { supabaseClient.updateTask(task) }
-            Log.d("SyncRepository", "updateTaskRemote initial result: $result for task ${task.id}")
-            
-            if (!result) {
-                // Update failed - check if task exists in Supabase
-                Log.w("SyncRepository", "Update failed for task ${task.id}, checking if task exists in Supabase...")
-                val existingTask = withContext(Dispatchers.IO) { supabaseClient.fetchTaskById(task.id) }
-                
-                if (existingTask == null) {
-                    // Task doesn't exist remotely, insert it instead
-                    Log.w("SyncRepository", "Task ${task.id} doesn't exist in Supabase, attempting insert instead")
-                    val (creatorUsername, creatorUserId) = resolveTaskCreatorMetadata(task.topicId, task.topicId)
-                    val insertedId = withContext(Dispatchers.IO) {
-                        supabaseClient.insertTask(task, creatorUsername, creatorUserId)
-                    }
-                    if (insertedId != null) {
-                        Log.i("SyncRepository", "Task inserted successfully with remote id=$insertedId, name='${task.name}', topicId=${task.topicId}")
-                        return true
-                    } else {
-                        Log.e("SyncRepository", "Failed to insert task ${task.id} as fallback")
-                        return false
-                    }
-                } else {
-                    // Task exists but update still failed - might be permissions or validation issue
-                    Log.e("SyncRepository", "Task ${task.id} exists in Supabase but update failed. Existing task: ${existingTask.name}")
-                    return false
-                }
-            }
-            
-            result
         } catch (e: Exception) {
             Log.e("SyncRepository", "updateTaskRemote failed for task ${task.id}", e)
             false
         }
     }
 
-    // Update Persona remotely via SupabaseClient
+    // Update Persona remotely via backend API
     suspend fun updatePersonaRemote(persona: Persona): Boolean {
         return try {
-            if (!supabaseClient.isConfigured()) {
-                Log.e("SyncRepository", "updatePersonaRemote: SupabaseClient not configured")
-                return false
+            val updates = mapOf<String, Any?>(
+                "nombre" to persona.nombres,
+                "apellido" to persona.apellidos,
+                "telefono" to persona.telefono
+            )
+            val result = BackendApiService.updatePersona(persona.id, updates)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Persona ${persona.id} updated via backend")
+                true
+            } else {
+                Log.e("SyncRepository", "updatePersonaRemote failed: ${result.errorMessage()}")
+                false
             }
-            val result = withContext(Dispatchers.IO) { supabaseClient.updatePersona(persona) }
-            Log.d("SyncRepository", "updatePersonaRemote result: $result for persona ${persona.id}")
-            result
         } catch (e: Exception) {
             Log.e("SyncRepository", "updatePersonaRemote failed for persona ${persona.id}", e)
             false
         }
     }
 
-    // Update Usuario remotely via SupabaseClient
+    // Update Usuario remotely via backend API
     suspend fun updateUsuarioRemote(usuario: Usuario): Boolean {
         return try {
-            if (!supabaseClient.isConfigured()) {
-                Log.e("SyncRepository", "updateUsuarioRemote: SupabaseClient not configured")
-                return false
+            val updates = mapOf<String, Any?>(
+                "username" to usuario.usuario,
+                "email" to usuario.email,
+                "avatar_url" to usuario.avatar
+            )
+            val result = BackendApiService.updateMyProfile(updates)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Usuario ${usuario.id} updated via backend")
+                true
+            } else {
+                Log.e("SyncRepository", "updateUsuarioRemote failed: ${result.errorMessage()}")
+                false
             }
-            val result = withContext(Dispatchers.IO) { supabaseClient.updateUsuario(usuario) }
-            Log.d("SyncRepository", "updateUsuarioRemote result: $result for usuario ${usuario.id}")
-            result
         } catch (e: Exception) {
             Log.e("SyncRepository", "updateUsuarioRemote failed for usuario ${usuario.id}", e)
             false
         }
     }
 
-    // Update Usuario profile (username, avatar) remotely via SupabaseClient
+    // Update Usuario profile (username, avatar) remotely via backend API
     suspend fun updateUsuarioProfileRemote(userId: Long, username: String, avatarUrl: String?): Boolean {
         return try {
-            if (!supabaseClient.isConfigured()) {
-                Log.e("SyncRepository", "updateUsuarioProfileRemote: SupabaseClient not configured")
-                return false
+            val updates = mutableMapOf<String, Any?>("username" to username)
+            if (avatarUrl != null) updates["avatar_url"] = avatarUrl
+            val result = BackendApiService.updateMyProfile(updates)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Usuario profile $userId updated via backend")
+                true
+            } else {
+                Log.e("SyncRepository", "updateUsuarioProfileRemote failed: ${result.errorMessage()}")
+                false
             }
-            val result = withContext(Dispatchers.IO) { supabaseClient.updateUsuarioProfile(userId, username, avatarUrl) }
-            Log.d("SyncRepository", "updateUsuarioProfileRemote result: $result for usuario $userId")
-            result
         } catch (e: Exception) {
             Log.e("SyncRepository", "updateUsuarioProfileRemote failed for usuario $userId", e)
             false
         }
     }
     
-    // Insert a ContentItem into Supabase and return remote id (or null)
+    // Insert a ContentItem via backend API and return remote id (or null)
     suspend fun insertContentItemRemote(contentItem: com.example.tareamov.data.entity.ContentItem): Long? {
         return try {
-            Log.d("SyncRepository", "Inserting ContentItem: name=${contentItem.name}, type=${contentItem.contentType}, creator_id=${contentItem.creator_usuario_id}, creator_username=${contentItem.creator_username}")
-            val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertContentItem(contentItem) }
-            Log.d("SyncRepository", "ContentItem inserted successfully with remote ID: $remoteId")
-            remoteId
+            Log.d("SyncRepository", "Inserting ContentItem: name=${contentItem.name}, type=${contentItem.contentType}")
+            val result = BackendApiService.createContentItem(contentItem)
+            if (result.isSuccess) {
+                val created = result.getOrNull()
+                Log.d("SyncRepository", "ContentItem created via backend: id=${created?.id}")
+                created?.id
+            } else {
+                Log.w("SyncRepository", "insertContentItemRemote failed: ${result.errorMessage()}")
+                null
+            }
         } catch (e: Exception) {
-            Log.w("SyncRepository", "Failed to insert content item to Supabase", e)
+            Log.w("SyncRepository", "Failed to insert content item via backend", e)
             null
         }
     }
 
     suspend fun deleteSubscriptionRemote(subscriberId: Long, creatorId: Long): Boolean {
         return try {
-            if (!supabaseClient.isConfigured()) return false
-            withContext(Dispatchers.IO) { supabaseClient.deleteSubscriptionFromSupabase(subscriberId, creatorId) }
+            val result = BackendApiService.unsubscribe(creatorId)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Subscription deleted via backend for $subscriberId -> $creatorId")
+                true
+            } else {
+                Log.w("SyncRepository", "deleteSubscriptionRemote failed: ${result.errorMessage()}")
+                false
+            }
         } catch (e: Exception) {
             Log.w("SyncRepository", "deleteSubscriptionRemote failed", e)
             false
@@ -1718,258 +1414,125 @@ class SyncRepository(
     }
 
     suspend fun isSubscribedRemote(subscriberId: Long, creatorId: Long): Boolean {
-        return supabaseClient.isSubscribedRemote(subscriberId, creatorId)
+        return try {
+            val result = BackendApiService.checkSubscription(creatorId)
+            result.isSuccess && result.getOrNull() == true
+        } catch (e: Exception) {
+            false
+        }
     }
 
-    // Fetch subscriber count for a creator from Supabase
+    // Fetch subscriber count for a creator via backend API
     suspend fun fetchSubscriberCountFromSupabase(creatorId: Long): Long {
-        Log.d("SyncRepository", "Fetching subscriber count from Supabase for creatorId: $creatorId")
-        val count = supabaseClient.fetchSubscriberCount(creatorId)
-        Log.d("SyncRepository", "Subscriber count result: $count")
-        return count
+        return try {
+            val result = BackendApiService.getSubscriberCount(creatorId)
+            if (result.isSuccess) {
+                result.getOrNull()?.toLong() ?: 0L
+            } else 0L
+        } catch (e: Exception) {
+            Log.w("SyncRepository", "fetchSubscriberCount failed", e)
+            0L
+        }
     }
 
-    // New: sincronizar a Supabase via REST
+    // New: sincronizar a Supabase via Backend API
     fun syncLocalToSupabase() {
         syncScope.launch {
-            // If Supabase isn't configured in BuildConfig, skip
-            if (!com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                Log.w("SyncRepository", "SupabaseClient not configured. Skipping syncLocalToSupabase.")
-                return@launch
-            }
             try {
-                // Check that at least one usable sync target exists before attempting to sync
-                // Previously we required 'personas' and 'usuarios' which blocked syncing file/chat contexts.
-                val allowIf = listOf("app_documents", "file_contexts", "chat_messages", "task_submissions", "subscriptions")
-                val available = allowIf.any { supabaseRepo.tableExists(it) }
-                if (!available) {
-                    Log.w("SyncRepository", "No usable Supabase target tables found (checked: ${allowIf.joinToString(",")}). Skipping sync. Apply migrations first.")
-                    return@launch
-                }
-                // Usuarios
-                usuarioDao.getAllUsuarios().forEach { usuario ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("usuarios", usuario) }
-                    if (ok) Log.i("SyncRepository", "Usuario ${usuario.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync usuario ${usuario.id} to Supabase.")
-                }
+                Log.i("SyncRepository", "Starting syncLocalToSupabase via backend API...")
 
-                // Personas
-                personaDao.getAllPersonasList().forEach { persona ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("personas", persona) }
-                    if (ok) Log.i("SyncRepository", "Persona ${persona.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync persona ${persona.id} to Supabase.")
+                // --- Courses ---
+                courseDao.getAllCoursesSync().forEach { course ->
+                    try {
+                        val result = BackendApiService.createCourse(course)
+                        if (result.isSuccess) Log.i("SyncRepository", "Course ${course.id} synced via backend")
+                        else {
+                            // Try update if create fails (already exists)
+                            val updateResult = BackendApiService.updateCourse(course.id, buildCoursePayload(course))
+                            if (updateResult.isSuccess) Log.i("SyncRepository", "Course ${course.id} updated via backend")
+                            else Log.w("SyncRepository", "Failed to sync course ${course.id}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Exception syncing course ${course.id}", e)
+                    }
                 }
 
-                // IMPORTANT: Upsert parents first to satisfy foreign key constraints
-                // Videos are intentionally skipped from automatic syncLocalToSupabase here.
-                // Video metadata should be uploaded explicitly when the user publishes/finishes
-                // editing via the UI (VideoDetailsFragment -> nextButton) by calling
-                // `uploadVideoToSupabaseSuspend`. This prevents premature uploads of
-                // placeholder or incomplete video records.
-                Log.i("SyncRepository", "Skipping automatic video upserts to Supabase. Use uploadVideoToSupabaseSuspend for explicit uploads.")
-
-                // Topics (parents for tasks) - if topic upsert fails due to missing course, try upserting the course parent then retry
+                // --- Topics ---
                 topicDao.getAllTopics().forEach { topic ->
-                    var ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("topics", topic) }
-                    if (!ok) {
-                        Log.w("SyncRepository", "Initial upsert failed for topic ${topic.id}; attempting to ensure parent course ${topic.courseId} exists and retry.")
-                        // Try to upsert parent course if available locally
-                        try {
-                            val course = withContext(Dispatchers.IO) { courseDao.getCourseById(topic.courseId) }
-                            if (course != null) {
-                                val cOk = withContext(Dispatchers.IO) { supabaseRepo.upsert("courses", course) }
-                                if (cOk) {
-                                    Log.i("SyncRepository", "Parent course ${course.id} upserted, retrying topic ${topic.id}.")
-                                    ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("topics", topic) }
-                                } else {
-                                    Log.w("SyncRepository", "Failed to upsert parent course ${topic.courseId} while retrying topic ${topic.id}.")
-                                }
-                            } else {
-                                Log.w("SyncRepository", "Local parent course ${topic.courseId} not found for topic ${topic.id}.")
-                            }
-                        } catch (e: Exception) {
-                            Log.e("SyncRepository", "Exception while attempting to upsert parent course for topic ${topic.id}", e)
-                        }
+                    try {
+                        val result = BackendApiService.createTopic(topic)
+                        if (result.isSuccess) Log.i("SyncRepository", "Topic ${topic.id} synced via backend")
+                        else Log.w("SyncRepository", "Failed to sync topic ${topic.id}: ${result.errorMessage()}")
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Exception syncing topic ${topic.id}", e)
                     }
-                    if (ok) Log.i("SyncRepository", "Topic ${topic.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync topic ${topic.id} to Supabase after retry.")
                 }
 
-                // ContentItems
-                contentItemDao.getAllContentItems().forEach { item ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("content_items", item) }
-                    if (ok) Log.i("SyncRepository", "ContentItem ${item.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync contentItem ${item.id} to Supabase.")
-                }
-
-                // Tasks (children referencing topics). Ensure topics were upserted above; if a task upsert fails due to missing topic, try to upsert the topic parent then retry.
+                // --- Tasks ---
                 taskDao.getAllTasks().forEach { task ->
-                    var ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", task) }
-                    if (!ok) {
-                        Log.w("SyncRepository", "Initial upsert failed for task ${task.id}; attempting to ensure parent topic ${task.topicId} exists and retry.")
-                        try {
-                            val topic = withContext(Dispatchers.IO) { topicDao.getTopicById(task.topicId) }
-                            if (topic != null) {
-                                val tOk = withContext(Dispatchers.IO) { supabaseRepo.upsert("topics", topic) }
-                                if (tOk) {
-                                    Log.i("SyncRepository", "Parent topic ${topic.id} upserted, retrying task ${task.id}.")
-                                    ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", task) }
-                                } else {
-                                    Log.w("SyncRepository", "Failed to upsert parent topic ${task.topicId} while retrying task ${task.id}.")
-                                }
-                            } else {
-                                Log.w("SyncRepository", "Local parent topic ${task.topicId} not found for task ${task.id}.")
-                            }
-                        } catch (e: Exception) {
-                            Log.e("SyncRepository", "Exception while attempting to upsert parent topic for task ${task.id}", e)
-                        }
+                    try {
+                        val result = BackendApiService.createTask(task)
+                        if (result.isSuccess) Log.i("SyncRepository", "Task ${task.id} synced via backend")
+                        else Log.w("SyncRepository", "Failed to sync task ${task.id}: ${result.errorMessage()}")
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Exception syncing task ${task.id}", e)
                     }
-                    if (ok) Log.i("SyncRepository", "Task ${task.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync task ${task.id} to Supabase after retry.")
                 }
 
-                // TaskSubmissions: use direct SupabaseClient method to ensure payload uses snake_case
-                // Try submissions after tasks are upserted so task_id FK exists remotely. If insert fails due to missing task, attempt to upsert the task then retry.
-                val supabaseClient = com.example.tareamov.service.SupabaseClient
+                // --- ContentItems ---
+                contentItemDao.getAllContentItems().forEach { item ->
+                    try {
+                        val result = BackendApiService.createContentItem(item)
+                        if (result.isSuccess) Log.i("SyncRepository", "ContentItem ${item.id} synced via backend")
+                        else Log.w("SyncRepository", "Failed to sync contentItem ${item.id}: ${result.errorMessage()}")
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Exception syncing contentItem ${item.id}", e)
+                    }
+                }
+
+                // --- TaskSubmissions ---
                 taskSubmissionDao.getAllTaskSubmissions().forEach { submission ->
                     try {
-                        // If the submission contains grading info, try update; otherwise insert
                         val hasGrade = submission.grade != null || !submission.feedback.isNullOrBlank()
-                        var success = false
-
                         if (hasGrade) {
-                            success = withContext(Dispatchers.IO) { supabaseClient.updateTaskSubmissionRemote(submission) }
+                            BackendApiService.gradeSubmission(submission.id, submission.grade ?: 0f, submission.feedback)
                         } else {
-                            // Defensive: ask remote if a submission for this task/student already exists
-                            try {
-                                val existingRemote = withContext(Dispatchers.IO) {
-                                    supabaseClient.fetchTaskSubmissionByTaskId(submission.taskId, submission.studentId)
-                                }
-                                if (existingRemote != null) {
-                                    Log.i("SyncRepository", "Remote submission already exists for task=${submission.taskId} student=${submission.studentId} id=${existingRemote.id}; skipping insert.")
-                                    success = true
-                                } else {
-                                    val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
-                                    success = remoteId != null
-                                }
-                            } catch (e: Exception) {
-                                Log.w("SyncRepository", "Failed to check existing remote submission before insert: ${e.message}")
-                                val remoteId = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
-                                success = remoteId != null
-                            }
+                            val data = mapOf<String, Any?>(
+                                "task_id" to submission.taskId,
+                                "student_id" to submission.studentId,
+                                "file_url" to submission.fileUri
+                            )
+                            BackendApiService.submitWork(data)
                         }
-
-                        if (!success) {
-                            Log.w("SyncRepository", "Initial submission sync failed for ${submission.id}; attempting to upsert parent task ${submission.taskId} and retry.")
-                            val taskParent = withContext(Dispatchers.IO) { taskDao.getTaskById(submission.taskId) }
-                            if (taskParent != null) {
-                                val tOk = withContext(Dispatchers.IO) { supabaseRepo.upsert("tasks", taskParent) }
-                                if (tOk) {
-                                    Log.i("SyncRepository", "Parent task ${taskParent.id} upserted, retrying submission ${submission.id}.")
-                                    if (hasGrade) {
-                                        success = withContext(Dispatchers.IO) { supabaseClient.updateTaskSubmissionRemote(submission) }
-                                    } else {
-                                        // Retry: check remote existence again before insert
-                                        try {
-                                            val existingRemote2 = withContext(Dispatchers.IO) { supabaseClient.fetchTaskSubmissionByTaskId(submission.taskId, submission.studentId) }
-                                            if (existingRemote2 != null) {
-                                                Log.i("SyncRepository", "(retry) Remote submission already exists for task=${submission.taskId} student=${submission.studentId} id=${existingRemote2.id}; skipping insert.")
-                                                success = true
-                                            } else {
-                                                val remoteId2 = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
-                                                success = remoteId2 != null
-                                            }
-                                        } catch (e: Exception) {
-                                            Log.w("SyncRepository", "(retry) Failed check before insert: ${e.message}")
-                                            val remoteId2 = withContext(Dispatchers.IO) { supabaseClient.insertTaskSubmission(submission) }
-                                            success = remoteId2 != null
-                                        }
-                                    }
-                                } else {
-                                    Log.w("SyncRepository", "Failed to upsert parent task ${submission.taskId} while retrying submission ${submission.id}.")
-                                }
-                            } else {
-                                Log.w("SyncRepository", "Local parent task ${submission.taskId} not found for submission ${submission.id}.")
-                            }
-                        }
-
-                        if (success) Log.i("SyncRepository", "TaskSubmission ${submission.id} synced to Supabase.")
-                        else Log.e("SyncRepository", "Failed to sync taskSubmission ${submission.id} to Supabase.")
+                        Log.i("SyncRepository", "TaskSubmission ${submission.id} synced via backend")
                     } catch (e: Exception) {
-                        Log.e("SyncRepository", "Exception while syncing submission ${submission.id}", e)
+                        Log.e("SyncRepository", "Exception syncing submission ${submission.id}", e)
                     }
                 }
 
-                // Subscriptions
+                // --- Subscriptions ---
                 subscriptionDao.getAllSubscriptions().forEach { sub ->
                     try {
-                        // Map Room entity fields to snake_case expected by Supabase/Postgres
-                        val mapped = mapOf(
-                            "subscriber_id" to sub.subscriberId,
-                            "creator_id" to sub.creatorId,
-                            "subscription_date" to sub.subscriptionDate
-                        )
-                        val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("subscriptions", mapped) }
-                        if (ok) Log.i("SyncRepository", "Subscription ${sub.subscriberId}_${sub.creatorId} synced to Supabase.")
-                        else Log.e("SyncRepository", "Failed to sync subscription ${sub.subscriberId}_${sub.creatorId} to Supabase.")
+                        val result = BackendApiService.subscribe(sub.creatorId)
+                        if (result.isSuccess) Log.i("SyncRepository", "Subscription ${sub.subscriberId}->${sub.creatorId} synced")
+                        else Log.w("SyncRepository", "Failed to sync subscription ${sub.subscriberId}->${sub.creatorId}")
                     } catch (e: Exception) {
-                        Log.e("SyncRepository", "Exception while syncing subscription ${sub.subscriberId}_${sub.creatorId}", e)
+                        Log.e("SyncRepository", "Exception syncing subscription", e)
                     }
                 }
 
-                // File contexts (metadata/extracted content) - ensure file_contexts table exists in migrations
-                try {
-                    val fileContexts = withContext(Dispatchers.IO) { fileContextDao.getAllFileContexts().first() }
-                    fileContexts.forEach { fc ->
-                        val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("file_contexts", fc) }
-                        if (ok) Log.i("SyncRepository", "FileContext ${fc.id} synced to Supabase.")
-                        else Log.e("SyncRepository", "Failed to sync FileContext ${fc.id} to Supabase.")
-                    }
-                } catch (e: Exception) {
-                    Log.w("SyncRepository", "Could not sync file_contexts: ${e.message}")
-                }
-
-
-
-                // Videos
+                // --- Videos ---
                 videoDao.getAllVideos().forEach { video ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("videos", video) }
-                    if (ok) Log.i("SyncRepository", "Video ${video.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync video ${video.id} to Supabase.")
-                }
-
-                // Roles
-                rolDao.getAllRoles().forEach { rol ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("roles", rol) }
-                    if (ok) Log.i("SyncRepository", "Rol ${rol.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync rol ${rol.id} to Supabase.")
-                }
-
-                // Chat messages - sync in-app chat messages to Supabase
-                try {
-                    val messages = withContext(Dispatchers.IO) { chatMessageDao.getAllMessages().first() }
-                    messages.forEach { msg ->
-                        val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("chat_messages", msg) }
-                        if (ok) Log.i("SyncRepository", "ChatMessage ${msg.id} synced to Supabase.")
-                        else Log.e("SyncRepository", "Failed to sync ChatMessage ${msg.id} to Supabase.")
+                    try {
+                        val result = BackendApiService.createVideo(video)
+                        if (result.isSuccess) Log.i("SyncRepository", "Video ${video.id} synced via backend")
+                        else Log.w("SyncRepository", "Failed to sync video ${video.id}: ${result.errorMessage()}")
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Exception syncing video ${video.id}", e)
                     }
-                } catch (e: Exception) {
-                    Log.w("SyncRepository", "Could not sync chat_messages: ${e.message}")
                 }
 
-                // Recursos
-                recursoDao.getAllRecursos().forEach { recurso ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("recursos", recurso) }
-                    if (ok) Log.i("SyncRepository", "Recurso ${recurso.id} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync recurso ${recurso.id} to Supabase.")
-                }
-
-                // Rol-Recursos
-                rolRecursoDao.getAllRolRecursos().forEach { rr ->
-                    val ok = withContext(Dispatchers.IO) { supabaseRepo.upsert("rol_recursos", rr) }
-                    if (ok) Log.i("SyncRepository", "RolRecurso ${rr.rolId}-${rr.recursoId} synced to Supabase.")
-                    else Log.e("SyncRepository", "Failed to sync rol_recurso ${rr.rolId}-${rr.recursoId} to Supabase.")
-                }
+                Log.i("SyncRepository", "syncLocalToSupabase completed via backend API")
             } catch (e: Exception) {
                 Log.e("SyncRepository", "Exception during syncLocalToSupabase", e)
             }
@@ -2388,11 +1951,18 @@ class SyncRepository(
 
     companion object {
         // Lightweight wrapper so UI code can update a TaskSubmission remotely without
-        // instantiating the full SyncRepository. Delegates to SupabaseClient.
+        // instantiating the full SyncRepository. Delegates to BackendApiService.
         suspend fun updateTaskSubmissionToSupabase(submission: TaskSubmission): Boolean {
             return try {
-                withContext(Dispatchers.IO) {
-                    com.example.tareamov.service.SupabaseClient.updateTaskSubmissionRemote(submission)
+                if (submission.grade != null || !submission.feedback.isNullOrBlank()) {
+                    BackendApiService.gradeSubmission(submission.id, submission.grade ?: 0f, submission.feedback).isSuccess
+                } else {
+                    val data = mapOf<String, Any?>(
+                        "task_id" to submission.taskId,
+                        "student_id" to submission.studentId,
+                        "file_url" to submission.fileUri
+                    )
+                    BackendApiService.submitWork(data).isSuccess
                 }
             } catch (e: Exception) {
                 Log.e("SyncRepository", "updateTaskSubmissionToSupabase failed: ${e.message}")
@@ -2406,13 +1976,26 @@ class SyncRepository(
      */
     suspend fun syncProgresoToSupabase(progreso: com.example.tareamov.data.entity.ProgresoEstudiante): Boolean {
         return try {
-            if (!supabaseClient.isConfigured()) {
-                Log.w("SyncRepository", "Supabase not configured, skipping progreso sync")
-                return false
+            val data = mapOf<String, Any?>(
+                "usuario_estudiante" to progreso.usuarioEstudiante,
+                "curso_id" to progreso.cursoId,
+                "tareas_completadas" to progreso.tareasCompletadas,
+                "tareas_totales" to progreso.tareasTotales,
+                "porcentaje_progreso" to progreso.porcentajeProgreso,
+                "calificacion_ponderada" to progreso.calificacionPonderada,
+                "estado" to progreso.estado,
+                "ultima_calculada_en" to progreso.ultimaCalculadaEn
+            )
+            val result = BackendApiService.upsertProgress(data)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Progreso synced via backend for user=${progreso.usuarioEstudiante} course=${progreso.cursoId}")
+                true
+            } else {
+                Log.e("SyncRepository", "syncProgresoToSupabase failed: ${result.errorMessage()}")
+                false
             }
-            supabaseClient.upsertProgresoEstudiante(progreso)
         } catch (e: Exception) {
-            Log.e("SyncRepository", "Error syncing progreso to Supabase", e)
+            Log.e("SyncRepository", "Error syncing progreso via backend", e)
             false
         }
     }
@@ -2509,8 +2092,18 @@ class SyncRepository(
                         // Guardar localmente
                         progresoEstudianteDao.insertProgreso(progreso)
                         
-                        // Sincronizar con Supabase
-                        val success = supabaseClient.upsertProgresoEstudiante(progreso)
+                        // Sincronizar con backend API
+                        val data = mapOf<String, Any?>(
+                            "usuario_estudiante" to progreso.usuarioEstudiante,
+                            "curso_id" to progreso.cursoId,
+                            "tareas_completadas" to progreso.tareasCompletadas,
+                            "tareas_totales" to progreso.tareasTotales,
+                            "porcentaje_progreso" to progreso.porcentajeProgreso,
+                            "calificacion_ponderada" to progreso.calificacionPonderada,
+                            "estado" to progreso.estado,
+                            "ultima_calculada_en" to progreso.ultimaCalculadaEn
+                        )
+                        val success = BackendApiService.upsertProgress(data).isSuccess
                         if (success) {
                             migratedCount++
                             Log.d("SyncRepository", "Migrated progress: $userId in course ${course.title} (${course.id})")
@@ -2605,18 +2198,22 @@ class SyncRepository(
                         val localId = taskSubmissionDao.insertSubmission(defaultSubmission)
                         Log.d("SyncRepository", "Created local submission id=$localId for studentId=$userId")
                         
-                        // Intentar sincronizar con Supabase
-                        if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                            try {
-                                val remoteSuccess = supabaseRepo.upsert("task_submissions", defaultSubmission.copy(id = localId))
-                                if (remoteSuccess) {
-                                    Log.d("SyncRepository", "Synced submission to Supabase for studentId=$userId")
-                                } else {
-                                    Log.w("SyncRepository", "Failed to sync submission to Supabase for studentId=$userId")
-                                }
-                            } catch (e: Exception) {
-                                Log.w("SyncRepository", "Error syncing submission to Supabase", e)
+                        // Intentar sincronizar con backend API
+                        try {
+                            val data = mapOf<String, Any?>(
+                                "task_id" to taskId,
+                                "student_id" to userId,
+                                "content" to "",
+                                "file_url" to ""
+                            )
+                            val remoteResult = BackendApiService.submitWork(data)
+                            if (remoteResult.isSuccess) {
+                                Log.d("SyncRepository", "Synced submission via backend for studentId=$userId")
+                            } else {
+                                Log.w("SyncRepository", "Failed to sync submission via backend for studentId=$userId")
                             }
+                        } catch (e: Exception) {
+                            Log.w("SyncRepository", "Error syncing submission via backend", e)
                         }
                         
                         successCount++
@@ -2635,17 +2232,16 @@ class SyncRepository(
             Log.i("SyncRepository", "Created $successCount default submissions for task $taskId")
             
             // Recalcular el progreso de todos los estudiantes en Supabase
-            if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                try {
-                    val recalcSuccess = supabaseRepo.recalculateAllStudentProgressForCourse(courseId)
-                    if (recalcSuccess) {
-                        Log.i("SyncRepository", "Successfully recalculated progress in Supabase for course $courseId")
-                    } else {
-                        Log.w("SyncRepository", "Failed to recalculate progress in Supabase")
-                    }
-                } catch (e: Exception) {
-                    Log.w("SyncRepository", "Error recalculating progress in Supabase", e)
+            // Recalcular progreso vía backend
+            try {
+                val result = com.example.tareamov.service.BackendApiService.recalculateProgress(courseId)
+                if (result.isSuccess) {
+                    Log.i("SyncRepository", "Successfully recalculated progress via backend for course $courseId")
+                } else {
+                    Log.w("SyncRepository", "Failed to recalculate progress via backend: ${result.errorMessage()}")
                 }
+            } catch (e: Exception) {
+                Log.w("SyncRepository", "Error recalculating progress via backend", e)
             }
             
             return@withContext successCount
@@ -2819,9 +2415,9 @@ class SyncRepository(
                     
                     // Sincronizar a Supabase
                     val synced = try {
-                        supabaseClient.upsertProgresoEstudiante(updatedProgreso)
+                        syncProgresoToSupabase(updatedProgreso)
                     } catch (e: Exception) {
-                        Log.e("SyncRepository", "Error syncing to Supabase for studentId=$userId", e)
+                        Log.e("SyncRepository", "Error syncing progress via backend for studentId=$userId", e)
                         false
                     }
                     
@@ -2876,16 +2472,16 @@ class SyncRepository(
             // Eliminar tarea de la base de datos local (CASCADE debería eliminar submissions relacionadas)
             taskDao.deleteTask(taskId)
             
-            // Intentar eliminar de Supabase si está configurado
-            if (com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                try {
-                    // Supabase debería tener trigger para actualizar progreso automáticamente
-                    val deleteSql = "DELETE FROM tasks WHERE id = $taskId"
-                    val result = supabaseRepo.executeRawQuery(deleteSql)
-                    Log.d("SyncRepository", "Deleted task from Supabase: taskId=$taskId, result=${result.size}")
-                } catch (e: Exception) {
-                    Log.w("SyncRepository", "Error deleting task from Supabase", e)
+            // Eliminar tarea del backend (cascade en servidor)
+            try {
+                val deleteResult = BackendApiService.deleteTask(taskId)
+                if (deleteResult.isSuccess) {
+                    Log.d("SyncRepository", "Task $taskId deleted from backend")
+                } else {
+                    Log.w("SyncRepository", "Failed to delete task $taskId from backend: ${deleteResult.errorMessage()}")
                 }
+            } catch (e: Exception) {
+                Log.w("SyncRepository", "Error deleting task from backend", e)
             }
             
             // Recalcular y sincronizar progreso para cada estudiante inscrito
@@ -2950,45 +2546,14 @@ class SyncRepository(
     }
 
     /**
-     * Applies the migration to disable problematic database triggers.
-     * This should be called once during app initialization to fix the ambiguous column reference error.
-     * The migration drops triggers that cause SQL error 42702 and moves progress calculation to app layer.
+     * Migration to disable problematic database triggers.
+     * NOTE: DDL migrations should be managed server-side, not from the client.
+     * This method is kept for backward compatibility but is now a no-op.
      */
+    @Deprecated("Database migrations should be managed server-side")
     suspend fun applyTriggerDisableMigration(): Boolean = withContext(kotlinx.coroutines.Dispatchers.IO) {
-        try {
-            Log.i("SyncRepository", "🔄 Applying migration to disable submission triggers...")
-            
-            val migrationSql = """
-                -- Drop the problematic triggers that cause ambiguous column references
-                DROP TRIGGER IF EXISTS trigger_update_progress_on_submission_insert ON task_submissions;
-                DROP TRIGGER IF EXISTS trigger_update_progress_on_submission_update ON task_submissions;
-                DROP TRIGGER IF EXISTS trigger_create_default_submissions ON tasks;
-                DROP TRIGGER IF EXISTS trigger_update_task_count_on_insert ON tasks;
-                DROP TRIGGER IF EXISTS trigger_update_task_count_on_delete ON tasks;
-            """.trimIndent()
-            
-            // Execute via SupabaseRepository raw SQL
-            val supabaseRepo = SupabaseRepository()
-            val statements = migrationSql.split(";")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-            
-            for (statement in statements) {
-                try {
-                    supabaseRepo.executeRawQuery(statement)
-                    Log.d("SyncRepository", "✅ Executed: ${statement.take(50)}...")
-                } catch (e: Exception) {
-                    // Some DROP IF EXISTS may fail if trigger doesn't exist - this is OK
-                    Log.w("SyncRepository", "⚠️ Statement execution warning (may be expected): ${e.message}")
-                }
-            }
-            
-            Log.i("SyncRepository", "✅ Migration completed successfully")
-            true
-        } catch (e: Exception) {
-            Log.e("SyncRepository", "❌ Error applying trigger disable migration", e)
-            false
-        }
+        Log.i("SyncRepository", "⚠️ applyTriggerDisableMigration is deprecated — DDL changes are managed server-side")
+        true
     }
 
     suspend fun getSubmissionAndContextForTask(taskId: Long, username: String): Pair<TaskSubmission?, com.example.tareamov.data.entity.FileContext?> {
@@ -3083,34 +2648,38 @@ class SyncRepository(
      */
     suspend fun toggleVideoCommentLike(commentId: Long, videoId: Long, userId: Long, authorId: Long): Pair<Boolean, Int> {
         return withContext(Dispatchers.IO) {
-            val result = supabaseClient.toggleVideoCommentLike(commentId, userId)
-            val isLiked = result.first
-            val newCount = result.second
-            
-            // Send notification if user liked (not unliked) and it's not their own comment
-            if (isLiked && authorId != userId) {
-                try {
-                    val localUser = usuarioDao.getUsuarioById(userId)
-                    val localVideo = videoDao.getVideoById(videoId)
-                    
-                    val notification = Notification(
-                        userId = authorId,
-                        type = Notification.TYPE_LIKE,
-                        title = "Me gusta en tu comentario",
-                        message = "${localUser?.usuario ?: "Alguien"} reaccionó a tu comentario",
-                        senderUsername = localUser?.usuario,
-                        senderAvatarUrl = localUser?.avatar,
-                        thumbnailUrl = localVideo?.thumbnailUri ?: localVideo?.videoUriString,
-                        relatedId = videoId,
-                        metadata = "{\"comment_id\": $commentId}" // Include comment_id for navigation
-                    )
-                    Log.d("SyncRepository", "📬 Creating toggle-like notification with comment_id=$commentId")
-                    supabaseClient.insertNotification(notification)
-                } catch (e: Exception) {
-                    Log.e("SyncRepository", "Error sending like notification", e)
+            try {
+                val result = BackendApiService.toggleLike("video_comment", commentId)
+                val isLiked = result.isSuccess && (result.getOrNull()?.get("liked")?.asBoolean ?: false)
+                val newCount = result.getOrNull()?.get("likeCount")?.asInt ?: 0
+                
+                // Send notification if user liked (not unliked) and it's not their own comment
+                if (isLiked && authorId != userId) {
+                    try {
+                        val localUser = usuarioDao.getUsuarioById(userId)
+                        val localVideo = videoDao.getVideoById(videoId)
+                        
+                        val notification = Notification(
+                            userId = authorId,
+                            type = Notification.TYPE_LIKE,
+                            title = "Me gusta en tu comentario",
+                            message = "${localUser?.usuario ?: "Alguien"} reaccionó a tu comentario",
+                            senderUsername = localUser?.usuario,
+                            senderAvatarUrl = localUser?.avatar,
+                            thumbnailUrl = localVideo?.thumbnailUri ?: localVideo?.videoUriString,
+                            relatedId = videoId,
+                            metadata = "{\"comment_id\": $commentId}"
+                        )
+                        BackendApiService.sendNotification(userId = notification.userId, title = notification.title, message = notification.message, type = notification.type, relatedId = notification.relatedId, senderUsername = notification.senderUsername, thumbnailUrl = notification.thumbnailUrl, metadata = notification.metadata, senderAvatarUrl = notification.senderAvatarUrl)
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Error sending like notification", e)
+                    }
                 }
+                return@withContext Pair(isLiked, newCount)
+            } catch (e: Exception) {
+                Log.e("SyncRepository", "toggleVideoCommentLike failed", e)
+                Pair(false, 0)
             }
-            return@withContext result
         }
     }
     
@@ -3119,40 +2688,49 @@ class SyncRepository(
      */
     suspend fun likeVideoComment(commentId: Long, videoId: Long, userId: Long, authorId: Long): Boolean {
         return withContext(Dispatchers.IO) {
-             val success = supabaseClient.likeVideoComment(commentId, userId)
-             
-             if (success && authorId != userId) {
-                try {
-                    val localUser = usuarioDao.getUsuarioById(userId)
-                    val localVideo = videoDao.getVideoById(videoId)
-                    
-                    val notification = Notification(
-                        userId = authorId,
-                        type = Notification.TYPE_LIKE,
-                        title = "Me gusta en tu comentario",
-                        message = "${localUser?.usuario ?: "Alguien"} reaccionó a tu comentario",
-                        senderUsername = localUser?.usuario,
-                        senderAvatarUrl = localUser?.avatar,
-                        thumbnailUrl = localVideo?.thumbnailUri ?: localVideo?.videoUriString,
-                        relatedId = videoId,
-                        metadata = "{\"comment_id\": $commentId}" // Include comment_id for navigation
-                    )
-                    Log.d("SyncRepository", "📬 Creating like notification with comment_id=$commentId")
-                    supabaseClient.insertNotification(notification)
-                } catch (e: Exception) {
-                    Log.e("SyncRepository", "Error sending like notification", e)
+            try {
+                val result = BackendApiService.toggleLike("video_comment", commentId)
+                val success = result.isSuccess
+                
+                if (success && authorId != userId) {
+                    try {
+                        val localUser = usuarioDao.getUsuarioById(userId)
+                        val localVideo = videoDao.getVideoById(videoId)
+                        
+                        val notification = Notification(
+                            userId = authorId,
+                            type = Notification.TYPE_LIKE,
+                            title = "Me gusta en tu comentario",
+                            message = "${localUser?.usuario ?: "Alguien"} reaccionó a tu comentario",
+                            senderUsername = localUser?.usuario,
+                            senderAvatarUrl = localUser?.avatar,
+                            thumbnailUrl = localVideo?.thumbnailUri ?: localVideo?.videoUriString,
+                            relatedId = videoId,
+                            metadata = "{\"comment_id\": $commentId}"
+                        )
+                        BackendApiService.sendNotification(userId = notification.userId, title = notification.title, message = notification.message, type = notification.type, relatedId = notification.relatedId, senderUsername = notification.senderUsername, thumbnailUrl = notification.thumbnailUrl, metadata = notification.metadata, senderAvatarUrl = notification.senderAvatarUrl)
+                    } catch (e: Exception) {
+                        Log.e("SyncRepository", "Error sending like notification", e)
+                    }
                 }
-             }
-             return@withContext success
+                return@withContext success
+            } catch (e: Exception) {
+                Log.e("SyncRepository", "likeVideoComment failed", e)
+                false
+            }
         }
     }
     
     /**
-     * Unlike a video comment
+     * Unlike a video comment via backend API
      */
     suspend fun unlikeVideoComment(commentId: Long, userId: Long): Boolean {
-        return withContext(Dispatchers.IO) {
-            supabaseClient.unlikeVideoComment(commentId, userId)
+        return try {
+            val result = BackendApiService.toggleLike("video_comment", commentId)
+            result.isSuccess
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "unlikeVideoComment failed", e)
+            false
         }
     }
     
@@ -3193,14 +2771,16 @@ class SyncRepository(
     }
 
     /**
-     * Check if a user has a specific role (checks usuarios_roles table)
+     * Check if a user has a specific role via backend API
      */
     suspend fun hasUserRole(userId: Long, roleId: Int): Boolean = withContext(Dispatchers.IO) {
         try {
-            // Use SupabaseClient to check raw SQL
-            val sql = "SELECT 1 FROM usuarios_roles WHERE usuario_id = $userId AND rol_id = $roleId"
-            val result = supabaseClient.executeRawQuery(sql)
-            return@withContext result.isNotEmpty()
+            val result = com.example.tareamov.service.BackendApiService.getUserRoles(userId)
+            if (result.isSuccess) {
+                val roleIds = result.getOrNull() ?: emptyList()
+                return@withContext roleIds.contains(roleId.toLong())
+            }
+            false
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error checking user role $roleId", e)
             false
@@ -3208,13 +2788,15 @@ class SyncRepository(
     }
 
     /**
-     * Get all roles for a user
+     * Get all roles for a user via backend API
      */
     suspend fun getUserRoles(userId: Long): List<Int> = withContext(Dispatchers.IO) {
         try {
-            val sql = "SELECT rol_id FROM usuarios_roles WHERE usuario_id = $userId"
-            val result = supabaseClient.executeRawQuery(sql)
-            return@withContext result.mapNotNull { (it["rol_id"] as? Number)?.toInt() }
+            val result = com.example.tareamov.service.BackendApiService.getUserRoles(userId)
+            if (result.isSuccess) {
+                return@withContext (result.getOrNull() ?: emptyList()).map { it.toInt() }
+            }
+            emptyList()
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error getting user roles", e)
             emptyList()
@@ -3260,25 +2842,13 @@ class SyncRepository(
      */
     suspend fun toggleVideoLike(videoId: Long, usuarioId: Long, isLiked: Boolean): Boolean = withContext(Dispatchers.IO) {
         try {
-            // Check the current state in Supabase
-            val currentLikeState = supabaseClient.hasUserLikedVideo(videoId, usuarioId)
-            
-            // If the requested state matches the current state, no action needed
-            if (currentLikeState == isLiked) {
-                Log.d("SyncRepository", "Like state already matches requested state ($isLiked) for video $videoId, user $usuarioId")
-                return@withContext true
-            }
-
-            if (isLiked) {
-                // Add like to polymorphic likes table
-                val success = supabaseClient.addUserVideoLike(videoId, usuarioId)
-                Log.d("SyncRepository", "Added like for video $videoId by user $usuarioId: $success")
-                return@withContext success
+            val result = BackendApiService.toggleLike("video", videoId)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Video like toggled via backend for video $videoId")
+                true
             } else {
-                // Remove like from polymorphic likes table
-                val success = supabaseClient.removeUserVideoLike(videoId, usuarioId)
-                Log.d("SyncRepository", "Removed like for video $videoId by user $usuarioId: $success")
-                return@withContext success
+                Log.w("SyncRepository", "toggleVideoLike failed: ${result.errorMessage()}")
+                false
             }
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error toggling like for video $videoId", e)
@@ -3345,8 +2915,9 @@ class SyncRepository(
                 }
             }
 
-            // Add to Supabase first
-            val remoteId = supabaseClient.addVideoComment(videoId, usuarioId, comment, parentId)
+            // Add to backend API first
+            val commentResult = BackendApiService.createComment(videoId, comment, parentId)
+            val remoteId = if (commentResult.isSuccess) commentResult.getOrNull()?.id else null
             
             if (remoteId != null) {
                 // Add to local with the remote ID
@@ -3432,7 +3003,7 @@ class SyncRepository(
                                 metadata = "{\"comment_id\": $remoteId}"
                             )
                             Log.d("SyncRepository", "📬 Creating notification for video owner $ownerId with comment_id=$remoteId (parentId=$parentId)")
-                            val insertResult = supabaseClient.insertNotification(notification)
+                            val insertResult = BackendApiService.sendNotification(userId = notification.userId, title = notification.title, message = notification.message, type = notification.type, relatedId = notification.relatedId, senderUsername = notification.senderUsername, thumbnailUrl = notification.thumbnailUrl, metadata = notification.metadata, senderAvatarUrl = notification.senderAvatarUrl)
                             Log.d("SyncRepository", "📬 Notification insert result: $insertResult")
                         } else {
                             Log.d("SyncRepository", "⚠️ NOT notifying video owner: owner=${owner != null}, ownerId=$ownerId, sameUser=${ownerId == usuarioId}")
@@ -3461,7 +3032,7 @@ class SyncRepository(
                                         metadata = "{\"comment_id\": $remoteId}"
                                     )
                                     Log.d("SyncRepository", "📬 Creating reply notification for comment author ${parentComment.usuarioId}")
-                                    supabaseClient.insertNotification(replyNotification)
+                                    BackendApiService.sendNotification(userId = replyNotification.userId, title = replyNotification.title, message = replyNotification.message, type = replyNotification.type, relatedId = replyNotification.relatedId, senderUsername = replyNotification.senderUsername, thumbnailUrl = replyNotification.thumbnailUrl, metadata = replyNotification.metadata, senderAvatarUrl = replyNotification.senderAvatarUrl)
                                 }
                             }
                         }
@@ -3487,7 +3058,7 @@ class SyncRepository(
                                      metadata = "{\"comment_id\": $remoteId}" // Include comment_id for navigation
                                  )
                                  Log.d("SyncRepository", "📬 Creating mention notification with comment_id=$remoteId for @$username")
-                                 supabaseClient.insertNotification(notification)
+                                 BackendApiService.sendNotification(userId = notification.userId, title = notification.title, message = notification.message, type = notification.type, relatedId = notification.relatedId, senderUsername = notification.senderUsername, thumbnailUrl = notification.thumbnailUrl, metadata = notification.metadata, senderAvatarUrl = notification.senderAvatarUrl)
                             }
                         }
                     }
@@ -3573,15 +3144,16 @@ class SyncRepository(
      */
     suspend fun deleteVideoComment(commentId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
-            // Delete from Supabase first
-            val success = supabaseClient.deleteVideoComment(commentId)
-            
-            if (success) {
+            val result = BackendApiService.deleteComment(commentId)
+            if (result.isSuccess) {
                 // Delete from local
                 videoCommentDao?.deleteCommentById(commentId)
+                Log.d("SyncRepository", "Comment $commentId deleted via backend")
+                true
+            } else {
+                Log.w("SyncRepository", "deleteVideoComment failed: ${result.errorMessage()}")
+                false
             }
-            
-            return@withContext success
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error deleting comment $commentId", e)
             false
@@ -3621,10 +3193,8 @@ class SyncRepository(
      */
     suspend fun promoteUserToDocente(userId: Long): Boolean = withContext(Dispatchers.IO) {
         try {
-            // Promote in Supabase
-            val success = supabaseClient.promoteToDocente(userId)
-            
-            if (success) {
+            val result = BackendApiService.ensureCreatorRole(userId)
+            if (result.isSuccess) {
                 // Update local
                 val docenteRole = rolDao.getDocenteRole()
                 if (docenteRole != null) {
@@ -3635,7 +3205,7 @@ class SyncRepository(
                 }
             }
             
-            return@withContext success
+            return@withContext result.isSuccess
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error promoting user $userId to docente", e)
             false
@@ -3717,41 +3287,49 @@ class SyncRepository(
     }
 
     /**
-     * Notify all subscribers of a creator about a new course
-     * This should be called after a course is successfully created/published
-     * Sends both in-app notifications AND push notifications
+     * Notify all subscribers of a creator about a new course.
+     * Delegates to the backend notification endpoint which handles
+     * both in-app notifications AND push notifications server-side.
      * @param course The newly created course
      * @return Pair of (in-app notifications sent, push notifications sent)
      */
     suspend fun notifySubscribersOfNewCourse(course: Course): Pair<Int, Int> = withContext(Dispatchers.IO) {
         try {
-            if (!supabaseClient.isConfigured()) {
-                Log.w("SyncRepository", "Supabase not configured, cannot notify subscribers")
-                return@withContext Pair(0, 0)
-            }
-
             val creatorUserId = course.creatorUserId
             if (creatorUserId <= 0) {
                 Log.w("SyncRepository", "Invalid creator user ID for course ${course.id}")
                 return@withContext Pair(0, 0)
             }
 
-            // Get creator info
-            val creatorUsername = supabaseClient.getUsernameFromUserId(creatorUserId) ?: "Usuario"
-            val creatorAvatarUrl = supabaseClient.getUserAvatarUrl(creatorUserId)
+            // Fetch subscriber IDs via backend
+            val subscribersResult = com.example.tareamov.service.BackendApiService.getMySubscribers()
+            val subscriberIds = if (subscribersResult.isSuccess) {
+                subscribersResult.getOrNull()?.map { it.subscriberId } ?: emptyList()
+            } else {
+                emptyList()
+            }
 
-            // Call the combined notification method (in-app + push)
-            val (inAppCount, pushCount) = supabaseClient.notifySubscribersOfNewCourseWithPush(
-                creatorUserId = creatorUserId,
-                creatorUsername = creatorUsername,
-                creatorAvatarUrl = creatorAvatarUrl,
-                courseId = course.id,
-                courseTitle = course.title ?: "Nuevo curso",
-                courseThumbnailUrl = course.thumbnailUri
+            if (subscriberIds.isEmpty()) {
+                Log.d("SyncRepository", "No subscribers to notify for course '${course.title}'")
+                return@withContext Pair(0, 0)
+            }
+
+            // Send bulk notification via backend
+            val result = com.example.tareamov.service.BackendApiService.sendNotificationToMultiple(
+                userIds = subscriberIds,
+                title = "📚 Nuevo curso disponible",
+                message = "Se ha publicado un nuevo curso: ${course.title ?: "Nuevo curso"}",
+                type = "new_course",
+                data = mapOf(
+                    "courseId" to course.id,
+                    "courseTitle" to (course.title ?: ""),
+                    "thumbnailUrl" to (course.thumbnailUri ?: "")
+                )
             )
 
-            Log.d("SyncRepository", "Notified subscribers about new course '${course.title}': $inAppCount in-app, $pushCount push")
-            return@withContext Pair(inAppCount, pushCount)
+            val count = subscriberIds.size
+            Log.d("SyncRepository", "Notified $count subscribers about new course '${course.title}' via backend")
+            return@withContext Pair(count, count)
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error notifying subscribers of new course", e)
             Pair(0, 0)
@@ -3769,7 +3347,8 @@ class SyncRepository(
     }
 
     /**
-     * Notify enrolled students about a new task in their course
+     * Notify enrolled students about a new task in their course.
+     * Delegates to the backend which handles notifications server-side.
      * @param taskId The ID of the newly created task
      * @param taskName The name of the task
      * @param courseId The course ID the task belongs to
@@ -3788,23 +3367,39 @@ class SyncRepository(
         creatorAvatarUrl: String? = null
     ): Int = withContext(Dispatchers.IO) {
         try {
-            if (!supabaseClient.isConfigured()) {
-                Log.w("SyncRepository", "Supabase not configured, skipping task notifications")
+            // Fetch enrolled student IDs via backend
+            val progressResult = com.example.tareamov.service.BackendApiService.getAllProgressByCourse(courseId)
+            val enrolledUserIds = if (progressResult.isSuccess) {
+                progressResult.getOrNull()
+                    ?.map { it.usuarioEstudiante }
+                    ?.filter { it != creatorUserId }
+                    ?: emptyList()
+            } else {
+                emptyList()
+            }
+
+            if (enrolledUserIds.isEmpty()) {
+                Log.d("SyncRepository", "No enrolled students to notify for task '$taskName'")
                 return@withContext 0
             }
 
-            val notifiedCount = supabaseClient.notifyEnrolledStudentsOfNewTask(
-                courseId = courseId,
-                creatorUserId = creatorUserId,
-                creatorUsername = creatorUsername,
-                creatorAvatarUrl = creatorAvatarUrl,
-                taskId = taskId,
-                taskName = taskName,
-                courseName = courseName
+            // Send bulk notification via backend
+            val result = com.example.tareamov.service.BackendApiService.sendNotificationToMultiple(
+                userIds = enrolledUserIds,
+                title = "📝 Nueva tarea en $courseName",
+                message = "$creatorUsername publicó: $taskName",
+                type = "new_task",
+                data = mapOf(
+                    "taskId" to taskId,
+                    "courseId" to courseId,
+                    "taskName" to taskName,
+                    "courseName" to courseName
+                )
             )
 
-            Log.i("SyncRepository", "✅ Notified $notifiedCount students about new task '$taskName' in course '$courseName'")
-            return@withContext notifiedCount
+            val count = enrolledUserIds.size
+            Log.i("SyncRepository", "✅ Notified $count students about new task '$taskName' via backend")
+            return@withContext count
         } catch (e: Exception) {
             Log.e("SyncRepository", "Error notifying enrolled students of new task", e)
             0
@@ -3856,72 +3451,71 @@ class SyncRepository(
         }
     }
     
-    // Delete topic from Supabase
+    // Delete topic via backend API
     suspend fun deleteTopicFromSupabase(topicId: Long): Boolean {
-        try {
-            val success = supabaseClient.deleteTopic(topicId)
-            if (success) {
-                Log.d("SyncRepository", "Successfully deleted topic $topicId from Supabase")
-                return true
-            } else {
-                Log.w("SyncRepository", "Failed to delete topic $topicId via SupabaseClient")
-                return false
-            }
-        } catch (e: Exception) {
-            Log.e("SyncRepository", "Error deleting topic $topicId from Supabase", e)
-            return false
-        }
-    }
-    
-    // Delete task from Supabase
-    suspend fun deleteTaskFromSupabase(taskId: Long): Boolean {
-        try {
-            val success = supabaseClient.deleteTask(taskId)
-            if (success) {
-                Log.d("SyncRepository", "Successfully deleted task $taskId from Supabase")
-                return true
-            } else {
-                Log.w("SyncRepository", "Failed to delete task $taskId via SupabaseClient")
-                return false
-            }
-        } catch (e: Exception) {
-            Log.e("SyncRepository", "Error deleting task $taskId from Supabase", e)
-            return false
-        }
-    }
-    
-    // Delete all content items for a specific task from Supabase
-    suspend fun deleteContentItemsByTaskIdFromSupabase(taskId: Long): Boolean {
         return try {
-            val success = supabaseClient.deleteContentItemsByTaskId(taskId)
-            if (success) {
-                Log.d("SyncRepository", "Successfully deleted all content items for taskId=$taskId from Supabase")
+            val result = BackendApiService.deleteTopic(topicId)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Topic $topicId deleted via backend")
+                true
             } else {
-                Log.w("SyncRepository", "Using deprecrated fallback for DELETE content_items by task_id=$taskId")
-                supabaseRepo.deleteContentItemsByTaskId(taskId)
+                Log.w("SyncRepository", "Failed to delete topic $topicId: ${result.errorMessage()}")
+                false
             }
-            success
         } catch (e: Exception) {
-            Log.e("SyncRepository", "Error deleting content items for taskId=$taskId from Supabase", e)
+            Log.e("SyncRepository", "Error deleting topic $topicId", e)
             false
         }
     }
     
-    // Delete content item from Supabase
-    suspend fun deleteContentItemFromSupabase(contentItemId: Long): Boolean {
-        try {
-            val success = supabaseClient.deleteContentItem(contentItemId)
-            if (success) {
-                Log.d("SyncRepository", "Successfully deleted content item $contentItemId from Supabase")
-                return true
+    // Delete task via backend API
+    suspend fun deleteTaskFromSupabase(taskId: Long): Boolean {
+        return try {
+            val result = BackendApiService.deleteTask(taskId)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Task $taskId deleted via backend")
+                true
             } else {
-                Log.w("SyncRepository", "Failed to delete content item $contentItemId via SupabaseClient")
-                // Fallback attempt removed to ensure consistency with SupabaseClient usage
-                return false
+                Log.w("SyncRepository", "Failed to delete task $taskId: ${result.errorMessage()}")
+                false
             }
         } catch (e: Exception) {
-            Log.e("SyncRepository", "Error deleting content item $contentItemId from Supabase", e)
-            return false
+            Log.e("SyncRepository", "Error deleting task $taskId", e)
+            false
+        }
+    }
+    
+    // Delete all content items for a specific task via backend API
+    suspend fun deleteContentItemsByTaskIdFromSupabase(taskId: Long): Boolean {
+        return try {
+            val result = BackendApiService.deleteContentItemsByTask(taskId)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Content items for taskId=$taskId deleted via backend")
+                true
+            } else {
+                Log.w("SyncRepository", "Failed to delete content items for taskId=$taskId: ${result.errorMessage()}")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error deleting content items for taskId=$taskId", e)
+            false
+        }
+    }
+    
+    // Delete content item via backend API
+    suspend fun deleteContentItemFromSupabase(contentItemId: Long): Boolean {
+        return try {
+            val result = BackendApiService.deleteContentItem(contentItemId)
+            if (result.isSuccess) {
+                Log.d("SyncRepository", "Content item $contentItemId deleted via backend")
+                true
+            } else {
+                Log.w("SyncRepository", "Failed to delete content item $contentItemId: ${result.errorMessage()}")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e("SyncRepository", "Error deleting content item $contentItemId", e)
+            false
         }
     }
 

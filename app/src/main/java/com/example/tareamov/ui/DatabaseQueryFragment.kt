@@ -101,6 +101,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     // Background task tracking - also used for chat state
     private var isProcessingQuery = false
     private var pendingQuery: String? = null
+    private var targetMessageId: String? = null
     
     // Enhanced chat state management per user
     private val chatHistory = mutableListOf<ChatMessage>()
@@ -273,7 +274,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                         for (candidate in candidates) {
                             try {
                                 if (candidate.isEmpty()) continue
-                                val ok = com.example.tareamov.service.CloudflareR2Service.deleteFile(candidate)
+                                val ok = com.example.tareamov.service.StorageHelper.deleteFile(candidate)
                                 if (ok) {
                                     deletedRemotely = true
                                     break
@@ -320,8 +321,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val ctx = context ?: return@launch
             try {
-                // Use CloudflareR2Service for direct upload (Better Performance/Good Practice)
-                val result = com.example.tareamov.service.CloudflareR2Service.uploadFile(
+                // Use StorageHelper for upload via backend
+                val result = com.example.tareamov.service.StorageHelper.uploadFile(
                     context = ctx,
                     fileUri = file.uri,
                     folder = "uploads/chat_attachments",
@@ -330,12 +331,12 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
 
                 withContext(Dispatchers.Main) {
                     when (result) {
-                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
+                        is com.example.tareamov.service.StorageHelper.UploadResult.Success -> {
                             file.remoteUrl = result.url
                             Toast.makeText(requireContext(), "Archivo subido correctamente", Toast.LENGTH_SHORT).show()
-                            Log.d(TAG, "✅ File uploaded to R2: ${result.url}")
+                            Log.d(TAG, "✅ File uploaded: ${result.url}")
                         }
-                        is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
+                        is com.example.tareamov.service.StorageHelper.UploadResult.Error -> {
                             Toast.makeText(requireContext(), "Error al subir archivo: ${result.message}", Toast.LENGTH_SHORT).show()
                             Log.e(TAG, "❌ Upload failed: ${result.message}")
                             // Remove failed file from list
@@ -402,6 +403,12 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        
+        arguments?.getString("messageId")?.let { id ->
+            targetMessageId = id
+            // Log for debugging
+            Log.d("DatabaseQueryFragment", "🔔 Notification navigation: target messageId=$targetMessageId")
+        }
 
         // Initialize SessionManager and register for user changes
         sessionManager = SessionManager.getInstance(requireContext())
@@ -1059,43 +1066,20 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
-                    "http://10.0.2.2:3000"
-                }
-                
-                val payload = JSONObject().apply {
-                    put("query", query)
-                    put("userId", sessionManager.getUsername() ?: "user")
-                }
-                
-                val client = okhttp3.OkHttpClient.Builder()
-                    .connectTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
-                    .writeTimeout(300, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
-                
-                val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-                val request = okhttp3.Request.Builder()
-                    .url("$baseUrl/excel/generate-excel")
-                    .header("X-Supabase-Url", com.example.tareamov.BuildConfig.SUPABASE_URL)
-                    .header("X-Supabase-Key", com.example.tareamov.BuildConfig.SUPABASE_ANON_KEY)
-                    .post(body)
-                    .build()
-                
-                val response = client.newCall(request).execute()
-                val responseBody = response.body?.string()
+                // Using centralized service
+                val result = BackendApiService.generateExcel(query)
                 
                 withContext(Dispatchers.Main) {
                     binding.loadingSpinner.visibility = View.GONE
                     binding.sendButton.visibility = View.VISIBLE
                     
-                    if (response.isSuccessful && responseBody != null) {
+                    if (result is ApiResult.Success && result.data != null) {
                         try {
-                            val json = JSONObject(responseBody)
+                            val json = result.data
                             if (json.has("url")) {
-                                val url = json.getString("url")
-                                val filename = json.optString("filename", "reporte.xlsx")
-                                val rows = json.optInt("rows", 0)
+                                val url = json.get("url").asString
+                                val filename = if (json.has("filename")) json.get("filename").asString else "reporte.xlsx"
+                                val rows = if (json.has("rows")) json.get("rows").asInt else 0
                                 
                                 // Create a single message with the attachment info (WITHOUT adding to input bar)
                                 val uri = android.net.Uri.parse(url)
@@ -1121,12 +1105,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                             addMessageToChat("❌ Error procesando respuesta: ${e.message}", false)
                         }
                     } else {
-                        val errorMsg = try {
-                            val errJson = JSONObject(responseBody ?: "")
-                            errJson.optString("error", "Error ${response.code}")
-                        } catch (e: Exception) {
-                            "Error ${response.code}"
-                        }
+                        val errorMsg = if (result is ApiResult.Error) result.message else "Error desconocido"
                         addMessageToChat("❌ Error al generar Excel: $errorMsg", false)
                     }
                 }
@@ -1347,13 +1326,12 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 // Use MCP Server directly (Server-side Agent)
                 val result = processQueryWithMCPServer(query)
                 
-                // Enviar notificación por email automáticamente después de obtener la respuesta
-                sendNotificationAfterResponse(result)
-
                 Log.d("DatabaseQueryFragment", "=== FINAL RESULT LOG ===")
                 Log.d("DatabaseQueryFragment", "Result Length: ${result.length} characters")
                 Log.d("DatabaseQueryFragment", "Result Content: $result")
                 Log.d("DatabaseQueryFragment", "=======================")
+
+                var messageId: String? = null
 
                 // Check if the response is a graph request
                 if (result.startsWith("GRAPH_REQUEST:")) {
@@ -1372,7 +1350,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                         result.contains("SUBSCRIPTIONS") -> "📊 Gráfico de suscripciones generado"
                         else -> "📊 Gráfico generado exitosamente"
                     }
-                    addMessageToChat(graphMessage, false)
+                    messageId = addMessageToChat(graphMessage, false)
                 } else {
                     // Check if binding is still valid before accessing it
                     if (_binding != null) {
@@ -1383,11 +1361,16 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                     
                     // Display the text result in chat
                     if (result.isNullOrBlank()) {
-                        addMessageToChat("⚠️ No se recibió respuesta del sistema. Intente reformular su consulta.", false)
+                        messageId = addMessageToChat("⚠️ No se recibió respuesta del sistema. Intente reformular su consulta.", false)
                     } else {
                         // Display the response exactly as received (VS Code style)
-                        addMessageToChat(result, false)
+                        messageId = addMessageToChat(result, false)
                     }
+                }
+                
+                // Enviar notificación después de añadir el mensaje para tener el ID
+                if (messageId != null) {
+                    sendNotificationAfterResponse(messageId)
                 }
 
             } catch (e: Exception) {
@@ -1422,7 +1405,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
      * 
      * NUEVO: También envía notificación push si la app está en background
      */
-    private suspend fun sendNotificationAfterResponse(responsePreview: String) = withContext(Dispatchers.IO) {
+    private suspend fun sendNotificationAfterResponse(messageId: String?) = withContext(Dispatchers.IO) {
         try {
             val currentUserId = sessionManager.getUserId()
             if (currentUserId == null || currentUserId <= 0) {
@@ -1446,6 +1429,11 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
             // El backend solo notifica que hay una respuesta disponible
             val payload = JSONObject().apply {
                 put("userId", currentUserId)
+                put("messageId", messageId)
+                put("data", JSONObject().apply {
+                     put("fragment", "database_query")
+                     put("action", "OPEN_CHAT")
+                })
                 // responsePreview se ignora en el backend por seguridad
                 put("responsePreview", "")  // Vacío por seguridad
             }
@@ -1473,7 +1461,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
             response.close()
             
             // 📱 NUEVO: Enviar notificación push si la app está en background
-            sendPushNotification(currentUserId, responsePreview)
+            sendPushNotification(currentUserId, messageId)
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error sending notification: ${e.message}", e)
@@ -1484,7 +1472,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
      * Envía notificación push cuando la app está en background
      * Utiliza Firebase Cloud Messaging via backend
      */
-    private suspend fun sendPushNotification(userId: Long, responsePreview: String) = withContext(Dispatchers.IO) {
+    private suspend fun sendPushNotification(userId: Long, messageId: String?) = withContext(Dispatchers.IO) {
         try {
             // Verificar si la app está en background
             val isInBackground = !isAppInForeground()
@@ -1509,6 +1497,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                     put("type", "chat_response")
                     put("userId", userId)
                     put("action", "OPEN_CHAT")
+                    put("messageId", messageId)
+                    put("fragment", "database_query")
                 })
             }
             
@@ -1652,8 +1642,11 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             // This triggers the backend agent (DeepSeek) if the query is natural language
             var result = mcpHttpClient.executeTool("query_database", args)
             
-            // Auto-retry if not reachable or connection failed
-            if (!result.success && (result.error?.contains("reachable") == true || result.error?.contains("failed") == true)) {
+            // Auto-retry if not reachable, connection failed, or server not available
+            if (!result.success && (result.error?.contains("reachable") == true 
+                    || result.error?.contains("failed") == true
+                    || result.error?.contains("not available") == true
+                    || result.error?.contains("not reachable") == true)) {
                 Log.w(TAG, "⚠️ First attempt failed (${result.error}), re-initializing MCP client and retrying...")
                 // Force re-initialization to find a valid host
                 if (mcpHttpClient.initialize(force = true)) {
@@ -1671,7 +1664,22 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
             }
             
             if (result.success && result.data != null) {
-                val data = result.data
+                var data = result.data
+
+                // FIX: If data is a String that looks like JSON, parse it first
+                // (Server often returns stringified JSON in 'text' field of tool response)
+                if (data is String) {
+                    val trimmed = data.trim()
+                    try {
+                        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                            data = JSONObject(trimmed)
+                        } else if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                            data = JSONArray(trimmed)
+                        }
+                    } catch (e: Exception) {
+                        Log.v(TAG, "Response string is not JSON: ${e.message}")
+                    }
+                }
                 
                 // If data is a JSONObject, check if it has a "data" field (common pattern in this app)
                 if (data is JSONObject) {
@@ -2527,13 +2535,25 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
                     binding.chatHistoryHeader.visibility = View.VISIBLE
                     updateMessageCountDisplay()
                     
-                    // Scroll to bottom
-                    view?.post {
-                        scrollToBottom(smooth = false)
-                    }
-                    
                     // Log restoration for debugging
                     Log.d("DatabaseQueryFragment", "Restored ${messageList.size} messages for user: ${sessionManager.getUsername()}")
+                    
+                    // Scroll to bottom or specific message
+                    view?.post {
+                        val targetId = targetMessageId
+                        if (targetId != null) {
+                            val position = chatAdapter.getPositionOfMessage(targetId)
+                            if (position >= 0) {
+                                binding.chatRecyclerView.scrollToPosition(position)
+                                targetMessageId = null // Consume the target
+                            } else {
+                                scrollToBottom(smooth = false)
+                            }
+                        } else {
+                            scrollToBottom(smooth = false)
+                        }
+                    }
+                    
                     messageList.forEach { message ->
                         Log.d("DatabaseQueryFragment", "Restored message - User: ${message.isUser}, Text: ${message.text.take(50)}...")
                     }

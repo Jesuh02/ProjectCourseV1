@@ -9,182 +9,382 @@ import androidx.lifecycle.viewModelScope
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.service.network.FallbackDnsResolver
+import com.example.tareamov.service.network.NetworkConnectivityChecker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
+/**
+ * ViewModel responsible for loading and managing the video feed.
+ *
+ * Follows SOLID principles:
+ *  - SRP: Only manages video feed state (loading, error, data).
+ *  - OCP: Retry strategy can be extended without modifying load logic.
+ *  - DIP: Depends on BackendApiService abstraction, not concrete HTTP impl.
+ *
+ * Performance optimizations:
+ *  - Parallel racing: fires streaming, standard and public endpoints simultaneously;
+ *    uses the first successful result.
+ *  - Aggressive pre-caching: thumbnails + video bytes are pre-fetched in parallel.
+ *  - Fast retry: reduces backoff times for transient DNS/network errors.
+ */
 class VideoHomeViewModel(application: Application) : AndroidViewModel(application) {
 
-    // Backing property for video list
+    companion object {
+        private const val TAG = "VideoHomeViewModel"
+        private const val MAX_RETRIES = 3
+        private const val INITIAL_DELAY_MS = 1_000L
+        private const val BACKOFF_MULTIPLIER = 1.5
+        private const val DEFAULT_PAGE_SIZE = 10
+
+        /** Maximum time to wait for a single feed attempt before trying fallbacks. */
+        private const val FEED_TIMEOUT_MS = 8_000L
+    }
+
+    // ── Observable state ─────────────────────────────────────────
     private val _videoList = MutableLiveData<List<VideoData>>(emptyList())
     val videoList: LiveData<List<VideoData>> = _videoList
 
-    // State for loading
-    private val _isLoading = MutableLiveData<Boolean>(false)
+    private val _isLoading = MutableLiveData(false)
     val isLoading: LiveData<Boolean> = _isLoading
-    
-    // State for error (no connection or load failure)
-    private val _hasError = MutableLiveData<Boolean>(false)
+
+    private val _hasError = MutableLiveData(false)
     val hasError: LiveData<Boolean> = _hasError
 
-    // State for current video index
-    var currentVideoIndex: Int = 0
+    private val _errorMessage = MutableLiveData<String?>(null)
+    val errorMessage: LiveData<String?> = _errorMessage
 
-    // Store total videos count for pagination
+    var currentVideoIndex: Int = 0
     var totalVideos: Int = 0
         private set
+
+    private var loadJob: Job? = null
 
     init {
         BackendApiService.initialize(application.applicationContext)
     }
 
+    // ── Public API ───────────────────────────────────────────────
+
+    /** Checks device connectivity before attempting any network call. */
+    fun isDeviceOnline(): Boolean =
+        NetworkConnectivityChecker.isNetworkAvailable(getApplication())
+
+    /**
+     * Loads the video feed from the backend with automatic retry on failure.
+     *
+     * @param targetVideoId If > 0, fetches that video first and places it at the top.
+     * @param pageSize Number of videos per page.
+     * @param isRefresh If true, forces a reload even if data exists.
+     */
     fun loadVideos(
         targetVideoId: Long = -1L,
-        pageSize: Int = 10,
+        pageSize: Int = DEFAULT_PAGE_SIZE,
         isRefresh: Boolean = false
     ) {
-        if (_isLoading.value == true && !isRefresh) {
-            return
-        }
+        // Prevent duplicate concurrent loads
+        if (_isLoading.value == true && !isRefresh) return
 
-        // If we already have videos and it's not a refresh or specific target load, skip
-        if (!isRefresh && _videoList.value?.isNotEmpty() == true && targetVideoId == -1L) {
-            return
-        }
+        // Skip if data is already loaded and no refresh is requested
+        if (!isRefresh && _videoList.value?.isNotEmpty() == true && targetVideoId == -1L) return
 
-        _isLoading.value = true
-        _hasError.value = false // Reset error state on new load
-        viewModelScope.launch {
-            try {
-                Log.d("VideoHomeViewModel", "Loading videos from BackendApiService (refresh=$isRefresh, target=$targetVideoId)")
+        // Cancel any in-flight load before starting a new one
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            _isLoading.value = true
+            _hasError.value = false
+            _errorMessage.value = null
 
-                // If a specific video is requested, try to fetch it first
-                var targetVideo: VideoData? = null
-                if (targetVideoId != -1L) {
-                    try {
-                        targetVideo = withContext(Dispatchers.IO) {
-                            val result = BackendApiService.getVideoById(targetVideoId)
-                            result.getOrNull()
-                        }
-                    } catch (e: Exception) {
-                        Log.e("VideoHomeViewModel", "Error fetching target video", e)
-                    }
-                }
-
-                val videos = withContext(Dispatchers.IO) {
-                    val result = BackendApiService.getVideos(page = 1, limit = pageSize)
-                    when (result) {
-                        is ApiResult.Success -> result.data ?: emptyList()
-                        is ApiResult.Error -> {
-                            Log.e("VideoHomeViewModel", "Backend error: ${result.message}")
-                            emptyList()
-                        }
-                    }
-                }
-
-                // Estimate total (backend should return this; for now use list size)
-                totalVideos = if (videos.size < pageSize) videos.size else videos.size + pageSize
-
-                val newList = mutableListOf<VideoData>()
-                // If we have a target video, add it first
-                if (targetVideo != null) {
-                    newList.add(targetVideo)
-                    val others = videos.filter { it.id != targetVideoId }
-                    newList.addAll(others)
-                } else {
-                    newList.addAll(videos)
-                }
-
-                _videoList.value = newList
-                
-                // OPTIMIZATION: Pre-cache thumbnails and video metadata for instant display
-                preCacheVideoAssets(newList)
-                
-                // Set error if no videos loaded
-                if (newList.isEmpty()) {
-                    _hasError.value = true
-                }
-                
-            } catch (e: Exception) {
-                Log.e("VideoHomeViewModel", "Error loading videos", e)
+            // Validar conectividad antes de intentar la red
+            if (!isDeviceOnline()) {
                 _hasError.value = true
-            } finally {
+                _errorMessage.value = NetworkConnectivityChecker.getOfflineMessage()
                 _isLoading.value = false
+                return@launch
             }
+
+            // Limpiar cache DNS al refrescar para forzar re-resolución
+            if (isRefresh) {
+                FallbackDnsResolver.clearCache()
+            }
+
+            val result = fetchVideosWithRetry(targetVideoId, pageSize)
+
+            if (result.isNotEmpty()) {
+                _videoList.value = result
+                totalVideos = if (result.size < pageSize) result.size else result.size + pageSize
+                preCacheVideoAssets(result)
+            } else {
+                _hasError.value = true
+            }
+
+            _isLoading.value = false
         }
     }
 
-    fun loadMoreVideos(pageSize: Int = 10) {
+    /**
+     * Loads the next page of videos and appends them to the existing list.
+     */
+    fun loadMoreVideos(pageSize: Int = DEFAULT_PAGE_SIZE) {
         if (_isLoading.value == true) return
-        
+
         val currentList = _videoList.value ?: emptyList()
         if (currentList.size >= totalVideos) return
 
         _isLoading.value = true
         viewModelScope.launch {
             try {
-                val page = (currentList.size / pageSize) + 1
-                val newVideos = withContext(Dispatchers.IO) {
-                    val result = BackendApiService.getVideos(page = page + 1, limit = pageSize)
-                    when (result) {
-                        is ApiResult.Success -> result.data ?: emptyList()
-                        is ApiResult.Error -> emptyList()
-                    }
-                }
-                
+                val nextPage = (currentList.size / pageSize) + 2
+                val newVideos = fetchPage(nextPage, pageSize)
+
                 if (newVideos.isNotEmpty()) {
-                    val combinedList = currentList.toMutableList()
-                    combinedList.addAll(newVideos)
-                    _videoList.value = combinedList
-                    
-                    // Update total estimate
-                    if (newVideos.size < pageSize) {
-                        totalVideos = combinedList.size
-                    } else {
-                        totalVideos = combinedList.size + pageSize
-                    }
-                    
-                    // Pre-cache the new videos too
+                    val combined = currentList + newVideos
+                    _videoList.value = combined
+                    totalVideos = if (newVideos.size < pageSize) combined.size else combined.size + pageSize
                     preCacheVideoAssets(newVideos)
                 }
             } catch (e: Exception) {
-                Log.e("VideoHomeViewModel", "Error loading more videos", e)
+                Log.e(TAG, "Error loading more videos", e)
             } finally {
                 _isLoading.value = false
             }
         }
     }
-    
+
     /**
-     * Pre-cache thumbnails and video metadata for instant display.
-     * This runs in the background and improves perceived loading speed.
+     * Retries loading after a failure. Can be called from the UI (e.g. tap-to-retry).
      */
+    fun retryLoad() {
+        loadVideos(isRefresh = true)
+    }
+
+    // ── Private helpers ──────────────────────────────────────────
+
+    /**
+     * Fetches videos with exponential backoff retry.
+     * Retries up to [MAX_RETRIES] times with increasing delays.
+     */
+    private suspend fun fetchVideosWithRetry(
+        targetVideoId: Long,
+        pageSize: Int
+    ): List<VideoData> {
+        var lastError: String? = null
+
+        for (attempt in 1..MAX_RETRIES) {
+            try {
+                Log.d(TAG, "Loading videos (attempt $attempt/$MAX_RETRIES, target=$targetVideoId)")
+
+                // Fetch target video if requested (non-blocking on failure)
+                val targetVideo = if (targetVideoId > 0) fetchTargetVideo(targetVideoId) else null
+
+                // Fetch the main video feed using parallel racing
+                val videos = fetchPage(page = 1, pageSize = pageSize)
+
+                // If both failed, retry
+                if (videos.isEmpty() && targetVideo == null) {
+                    lastError = "No videos returned from backend"
+                    if (attempt < MAX_RETRIES) {
+                        val delayMs = calculateBackoff(attempt)
+                        Log.w(TAG, "Attempt $attempt failed, retrying in ${delayMs}ms...")
+                        delay(delayMs)
+                        continue
+                    }
+                    break
+                }
+
+                // Compose final list: target video first, then the rest
+                return buildVideoList(targetVideo, videos, targetVideoId)
+
+            } catch (e: Exception) {
+                lastError = e.message
+                Log.e(TAG, "Attempt $attempt failed: ${e.message}")
+                if (attempt < MAX_RETRIES) {
+                    val delayMs = calculateBackoff(attempt)
+                    Log.w(TAG, "Retrying in ${delayMs}ms...")
+                    delay(delayMs)
+                }
+            }
+        }
+
+        Log.e(TAG, "All $MAX_RETRIES attempts failed. Last error: $lastError")
+        _errorMessage.value = lastError ?: "Error de conexión con el servidor"
+        return emptyList()
+    }
+
+    /**
+     * Fetches a single page of videos from the backend (IO dispatcher).
+     *
+     * Strategy: PARALLEL RACING for maximum speed.
+     * Fires all 3 endpoints simultaneously and uses the first successful result.
+     * This eliminates the serial latency of the old sequential fallback approach.
+     *
+     *  1. Streaming feed (optimized, server-cached signed URLs) → fastest
+     *  2. Standard authenticated feed (signs URLs on-the-fly)
+     *  3. Public feed (no auth required, for pre-login browsing)
+     */
+    private suspend fun fetchPage(page: Int, pageSize: Int): List<VideoData> {
+        return withContext(Dispatchers.IO) {
+            // Launch all endpoints in parallel — use first successful result
+            val streamingDeferred = async {
+                try {
+                    withTimeoutOrNull(FEED_TIMEOUT_MS) {
+                        BackendApiService.getStreamingFeed(page = page, limit = pageSize)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Streaming feed exception: ${e.message}")
+                    null
+                }
+            }
+
+            val standardDeferred = async {
+                try {
+                    withTimeoutOrNull(FEED_TIMEOUT_MS) {
+                        BackendApiService.getVideos(page = page, limit = pageSize)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Standard feed exception: ${e.message}")
+                    null
+                }
+            }
+
+            val publicDeferred = async {
+                try {
+                    withTimeoutOrNull(FEED_TIMEOUT_MS) {
+                        BackendApiService.getPublicStreamingFeed(page = page, limit = pageSize)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Public feed exception: ${e.message}")
+                    null
+                }
+            }
+
+            // Wait for streaming first (fastest expected), then check others
+            val streamResult = streamingDeferred.await()
+            if (streamResult is ApiResult.Success) {
+                val videos = streamResult.data ?: emptyList()
+                if (videos.isNotEmpty()) {
+                    Log.d(TAG, "Streaming feed returned ${videos.size} videos (page $page)")
+                    // Cancel the slower requests
+                    standardDeferred.cancel()
+                    publicDeferred.cancel()
+                    return@withContext videos
+                }
+            }
+
+            // Streaming failed or empty — check standard
+            val standardResult = standardDeferred.await()
+            if (standardResult is ApiResult.Success) {
+                val videos = standardResult.data ?: emptyList()
+                if (videos.isNotEmpty()) {
+                    Log.d(TAG, "Standard feed returned ${videos.size} videos (page $page)")
+                    publicDeferred.cancel()
+                    return@withContext videos
+                }
+            }
+
+            // Standard failed — check public
+            val publicResult = publicDeferred.await()
+            if (publicResult is ApiResult.Success) {
+                val videos = publicResult.data ?: emptyList()
+                Log.d(TAG, "Public feed returned ${videos.size} videos (page $page)")
+                return@withContext videos
+            }
+
+            Log.e(TAG, "All feed endpoints failed for page $page")
+            emptyList()
+        }
+    }
+
+    /**
+     * Fetches a specific video by ID. Returns null on failure (non-fatal).
+     */
+    private suspend fun fetchTargetVideo(videoId: Long): VideoData? {
+        return try {
+            withContext(Dispatchers.IO) {
+                BackendApiService.getVideoById(videoId).getOrNull()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching target video $videoId", e)
+            null
+        }
+    }
+
+    /**
+     * Builds the final video list with the target video at position 0 if present.
+     */
+    private fun buildVideoList(
+        targetVideo: VideoData?,
+        videos: List<VideoData>,
+        targetVideoId: Long
+    ): List<VideoData> {
+        if (targetVideo == null) return videos
+        return listOf(targetVideo) + videos.filter { it.id != targetVideoId }
+    }
+
+    /**
+     * Calculates exponential backoff delay for a given attempt number.
+     */
+    private fun calculateBackoff(attempt: Int): Long {
+        val delay = INITIAL_DELAY_MS * Math.pow(BACKOFF_MULTIPLIER, (attempt - 1).toDouble())
+        return delay.toLong().coerceAtMost(8_000L) // Cap at 8 seconds (was 16s)
+    }
+
+    /**
+     * Pre-caches video thumbnails AND the first 3 MB of each video file
+     * into ExoPlayer's disk cache for instant playback.
+     *
+     * Strategy:
+     *  - Thumbnails: ALL videos, via Glide disk cache (parallel)
+     *  - Video bytes: First 8 videos, 3 MB each → ~24 MB total
+     *  - Both operations run in parallel for maximum speed
+     *
+     * Principio OCP: la estrategia de pre-cache puede extenderse (ej. adaptive
+     * bitrate) sin modificar esta orquestación.
+     */
+    @androidx.media3.common.util.UnstableApi
     private fun preCacheVideoAssets(videos: List<VideoData>) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val context = getApplication<android.app.Application>()
-                
-                // Pre-cache thumbnails using Glide
-                videos.forEach { video ->
-                    video.thumbnailUri?.let { thumbnailUrl ->
-                        if (thumbnailUrl.isNotEmpty()) {
+                val context = getApplication<Application>()
+                com.example.tareamov.util.VideoCacheManager.initialize(context)
+
+                // Parallel: thumbnails + video bytes at the same time
+                val thumbnailJob = launch {
+                    videos.forEach { video ->
+                        video.thumbnailUri?.takeIf { it.isNotEmpty() && it.startsWith("http") }?.let { url ->
                             try {
-                                // Download thumbnail to disk cache
                                 com.bumptech.glide.Glide.with(context)
                                     .downloadOnly()
-                                    .load(thumbnailUrl)
+                                    .load(url)
                                     .submit()
-                                    .get() // Block to ensure it's cached
-                            } catch (e: Exception) {
-                                // Ignore individual thumbnail failures
-                            }
+                                    .get()
+                            } catch (_: Exception) { /* non-fatal */ }
                         }
                     }
                 }
-                
-                Log.d("VideoHomeViewModel", "Pre-cached ${videos.size} video thumbnails")
+
+                val videoCacheJob = launch {
+                    // Pre-cache the first 8 videos (current + 7 next)
+                    val videosToPreCache = videos.take(8)
+                    val httpUrls = videosToPreCache.mapNotNull { video ->
+                        val url = video.videoUriString ?: video.getBestVideoUri()?.toString()
+                        url?.takeIf { it.startsWith("http") }
+                    }
+                    com.example.tareamov.util.VideoCacheManager.preCacheVideos(context, httpUrls)
+                }
+
+                thumbnailJob.join()
+                videoCacheJob.join()
+
+                Log.d(TAG, "Pre-cached ${videos.size} thumbnails + ${videos.take(8).size} video headers")
             } catch (e: Exception) {
-                Log.w("VideoHomeViewModel", "Pre-cache failed", e)
+                Log.w(TAG, "Pre-cache failed", e)
             }
         }
     }

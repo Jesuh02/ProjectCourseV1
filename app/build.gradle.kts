@@ -127,7 +127,7 @@ android {
         // Add Room schema location
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
-            arg("room.incremental", "true")
+            arg("room.incremental", "false")
             arg("room.expandProjection", "true")
         }
     }
@@ -246,6 +246,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-ui:1.2.1")
     implementation("androidx.media3:media3-common:1.2.1")
+    implementation("androidx.media3:media3-datasource:1.2.1") // Cache + HTTP data sources for instant preloading
+    implementation("androidx.media3:media3-exoplayer-hls:1.2.1") // HLS adaptive streaming support
 
     // CircleImageView for circular profile images
     implementation("de.hdodenhof:circleimageview:3.1.0")

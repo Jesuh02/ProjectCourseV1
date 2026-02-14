@@ -475,15 +475,24 @@ class ChatMessageAdapter(
                             hashCount++
                             j++
                         }
-                        // Skip any spaces after #
-                        while (j < text.length && text[j] == ' ') j++
-                        // Find end of line
-                        val lineEnd = text.indexOf('\n', j).let { if (it == -1) text.length else it }
-                        val startPos = result.length
-                        val headerContent = text.substring(j, lineEnd)
-                        result.append(headerContent)
-                        boldRanges.add(Pair(startPos, result.length))
-                        i = lineEnd
+                        
+                        // Check if it's a valid header (must be followed by space)
+                        // If user wrote "#1" or "#Enumeration", treat as normal text
+                        if (j < text.length && text[j] == ' ') {
+                            // Skip any spaces after #
+                            while (j < text.length && text[j] == ' ') j++
+                            // Find end of line
+                            val lineEnd = text.indexOf('\n', j).let { if (it == -1) text.length else it }
+                            val startPos = result.length
+                            val headerContent = text.substring(j, lineEnd)
+                            result.append(headerContent)
+                            boldRanges.add(Pair(startPos, result.length))
+                            i = lineEnd
+                        } else {
+                            // Valid # usage (like numbering), don't strip
+                            result.append(text[i])
+                            i++
+                        }
                     }
                     else -> {
                         result.append(text[i])

@@ -29,10 +29,7 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import kotlinx.coroutines.withContext
-import okio.source
 
 class VideoDetailsFragment : Fragment() {
     private lateinit var videoUri: Uri
@@ -426,19 +423,17 @@ class VideoDetailsFragment : Fragment() {
     }
 
     /**
-     * Proceeds with video save, optionally creating a course
+     * Proceeds with video save, optionally creating a course.
+     * All file uploads are delegated to the backend — the client never touches R2 directly.
      */
     private fun proceedWithVideoSave(title: String, description: String, currentUsername: String, createCourse: Boolean) {
-        // Show professional loading screen
         showProfessionalLoading(
             if (isEditMode) "Actualizando Curso" else if (createCourse) "Creando tu Curso" else "Subiendo Video",
             if (isEditMode) "Guardando cambios..." else "Preparando archivos..."
         )
 
-        // Update the existing video record instead of creating a new one
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                // Get user ID for foreign key
                 val userId = withContext(Dispatchers.IO) {
                     BackendApiService.getUserByUsername(currentUsername).getOrNull()?.id
                 }
@@ -449,503 +444,10 @@ class VideoDetailsFragment : Fragment() {
                     return@launch
                 }
 
-                val activity = activity as? com.example.tareamov.MainActivity
-                if (activity == null) {
-                    hideProfessionalLoading()
-                    if (isAdded) context?.let { Toast.makeText(it, "Error: Contexto inválido", Toast.LENGTH_SHORT).show() }
-                    return@launch
-                }
-                
                 if (isEditMode) {
-                    // === UPDATE LOGIC ===
-                    updateLoadingProgress(10, "Verificando cambios...", false)
-                    
-                    // Only check for duplicates if title changed
-                    if (title != initialTitle) {
-                        val duplicateNew = withContext(Dispatchers.IO) {
-                            val existingCourses = BackendApiService.searchCourses(title).getOrNull() ?: emptyList()
-                            existingCourses.any { it.title.equals(title, ignoreCase = true) }
-                        }
-                        if (duplicateNew) {
-                            hideProfessionalLoading()
-                            if (isAdded) context?.let { Toast.makeText(it, "Ya existe un video/curso con este título. Elige otro título.", Toast.LENGTH_LONG).show() }
-                            return@launch
-                        }
-                    }
-                    
-                    // Upload NEW thumbnail if selected
-                    var thumbnailUrl: String? = null
-                    if (thumbnailUri != null) {
-                        updateLoadingProgress(30, "Subiendo nueva miniatura...", false)
-                        val thumbnailResult = withContext(Dispatchers.IO) {
-                            try {
-                                com.example.tareamov.service.CloudflareR2Service.uploadThumbnail(
-                                    context = requireContext(),
-                                    thumbnailUri = thumbnailUri!!,
-                                    courseId = null
-                                ) { progress ->
-                                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
-                                        updateLoadingProgress(30 + (progress * 0.4).toInt(), "Subiendo miniatura: $progress%", false)
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.e("VideoDetailsFragment", "Error uploading thumbnail", e)
-                                com.example.tareamov.service.CloudflareR2Service.UploadResult.Error("Error: ${e.message}")
-                            }
-                        }
-                        
-                        if (thumbnailResult is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success) {
-                            thumbnailUrl = thumbnailResult.url
-                        }
-                    }
-                    
-                    updateLoadingProgress(80, "Actualizando base de datos...", false)
-                    
-                    // Update VideoData and Course in Supabase
-                    // We need to fetch the current video data to get the courseId if we don't have it
-                    // But we have videoId.
-                    
-                    val success = withContext(Dispatchers.IO) {
-                        // Fetch current video to get courseId
-                        val currentVideo = BackendApiService.getVideoById(videoId).getOrNull()
-                        if (currentVideo != null) {
-                            // Update Video
-                            val videoUpdates = mapOf<String, Any?>(
-                                "title" to title,
-                                "description" to description,
-                                "is_paid" to isPaidCourse,
-                                "price" to if (isPaidCourse) 9.99 else null,
-                                "thumbnail_uri" to (thumbnailUrl ?: currentVideo.thumbnailUri)
-                            )
-                            val videoUpdateSuccess = BackendApiService.updateVideo(videoId, videoUpdates).getOrNull() != null
-                            
-                            // Update Course
-                            val courseId = currentVideo.courseId
-                            if (courseId != null && courseId > 0) {
-                                val currentCourse = BackendApiService.getCourseById(courseId).getOrNull()
-                                if (currentCourse != null) {
-                                    val courseUpdates = mapOf<String, Any?>(
-                                        "title" to title,
-                                        "description" to description,
-                                        "is_premium" to isPaidCourse,
-                                        "price" to if (isPaidCourse) 9.99 else 0.0,
-                                        "thumbnail_uri" to (thumbnailUrl ?: currentCourse.thumbnailUri)
-                                    )
-                                    BackendApiService.updateCourse(courseId, courseUpdates)
-                                }
-                            }
-                            videoUpdateSuccess
-                        } else {
-                            false
-                        }
-                    }
-                    
-                    if (success) {
-                        updateLoadingProgress(100, "¡Actualizado exitosamente! ✓", false)
-                        
-                        kotlinx.coroutines.delay(800)
-                        hideProfessionalLoading()
-                        
-                        if (isAdded) {
-                            val navController = findNavController()
-                            
-                            // Send result via NavBackStackEntry for more reliable delivery
-                            try {
-                                val backStackEntry = navController.previousBackStackEntry
-                                if (backStackEntry != null) {
-                                    backStackEntry.savedStateHandle["videoUpdated"] = true
-                                    backStackEntry.savedStateHandle["updatedVideoId"] = videoId
-                                    backStackEntry.savedStateHandle["updatedTitle"] = title
-                                    backStackEntry.savedStateHandle["updatedDescription"] = description
-                                    backStackEntry.savedStateHandle["updatedIsPaid"] = isPaidCourse
-                                    backStackEntry.savedStateHandle["updatedThumbnailUri"] = thumbnailUrl
-                                    Log.d("VideoDetailsFragment", "SavedStateHandle updated for video ID: $videoId, title: $title")
-                                } else {
-                                    Log.w("VideoDetailsFragment", "No previousBackStackEntry found")
-                                }
-                            } catch (e: Exception) {
-                                Log.e("VideoDetailsFragment", "Error setting savedStateHandle", e)
-                            }
-                            
-                            // Also send via FragmentManager as backup
-                            try {
-                                val resultBundle = Bundle().apply {
-                                    putLong("updatedVideoId", videoId)
-                                    putString("updatedTitle", title)
-                                    putString("updatedDescription", description)
-                                    putBoolean("updatedIsPaid", isPaidCourse)
-                                    putString("updatedThumbnailUri", thumbnailUrl)
-                                }
-                                requireActivity().supportFragmentManager.setFragmentResult("videoUpdated", resultBundle)
-                                Log.d("VideoDetailsFragment", "Fragment result sent via FragmentManager for videoId: $videoId")
-                            } catch (e: Exception) {
-                                Log.e("VideoDetailsFragment", "Error sending fragment result", e)
-                            }
-                            
-                            Toast.makeText(context, "Video actualizado correctamente", Toast.LENGTH_SHORT).show()
-                            navController.navigateUp()
-                        }
-                    } else {
-                        hideProfessionalLoading()
-                        if (isAdded) Toast.makeText(context, "Error al actualizar el video", Toast.LENGTH_SHORT).show()
-                    }
-                    
+                    handleEditMode(title, description, userId)
                 } else {
-                    // === CREATE LOGIC (Existing) ===
-                    
-                    // Verificar título único
-                    updateLoadingProgress(5, "Verificando título...", false)
-                    val duplicateNew = withContext(Dispatchers.IO) {
-                        val existingCourses = BackendApiService.searchCourses(title).getOrNull() ?: emptyList()
-                        existingCourses.any { it.title.equals(title, ignoreCase = true) }
-                    }
-
-                    if (duplicateNew) {
-                        hideProfessionalLoading()
-                        if (isAdded) context?.let { Toast.makeText(it, "Ya existe un video/curso con este título. Elige otro título.", Toast.LENGTH_LONG).show() }
-                        return@launch
-                    }
-
-                    // 🎬 GENERAR MINIATURA AUTOMÁTICAMENTE si no se seleccionó una
-                    if (thumbnailUri == null) {
-                        updateLoadingProgress(8, "Generando miniatura del video...", false)
-                        Log.d("VideoDetailsFragment", "🎨 No se seleccionó miniatura, generando automáticamente...")
-                        
-                        thumbnailUri = withContext(Dispatchers.IO) {
-                            try {
-                                thumbnailExtractor.extractThumbnailFromVideo(videoUri)
-                            } catch (e: Exception) {
-                                Log.e("VideoDetailsFragment", "Error extrayendo miniatura automática", e)
-                                null
-                            }
-                        }
-                        
-                        if (thumbnailUri != null) {
-                            Log.d("VideoDetailsFragment", "✅ Miniatura generada automáticamente: $thumbnailUri")
-                            
-                            // Mostrar la miniatura generada en la vista previa
-                            withContext(Dispatchers.Main) {
-                                try {
-                                    val thumbnailPreview = view?.findViewById<android.widget.ImageView>(R.id.thumbnailPreview)
-                                    val thumbnailPlaceholder = view?.findViewById<android.view.ViewGroup>(R.id.thumbnailPlaceholder)
-                                    val thumbnailSelectedText = view?.findViewById<android.widget.TextView>(R.id.thumbnailSelectedText)
-                                    
-                                    if (thumbnailPreview != null) {
-                                        com.bumptech.glide.Glide.with(requireContext())
-                                            .load(thumbnailUri)
-                                            .override(1280, 720)
-                                            .centerCrop()
-                                            .into(thumbnailPreview)
-                                        
-                                        thumbnailPreview.visibility = View.VISIBLE
-                                        thumbnailPlaceholder?.visibility = View.GONE
-                                        thumbnailSelectedText?.visibility = View.VISIBLE
-                                        thumbnailSelectedText?.text = "✓ Miniatura generada automáticamente"
-                                    }
-                                    
-                                    Toast.makeText(
-                                        requireContext(),
-                                        "📸 Miniatura generada desde el video",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                } catch (e: Exception) {
-                                    Log.e("VideoDetailsFragment", "Error mostrando miniatura generada", e)
-                                }
-                            }
-                        } else {
-                            Log.w("VideoDetailsFragment", "⚠️ No se pudo generar miniatura automática")
-                        }
-                    }
-
-                    // Upload video to Cloudflare R2 if configured
-                    var finalVideoUri = videoUri.toString()
-                    var uploadedViaBackend = false
-                    
-                    // Try Backend Presigned URL First
-                    val videoCleanName = title.replace(Regex("[^a-zA-Z0-9]"), "_") + ".mp4"
-                    val videoUploadData = getUploadUrlFromBackend(videoCleanName, "video/mp4")
-                    if (videoUploadData != null) {
-                         updateLoadingProgress(15, "Subiendo video (nube)...", true)
-                         val uploadUrl = videoUploadData.getString("uploadUrl")
-                         val publicUrl = videoUploadData.getString("publicUrl")
-                         val success = uploadToPresignedUrl(uploadUrl, videoUri, "video/mp4") { progress ->
-                             val mappedProgress = 15 + (progress * 0.55).toInt()
-                             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
-                                 updateLoadingProgress(mappedProgress, "Subiendo video: $progress%", true)
-                             }
-                         }
-                         if (success) {
-                             finalVideoUri = publicUrl
-                             uploadedViaBackend = true
-                             Log.d("VideoDetailsFragment", "✅ Video uploaded to Backend Storage: $finalVideoUri")
-                         }
-                    }
-                    
-                    Log.d("VideoDetailsFragment", "🔍 Verificando configuración R2: isConfigured=${com.example.tareamov.service.CloudflareR2Service.isConfigured()}")
-                    
-                    if (!uploadedViaBackend && com.example.tareamov.service.CloudflareR2Service.isConfigured()) {
-                        updateLoadingProgress(10, "Verificando conexión con la nube...", false)
-                        
-                        // Primero probar la conexión
-                        val connectionOk = withContext(Dispatchers.IO) {
-                            com.example.tareamov.service.CloudflareR2Service.testConnection()
-                        }
-                        
-                        if (!connectionOk) {
-                            Log.e("VideoDetailsFragment", "❌ No se pudo conectar a R2")
-                            withContext(Dispatchers.Main) {
-                                android.widget.Toast.makeText(
-                                    requireContext(),
-                                    "No se pudo conectar a Cloudflare R2. Usando almacenamiento local.",
-                                    android.widget.Toast.LENGTH_LONG
-                                ).show()
-                            }
-                        } else {
-                            updateLoadingProgress(15, "Conectado a la nube, iniciando subida...", false)
-                            
-                            Log.d("VideoDetailsFragment", "📤 Iniciando subida a R2...")
-                            Log.d("VideoDetailsFragment", "   Video URI: $videoUri")
-                            Log.d("VideoDetailsFragment", "   Custom filename: ${title.replace(Regex("[^a-zA-Z0-9]"), "_")}")
-                            
-                            val uploadResult = withContext(Dispatchers.IO) {
-                                try {
-                                    com.example.tareamov.service.CloudflareR2Service.uploadVideo(
-                                        context = requireContext(),
-                                        videoUri = videoUri,
-                                        customFileName = title.replace(Regex("[^a-zA-Z0-9]"), "_")
-                                    ) { progress ->
-                                        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
-                                            // Mapear progreso de 20% a 70% (reservar 70-100% para guardado)
-                                            val mappedProgress = 20 + (progress * 0.5).toInt()
-                                            updateLoadingProgress(mappedProgress, "Subiendo video: $progress%", true)
-                                            Log.d("VideoDetailsFragment", "📊 Upload progress: $progress%")
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    Log.e("VideoDetailsFragment", "❌ Exception en uploadVideo", e)
-                                    com.example.tareamov.service.CloudflareR2Service.UploadResult.Error("Exception: ${e.message}")
-                                }
-                            }
-                            
-                            when (uploadResult) {
-                                is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
-                                    // SECURITY FIX: Ahora guardamos solo el Object Key (ruta relativa), no la URL completa
-                                    finalVideoUri = uploadResult.objectKey
-                                    Log.d("VideoDetailsFragment", "✅ Video uploaded to R2. Storing Object Key: $finalVideoUri")
-                                    Log.d("VideoDetailsFragment", "   Full URL (temporary): ${uploadResult.url}")
-                                    updateLoadingProgress(70, "Video subido exitosamente ✓", false)
-                                    withContext(Dispatchers.Main) {
-                                        android.widget.Toast.makeText(
-                                            requireContext(),
-                                            "✅ Video subido a la nube (Privado)",
-                                            android.widget.Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                }
-                                is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
-                                    Log.e("VideoDetailsFragment", "❌ R2 upload failed: ${uploadResult.message}")
-                                    Log.w("VideoDetailsFragment", "⚠️ Usando URI local como fallback")
-                                    updateLoadingProgress(70, "Usando almacenamiento local...", false)
-                                    withContext(Dispatchers.Main) {
-                                        android.widget.Toast.makeText(
-                                            requireContext(),
-                                            "Error subiendo a nube: ${uploadResult.message}. Usando almacenamiento local.",
-                                            android.widget.Toast.LENGTH_LONG
-                                        ).show()
-                                    }
-                                }
-                            }
-                        }
-                    } else if (!uploadedViaBackend) {
-                        Log.w("VideoDetailsFragment", "⚠️ R2 no está configurado y backend upload falló")
-                    }
-
-                    // GUARD: If video was not uploaded to cloud, block save
-                    if (!finalVideoUri.startsWith("http://") && !finalVideoUri.startsWith("https://")) {
-                        Log.e("VideoDetailsFragment", "❌ Video no fue subido a la nube. URI local: $finalVideoUri")
-                        hideProfessionalLoading()
-                        withContext(Dispatchers.Main) {
-                            if (isAdded) {
-                                Toast.makeText(
-                                    requireContext(),
-                                    "Error: No se pudo subir el video a la nube. Otros usuarios no podrán verlo. Intenta de nuevo.",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
-                        }
-                        return@launch
-                    }
-
-                    // Upload thumbnail to Cloudflare R2 if selected
-                    var thumbnailUrl: String? = null
-                    var thumbUploadedViaBackend = false
-                    
-                    if (thumbnailUri != null) {
-                        val thumbName = "thumb_${System.currentTimeMillis()}.jpg"
-                        val thumbUploadData = getUploadUrlFromBackend(thumbName, "image/jpeg")
-                        if (thumbUploadData != null) {
-                            updateLoadingProgress(75, "Subiendo miniatura (nube)...", false)
-                            val uploadUrl = thumbUploadData.getString("uploadUrl")
-                            val publicUrl = thumbUploadData.getString("publicUrl")
-                            val success = uploadToPresignedUrl(uploadUrl, thumbnailUri!!, "image/jpeg") {  }
-                            if (success) {
-                                thumbnailUrl = publicUrl
-                                thumbUploadedViaBackend = true
-                                Log.d("VideoDetailsFragment", "✅ Thumbnail uploaded to Backend Storage: $thumbnailUrl")
-                            }
-                        }
-                    }
-
-                    if (thumbnailUri != null && !thumbUploadedViaBackend) {
-                        updateLoadingProgress(75, "Subiendo miniatura...", false)
-                        
-                        val thumbnailResult = withContext(Dispatchers.IO) {
-                            try {
-                                com.example.tareamov.service.CloudflareR2Service.uploadThumbnail(
-                                    context = requireContext(),
-                                    thumbnailUri = thumbnailUri!!,
-                                    courseId = null // Will be set after course creation
-                                ) { progress ->
-                                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
-                                        val mappedProgress = 75 + (progress * 0.1).toInt()
-                                        updateLoadingProgress(mappedProgress, "Subiendo miniatura: $progress%", false)
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.e("VideoDetailsFragment", "Error uploading thumbnail", e)
-                                com.example.tareamov.service.CloudflareR2Service.UploadResult.Error("Error: ${e.message}")
-                            }
-                        }
-                        
-                        when (thumbnailResult) {
-                            is com.example.tareamov.service.CloudflareR2Service.UploadResult.Success -> {
-                                thumbnailUrl = thumbnailResult.url
-                                Log.d("VideoDetailsFragment", "✅ Thumbnail uploaded: $thumbnailUrl")
-                                updateLoadingProgress(85, "Miniatura subida ✓", false)
-                                withContext(Dispatchers.Main) {
-                                    android.widget.Toast.makeText(
-                                        requireContext(),
-                                        "✅ Miniatura subida exitosamente",
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            }
-                            is com.example.tareamov.service.CloudflareR2Service.UploadResult.Error -> {
-                                Log.e("VideoDetailsFragment", "❌ Thumbnail upload failed: ${thumbnailResult.message}")
-                                updateLoadingProgress(85, "Error en miniatura, continuando...", false)
-                                withContext(Dispatchers.Main) {
-                                    android.widget.Toast.makeText(
-                                        requireContext(),
-                                        "⚠️ Error subiendo miniatura: ${thumbnailResult.message}",
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Get next available video ID for reference/logging
-                    updateLoadingProgress(87, "Generando identificadores...", false)
-                    val nextVideoId = 0L // Backend auto-assigns the real ID on creation
-                    
-                    Log.d("VideoDetailsFragment", "Creating new video with calculated ID: $nextVideoId")
-
-                    // Variable to hold course ID (null if not creating a course)
-                    var courseRemoteId: Long? = null
-
-                    // Only create course if user chose to
-                    if (createCourse) {
-                        updateLoadingProgress(90, "Creando curso...", false)
-                        val payload = mapOf(
-                            "title" to title,
-                            "description" to description,
-                            "creatorUsername" to currentUsername,
-                            "thumbnailUri" to thumbnailUrl,
-                            "isFree" to !isPaidCourse,
-                            "price" to if (isPaidCourse) 9.99 else 0.0
-                        )
-                        
-                        Log.d("VideoDetailsFragment", "Creating course via Map with creator: $currentUsername, title: $title")
-                        
-                        courseRemoteId = withContext(Dispatchers.IO) {
-                            BackendApiService.createCourse(payload).getOrNull()?.id
-                        }
-                        
-                        if (courseRemoteId == null || courseRemoteId <= 0) {
-                            hideProfessionalLoading()
-                            if (isAdded) context?.let { Toast.makeText(it, "Error creando el curso asociado", Toast.LENGTH_SHORT).show() }
-                            Log.e("VideoDetailsFragment", "Failed to create course - courseRemoteId: $courseRemoteId")
-                            return@launch
-                        }
-                        
-                        Log.d("VideoDetailsFragment", "Course created with ID: $courseRemoteId")
-                    } else {
-                        Log.d("VideoDetailsFragment", "User chose not to create a course - video will be standalone")
-                        updateLoadingProgress(90, "Preparando video...", false)
-                    }
-
-                    // Now create video with the specific ID and optional courseId reference
-                    updateLoadingProgress(95, "Guardando video en servidor...", false)
-                    val videoData = VideoData(
-                        id = nextVideoId,
-                        username = currentUsername, // Keep username for standalone videos
-                        description = description,
-                        title = title,
-                        videoUriString = finalVideoUri, // Use R2 URL or local URI
-                        isPaid = isPaidCourse,
-                        price = if (isPaidCourse) 9.99 else null,
-                        courseId = courseRemoteId, // null if no course created, otherwise link to the course
-                        remoteId = userId, // Store creator ID in remote_id as requested
-                        timestamp = System.currentTimeMillis(),
-                        thumbnailUri = thumbnailUrl // Include thumbnail URL
-                    )
-                    
-                    Log.d("VideoDetailsFragment", "Attempting to insert video via backend with courseId: ${courseRemoteId ?: "null (standalone video)"}")
-                    
-                    // Use backend endpoint to insert video (better reliability and centralized logic)
-                    var remoteId = withContext(Dispatchers.IO) {
-                        insertVideoViaBackend(videoData)
-                    }
-                    
-                    // FALLBACK: If insertVideoViaBackend fails, try via BackendApiService
-                    if (remoteId == null || remoteId <= 0) {
-                        Log.w("VideoDetailsFragment", "⚠️ Backend insert failed, retrying via BackendApiService...")
-                        updateLoadingProgress(97, "Reintentando creación de video...", false)
-                        remoteId = withContext(Dispatchers.IO) {
-                            BackendApiService.createVideo(videoData).getOrNull()?.id
-                        }
-                    }
-                    
-                    if (remoteId != null && remoteId > 0) {
-                        updateLoadingProgress(100, "¡Completado exitosamente! ✓", false)
-                        
-                        // Esperar un momento para que el usuario vea el 100%
-                        kotlinx.coroutines.delay(800)
-                        
-                        hideProfessionalLoading()
-                        
-                        if (isAdded) {
-                            val successMessage = if (createCourse) {
-                                "✅ Video guardado con ID $remoteId, Curso ID $courseRemoteId"
-                            } else {
-                                "✅ Video guardado con ID $remoteId (sin curso)"
-                            }
-                            context?.let { Toast.makeText(it, successMessage, Toast.LENGTH_LONG).show() }
-                            Log.d("VideoDetailsFragment", "Video saved successfully with ID: $remoteId, courseId: ${courseRemoteId ?: "none"}")
-                            
-                            // Navigate to VideoHomeFragment after creating video
-                            try {
-                                findNavController().navigate(R.id.action_videoDetailsFragment_to_videoHomeFragment)
-                            } catch (navException: Exception) {
-                                Log.e("VideoDetailsFragment", "Navigation failed: ${navException.message}")
-                            }
-                        }
-                    } else {
-                        hideProfessionalLoading()
-                        if (isAdded) context?.let { Toast.makeText(it, "Error guardando video en Supabase", Toast.LENGTH_SHORT).show() }
-                        Log.e("VideoDetailsFragment", "Failed to insert video - remoteId: $remoteId")
-                        return@launch
-                    }
+                    handleCreateMode(title, description, currentUsername, createCourse, userId)
                 }
             } catch (e: Exception) {
                 Log.e("VideoDetailsFragment", "Error saving video details", e)
@@ -954,182 +456,242 @@ class VideoDetailsFragment : Fragment() {
             }
         }
     }
-    
+
     /**
-     * Insert video via backend API endpoint (centralized database operations)
-     * This is more reliable than direct Supabase calls from mobile
+     * Handles video update (edit mode). Only metadata + optional new thumbnail via backend.
      */
-    private suspend fun insertVideoViaBackend(videoData: VideoData): Long? = withContext(Dispatchers.IO) {
-        try {
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-            
-            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.getMcpBaseUrl()
-            val url = "$baseUrl/video/insert"
-            
-            // Build JSON payload
-            val jsonPayload = org.json.JSONObject().apply {
-                put("title", videoData.title)
-                put("description", videoData.description)
-                put("videoUriString", videoData.videoUriString)
-                put("localFilePath", videoData.localFilePath)
-                put("timestamp", videoData.timestamp)
-                put("isPaid", videoData.isPaid)
-                put("thumbnailUri", videoData.thumbnailUri)
-                put("price", videoData.price)
-                put("remoteId", videoData.remoteId)
-                if (videoData.courseId != null) {
-                    put("courseId", videoData.courseId)
+    private suspend fun handleEditMode(title: String, description: String, userId: Long) {
+        updateLoadingProgress(10, "Verificando cambios...", false)
+
+        if (title != initialTitle) {
+            val duplicateNew = withContext(Dispatchers.IO) {
+                val existing = BackendApiService.searchCourses(title).getOrNull() ?: emptyList()
+                existing.any { it.title.equals(title, ignoreCase = true) }
+            }
+            if (duplicateNew) {
+                hideProfessionalLoading()
+                if (isAdded) context?.let { Toast.makeText(it, "Ya existe un video/curso con este título. Elige otro título.", Toast.LENGTH_LONG).show() }
+                return
+            }
+        }
+
+        // Upload new thumbnail via backend if selected
+        var thumbnailUrl: String? = null
+        if (thumbnailUri != null) {
+            updateLoadingProgress(30, "Subiendo nueva miniatura...", false)
+            thumbnailUrl = withContext(Dispatchers.IO) {
+                uploadThumbnailViaBackend(thumbnailUri!!)
+            }
+        }
+
+        updateLoadingProgress(80, "Actualizando base de datos...", false)
+
+        val success = withContext(Dispatchers.IO) {
+            val currentVideo = BackendApiService.getVideoById(videoId).getOrNull() ?: return@withContext false
+            val videoUpdates = mapOf<String, Any?>(
+                "title" to title,
+                "description" to description,
+                "is_paid" to isPaidCourse,
+                "price" to if (isPaidCourse) 9.99 else null,
+                "thumbnail_uri" to (thumbnailUrl ?: currentVideo.thumbnailUri)
+            )
+            val videoOk = BackendApiService.updateVideo(videoId, videoUpdates).getOrNull() != null
+
+            val courseId = currentVideo.courseId
+            if (courseId != null && courseId > 0) {
+                val currentCourse = BackendApiService.getCourseById(courseId).getOrNull()
+                if (currentCourse != null) {
+                    BackendApiService.updateCourse(courseId, mapOf(
+                        "title" to title,
+                        "description" to description,
+                        "is_premium" to isPaidCourse,
+                        "price" to if (isPaidCourse) 9.99 else 0.0,
+                        "thumbnail_uri" to (thumbnailUrl ?: currentCourse.thumbnailUri)
+                    ))
                 }
             }
-            
-            Log.d("VideoDetailsFragment", "📤 Sending video insert to backend: $url")
-            Log.d("VideoDetailsFragment", "   Payload: $jsonPayload")
-            
-            val mediaType = "application/json; charset=utf-8".toMediaType()
-            val requestBody = jsonPayload.toString().toRequestBody(mediaType)
-            
-            val request = okhttp3.Request.Builder()
-                .url(url)
-                .post(requestBody)
-                .addHeader("Content-Type", "application/json")
-                .build()
-            
-            client.newCall(request).execute().use { response ->
-                val responseBody = response.body?.string()
-                Log.d("VideoDetailsFragment", "📥 Backend response: code=${response.code}, body=$responseBody")
-                
-                if (response.isSuccessful && responseBody != null) {
-                    val json = org.json.JSONObject(responseBody)
-                    if (json.optBoolean("success", false)) {
-                        val videoId = json.optLong("videoId", -1L)
-                        if (videoId > 0) {
-                            Log.d("VideoDetailsFragment", "✅ Video inserted via backend: ID=$videoId")
-                            return@withContext videoId
+            videoOk
+        }
+
+        if (success) {
+            updateLoadingProgress(100, "¡Actualizado exitosamente! ✓", false)
+            kotlinx.coroutines.delay(800)
+            hideProfessionalLoading()
+            if (isAdded) {
+                notifyVideoUpdated(title, description)
+                Toast.makeText(context, "Video actualizado correctamente", Toast.LENGTH_SHORT).show()
+                findNavController().navigateUp()
+            }
+        } else {
+            hideProfessionalLoading()
+            if (isAdded) Toast.makeText(context, "Error al actualizar el video", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Handles new video creation. Uploads video + thumbnail to the backend in one request.
+     */
+    private suspend fun handleCreateMode(
+        title: String,
+        description: String,
+        currentUsername: String,
+        createCourse: Boolean,
+        userId: Long
+    ) {
+        // Check for duplicate title
+        updateLoadingProgress(5, "Verificando título...", false)
+        val duplicate = withContext(Dispatchers.IO) {
+            val existing = BackendApiService.searchCourses(title).getOrNull() ?: emptyList()
+            existing.any { it.title.equals(title, ignoreCase = true) }
+        }
+        if (duplicate) {
+            hideProfessionalLoading()
+            if (isAdded) context?.let { Toast.makeText(it, "Ya existe un video/curso con este título. Elige otro título.", Toast.LENGTH_LONG).show() }
+            return
+        }
+
+        // Auto-generate thumbnail if not selected
+        if (thumbnailUri == null) {
+            updateLoadingProgress(8, "Generando miniatura del video...", false)
+            thumbnailUri = withContext(Dispatchers.IO) {
+                try { thumbnailExtractor.extractThumbnailFromVideo(videoUri) } catch (_: Exception) { null }
+            }
+            if (thumbnailUri != null) {
+                withContext(Dispatchers.Main) {
+                    try {
+                        val thumbnailPreview = view?.findViewById<android.widget.ImageView>(R.id.thumbnailPreview)
+                        val thumbnailPlaceholder = view?.findViewById<android.view.ViewGroup>(R.id.thumbnailPlaceholder)
+                        val thumbnailSelectedText = view?.findViewById<android.widget.TextView>(R.id.thumbnailSelectedText)
+                        if (thumbnailPreview != null) {
+                            com.bumptech.glide.Glide.with(requireContext()).load(thumbnailUri).override(1280, 720).centerCrop().into(thumbnailPreview)
+                            thumbnailPreview.visibility = View.VISIBLE
+                            thumbnailPlaceholder?.visibility = View.GONE
+                            thumbnailSelectedText?.visibility = View.VISIBLE
+                            thumbnailSelectedText?.text = "✓ Miniatura generada automáticamente"
                         }
-                    }
-                    Log.e("VideoDetailsFragment", "❌ Backend returned success=false or missing videoId")
-                } else {
-                    Log.e("VideoDetailsFragment", "❌ Backend request failed: ${response.code} - $responseBody")
+                    } catch (_: Exception) {}
                 }
             }
-        } catch (e: Exception) {
-            Log.e("VideoDetailsFragment", "❌ Error inserting video via backend", e)
         }
-        
-        // Backend failed - log error and return null (caller will handle fallback)
-        Log.w("VideoDetailsFragment", "⚠️ Backend video insert failed - returning null to trigger fallback")
-        return@withContext null
-    }
-    
-    // OkHttp extension helpers using modern API
-    private fun String.toMediaType(): okhttp3.MediaType = 
-        this.toMediaTypeOrNull() ?: throw IllegalArgumentException("Invalid media type")
-    private fun String.toRequestBody(mediaType: okhttp3.MediaType): okhttp3.RequestBody = 
-        okhttp3.RequestBody.Companion.create(mediaType, this)
 
-    /**
-     * Obtains a presigned upload URL from the backend
-     */
-    private suspend fun getUploadUrlFromBackend(filename: String, contentType: String): org.json.JSONObject? = withContext(Dispatchers.IO) {
-        try {
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-            
-            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.getMcpBaseUrl()
-            val url = "$baseUrl/video/upload-url"
-            
-            Log.d("VideoDetailsFragment", "🔗 Requesting presigned upload URL: $url")
-            Log.d("VideoDetailsFragment", "   filename=$filename, contentType=$contentType")
-            
-            val jsonBody = org.json.JSONObject().apply {
-                put("filename", filename)
-                put("contentType", contentType)
+        // Optionally create course first
+        var courseRemoteId: Long? = null
+        if (createCourse) {
+            updateLoadingProgress(10, "Creando curso...", false)
+            courseRemoteId = withContext(Dispatchers.IO) {
+                BackendApiService.createCourse(mapOf(
+                    "title" to title,
+                    "description" to description,
+                    "creatorUsername" to currentUsername,
+                    "isFree" to !isPaidCourse,
+                    "price" to if (isPaidCourse) 9.99 else 0.0
+                )).getOrNull()?.id
             }
-            
-            val mediaType = "application/json; charset=utf-8".toMediaType()
-            val requestBody = jsonBody.toString().toRequestBody(mediaType)
-            
-            val request = okhttp3.Request.Builder()
-                .url(url)
-                .post(requestBody)
-                .addHeader("Content-Type", "application/json")
-                .build()
-            
-            client.newCall(request).execute().use { response ->
-                val respBody = response.body?.string()
-                Log.d("VideoDetailsFragment", "🔗 Upload URL response: code=${response.code}, body=${respBody?.take(200)}")
-                if (response.isSuccessful && respBody != null) {
-                    val json = org.json.JSONObject(respBody)
-                    if (json.optBoolean("success")) {
-                        val data = json.optJSONObject("data")
-                        Log.d("VideoDetailsFragment", "✅ Got presigned upload URL: ${data?.optString("publicUrl")?.take(80)}")
-                        return@withContext data
-                    } else {
-                        Log.e("VideoDetailsFragment", "❌ Upload URL request failed: ${json.optString("error")}")
+            if (courseRemoteId == null || courseRemoteId <= 0) {
+                hideProfessionalLoading()
+                if (isAdded) context?.let { Toast.makeText(it, "Error creando el curso asociado", Toast.LENGTH_SHORT).show() }
+                return
+            }
+        }
+
+        // Upload video + thumbnail to backend in one multipart request
+        updateLoadingProgress(15, "Subiendo video al servidor...", true)
+
+        val uploadResult = withContext(Dispatchers.IO) {
+            BackendApiService.uploadVideoWithFiles(
+                context = requireContext(),
+                videoUri = videoUri,
+                thumbnailUri = thumbnailUri,
+                title = title,
+                description = description,
+                isPaid = isPaidCourse,
+                price = if (isPaidCourse) 9.99 else null,
+                courseId = courseRemoteId,
+                onProgress = { progress ->
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+                        val mapped = 15 + (progress * 0.8).toInt()
+                        updateLoadingProgress(mapped, "Subiendo video: $progress%", true)
                     }
-                } else {
-                    Log.e("VideoDetailsFragment", "❌ Upload URL HTTP error: ${response.code} - ${respBody?.take(200)}")
+                }
+            )
+        }
+
+        when (uploadResult) {
+            is ApiResult.Success -> {
+                val createdVideo = uploadResult.data
+                updateLoadingProgress(100, "¡Completado exitosamente! ✓", false)
+                kotlinx.coroutines.delay(800)
+                hideProfessionalLoading()
+
+                if (isAdded) {
+                    val msg = if (createCourse) "✅ Video guardado con ID ${createdVideo.id}, Curso ID $courseRemoteId"
+                              else "✅ Video guardado con ID ${createdVideo.id} (sin curso)"
+                    context?.let { Toast.makeText(it, msg, Toast.LENGTH_LONG).show() }
+                    try { findNavController().navigate(R.id.action_videoDetailsFragment_to_videoHomeFragment) }
+                    catch (e: Exception) { Log.e("VideoDetailsFragment", "Navigation failed: ${e.message}") }
                 }
             }
-        } catch (e: Exception) {
-            Log.e("VideoDetailsFragment", "❌ Error getting upload URL", e)
+            is ApiResult.Error -> {
+                hideProfessionalLoading()
+                if (isAdded) context?.let {
+                    Toast.makeText(it, "Error subiendo video: ${uploadResult.message}", Toast.LENGTH_LONG).show()
+                }
+            }
         }
-        return@withContext null
     }
 
     /**
-     * Uploads file to presigned URL
+     * Upload a thumbnail image via the backend storage API.
+     * Returns the public URL on success, null on failure.
      */
-    private suspend fun uploadToPresignedUrl(uploadUrl: String, uri: Uri, contentType: String, progressCallback: (Int) -> Unit): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun uploadThumbnailViaBackend(uri: android.net.Uri): String? = withContext(Dispatchers.IO) {
         try {
             val resolver = requireContext().contentResolver
-            val fileSize = resolver.openFileDescriptor(uri, "r")?.statSize ?: 0L
-            
-            val inputStream = resolver.openInputStream(uri) ?: return@withContext false
-            
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-            
-            // Create a RequestBody that supports progress tracking
-            val requestBody = object : okhttp3.RequestBody() {
-                override fun contentType() = contentType.toMediaType()
-                override fun contentLength() = fileSize
-                override fun writeTo(sink: okio.BufferedSink) {
-                    val source = inputStream.source()
-                    var totalBytes = 0L
-                    val buffer = okio.Buffer()
-                    var readCount: Long = 0L
-                    
-                    while (source.read(buffer, 8192L).also { readCount = it } != -1L) {
-                        sink.write(buffer, readCount)
-                        totalBytes += readCount
-                        if (fileSize > 0) {
-                            val progress = ((totalBytes * 100) / fileSize).toInt()
-                            progressCallback(progress)
-                        }
-                    }
-                }
-            }
-            
-            val request = okhttp3.Request.Builder()
-                .url(uploadUrl)
-                .put(requestBody)
-                .build()
-                
-            client.newCall(request).execute().use { response ->
-                return@withContext response.isSuccessful
+            val mime = resolver.getType(uri) ?: "image/jpeg"
+            val stream = resolver.openInputStream(uri) ?: return@withContext null
+            val bytes = stream.readBytes()
+            stream.close()
+
+            val result = BackendApiService.uploadFile(
+                fileBytes = bytes,
+                fileName = "thumb_${System.currentTimeMillis()}.jpg",
+                mimeType = mime,
+                folder = "thumbnails/courses"
+            )
+            if (result is ApiResult.Success) {
+                result.data?.get("publicUrl")?.asString
+            } else null
+        } catch (e: Exception) {
+            Log.e("VideoDetailsFragment", "Error uploading thumbnail via backend", e)
+            null
+        }
+    }
+
+    /**
+     * Sends navigation results about the updated video to previous fragments.
+     */
+    private fun notifyVideoUpdated(title: String, description: String) {
+        try {
+            val navController = findNavController()
+            navController.previousBackStackEntry?.savedStateHandle?.apply {
+                set("videoUpdated", true)
+                set("updatedVideoId", videoId)
+                set("updatedTitle", title)
+                set("updatedDescription", description)
+                set("updatedIsPaid", isPaidCourse)
             }
         } catch (e: Exception) {
-            Log.e("VideoDetailsFragment", "Error uploading to presigned URL", e)
-            return@withContext false
+            Log.e("VideoDetailsFragment", "Error setting savedStateHandle", e)
+        }
+        try {
+            requireActivity().supportFragmentManager.setFragmentResult("videoUpdated", Bundle().apply {
+                putLong("updatedVideoId", videoId)
+                putString("updatedTitle", title)
+                putString("updatedDescription", description)
+                putBoolean("updatedIsPaid", isPaidCourse)
+            })
+        } catch (e: Exception) {
+            Log.e("VideoDetailsFragment", "Error sending fragment result", e)
         }
     }
     

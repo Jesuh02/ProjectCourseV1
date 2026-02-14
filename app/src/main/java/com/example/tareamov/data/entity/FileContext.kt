@@ -8,9 +8,9 @@ data class FileContext(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val submissionId: Long,
-    val fileName: String,
-    val fileType: String,
-    val fileContent: String,
+    val fileName: String = "",
+    val fileType: String = "",
+    val fileContent: String? = null,
     val extractedText: String? = null,
     val metadata: String? = null,
     val timestamp: Long = System.currentTimeMillis(),

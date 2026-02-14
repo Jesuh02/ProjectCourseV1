@@ -26,6 +26,7 @@ data class Topic(
     val id: Long = 0,
     @SerializedName("course_id")
     val courseId: Long = 0,
+    @SerializedName("name")
     val name: String = "",
     val description: String = "",
     @SerializedName("order_index")

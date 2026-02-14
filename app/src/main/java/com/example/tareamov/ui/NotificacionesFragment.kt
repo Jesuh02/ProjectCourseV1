@@ -265,9 +265,48 @@ class NotificacionesFragment : Fragment() {
                 // Navigate SYNCHRONOUSLY — no coroutine needed since metadata parsing is synchronous
                 navigateToCommentInVideo(notification)
             }
+            Notification.TYPE_CHAT_RESPONSE -> {
+                navigateToChat(notification)
+            }
             else -> {
                 Log.w("NotificacionesFragment", "⚠️ Unhandled notification type: '${notification.type}' for notification id=${notification.id}")
             }
+        }
+    }
+
+    private fun navigateToChat(notification: Notification) {
+        val metadataStr = notification.metadata
+        if (metadataStr.isNullOrEmpty()) {
+             // Fallback default
+             try {
+                findNavController().navigate(R.id.databaseQueryFragment)
+             } catch (e: Exception) { Log.e("NotificacionesFragment", "Nav error", e) }
+             return
+        }
+
+        try {
+            val metadata = org.json.JSONObject(metadataStr)
+            val messageId = metadata.optString("messageId")
+            val fragment = metadata.optString("fragment")
+            
+            val bundle = Bundle().apply {
+                putString("messageId", messageId)
+            }
+            
+            Log.d("NotificacionesFragment", "Navigating to chat: fragment=$fragment, messageId=$messageId")
+
+            if (fragment == "database_query") {
+                 findNavController().navigate(R.id.databaseQueryFragment, bundle)
+            } else {
+                 // Even if fragment is unknown, default to DatabaseQueryFragment or ChatBotFragment
+                 // But since DatabaseQueryFragment is the one sending it currently:
+                 findNavController().navigate(R.id.databaseQueryFragment, bundle)
+            }
+        } catch (e: Exception) {
+            Log.e("NotificacionesFragment", "Error navigating to chat: ${e.message}")
+            try {
+                findNavController().navigate(R.id.databaseQueryFragment)
+            } catch (ignore: Exception) {}
         }
     }
 

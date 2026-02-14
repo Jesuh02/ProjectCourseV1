@@ -387,42 +387,109 @@
                     app:cardElevation="0dp"
                     android:layout_marginBottom="20dp">
 
-                    <!-- Account Settings -->
                     <LinearLayout
-                        android:id="@+id/accountSettingsItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:padding="16dp"
-                        android:gravity="center_vertical"
-                        android:background="?attr/selectableItemBackground"
-                        android:clickable="true"
-                        android:focusable="true">
+                        android:orientation="vertical">
 
-                        <ImageView
-                            android:layout_width="32dp"
-                            android:layout_height="32dp"
-                            android:src="@drawable/ic_settings"
-                            android:background="@drawable/bg_rounded_icon_background"
-                            android:backgroundTint="#8E8E93"
-                            android:padding="6dp"
-                            app:tint="#FFFFFF" />
-
-                        <TextView
-                            android:layout_width="0dp"
+                        <!-- Account Settings -->
+                        <LinearLayout
+                            android:id="@+id/accountSettingsItem"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:layout_marginStart="16dp"
-                            android:text="Configuración de la cuenta"
-                            android:textColor="#FFFFFF"
-                            android:textSize="16sp"
-                            android:fontFamily="sans-serif-medium" />
+                            android:orientation="horizontal"
+                            android:padding="16dp"
+                            android:gravity="center_vertical"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true">
 
-                        <ImageView
-                            android:layout_width="16dp"
-                            android:layout_height="16dp"
-                            android:src="@drawable/ic_arrow_forward"
-                            app:tint="#666666" />
+                            <ImageView
+                                android:layout_width="32dp"
+                                android:layout_height="32dp"
+                                android:src="@drawable/ic_settings"
+                                android:background="@drawable/bg_rounded_icon_background"
+                                android:backgroundTint="#8E8E93"
+                                android:padding="6dp"
+                                app:tint="#FFFFFF" />
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="16dp"
+                                android:text="Configuración de la cuenta"
+                                android:textColor="#FFFFFF"
+                                android:textSize="16sp"
+                                android:fontFamily="sans-serif-medium" />
+
+                            <ImageView
+                                android:layout_width="16dp"
+                                android:layout_height="16dp"
+                                android:src="@drawable/ic_arrow_forward"
+                                app:tint="#666666" />
+                        </LinearLayout>
+
+                        <!-- Divider -->
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="0.5dp"
+                            android:background="#333333"
+                            android:layout_marginStart="64dp" />
+
+                        <!-- WhatsApp Link/Unlink -->
+                        <LinearLayout
+                            android:id="@+id/whatsappItem"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:padding="16dp"
+                            android:gravity="center_vertical"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true">
+
+                            <ImageView
+                                android:layout_width="32dp"
+                                android:layout_height="32dp"
+                                android:src="@drawable/ic_whatsapp"
+                                android:background="@drawable/bg_rounded_icon_background"
+                                android:backgroundTint="#25D366"
+                                android:padding="6dp"
+                                app:tint="#FFFFFF" />
+
+                            <TextView
+                                android:id="@+id/whatsappItemText"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="16dp"
+                                android:text="Vincular WhatsApp"
+                                android:textColor="#FFFFFF"
+                                android:textSize="16sp"
+                                android:fontFamily="sans-serif-medium" />
+
+                            <TextView
+                                android:id="@+id/whatsappStatusBadge"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginEnd="8dp"
+                                android:text="NO VINCULADO"
+                                android:textSize="10sp"
+                                android:textStyle="bold"
+                                android:textColor="#AAAAAA"
+                                android:background="@drawable/bg_badge_premium"
+                                android:paddingHorizontal="6dp"
+                                android:paddingVertical="2dp"
+                                android:visibility="visible" />
+
+                            <ImageView
+                                android:layout_width="16dp"
+                                android:layout_height="16dp"
+                                android:src="@drawable/ic_arrow_forward"
+                                app:tint="#666666" />
+                        </LinearLayout>
+
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 

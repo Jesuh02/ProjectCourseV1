@@ -73,6 +73,7 @@ class VideoHomeFragment : Fragment() {
     private lateinit var sessionManager: SessionManager // Add SessionManager instance
     private lateinit var skeletonContainer: ShimmerFrameLayout // Skeleton container
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private lateinit var videoPreloader: com.example.tareamov.util.VideoPreloader // Video pre-fetcher for instant loading
 
     private lateinit var homeIconImageView: ImageView
     private lateinit var exploreIconImageView: ImageView
@@ -150,9 +151,13 @@ class VideoHomeFragment : Fragment() {
         // Initialize VideoManager
         videoManager = VideoManager(requireContext())
         sessionManager = SessionManager.getInstance(requireContext()) // Initialize SessionManager
+        videoPreloader = com.example.tareamov.util.VideoPreloader(requireContext()) // Initialize video pre-fetcher
 
         // Initialize BackendApiService
         BackendApiService.initialize(requireContext())
+
+        // Initialize video cache early so pre-fetching can start immediately
+        com.example.tareamov.util.VideoCacheManager.initialize(requireContext())
 
         // Refresh session info from backend in background so role checks are current
         lifecycleScope.launch {
@@ -253,20 +258,30 @@ class VideoHomeFragment : Fragment() {
             }
             
             if (::videoAdapter.isInitialized) {
-                videoAdapter.updateVideos(videoList)
+                videoAdapter.updateVideos(videos)
+
+                // Warm the pre-signed URL cache with URLs from the streaming feed
+                // so VideoAdapter gets instant URL resolution (no network call)
+                if (videos.isNotEmpty() && ::videoPreloader.isInitialized) {
+                    videoPreloader.warmCache(videos)
+                    videoPreloader.onPageSelected(0, videos)
+                }
                 
                 val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
                 
                 // Handle auto-opening comments if requested (e.g. from notification)
-                if (shouldOpenComments && videoList.isNotEmpty()) {
+                if (shouldOpenComments && videos.isNotEmpty()) {
                     // content is loaded, try to find the video
                     val reqVideoId = arguments?.getLong("videoId", -1L) ?: -1L
                     val targetCommentId = arguments?.getLong("targetCommentId", -1L) ?: -1L
-                    val targetIndex = if (reqVideoId != -1L) videoList.indexOfFirst { it.id == reqVideoId } else 0
+                    val targetIndex = if (reqVideoId != -1L) videos.indexOfFirst { it.id == reqVideoId } else 0
                     
                     Log.d("VideoHomeFragment", "🎬 Auto-opening comments: videoId=$reqVideoId, commentId=$targetCommentId, videoIndex=$targetIndex")
                     
-                    if (targetIndex != -1) {
+                    if (targetIndex != -1 && targetIndex < videos.size) {
+                         // Capture video to avoid IndexOutOfBounds if list changes during postDelayed
+                         val targetVideo = videos[targetIndex]
+                         
                          // Post to message queue to ensure view is ready
                          viewPager?.post {
                              if (viewPager.currentItem != targetIndex) {
@@ -275,8 +290,8 @@ class VideoHomeFragment : Fragment() {
                              
                              // Esperar un poco más para asegurar que el video está completamente cargado
                              viewPager.postDelayed({
-                                 Log.d("VideoHomeFragment", "🎯 Opening comments dialog for video ${videoList[targetIndex].id} with target comment $targetCommentId")
-                                 showCommentsDialog(videoList[targetIndex], targetCommentId)
+                                 Log.d("VideoHomeFragment", "🎯 Opening comments dialog for video ${targetVideo.id} with target comment $targetCommentId")
+                                 showCommentsDialog(targetVideo, targetCommentId)
                                  shouldOpenComments = false // Reset flag
                              }, 500) // Delay adicional para asegurar que el video está listo
                          }
@@ -1291,6 +1306,9 @@ class VideoHomeFragment : Fragment() {
 
         // Set current user ID
         videoAdapter.setCurrentUserId(currentUserId)
+
+        // Wire the VideoPreloader for instant adjacent-video loading
+        videoAdapter.videoPreloader = videoPreloader
         
         // Set initial active position to 0 (first video)
         videoAdapter.setActivePosition(0)
@@ -1334,6 +1352,11 @@ class VideoHomeFragment : Fragment() {
                 
                 currentVideoIndex = position
                 viewModel.currentVideoIndex = position
+
+                // INSTANT LOADING: Trigger pre-fetch of adjacent videos
+                // This batch-signs URLs and downloads first 2 MB of N±2 videos
+                // so they are ready to play instantly when scrolled to.
+                videoPreloader.onPageSelected(position, videoList)
 
                 // NOTE: Premium badge is now shown per-video in item_video.xml
 
@@ -1488,6 +1511,11 @@ class VideoHomeFragment : Fragment() {
     override fun onDestroyView() {
         // Release all video players before destroying view
         releaseAllVideos()
+
+        // Cancel all in-flight pre-fetch work
+        if (::videoPreloader.isInitialized) {
+            videoPreloader.cancel()
+        }
         
         // Clear video list to release references
         videoList.clear()
@@ -2191,8 +2219,8 @@ class VideoHomeFragment : Fragment() {
             try {
                 val context = requireContext()
 
-                // ESTRATEGIA 1: Intentar obtener URL firmada de Cloudflare R2
-                val r2PublicUrl = com.example.tareamov.service.CloudflareR2Service.getVideoStreamUrl(context, videoData.videoUriString)
+                // ESTRATEGIA 1: Intentar obtener URL firmada del backend
+                val r2PublicUrl = com.example.tareamov.service.StorageHelper.getVideoStreamUrl(context, videoData.videoUriString)
 
                 if (r2PublicUrl != null && (r2PublicUrl.startsWith("http://") || r2PublicUrl.startsWith("https://"))) {
                     // Compartir usando URL pública/firmada - MÉTODO PREFERIDO

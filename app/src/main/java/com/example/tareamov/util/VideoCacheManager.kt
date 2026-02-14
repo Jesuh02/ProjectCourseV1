@@ -6,250 +6,251 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import java.io.File
 import java.util.concurrent.Executors
+import kotlinx.coroutines.*
 
 /**
  * Singleton manager for video caching using ExoPlayer's cache system.
- * This enables near-instant video loading by pre-caching video data.
+ *
+ * Responsibilities (SRP):
+ *  - Manages a single shared SimpleCache instance (300 MB LRU).
+ *  - Provides CacheDataSource.Factory for ExoPlayer instances.
+ *  - Pre-fetches video bytes into cache for INSTANT playback of adjacent videos.
+ *
+ * Open/Closed: the pre-fetch strategy can be extended (e.g., adaptive bitrate)
+ * without modifying the core cache setup.
  */
 @UnstableApi
 object VideoCacheManager {
-    
+
     private const val TAG = "VideoCacheManager"
-    
-    // Cache configuration - increased for better pre-buffering
-    private const val CACHE_SIZE_BYTES = 300L * 1024 * 1024 // 300 MB cache
+
+    // ─── Configuration ────────────────────────────────────────
+    private const val CACHE_SIZE_BYTES = 500L * 1024 * 1024 // 500 MB LRU (generous for instant loading)
     private const val CACHE_FOLDER_NAME = "video_cache"
-    
-    // AGGRESSIVE connection settings for instant loading
-    private const val CONNECT_TIMEOUT_MS = 3000 // 3 seconds - faster timeout
-    private const val READ_TIMEOUT_MS = 3000 // 3 seconds - faster timeout
-    
+    private const val CONNECT_TIMEOUT_MS = 3_000
+    private const val READ_TIMEOUT_MS = 5_000
+
+    /** How many bytes to pre-fetch per video (first 3 MB → ~3-6 s of 720p).
+     *  This ensures ExoPlayer can start playback INSTANTLY from cache. */
+    private const val PRE_FETCH_BYTES = 3L * 1024 * 1024
+
+    // ─── State ────────────────────────────────────────────────
     private var cache: Cache? = null
     private var cacheDataSourceFactory: DataSource.Factory? = null
+    private var httpDataSourceFactory: DefaultHttpDataSource.Factory? = null
     private var isInitialized = false
-    
-    // Executor for background cache operations
-    private val cacheExecutor = Executors.newFixedThreadPool(2)
-    
-    /**
-     * Initialize the video cache. Should be called once on app start.
-     */
+    private var appContextRef: java.lang.ref.WeakReference<Context>? = null
+
+    /** Dedicated thread pool for background pre-fetch I/O */
+    private val preFetchExecutor = Executors.newFixedThreadPool(3)
+    private val preFetchScope = CoroutineScope(preFetchExecutor.asCoroutineDispatcher() + SupervisorJob())
+
+    /** Tracks URLs currently being pre-fetched to avoid duplicate work */
+    private val activePrefetches = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    // ─── Initialization ───────────────────────────────────────
+
     @Synchronized
     fun initialize(context: Context) {
-        if (isInitialized) {
-            return
-        }
-        
+        if (isInitialized) return
         try {
-            // CRITICAL: Set appContextRef BEFORE calling updateHttpFactory
-            // so the factory can access the context for DefaultDataSource
             appContextRef = java.lang.ref.WeakReference(context.applicationContext)
-            
-            val cacheDir = File(context.cacheDir, CACHE_FOLDER_NAME)
-            if (!cacheDir.exists()) {
-                cacheDir.mkdirs()
-            }
-            
+            val cacheDir = File(context.cacheDir, CACHE_FOLDER_NAME).also { it.mkdirs() }
             val databaseProvider = StandaloneDatabaseProvider(context)
-            val cacheEvictor = LeastRecentlyUsedCacheEvictor(CACHE_SIZE_BYTES)
-            
-            cache = SimpleCache(cacheDir, cacheEvictor, databaseProvider)
-            
-            // Initial factory setup
-            updateHttpFactory()
-            
+            val evictor = LeastRecentlyUsedCacheEvictor(CACHE_SIZE_BYTES)
+            cache = SimpleCache(cacheDir, evictor, databaseProvider)
+            buildFactories()
             isInitialized = true
-            Log.d(TAG, "Video cache initialized with ${CACHE_SIZE_BYTES / (1024 * 1024)} MB capacity")
-            
+            Log.d(TAG, "Video cache initialized (${CACHE_SIZE_BYTES / (1024 * 1024)} MB)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize video cache", e)
         }
     }
 
-    private fun updateHttpFactory() {
-        // NOTE: No longer adding Authorization header here.
-        // The backend now returns presigned R2 URLs that already contain
-        // authentication in query parameters (X-Amz-Signature, etc.).
-        // Adding extra Authorization headers to presigned URLs would cause 403 errors.
-
-        // Create OPTIMIZED HTTP data source (no auth headers needed for presigned URLs)
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+    private fun buildFactories() {
+        httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setConnectTimeoutMs(CONNECT_TIMEOUT_MS)
             .setReadTimeoutMs(READ_TIMEOUT_MS)
             .setAllowCrossProtocolRedirects(true)
             .setKeepPostFor302Redirects(true)
             .setUserAgent("ExoPlayer/CourseV-App")
-        
-        // Create upstream data source (network)
-        val upstreamDataSourceFactory = DefaultDataSource.Factory(getContextOrNull() ?: return, httpDataSourceFactory)
-        
-        // Create cache data source that wraps the upstream
+
+        val ctx = getContextOrNull() ?: return
+        val upstream = DefaultDataSource.Factory(ctx, httpDataSourceFactory!!)
         val c = cache ?: return
+
         cacheDataSourceFactory = CacheDataSource.Factory()
             .setCache(c)
-            .setUpstreamDataSourceFactory(upstreamDataSourceFactory)
-            .setFlags(
-                CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
-                CacheDataSource.FLAG_BLOCK_ON_CACHE
-            )
+            .setUpstreamDataSourceFactory(upstream)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or CacheDataSource.FLAG_BLOCK_ON_CACHE)
     }
 
-    private var appContextRef: java.lang.ref.WeakReference<Context>? = null
+    private fun getContextOrNull(): Context? = appContextRef?.get()
 
-    private fun getContextOrNull(): Context? {
-        return appContextRef?.get()
-    }
-    
-    /**
-     * Get the cache data source factory for use with ExoPlayer.
-     */
+    // ─── Public API: DataSource factory ───────────────────────
+
     fun getCacheDataSourceFactory(context: Context): DataSource.Factory {
-        if (appContextRef == null) {
-            appContextRef = java.lang.ref.WeakReference(context.applicationContext)
-        }
-
-        if (!isInitialized) {
-            initialize(context)
-        } else {
-            // Check if token changed and update factory if needed
-            // This is a simple lightweight check
-            updateHttpFactory() 
-        }
+        if (appContextRef == null) appContextRef = java.lang.ref.WeakReference(context.applicationContext)
+        if (!isInitialized) initialize(context)
         return cacheDataSourceFactory ?: DefaultDataSource.Factory(context)
     }
-    
+
     /**
-     * Create a MediaSource factory that uses the cache with tolerant extractors.
-     * Configured to handle videos with problematic metadata or keyframes.
+     * Create tolerant MediaSource factory backed by disk cache.
      */
     fun createMediaSourceFactory(context: Context): MediaSource.Factory {
-        // Create tolerant extractors for problematic videos (VP8, VP9, etc.)
         val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
-            .setConstantBitrateSeekingEnabled(true) // Enable seeking in CBR streams
-            .setConstantBitrateSeekingAlwaysEnabled(true) // Always enable CBR seeking
-            .setMp4ExtractorFlags(androidx.media3.extractor.mp4.Mp4Extractor.FLAG_WORKAROUND_IGNORE_EDIT_LISTS) // Robust MP4 parsing
-
+            .setConstantBitrateSeekingEnabled(true)
+            .setConstantBitrateSeekingAlwaysEnabled(true)
+            .setMp4ExtractorFlags(androidx.media3.extractor.mp4.Mp4Extractor.FLAG_WORKAROUND_IGNORE_EDIT_LISTS)
         return DefaultMediaSourceFactory(getCacheDataSourceFactory(context), extractorsFactory)
     }
-    
+
     /**
-     * Create a cached MediaSource for a video URL.
-     * Uses a stable cache key based on the object key (not the full signed URL)
-     * so ExoPlayer reuses cached data across different signed URL generations.
+     * Create a cached MediaSource for a URL.
+     * Uses a stable cache key so that different presigned URLs for the
+     * same R2 object share the same cache entry.
      */
     fun createCachedMediaSource(context: Context, url: String): MediaSource {
-        val mediaItemBuilder = MediaItem.Builder().setUri(url)
+        val builder = MediaItem.Builder().setUri(url)
 
-        // FIX FOR R2 VIDEOS WITHOUT EXTENSION
-        // Forces ExoPlayer to use MP4 extractor even if extension is missing/unknown
-        val isR2Url = url.contains("r2.dev") || url.contains("r2.cloudflarestorage.com")
-        val lowerUrl = url.lowercase()
-        val hasVideoExtension = lowerUrl.endsWith(".mp4") || lowerUrl.endsWith(".mkv") || lowerUrl.endsWith(".webm") || lowerUrl.endsWith(".mov")
-        
-        if (isR2Url && !hasVideoExtension) {
-            Log.w(TAG, "Forcing VIDEO_MP4 mime type for extensionless R2 URL: $url")
-            mediaItemBuilder.setMimeType(androidx.media3.common.MimeTypes.VIDEO_MP4)
+        // Force MP4 mime for extensionless R2 URLs
+        val isR2 = url.contains("r2.dev") || url.contains("r2.cloudflarestorage.com")
+        val lower = url.lowercase()
+        val hasExt = lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".webm") || lower.endsWith(".mov")
+        if (isR2 && !hasExt) {
+            builder.setMimeType(androidx.media3.common.MimeTypes.VIDEO_MP4)
         }
-        
-        // CRITICAL: Use a stable custom cache key for signed URLs.
-        // Signed URLs change every time (different signature/expiry), but the
-        // underlying content is the same. By using the object key as cache key,
-        // ExoPlayer will reuse previously cached video data.
-        val stableCacheKey = extractStableCacheKey(url)
-        if (stableCacheKey != null) {
-            mediaItemBuilder.setCustomCacheKey(stableCacheKey)
-            Log.d(TAG, "Using stable cache key: $stableCacheKey for signed URL")
+        extractStableCacheKey(url)?.let { key ->
+            builder.setCustomCacheKey(key)
+            Log.d(TAG, "Stable cache key: $key")
         }
+        return createMediaSourceFactory(context).createMediaSource(builder.build())
+    }
 
-        return createMediaSourceFactory(context).createMediaSource(mediaItemBuilder.build())
-    }
-    
+    // ─── Pre-fetch API ────────────────────────────────────────
+
     /**
-     * Extract a stable cache key from a signed R2 URL.
-     * Strips the query string (which contains the signature) and uses only the path.
-     * Example: "https://xxx.r2.dev/videos/my_video?X-Amz-..." → "videos/my_video"
-     * Returns null for non-R2 URLs (they use the default URL as cache key).
-     */
-    private fun extractStableCacheKey(url: String): String? {
-        val isSignedR2 = (url.contains("r2.dev") || url.contains("r2.cloudflarestorage.com")) 
-                         && url.contains("X-Amz-")
-        if (!isSignedR2) return null
-        
-        return try {
-            val uri = android.net.Uri.parse(url)
-            uri.path?.trimStart('/') // e.g. "videos/my_video"
-        } catch (e: Exception) {
-            Log.e(TAG, "Error extracting stable cache key from URL", e)
-            null
-        }
-    }
-    
-    /**
-     * Pre-cache video data for faster loading.
-     * Call this for videos that are about to be displayed.
+     * Pre-fetch the first [PRE_FETCH_BYTES] of a video URL into the disk cache.
+     * Called for adjacent (N±1, N±2) videos so they are ready for instant playback.
+     *
+     * This is a *fire-and-forget* operation — it runs on a background thread pool
+     * and silently catches errors (network failures, cancelled jobs, etc.).
+     *
+     * @param url  The (presigned) video URL.
      */
     fun preCacheVideo(context: Context, url: String) {
-        if (!isInitialized) {
-            initialize(context)
+        if (!isInitialized) initialize(context)
+        val c = cache ?: return
+        val stableKey = extractStableCacheKey(url)
+
+        // Skip if already cached
+        if (stableKey != null && c.isCached(stableKey, 0, PRE_FETCH_BYTES)) {
+            Log.d(TAG, "Already cached (${PRE_FETCH_BYTES / 1024}KB): $stableKey")
+            return
         }
-        
-        // Pre-caching is handled automatically by the CacheDataSource
-        // when videos are played. This method can be extended for
-        // more aggressive pre-fetching if needed.
-        Log.d(TAG, "Video URL registered for caching: $url")
+        // Skip if already in flight
+        val dedupeKey = stableKey ?: url
+        if (activePrefetches.putIfAbsent(dedupeKey, true) != null) return
+
+        preFetchScope.launch {
+            try {
+                val upstream = httpDataSourceFactory?.createDataSource() ?: return@launch
+
+                val cacheDataSource = CacheDataSource(
+                    c, upstream,
+                    CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR
+                )
+
+                val dataSpec = DataSpec.Builder()
+                    .setUri(url)
+                    .setLength(PRE_FETCH_BYTES)
+                    .apply { if (stableKey != null) setKey(stableKey) }
+                    .build()
+
+                val writer = CacheWriter(cacheDataSource, dataSpec, null, null)
+                writer.cache()
+
+                Log.d(TAG, "Pre-fetched ${PRE_FETCH_BYTES / 1024}KB for: $dedupeKey")
+            } catch (e: Exception) {
+                Log.w(TAG, "Pre-fetch failed for $dedupeKey: ${e.message}")
+            } finally {
+                activePrefetches.remove(dedupeKey)
+            }
+        }
     }
-    
+
     /**
-     * Check if video data is cached.
+     * Pre-fetch multiple video URLs concurrently.
+     * Ideal for batch pre-loading after receiving signed URLs from the backend.
      */
+    fun preCacheVideos(context: Context, urls: List<String>) {
+        urls.forEach { url -> preCacheVideo(context, url) }
+    }
+
+    // ─── Cache queries ────────────────────────────────────────
+
     fun isVideoCached(url: String): Boolean {
-        return cache?.isCached(url, 0, 1024 * 1024) ?: false // Check if first 1MB is cached
+        val key = extractStableCacheKey(url) ?: url
+        return cache?.isCached(key, 0, PRE_FETCH_BYTES) ?: false
     }
-    
-    /**
-     * Get the cache instance for advanced operations.
-     */
+
     fun getCache(): Cache? = cache
-    
-    /**
-     * Release the cache when the app is destroyed.
-     */
+
     @Synchronized
     fun release() {
         try {
+            preFetchScope.cancel()
             cache?.release()
             cache = null
             cacheDataSourceFactory = null
+            httpDataSourceFactory = null
             isInitialized = false
             Log.d(TAG, "Video cache released")
         } catch (e: Exception) {
             Log.e(TAG, "Error releasing video cache", e)
         }
     }
-    
-    /**
-     * Clear all cached data.
-     */
+
     fun clearCache() {
         try {
-            // SimpleCache doesn't have a clear method, so we release and reinitialize
-            val cacheKeys = cache?.keys?.toList() ?: emptyList()
-            cacheKeys.forEach { key ->
-                cache?.removeResource(key)
-            }
+            cache?.keys?.toList()?.forEach { cache?.removeResource(it) }
             Log.d(TAG, "Video cache cleared")
         } catch (e: Exception) {
             Log.e(TAG, "Error clearing video cache", e)
+        }
+    }
+
+    // ─── Internals ────────────────────────────────────────────
+
+    /**
+     * Extract stable cache key from R2 URLs (signed or public) so that
+     * different presigned URLs for the same object share the same cache entry.
+     *
+     * This is critical for cache hit rates: without stable keys, each new
+     * signed URL would be treated as a different resource, wasting disk space
+     * and forcing re-downloads.
+     */
+    private fun extractStableCacheKey(url: String): String? {
+        val isR2 = url.contains("r2.dev") || url.contains("r2.cloudflarestorage.com")
+        if (!isR2) return null
+        return try {
+            android.net.Uri.parse(url).path?.trimStart('/')
+        } catch (e: Exception) {
+            Log.e(TAG, "Error extracting cache key", e)
+            null
         }
     }
 }

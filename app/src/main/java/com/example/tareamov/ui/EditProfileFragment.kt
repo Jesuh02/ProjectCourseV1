@@ -16,7 +16,7 @@ import android.widget.ProgressBar
 import android.widget.TextView // Import added
 import android.widget.Toast
 import android.util.Log
-import com.example.tareamov.service.CloudflareR2Service
+import com.example.tareamov.service.StorageHelper
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -324,8 +324,8 @@ class EditProfileFragment : Fragment() {
         return withContext(Dispatchers.IO) {
             try {
                 // Check if R2 is configured
-                if (!CloudflareR2Service.isConfigured()) {
-                    Log.e("EditProfileFragment", "Cloudflare R2 not configured")
+                if (!StorageHelper.isConfigured()) {
+                    Log.e("EditProfileFragment", "Storage service not configured")
                     withContext(Dispatchers.Main) {
                         Toast.makeText(requireContext(), "Servicio de almacenamiento no configurado", Toast.LENGTH_SHORT).show()
                     }
@@ -345,8 +345,8 @@ class EditProfileFragment : Fragment() {
                 
                 Log.d("EditProfileFragment", "Uploading avatar to R2: $fileName")
                 
-                // Upload image to R2 using the existing uploadImage function
-                val result = CloudflareR2Service.uploadImage(
+                // Upload image via backend
+                val result = StorageHelper.uploadImage(
                     context = requireContext(),
                     imageUri = uri,
                     customFileName = "avatars/$fileName"
@@ -365,11 +365,11 @@ class EditProfileFragment : Fragment() {
                 }
 
                 when (result) {
-                    is CloudflareR2Service.UploadResult.Success -> {
+                    is StorageHelper.UploadResult.Success -> {
                         Log.d("EditProfileFragment", "Avatar uploaded successfully: ${result.url}")
                         result.url
                     }
-                    is CloudflareR2Service.UploadResult.Error -> {
+                    is StorageHelper.UploadResult.Error -> {
                         Log.e("EditProfileFragment", "Avatar upload failed: ${result.message}")
                         withContext(Dispatchers.Main) {
                             Toast.makeText(requireContext(), "Error: ${result.message}", Toast.LENGTH_SHORT).show()

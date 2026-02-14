@@ -114,6 +114,27 @@ class ChatBotFragment : Fragment() {
             gradedTaskOverlayAdapter.updateGradedTasks(emptyList())
         }
     }
+
+    /**
+     * Sincroniza un ChatMessage al backend de forma asíncrona (fire-and-forget).
+     * Reemplaza los upserts directos a Supabase.
+     */
+    private fun syncChatMessageToBackend(chatMessage: ChatMessage, savedId: Long) {
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val toSync = chatMessage.copy(id = savedId)
+                val result = BackendApiService.upsertChatMessage(toSync)
+                if (result.isSuccess) {
+                    Log.i("ChatBotFragment", "ChatMessage $savedId synced to backend.")
+                } else {
+                    Log.w("ChatBotFragment", "Failed to sync ChatMessage $savedId: ${result.errorMessage()}")
+                }
+            } catch (e: Exception) {
+                Log.w("ChatBotFragment", "Exception syncing chat message to backend: ${e.message}")
+            }
+        }
+    }
+
     /**
      * Envía la entrega al microservicio de análisis y luego consulta el feedback conversacional.
      * Usa submissionId para cache y eficiencia.
@@ -436,8 +457,8 @@ class ChatBotFragment : Fragment() {
             val request = com.example.tareamov.network.MicroservicioPromptRequest(
                 prompt = userMessage,
                 ollamaUrl = ollamaUrl,
-                taskDescription = taskDescription,
-                fileContent = fileContent,
+                taskDescription = taskDescription.ifEmpty { null },
+                fileContent = fileContent.ifEmpty { null },
                 userId = currentUserId
             )
             val responseWrapper = microservicioApi.procesarPrompt(request)
@@ -772,28 +793,7 @@ class ChatBotFragment : Fragment() {
 
                     withContext(Dispatchers.IO) {
                         val savedId = database.chatMessageDao().insertMessage(errorChatMessage)
-                        try {
-                            val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                            val toSend = com.example.tareamov.data.entity.ChatMessage(
-                                id = savedId,
-                                message = errorChatMessage.message,
-                                isFromUser = errorChatMessage.isFromUser,
-                                timestamp = errorChatMessage.timestamp,
-                                sessionId = errorChatMessage.sessionId,
-                                hasCalification = errorChatMessage.hasCalification,
-                                calificationValue = errorChatMessage.calificationValue,
-                                calificationAdded = errorChatMessage.calificationAdded
-                                , senderUsername = errorChatMessage.senderUsername,
-                                senderAvatar = errorChatMessage.senderAvatar
-                            )
-                            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                val ok = supabaseRepo.upsert("chat_messages", toSend)
-                                if (ok) Log.i("ChatBotFragment", "ChatMessage $savedId upserted to Supabase.")
-                                else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedId to Supabase.")
-                            }
-                        } catch (e: Exception) {
-                            Log.w("ChatBotFragment", "Exception sending chat message to Supabase: ${e.message}")
-                        }
+                        syncChatMessageToBackend(errorChatMessage, savedId)
                     }
                 }
 
@@ -900,17 +900,7 @@ class ChatBotFragment : Fragment() {
 
                 withContext(Dispatchers.IO) {
                     val savedIdCtx = database.chatMessageDao().insertMessage(contextMessage)
-                    try {
-                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = contextMessage.copy(id = savedIdCtx, senderUsername = contextMessage.senderUsername, senderAvatar = contextMessage.senderAvatar)
-                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            val ok = supabaseRepo.upsert("chat_messages", toSend)
-                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedIdCtx upserted to Supabase.")
-                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedIdCtx to Supabase.")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("ChatBotFragment", "Exception sending chat context to Supabase: ${e.message}")
-                    }
+                    syncChatMessageToBackend(contextMessage, savedIdCtx)
                 }
             }
         }
@@ -1221,8 +1211,8 @@ class ChatBotFragment : Fragment() {
                         val body = com.example.tareamov.network.MicroservicioPromptRequest(
                             prompt = messageText,
                             ollamaUrl = getOllamaUrl(),
-                            taskDescription = if (effectiveTaskDescription.isNotEmpty()) effectiveTaskDescription else "",
-                            fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else "",
+                            taskDescription = effectiveTaskDescription.ifEmpty { null },
+                            fileContent = effectiveFileContent.ifEmpty { null },
                             jsonContent = if (effectiveJsonContent.isNotEmpty()) effectiveJsonContent else null,
                             metadata = if (effectiveMetadata.isNotEmpty()) effectiveMetadata else null,
                             userId = sessionManager.getUserId(),
@@ -1284,13 +1274,7 @@ class ChatBotFragment : Fragment() {
                 )
                 withContext(Dispatchers.IO) {
                     val savedBotId = database.chatMessageDao().insertMessage(botMessage)
-                    try {
-                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = botMessage.copy(id = savedBotId)
-                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            supabaseRepo.upsert("chat_messages", toSend)
-                        }
-                    } catch (e: Exception) { }
+                    syncChatMessageToBackend(botMessage, savedBotId)
                 }
 
                 loadMessages()
@@ -1318,21 +1302,7 @@ class ChatBotFragment : Fragment() {
             )
             withContext(Dispatchers.IO) {
                 val savedUserId = database.chatMessageDao().insertMessage(userMessage)
-                try {
-                    val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                    val toSend = userMessage.copy(
-                        id = savedUserId,
-                        senderUsername = userMessage.senderUsername,
-                        senderAvatar = userMessage.senderAvatar
-                    )
-                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        val ok = supabaseRepo.upsert("chat_messages", toSend)
-                        if (ok) Log.i("ChatBotFragment", "ChatMessage $savedUserId upserted to Supabase.")
-                        else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedUserId to Supabase.")
-                    }
-                } catch (e: Exception) {
-                    Log.w("ChatBotFragment", "Exception sending user chat to Supabase: ${e.message}")
-                }
+                syncChatMessageToBackend(userMessage, savedUserId)
             }
             loadingProgressBar.visibility = View.VISIBLE
 
@@ -1372,7 +1342,7 @@ class ChatBotFragment : Fragment() {
                 if (currentFileContext != null) {
                     Log.d("ChatBotFragment", "✅ currentFileContext cargado después de ${waitCount * 100}ms")
                     // Actualizar todos los contextos efectivos desde currentFileContext
-                    effectiveFileContent = currentFileContext!!.fileContent
+                    effectiveFileContent = currentFileContext!!.fileContent ?: ""
                     effectiveJsonContent = currentFileContext!!.jsonContent ?: ""
                     effectiveMetadata = currentFileContext!!.metadata ?: ""
                     effectiveTaskDescription = currentFileContext!!.contentSummary ?: taskDescription
@@ -1457,7 +1427,7 @@ class ChatBotFragment : Fragment() {
                 Log.d("ChatBotFragment", "🔗 Usando currentFileContext establecido por onTaskSelected")
 
                 // 🔥 CRÍTICO: fileContent contiene el contenido del archivo del estudiante
-                effectiveFileContent = currentFileContext!!.fileContent
+                effectiveFileContent = currentFileContext!!.fileContent ?: ""
 
                 // 🔥 CRÍTICO: Si el fileContent está vacío, intentar usar contentSummary o metadata
                 if (effectiveFileContent.isBlank()) {
@@ -1480,8 +1450,10 @@ class ChatBotFragment : Fragment() {
                         // Si no hay taskDescription pero hay contentSummary, usarlo
                         append("📝 DESCRIPCIÓN/REQUISITOS:\n${currentFileContext!!.contentSummary}\n")
                     }
-                    if (currentFileContext!!.fileName.isNotBlank()) {
-                        append("\n📎 ARCHIVO ENVIADO POR EL ESTUDIANTE: ${currentFileContext!!.fileName}")
+                    // Safely check fileName even if technically non-null (might be null at runtime via Gson)
+                    val sFileName = currentFileContext!!.fileName as? String
+                    if (!sFileName.isNullOrBlank()) {
+                        append("\n📎 ARCHIVO ENVIADO POR EL ESTUDIANTE: ${'$'}sFileName")
                     }
                     if (!currentFileContext!!.contentSummary.isNullOrBlank() &&
                         currentFileContext!!.contentSummary != taskDescription) {
@@ -1575,7 +1547,7 @@ class ChatBotFragment : Fragment() {
                                         val fc = fcs.firstOrNull()
 
                                         if (fc != null) {
-                                            effectiveFileContent = fc.fileContent
+                                            effectiveFileContent = fc.fileContent ?: ""
                                             effectiveJsonContent = fc.jsonContent ?: ""
                                             effectiveMetadata = fc.metadata ?: ""
 
@@ -1593,7 +1565,7 @@ class ChatBotFragment : Fragment() {
                                                     append("\n📄 RESUMEN DEL CONTENIDO: ${fc.contentSummary}")
                                                 }
                                                 // Si fileContent está vacío, indicarlo
-                                                if (fc.fileContent.isBlank()) {
+                                                if (fc.fileContent.isNullOrBlank()) {
                                                     append("\n⚠️ NOTA: El contenido del archivo no está disponible para análisis detallado")
                                                 }
 
@@ -1696,7 +1668,7 @@ class ChatBotFragment : Fragment() {
 
                                         fc?.let { currentFc ->
                                             // 🔥 CARGAR CONTENIDO DEL ARCHIVO DEL ESTUDIANTE
-                                            effectiveFileContent = currentFc.fileContent
+                                            effectiveFileContent = currentFc.fileContent ?: ""
                                             effectiveJsonContent = currentFc.jsonContent ?: ""
                                             effectiveMetadata = currentFc.metadata ?: ""
 
@@ -1818,7 +1790,7 @@ class ChatBotFragment : Fragment() {
 
                                     fc?.let { currentFc ->
                                         // 🔥 CARGAR CONTENIDO DEL ARCHIVO DEL ESTUDIANTE
-                                        effectiveFileContent = currentFc.fileContent
+                                        effectiveFileContent = currentFc.fileContent ?: ""
                                         effectiveJsonContent = currentFc.jsonContent ?: ""
                                         effectiveMetadata = currentFc.metadata ?: ""
 
@@ -1837,7 +1809,7 @@ class ChatBotFragment : Fragment() {
 
                                         // Establecer como contexto actual para futuras referencias
                                         currentFileContext = currentFc
-                                        Log.d("ChatBotFragment", "✅ FileContext cargado para #${referencedTask.taskName}: ${currentFc.fileContent.length} caracteres")
+                                        Log.d("ChatBotFragment", "✅ FileContext cargado para #${referencedTask.taskName}: ${(currentFc.fileContent ?: "").length} caracteres")
                                         Log.d("ChatBotFragment", "📋 TaskDescription completo: ${effectiveTaskDescription.take(200)}...")
                                     } ?: run {
                                         Log.w("ChatBotFragment", "⚠️ No se encontró FileContext para submission ${currentSubmission.id}")
@@ -1880,13 +1852,11 @@ class ChatBotFragment : Fragment() {
                         val body = com.example.tareamov.network.MicroservicioPromptRequest(
                             prompt = messageText,
                             ollamaUrl = getOllamaUrl(),
-                            // Always send strings (empty when absent) to avoid undefined on the microservice
-                            taskDescription = if (effectiveTaskDescription.isNotEmpty()) effectiveTaskDescription else "",
-                            fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else "",
+                            taskDescription = effectiveTaskDescription.ifEmpty { null },
+                            fileContent = effectiveFileContent.ifEmpty { null },
                             jsonContent = if (effectiveJsonContent.isNotEmpty()) effectiveJsonContent else null,
                             metadata = if (effectiveMetadata.isNotEmpty()) effectiveMetadata else null,
                             userId = sessionManager.getUserId(),
-                            // 🔥 FIX: Enviar datos REALES del TaskItem seleccionado
                             submissionId = currentSubmissionId,
                             taskId = currentTaskIdForRequest,
                             studentId = currentStudentIdForRequest,
@@ -2005,8 +1975,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             val fallbackBody = com.example.tareamov.network.MicroservicioPromptRequest(
                                 prompt = messageText,
                                 ollamaUrl = getOllamaUrl(),
-                                taskDescription = if (effectiveTaskDescription.isNotEmpty()) effectiveTaskDescription else "",
-                                fileContent = if (effectiveFileContent.isNotEmpty()) effectiveFileContent else "",
+                                taskDescription = effectiveTaskDescription.ifEmpty { null },
+                                fileContent = effectiveFileContent.ifEmpty { null },
                                 jsonContent = if (effectiveJsonContent.isNotEmpty()) effectiveJsonContent else null,
                                 metadata = if (effectiveMetadata.isNotEmpty()) effectiveMetadata else null,
                                 userId = sessionManager.getUserId(),
@@ -2039,7 +2009,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     }
                 }
 
-                val response = llmResponse.text.replace("#", "").replace("**", "")
+                val response = llmResponse.text
 
                 // 🎯 SEMANTIC: Solo el LLM decide si mostrar botones de calificación (via esCalificacion del backend)
                 // NO usamos heurísticas locales que causan falsos positivos (ej: "que se nota al hablar de Marie Curie?")
@@ -2071,17 +2041,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 )
                 withContext(Dispatchers.IO) {
                     val savedBotId = database.chatMessageDao().insertMessage(botMessage)
-                    try {
-                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = botMessage.copy(id = savedBotId, senderUsername = botMessage.senderUsername, senderAvatar = botMessage.senderAvatar)
-                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            val ok = supabaseRepo.upsert("chat_messages", toSend)
-                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedBotId upserted to Supabase.")
-                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedBotId to Supabase.")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("ChatBotFragment", "Exception sending bot chat to Supabase: ${e.message}")
-                    }
+                    syncChatMessageToBackend(botMessage, savedBotId)
                 }
             } catch (e: Exception) {
                 val errorMessage = ChatMessage(
@@ -2093,17 +2053,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 )
                 withContext(Dispatchers.IO) {
                     val savedErrId = database.chatMessageDao().insertMessage(errorMessage)
-                    try {
-                        val supabaseRepo = com.example.tareamov.data.repository.SupabaseRepository()
-                        val toSend = errorMessage.copy(id = savedErrId, senderUsername = errorMessage.senderUsername, senderAvatar = errorMessage.senderAvatar)
-                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            val ok = supabaseRepo.upsert("chat_messages", toSend)
-                            if (ok) Log.i("ChatBotFragment", "ChatMessage $savedErrId upserted to Supabase.")
-                            else Log.w("ChatBotFragment", "Failed to upsert ChatMessage $savedErrId to Supabase.")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("ChatBotFragment", "Exception sending error chat to Supabase: ${e.message}")
-                    }
+                    syncChatMessageToBackend(errorMessage, savedErrId)
                 }
             } finally {
                 loadingProgressBar.visibility = View.GONE
@@ -2422,7 +2372,12 @@ El archivo enviado está vacío o no se pudo leer su contenido.
         lifecycleScope.launch {
             try {
                 // Extraer la calificación numérica y el feedback del mensaje del bot
-                val grade = extractGradeFromMessage(message.message)
+                // PRIORITY: Usar el valor estructurado que viene del backend (nota precisa)
+                val rawGrade = if (!message.calificationValue.isNullOrBlank()) {
+                    message.calificationValue!!.substringBefore("/")
+                } else null
+
+                val grade = rawGrade ?: extractGradeFromMessage(message.message)
                 val feedback = extractFeedbackFromMessage(message.message)
 
                 if (grade != null && feedback != null) {
@@ -3146,8 +3101,10 @@ El archivo enviado está vacío o no se pudo leer su contenido.
     }
 
     /**
-     * Carga solo los cursos donde el usuario ha enviado tareas (submissions)
-     * MODIFICADO: Ahora carga cursos CREADOS por el usuario actual que tengan entregas de estudiantes (para calificar)
+     * Carga cursos relevantes para el usuario:
+     * 1. Cursos CREADOS por el usuario que tengan entregas de estudiantes (modo profesor)
+     * 2. Cursos donde el usuario está INSCRITO y ha entregado tareas (modo estudiante)
+     * Ambos conjuntos se combinan sin duplicados.
      */
     private suspend fun loadAllUserCourses(): List<TaskItem> {
         return withContext(Dispatchers.IO) {
@@ -3158,26 +3115,62 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             }
 
             try {
-                // Fetch courses where the current user is the CREATOR (Owner)
+                val coursesMap = mutableMapOf<Long, com.example.tareamov.data.entity.Course>()
+
+                // ── 1. Cursos CREADOS por el usuario que tengan entregas ──
                 val myCourses = BackendApiService.getCoursesByCreatorId(userId).getOrNull() ?: emptyList()
-
-                // Filter: only keep courses that have submissions from students
-                val coursesWithSubmissions = mutableListOf<com.example.tareamov.data.entity.Course>()
-
                 for (course in myCourses) {
                     try {
                         val submissions = BackendApiService.getSubmissionsByCourse(course.id).getOrNull() ?: emptyList()
                         if (submissions.isNotEmpty()) {
-                            coursesWithSubmissions.add(course)
+                            coursesMap[course.id] = course
                         }
                     } catch (e: Exception) {
-                        Log.w("ChatBotFragment", "Error checking submissions for course ${course.id}: ${e.message}")
+                        Log.w("ChatBotFragment", "Error checking submissions for created course ${course.id}: ${e.message}")
                     }
                 }
+                Log.d("ChatBotFragment", "Found ${coursesMap.size} created courses with submissions for user $userId")
 
-                Log.d("ChatBotFragment", "Loaded ${coursesWithSubmissions.size} courses created by user $userId that have submissions")
+                // ── 2. Cursos donde el usuario ENTREGÓ tareas (modo estudiante) ──
+                try {
+                    // Obtener las submissions del usuario actual
+                    val mySubmissions = BackendApiService.getMySubmissions(page = 1, limit = 200).getOrNull() ?: emptyList()
+                    if (mySubmissions.isNotEmpty()) {
+                        // Extraer taskIds únicos y resolver courseIds vía Task → Topic → Course
+                        val taskIds = mySubmissions.map { it.taskId }.distinct()
+                        val courseIdsFromSubmissions = mutableSetOf<Long>()
 
-                coursesWithSubmissions.mapIndexed { index, course ->
+                        for (taskId in taskIds) {
+                            try {
+                                val task = BackendApiService.getTaskById(taskId).getOrNull()
+                                if (task != null && task.topicId > 0) {
+                                    val topic = BackendApiService.getTopicById(task.topicId).getOrNull()
+                                    if (topic != null) {
+                                        courseIdsFromSubmissions.add(topic.courseId)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w("ChatBotFragment", "Error resolving course for task $taskId: ${e.message}")
+                            }
+                        }
+
+                        // Obtener los cursos por IDs (solo los que no tenemos ya)
+                        val missingCourseIds = courseIdsFromSubmissions.filter { it !in coursesMap }
+                        if (missingCourseIds.isNotEmpty()) {
+                            val enrolledCourses = BackendApiService.getCoursesByIds(missingCourseIds).getOrNull() ?: emptyList()
+                            for (course in enrolledCourses) {
+                                coursesMap[course.id] = course
+                            }
+                        }
+                        Log.d("ChatBotFragment", "Found ${courseIdsFromSubmissions.size} courses from student submissions for user $userId")
+                    }
+                } catch (e: Exception) {
+                    Log.w("ChatBotFragment", "Error loading student submissions for courses: ${e.message}")
+                }
+
+                Log.d("ChatBotFragment", "Total ${coursesMap.size} courses with submissions for user $userId (created + enrolled)")
+
+                coursesMap.values.sortedBy { it.title }.mapIndexed { index, course ->
                     TaskItem(
                         taskId = course.id,
                         taskName = course.title,
@@ -3551,7 +3544,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             if (fileContext != null) {
                                 Log.d("ChatBotFragment", "📄 FileContext: ENCONTRADO")
                                 Log.d("ChatBotFragment", "   - fileName: ${fileContext!!.fileName}")
-                                Log.d("ChatBotFragment", "   - fileContent length: ${fileContext!!.fileContent.length}")
+                                Log.d("ChatBotFragment", "   - fileContent length: ${(fileContext!!.fileContent ?: "").length}")
                                 Log.d("ChatBotFragment", "   - contentSummary: ${fileContext!!.contentSummary?.take(100)}")
                             } else {
                                 Log.d("ChatBotFragment", "📄 FileContext: NO ENCONTRADO")
@@ -3647,7 +3640,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                     // 🔥 CRÍTICO: Si el fileContent está vacío pero tenemos contentSummary,
                     // intentar obtener contenido adicional de la descripción de la tarea
-                    if (fileContext!!.fileContent.isBlank()) {
+                    if (fileContext!!.fileContent.isNullOrBlank()) {
                         Log.d("ChatBotFragment", "⚠️ FileContext tiene fileContent vacío, usando contentSummary como fallback")
                         // El contentSummary generalmente contiene la descripción de la tarea
                         if (!fileContext!!.contentSummary.isNullOrBlank()) {
@@ -3661,7 +3654,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                     Log.d("ChatBotFragment", "✅ currentFileContext establecido:")
                     Log.d("ChatBotFragment", "   - FileName: ${fileContext!!.fileName}")
-                    Log.d("ChatBotFragment", "   - FileContent length: ${fileContext!!.fileContent.length}")
+                    Log.d("ChatBotFragment", "   - FileContent length: ${(fileContext!!.fileContent ?: "").length}")
                     Log.d("ChatBotFragment", "   - ContentSummary: ${fileContext!!.contentSummary?.take(100)}")
                     Log.d("ChatBotFragment", "   - TaskDescription actual: ${taskDescription.take(100)}...")
 
@@ -3676,7 +3669,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 "📝 Tarea: ${task.taskName}\n" +
                                 "📁 Archivo: ${fileContext!!.fileName}\n" +
                                 "🔧 Tipo: ${fileContext!!.fileType}\n" +
-                                "📊 Contenido: ${fileContext!!.fileContent.length} caracteres\n\n" +
+                                "📊 Contenido: ${(fileContext!!.fileContent ?: "").length} caracteres\n\n" +
                                 "✅ Ahora puedes hacer preguntas sobre esta tarea y su entrega.",
                         isFromUser = false,
                         sessionId = sessionId,
@@ -4235,7 +4228,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         Log.d("ChatBotFragment", "Contexto de archivo cargado para tarea referenciada:")
                         Log.d("ChatBotFragment", "- FileName: ${fileContext.fileName}")
                         Log.d("ChatBotFragment", "- ContentSummary length: ${fileContext.contentSummary?.length ?: 0}")
-                        Log.d("ChatBotFragment", "- FileContent length: ${fileContext.fileContent.length}")
+                        Log.d("ChatBotFragment", "- FileContent length: ${(fileContext.fileContent ?: "").length}")
 
                         // Mostrar mensaje informativo sobre el contexto cargado
                         val contextMessage = ChatMessage(
@@ -4244,7 +4237,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                     "📁 Archivo: ${fileContext.fileName}\n" +
                                     "📊 Calificación: ${gradedTask.grade}\n" +
                                     "🔧 Tipo: ${fileContext.fileType}\n" +
-                                    "📊 Contenido: ${fileContext.fileContent.length} caracteres\n\n" +
+                                    "📊 Contenido: ${(fileContext.fileContent ?: "").length} caracteres\n\n" +
                                     "✅ Contexto actualizado. Puedes hacer preguntas sobre esta entrega.",
                             isFromUser = false,
                             sessionId = sessionId,

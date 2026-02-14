@@ -53,6 +53,7 @@ class SupabaseRepository(
      * Uses INSERT ... ON CONFLICT to avoid duplicates.
      * 🛠️ AUTO-REPAIRS: Auto-generates explanations if missing before inserting
      */
+    @Deprecated("Use BackendApiService.insertReinforcementHistory() instead", level = DeprecationLevel.WARNING)
     suspend fun upsertReinforcementHistory(userId: Long, courseId: Long, questionsJson: String): Boolean {
         return try {
             // Try to fetch existing questions for this user+course
@@ -200,6 +201,7 @@ class SupabaseRepository(
     //  - data JSONB
     // This avoids schema drift between Room entities and Postgres and requires only
     // creating one table on the Supabase side.
+    @Deprecated("Use BackendApiService instead for all write operations", level = DeprecationLevel.WARNING)
     fun upsert(table: String, payload: Any) : Boolean {
         // Prevent client from performing upserts when no anon key is configured
         if (supabaseKey.isBlank()) {
@@ -564,6 +566,7 @@ class SupabaseRepository(
      * Execute a raw SQL query via Supabase RPC endpoint
      * This allows direct SQL execution for MCP tools
      */
+    @Deprecated("Use specific BackendApiService methods instead of raw SQL", level = DeprecationLevel.WARNING)
     suspend fun executeRawQuery(sql: String): List<Map<String, Any?>> {
         // Prevent arbitrary SQL execution from client builds without a configured key
         if (supabaseKey.isBlank()) {
@@ -644,6 +647,7 @@ class SupabaseRepository(
      * Ejecuta una migración SQL desde un archivo
      * Útil para aplicar triggers y funciones en Supabase
      */
+    @Deprecated("Database migrations should be managed server-side", level = DeprecationLevel.WARNING)
     suspend fun executeMigrationFile(sqlContent: String): Boolean {
         if (supabaseKey.isBlank()) {
             Log.e("SupabaseRepository", "executeMigrationFile blocked: SUPABASE_ANON_KEY is not set. Migrations must run on backend.")
@@ -871,6 +875,7 @@ class SupabaseRepository(
      * para todos los estudiantes inscritos en un curso específico.
      * Útil después de agregar o eliminar tareas.
      */
+    @Deprecated("Use BackendApiService.recalculateProgress() instead", level = DeprecationLevel.WARNING)
     suspend fun recalculateAllStudentProgressForCourse(courseId: Long): Boolean {
         return try {
             Log.d("SupabaseRepository", "Recalculating progress for all students in course $courseId")
@@ -975,6 +980,7 @@ class SupabaseRepository(
      * Actualiza el progreso de un estudiante en un curso usando la API REST PATCH de Supabase
      * Esto evita usar SQL UPDATE que no funciona bien con el endpoint execute_sql
      */
+    @Deprecated("Use BackendApiService.upsertProgress() instead", level = DeprecationLevel.WARNING)
     private suspend fun updateProgresoEstudiante(
         studentId: Long,
         courseId: Long,
@@ -1027,6 +1033,7 @@ class SupabaseRepository(
      * Checks if user already liked the comment to prevent duplicates or toggles it
      * Uses a transaction or direct inserts to `video_comment_likes`
      */
+    @Deprecated("Use BackendApiService.toggleLike() instead", level = DeprecationLevel.WARNING)
     suspend fun likeVideoComment(commentId: Long, userId: Long): Boolean {
         return try {
             // Check if already liked
@@ -1286,6 +1293,7 @@ class SupabaseRepository(
     /**
      * Delete a topic from Supabase
      */
+    @Deprecated("Use BackendApiService.deleteTopic() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteTopic(topicId: Long): Boolean {
         return try {
             val url = "$supabaseUrl/rest/v1/topics?id=eq.$topicId"
@@ -1316,6 +1324,7 @@ class SupabaseRepository(
     /**
      * Delete a task from Supabase
      */
+    @Deprecated("Use BackendApiService.deleteTask() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteTask(taskId: Long): Boolean {
         return try {
             val url = "$supabaseUrl/rest/v1/tasks?id=eq.$taskId"
@@ -1346,6 +1355,7 @@ class SupabaseRepository(
     /**
      * Delete all content items for a specific task from Supabase
      */
+    @Deprecated("Use BackendApiService.deleteContentItemsByTaskId() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteContentItemsByTaskId(taskId: Long): Boolean {
         return try {
             val url = "$supabaseUrl/rest/v1/content_items?task_id=eq.$taskId"
@@ -1376,6 +1386,7 @@ class SupabaseRepository(
     /**
      * Delete a content item from Supabase
      */
+    @Deprecated("Use BackendApiService.deleteContentItem() instead", level = DeprecationLevel.WARNING)
     suspend fun deleteContentItem(contentItemId: Long): Boolean {
         return try {
             val url = "$supabaseUrl/rest/v1/content_items?id=eq.$contentItemId"
