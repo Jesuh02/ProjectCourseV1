@@ -166,7 +166,7 @@ class CourseProgressLoader(private val context: Context) {
                     Log.w(TAG, "Backend not authenticated, skipping sync")
                     return@launch
                 }
-                
+
                 val data = mapOf(
                     "userId" to progreso.usuarioEstudiante,
                     "courseId" to progreso.cursoId,
@@ -174,16 +174,12 @@ class CourseProgressLoader(private val context: Context) {
                     "tareasTotales" to progreso.tareasTotales,
                     "porcentajeProgreso" to progreso.porcentajeProgreso,
                     "calificacionPonderada" to progreso.calificacionPonderada,
-                    "estado" to progreso.estado,
-                    "completedTasks" to progreso.tareasCompletadas,
-                    "totalTasks" to progreso.tareasTotales,
-                    "progressPercentage" to progreso.porcentajeProgreso,
-                    "averageGrade" to progreso.calificacionPonderada,
-                    "status" to progreso.estado
+                    "estado" to progreso.estado
                 )
                 val result = com.example.tareamov.service.BackendApiService.upsertProgress(data)
                 if (result.isSuccess) {
-                    Log.d(TAG, "Progreso sincronizado vía backend para ${progreso.usuarioEstudiante} en curso ${progreso.cursoId}")
+                    com.example.tareamov.service.BackendApiService.recalculateProgress(progreso.cursoId)
+                    Log.d(TAG, "Progreso sincronizado y recalculado en backend para ${progreso.usuarioEstudiante} en curso ${progreso.cursoId}")
                 } else {
                     Log.w(TAG, "No se pudo sincronizar el progreso: ${result.errorMessage()}")
                 }

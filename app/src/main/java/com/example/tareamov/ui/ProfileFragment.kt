@@ -45,6 +45,8 @@ class ProfileFragment : Fragment() {
     private lateinit var editProfileButton: Button
     private lateinit var avatarContainer: FrameLayout
     private lateinit var skeletonLayout: FrameLayout
+    private var requestedUserId: Long = -1L
+    private var isViewingExternalProfile: Boolean = false
     
     // WhatsApp Views
     private var whatsappStatusText: TextView? = null
@@ -74,10 +76,16 @@ class ProfileFragment : Fragment() {
         avatarContainer = view.findViewById(R.id.avatarContainer)
         skeletonLayout = view.findViewById(R.id.skeletonLayout)
 
+        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        requestedUserId = arguments?.getLong("userId", -1L) ?: -1L
+        isViewingExternalProfile = requestedUserId > 0L && requestedUserId != sessionManager.getUserId()
+
         // Show immediate connection state while data is loading
         try {
-            val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-            if (sess.isLoggedIn()) {
+            if (isViewingExternalProfile) {
+                statusTextView.text = "Perfil de usuario"
+                statusTextView.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+            } else if (sessionManager.isLoggedIn()) {
                 statusTextView.text = getString(R.string.status_connected)
                 statusTextView.setTextColor(android.graphics.Color.parseColor("#2ECC71"))
             } else {
@@ -90,10 +98,14 @@ class ProfileFragment : Fragment() {
 
         // Enable clicking on avatar to change it
         profileImage.setOnClickListener {
-            pickImageLauncher.launch("image/*")
+            if (!isViewingExternalProfile) {
+                pickImageLauncher.launch("image/*")
+            }
         }
         avatarContainer.setOnClickListener {
-            pickImageLauncher.launch("image/*")
+            if (!isViewingExternalProfile) {
+                pickImageLauncher.launch("image/*")
+            }
         }
 
         // Set up navigation for bottom buttons usando ComponentBottomNavigationBinding 
@@ -136,23 +148,32 @@ class ProfileFragment : Fragment() {
             // Ya estás en Perfil, puedes dejarlo vacío o recargar
         }
 
-        // Set up menu item clicks
-        setupMenuItems(view)
+        if (!isViewingExternalProfile) {
+            // Set up menu item clicks
+            setupMenuItems(view)
 
-        // Set up WhatsApp link/unlink
-        setupWhatsAppItem(view)
+            // Set up WhatsApp link/unlink
+            setupWhatsAppItem(view)
+        } else {
+            editProfileButton.visibility = View.GONE
+            view.findViewById<LinearLayout>(R.id.whatsappItem)?.visibility = View.GONE
+        }
 
         // Load user data
         loadUserData()
 
         // Set up edit profile button with animation
-        editProfileButton.setOnClickListener {
-            animateButtonPress(it)
-            findNavController().navigate(R.id.action_profileFragment_to_editProfileFragment)
+        if (!isViewingExternalProfile) {
+            editProfileButton.setOnClickListener {
+                animateButtonPress(it)
+                findNavController().navigate(R.id.action_profileFragment_to_editProfileFragment)
+            }
         }
 
         // Listeners for WhatsApp
-        setupFragmentListeners()
+        if (!isViewingExternalProfile) {
+            setupFragmentListeners()
+        }
 
         // Initial entrance animation
         animateEntrance()
@@ -605,8 +626,35 @@ class ProfileFragment : Fragment() {
         lifecycleScope.launch {
             try {
                 val context = requireContext()
-                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
                 BackendApiService.initialize(context)
+
+                if (isViewingExternalProfile && requestedUserId > 0L) {
+                    val profileResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getUserById(requestedUserId)
+                    }
+
+                    when (profileResult) {
+                        is ApiResult.Success -> {
+                            val usuario = profileResult.data
+                            val countResult = withContext(Dispatchers.IO) {
+                                BackendApiService.getSubscriberCount(usuario.id)
+                            }
+                            val subscriberCount = when (countResult) {
+                                is ApiResult.Success -> countResult.data?.toLong() ?: 0L
+                                is ApiResult.Error -> 0L
+                            }
+                            updateUI(usuario, null, subscriberCount)
+                        }
+                        is ApiResult.Error -> {
+                            Log.w("ProfileFragment", "API error loading external profile: ${profileResult.message}")
+                            stopSkeletonAnimation()
+                            Toast.makeText(context, "Error cargando perfil", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    return@launch
+                }
+
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
                 val currentUsername = sessionManager.getUsername()
                 
                 if (currentUsername != null) {
@@ -688,13 +736,18 @@ class ProfileFragment : Fragment() {
 
         // Update status based on session state
         try {
-            val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-            if (sess.isLoggedIn()) {
-                statusTextView.text = getString(R.string.status_connected)
-                statusTextView.setTextColor(android.graphics.Color.parseColor("#2ECC71")) // green
+            if (isViewingExternalProfile) {
+                statusTextView.text = "Perfil de usuario"
+                statusTextView.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
             } else {
-                statusTextView.text = getString(R.string.status_disconnected)
-                statusTextView.setTextColor(android.graphics.Color.parseColor("#AAAAAA")) // gray
+                val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                if (sess.isLoggedIn()) {
+                    statusTextView.text = getString(R.string.status_connected)
+                    statusTextView.setTextColor(android.graphics.Color.parseColor("#2ECC71")) // green
+                } else {
+                    statusTextView.text = getString(R.string.status_disconnected)
+                    statusTextView.setTextColor(android.graphics.Color.parseColor("#AAAAAA")) // gray
+                }
             }
         } catch (e: Exception) {
             statusTextView.text = getString(R.string.status_disconnected)
@@ -760,6 +813,10 @@ class ProfileFragment : Fragment() {
     // Add this method to ProfileFragment class
     override fun onResume() {
         super.onResume()
+
+        if (isViewingExternalProfile) {
+            return
+        }
 
         // Check if profile was updated
         val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)

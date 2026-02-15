@@ -660,13 +660,14 @@ class TaskSubmissionsFragment : Fragment() {
     private fun updateSubmissionGrade(submission: TaskSubmission, grade: Float, feedback: String) {
         lifecycleScope.launch {
             try {
-                val updatedSubmission = submission.copy(grade = grade, feedback = feedback)
+                val cleanFeedback = sanitizeFeedback(feedback)
+                val updatedSubmission = submission.copy(grade = grade, feedback = cleanFeedback)
                 try {
                     val pushed = withContext(Dispatchers.IO) {
                         val result = BackendApiService.gradeSubmission(
                             updatedSubmission.id,
                             grade,
-                            feedback
+                            cleanFeedback
                         )
                         result is ApiResult.Success
                     }
@@ -677,7 +678,7 @@ class TaskSubmissionsFragment : Fragment() {
                         }
                         
                         // Enviar notificación al estudiante sobre la calificación
-                        sendGradeNotificationToStudent(submission, grade, feedback)
+                        sendGradeNotificationToStudent(submission, grade, cleanFeedback)
                         
                         // Trigger progress update event for the graded student
                         triggerProgressUpdateEvent(submission.studentId, taskId)
@@ -2074,7 +2075,7 @@ class TaskSubmissionsFragment : Fragment() {
 
                     // Pre-fill existing grade and feedback if available
                     gradeEditText.setText(submission.grade?.toString() ?: "")
-                    feedbackEditText.setText(submission.feedback ?: "")
+                    feedbackEditText.setText(sanitizeFeedback(submission.feedback))
 
                     // Verificar si hay calificación pendiente y aplicarla automáticamente a los campos
                     val calificationManager = CalificationManager.getInstance(itemView.context)
@@ -2083,7 +2084,7 @@ class TaskSubmissionsFragment : Fragment() {
                         if (pendingCalification != null) {
                             // Aplicar la calificación pendiente a los campos
                             gradeEditText.setText(pendingCalification.grade)
-                            feedbackEditText.setText(pendingCalification.feedback)
+                            feedbackEditText.setText(sanitizeFeedback(pendingCalification.feedback))
                             
                             // Destacar los campos para mostrar que vienen del chat
                             gradeEditText.setBackgroundColor(itemView.context.getColor(android.R.color.holo_green_light))
@@ -2110,7 +2111,8 @@ class TaskSubmissionsFragment : Fragment() {
                                 return@setOnClickListener
                             }
 
-                            val feedback = feedbackEditText.text.toString()
+                            val feedback = sanitizeFeedback(feedbackEditText.text.toString())
+                            feedbackEditText.setText(feedback)
                             onGradeSubmitted(submission, grade, feedback)
                         } catch (e: NumberFormatException) {
                             Toast.makeText(context, "❌ No se pudo convertir la calificación '$gradeText' a número decimal", Toast.LENGTH_SHORT).show()
@@ -2128,7 +2130,7 @@ class TaskSubmissionsFragment : Fragment() {
                         // Show feedback if available
                         if (!submission.feedback.isNullOrBlank()) {
                             feedbackDisplayTextView.visibility = View.VISIBLE
-                            feedbackDisplayTextView.text = "Comentarios: ${submission.feedback}"
+                            feedbackDisplayTextView.text = "Comentarios: ${sanitizeFeedback(submission.feedback)}"
                         } else {
                             feedbackDisplayTextView.visibility = View.GONE
                         }
@@ -2446,6 +2448,21 @@ class TaskSubmissionsFragment : Fragment() {
         } catch (e: Exception) {
             "repository"
         }
+    }
+
+    /**
+     * Limpia formato Markdown básico del feedback para evitar mostrar símbolos como ** y #.
+     */
+    private fun sanitizeFeedback(feedback: String?): String {
+        if (feedback.isNullOrBlank()) return ""
+
+        return feedback
+            .lines()
+            .map { line -> line.replace(Regex("^\\s{0,3}#{1,6}\\s*"), "") }
+            .joinToString("\n")
+            .replace("**", "")
+            .replace("__", "")
+            .trim()
     }
     
     /**

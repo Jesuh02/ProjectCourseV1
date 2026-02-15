@@ -1,46 +1,384 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
+    android:background="@drawable/bg_liquid_glass_purple_cyan"
     android:padding="16dp">
 
-    <TextView
-        android:id="@+id/pendingSubmissionsCount"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Pendientes: 0"
-        android:textColor="@android:color/white"
-        android:textSize="16sp" />
-
+    <!-- ═══════ Métricas Rápidas Row (4 cards) ═══════ -->
     <LinearLayout
-        android:id="@+id/pendingSubmissionsContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_marginTop="16dp" />
+        android:orientation="horizontal"
+        android:weightSum="4">
 
-    <TextView
-        android:id="@+id/totalChatMessages"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Mensajes: 0"
-        android:textColor="@android:color/white"
-        android:textSize="16sp"
-        android:layout_marginTop="24dp" />
+        <!-- Tareas Hoy -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="4dp"
+            app:cardBackgroundColor="@color/card_purple_glass"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp">
 
-    <LinearLayout
-        android:id="@+id/recentChatContainer"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:padding="12dp">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_assignment"
+                    android:padding="4dp"
+                    android:background="@drawable/circle_icon_bg_purple"
+                    app:tint="#64B5F6" />
+
+                <TextView
+                    android:id="@+id/metricTareasHoy"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textColor="@android:color/white"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
+                    android:layout_marginTop="6dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Tareas Hoy"
+                    android:textColor="#B8B3FF"
+                    android:textSize="10sp"
+                    android:gravity="center"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Promedio -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="4dp"
+            app:cardBackgroundColor="@color/card_purple_glass"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:padding="12dp">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_star"
+                    android:padding="4dp"
+                    android:background="@drawable/circle_icon_bg_purple"
+                    app:tint="#FFD700" />
+
+                <TextView
+                    android:id="@+id/metricPromedio"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0.0"
+                    android:textColor="@android:color/white"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
+                    android:layout_marginTop="6dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Promedio"
+                    android:textColor="#B8B3FF"
+                    android:textSize="10sp"
+                    android:gravity="center"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Tiempo Est. -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="4dp"
+            app:cardBackgroundColor="@color/card_purple_glass"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:padding="12dp">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_clock"
+                    android:padding="4dp"
+                    android:background="@drawable/circle_icon_bg_purple"
+                    app:tint="#4ADE80" />
+
+                <TextView
+                    android:id="@+id/metricTiempoEst"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0h"
+                    android:textColor="@android:color/white"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
+                    android:layout_marginTop="6dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Tiempo Est."
+                    android:textColor="#B8B3FF"
+                    android:textSize="10sp"
+                    android:gravity="center"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Esta Semana -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="4dp"
+            app:cardBackgroundColor="@color/card_purple_glass"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:padding="12dp">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_trending_up"
+                    android:padding="4dp"
+                    android:background="@drawable/circle_icon_bg_purple"
+                    app:tint="#FF4081" />
+
+                <TextView
+                    android:id="@+id/metricEstaSemana"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textColor="@android:color/white"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
+                    android:layout_marginTop="6dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Esta Semana"
+                    android:textColor="#B8B3FF"
+                    android:textSize="10sp"
+                    android:gravity="center"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+    </LinearLayout>
+
+    <!-- ═══════ Tareas por Calificar ═══════ -->
+    <androidx.cardview.widget.CardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_marginTop="16dp" />
+        android:layout_marginTop="20dp"
+        app:cardBackgroundColor="@color/card_purple_glass"
+        app:cardCornerRadius="24dp"
+        app:cardElevation="0dp">
 
-    <LinearLayout
-        android:id="@+id/systemNotificationsContainer"
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <!-- Header: icon + title + badge -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ImageView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:src="@drawable/ic_task_grading"
+                    android:padding="6dp"
+                    android:background="@drawable/circle_icon_bg_purple"
+                    app:tint="#B8B3FF" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Tareas por Calificar"
+                        android:textColor="@android:color/white"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Entregas de estudiantes"
+                        android:textColor="#B8B3FF"
+                        android:textSize="11sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <!-- Badge pendientes -->
+                <TextView
+                    android:id="@+id/pendingSubmissionsCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 pendientes"
+                    android:textColor="#4ADE80"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/badge_background"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="6dp" />
+            </LinearLayout>
+
+            <!-- Submissions List Container -->
+            <LinearLayout
+                android:id="@+id/pendingSubmissionsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="16dp" />
+
+            <!-- Ver todas las tareas link -->
+            <TextView
+                android:id="@+id/viewAllSubmissionsLink"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Ver todas las tareas ›"
+                android:textColor="#8B7FFF"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:paddingTop="16dp"
+                android:paddingBottom="4dp" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- ═══════ Cursos por Terminar ═══════ -->
+    <androidx.cardview.widget.CardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_marginTop="24dp" />
+        android:layout_marginTop="20dp"
+        app:cardBackgroundColor="@color/card_purple_glass"
+        app:cardCornerRadius="24dp"
+        app:cardElevation="0dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <!-- Header: icon + title + badge -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ImageView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:src="@drawable/ic_book"
+                    android:padding="6dp"
+                    android:background="@drawable/circle_icon_bg_purple"
+                    app:tint="#64B5F6" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Cursos por Terminar"
+                        android:textColor="@android:color/white"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Contenido pendiente de completar"
+                        android:textColor="#B8B3FF"
+                        android:textSize="11sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <!-- Badge count -->
+                <TextView
+                    android:id="@+id/pendingCoursesCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 cursos"
+                    android:textColor="#64B5F6"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/badge_background"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="6dp" />
+            </LinearLayout>
+
+            <!-- Courses List Container -->
+            <LinearLayout
+                android:id="@+id/pendingCoursesContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="16dp" />
+
+            <!-- Ver todos los cursos link -->
+            <TextView
+                android:id="@+id/viewAllCoursesLink"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Ver todos los cursos ›"
+                android:textColor="#8B7FFF"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:paddingTop="16dp"
+                android:paddingBottom="4dp" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
 
 </LinearLayout>

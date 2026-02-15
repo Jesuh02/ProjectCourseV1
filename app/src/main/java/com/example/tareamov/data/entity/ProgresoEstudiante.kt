@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.google.gson.annotations.SerializedName
 
 /**
  * Entidad que representa el progreso de un estudiante en un curso.
@@ -21,14 +22,21 @@ import androidx.room.PrimaryKey
     ]
 )
 data class ProgresoEstudiante(
+    @SerializedName(value = "usuarioEstudiante", alternate = ["userId", "usuario_estudiante"])
     val usuarioEstudiante: Long = 0, // Changed from String to Long to match Supabase bigint
+    @SerializedName(value = "cursoId", alternate = ["courseId", "curso_id"])
     val cursoId: Long = 0,
+    @SerializedName(value = "tareasCompletadas", alternate = ["completedTasks", "tareas_completadas"])
     val tareasCompletadas: Int = 0,
+    @SerializedName(value = "tareasTotales", alternate = ["totalTasks", "tareas_totales"])
     val tareasTotales: Int = 0,
+    @SerializedName(value = "porcentajeProgreso", alternate = ["progressPercentage", "porcentaje_progreso"])
     val porcentajeProgreso: Float = 0f,
     val calificacionPonderada: Float? = null,
+    @SerializedName(value = "promedio", alternate = ["averageGrade"])
     val promedio: Float? = null, // Promedio de calificaciones (alias de calificacionPonderada)
     // Estado se genera automáticamente en Supabase, pero lo guardamos localmente
+    @SerializedName(value = "estado", alternate = ["status"])
     val estado: String? = null, // "Ganado" o "Perdido"
     val ultimaCalculadaEn: Long = System.currentTimeMillis(),
     val certificadoEmitidoEn: Long? = null,

@@ -4,23 +4,31 @@ import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
+import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
+import com.bumptech.glide.load.resource.bitmap.CenterCrop
+import com.bumptech.glide.load.resource.bitmap.RoundedCorners
 import com.example.tareamov.R
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
-import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * Panel de Administrador - Funcionalidades únicas para el creador de la app:
@@ -55,7 +63,6 @@ import kotlinx.coroutines.withContext
 class AdminDashboardFragment : Fragment() {
 
     private lateinit var sessionManager: SessionManager
-    private lateinit var bottomNavBinding: ComponentBottomNavigationBinding
     
     // Views principales
     private lateinit var backButton: ImageButton
@@ -68,6 +75,8 @@ class AdminDashboardFragment : Fragment() {
     private var cachedMetrics: GlobalMetrics? = null
     private var metricsLastUpdated: Long = 0
     private val CACHE_DURATION_MS = 60_000L // 1 minuto
+    private val TOP_ITEMS_LIMIT = 5
+    private val MAX_SUBMISSIONS_PER_COURSE = 50
     
     // Secciones del dashboard
     private var currentSection: DashboardSection = DashboardSection.ANALYTICS
@@ -95,7 +104,6 @@ class AdminDashboardFragment : Fragment() {
         BackendApiService.initialize(requireContext())
         
         initializeViews(view)
-        setupBottomNavigation(view)
         checkAdminAccess()
     }
 
@@ -153,7 +161,7 @@ class AdminDashboardFragment : Fragment() {
 
             tabProgress.setOnClickListener {
                 updateTabSelection(tabProgress, tabAnalytics, tabModeration)
-                switchSection(DashboardSection.PROGRESS_TRACKING)
+                switchSection(DashboardSection.PERMISSIONS)
             }
 
             // Iniciar con Analytics
@@ -197,56 +205,67 @@ class AdminDashboardFragment : Fragment() {
         }
         
         // Mostrar UI instantáneamente con valores en 0
-        displayAnalyticsMetrics(GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0), animated = false)
+        displayAnalyticsMetrics(GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), animated = false)
         
         // Cargar datos reales en background y actualizar con animación
         lifecycleScope.launch {
             try {
                 val metrics = withContext(Dispatchers.IO) {
                     try {
-                        val currentUsername = sessionManager.getUsername()
-                        if (currentUsername.isNullOrEmpty()) {
-                            Log.w("AdminDashboard", "No username found in session")
-                            return@withContext GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0)
-                        }
-                        
-                        // Fetch creator's courses via BackendApiService
-                        val creatorCourses = BackendApiService.getCoursesByCreator(currentUsername).getOrNull() ?: emptyList()
-                        val courseIds = creatorCourses.map { it.id }
-                        
-                        if (courseIds.isEmpty()) {
-                            return@withContext GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0)
+                        val creatorUserId = sessionManager.getUserId()
+                        if (creatorUserId <= 0L) {
+                            Log.w("AdminDashboard", "No userId found in session")
+                            return@withContext GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
                         }
 
-                        // Compute aggregated metrics from BackendApiService
-                        var uniqueUsers = 0
-                        var totalSubmissions = 0
-                        var certifications = 0
+                        val creatorMetricsResult = BackendApiService.getMyCreatorDashboardMetrics()
+                        val creatorMetrics = if (creatorMetricsResult is ApiResult.Success) {
+                            creatorMetricsResult.data
+                        } else {
+                            null
+                        }
+                        val enrollmentAnalytics = BackendApiService
+                            .getCreatorEnrollmentAnalytics(weeklyDays = 7, monthlyMonths = 6)
+                            .getOrNull()
 
-                        for (courseId in courseIds) {
-                            val enrolled = BackendApiService.getEnrolledCount(courseId).getOrNull() ?: 0
-                            uniqueUsers += enrolled
-
-                            val subs = BackendApiService.getSubmissionsByCourse(courseId).getOrNull() ?: emptyList()
-                            totalSubmissions += subs.size
-
-                            val progress = BackendApiService.getAllProgressByCourse(courseId).getOrNull() ?: emptyList()
-                            certifications += progress.count { !it.certificadoUrl.isNullOrBlank() }
+                        val creatorCourses = BackendApiService.getCoursesByCreatorId(creatorUserId).getOrNull() ?: emptyList()
+                        val totalSubmissions = coroutineScope {
+                            creatorCourses
+                                .map { course ->
+                                    async {
+                                        BackendApiService
+                                            .getSubmissionsByCourse(course.id)
+                                            .getOrNull()
+                                            ?.size ?: 0
+                                    }
+                                }
+                                .awaitAll()
+                                .sum()
                         }
 
                         GlobalMetrics(
-                            totalUsers = uniqueUsers,
-                            activeUsers = uniqueUsers,
-                            totalCourses = creatorCourses.size,
+                            totalUsers = creatorMetrics?.enrolledUsersCount ?: 0,
+                            activeUsers = creatorMetrics?.enrolledUsersCount ?: 0,
+                            totalCourses = creatorMetrics?.totalCourses ?: creatorCourses.size,
                             publishedCourses = creatorCourses.count { it.isPublished },
                             totalSubmissions = totalSubmissions,
                             totalNotifications = 0,
                             totalChatMessages = 0,
-                            certificatesIssued = certifications
+                            certificatesIssued = creatorMetrics?.certifiedUsersCount ?: 0,
+                            completionRate = creatorMetrics?.completionRate ?: 0,
+                            approvalRate = creatorMetrics?.approvalRate ?: 0,
+                            satisfactionRate = creatorMetrics?.satisfactionRate ?: 0,
+                            weeklyEnrollmentSeries = enrollmentAnalytics?.weekly?.values?.map { it.toFloat() }
+                                ?: List(7) { 0f },
+                            monthlyEnrollmentSeries = enrollmentAnalytics?.monthly?.values?.map { it.toFloat() }
+                                ?: List(6) { 0f },
+                            monthlyEnrollmentLabels = enrollmentAnalytics?.monthly?.labels
+                                ?.takeIf { it.isNotEmpty() }
+                                ?: listOf("Ene", "Feb", "Mar", "Abr", "May", "Jun")
                         )
                     } catch (e: Exception) {
                         Log.w("AdminDashboard", "Error loading analytics: ${e.message}", e)
-                        GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0)
+                        GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
                     }
                 }
                 
@@ -292,29 +311,22 @@ class AdminDashboardFragment : Fragment() {
             
             // Setup Charts - con validación de null
             val weeklyChart = analyticsView.findViewById<com.example.tareamov.ui.components.SimpleLineChart>(R.id.weeklyActivityChart)
-            weeklyChart?.setData(listOf(120f, 150f, 140f, 180f, 220f, 190f, 160f))
+            weeklyChart?.setData(metrics.weeklyEnrollmentSeries)
             
             val monthlyChart = analyticsView.findViewById<com.example.tareamov.ui.components.SimpleBarChart>(R.id.monthlyProgressChart)
             monthlyChart?.setData(
-                listOf(350f, 500f, 420f, 580f, 510f, 620f),
-                listOf("Ene", "Feb", "Mar", "Abr", "May", "Jun")
+                metrics.monthlyEnrollmentSeries,
+                metrics.monthlyEnrollmentLabels
             )
             
-            // Animate Progress Bars
-            val progressCompleted = analyticsView.findViewById<ProgressBar>(R.id.progressCompleted)
-            val progressApproved = analyticsView.findViewById<ProgressBar>(R.id.progressApproved)
-            val progressSatisfaction = analyticsView.findViewById<ProgressBar>(R.id.progressSatisfaction)
-            
-            progressCompleted?.let { animateProgressBar(it, 87) }
-            progressApproved?.let { animateProgressBar(it, 92) }
-            progressSatisfaction?.let { animateProgressBar(it, 78) }
+            setGlobalPerformanceMetrics(analyticsView, metrics, animated)
             
             sectionsContainer.addView(analyticsView)
             
             // Lazy loading: cargar secciones secundarias después de mostrar lo principal
             lifecycleScope.launch {
                 try {
-                    // Cargar en paralelo pero después de mostrar la UI principal
+                    // Cargar en paralelo real pero después de mostrar la UI principal
                     val creatorsJob = async { loadTopCreators(analyticsView) }
                     val coursesJob = async { loadTopCourses(analyticsView) }
                     val studentsJob = async { loadTopStudents(analyticsView) }
@@ -339,6 +351,8 @@ class AdminDashboardFragment : Fragment() {
 
     private fun updateAnalyticsMetrics(metrics: GlobalMetrics, animated: Boolean = true) {
         try {
+            if (currentSection != DashboardSection.ANALYTICS) return
+
             // Buscar la vista ya existente en el contenedor
             if (sectionsContainer.childCount == 0) {
                 // Si no existe, crearla
@@ -360,6 +374,14 @@ class AdminDashboardFragment : Fragment() {
                 analyticsView.findViewById<TextView>(R.id.totalSubmissionsText)?.text = metrics.totalSubmissions.toString()
                 analyticsView.findViewById<TextView>(R.id.certificatesIssuedText)?.text = metrics.certificatesIssued.toString()
             }
+
+            val weeklyChart = analyticsView.findViewById<com.example.tareamov.ui.components.SimpleLineChart>(R.id.weeklyActivityChart)
+            weeklyChart?.setData(metrics.weeklyEnrollmentSeries)
+
+            val monthlyChart = analyticsView.findViewById<com.example.tareamov.ui.components.SimpleBarChart>(R.id.monthlyProgressChart)
+            monthlyChart?.setData(metrics.monthlyEnrollmentSeries, metrics.monthlyEnrollmentLabels)
+
+            setGlobalPerformanceMetrics(analyticsView, metrics, animated)
             
             Log.d("AdminDashboard", "Analytics metrics updated with animation=$animated")
         } catch (e: Exception) {
@@ -370,6 +392,7 @@ class AdminDashboardFragment : Fragment() {
     private fun animateMetricValue(view: View, textViewId: Int, targetValue: Int) {
         val textView = view.findViewById<TextView>(textViewId) ?: return
         val currentValue = textView.text.toString().toIntOrNull() ?: 0
+        if (currentValue == targetValue) return
         
         // Animar de currentValue a targetValue en 800ms
         android.animation.ValueAnimator.ofInt(currentValue, targetValue).apply {
@@ -383,59 +406,116 @@ class AdminDashboardFragment : Fragment() {
     }
 
     private fun animateProgressBar(progressBar: ProgressBar, target: Int) {
-        val animation = android.animation.ObjectAnimator.ofInt(progressBar, "progress", 0, target)
+        val safeTarget = target.coerceIn(0, 100)
+        if (progressBar.progress == safeTarget) return
+        val animation = android.animation.ObjectAnimator.ofInt(progressBar, "progress", progressBar.progress, safeTarget)
         animation.duration = 1500
         animation.interpolator = android.view.animation.DecelerateInterpolator()
         animation.start()
     }
 
-    private fun loadTopCreators(parentView: View) {
-        lifecycleScope.launch {
-            try {
-                val creators = withContext(Dispatchers.IO) {
-                    try {
-                        // Get all courses and group by creator to compute top creators
-                        val allCourses = BackendApiService.getCourses().getOrNull() ?: emptyList()
-                        val coursesByCreator = allCourses.groupBy { it.creatorUserId }.filter { it.key > 0L }
-                        
-                        coursesByCreator.map { (creatorUserId, courses) ->
-                            val creatorUser = BackendApiService.getUserById(creatorUserId).getOrNull()
-                            val creatorUsername = creatorUser?.usuario ?: ""
-                            val subscriberCount = if (creatorUser != null) {
-                                BackendApiService.getSubscriberCount(creatorUser.id).getOrNull() ?: 0
-                            } else 0
-                            CreatorStats(
-                                username = creatorUsername,
-                                coursesCount = courses.size,
-                                subscribersCount = subscriberCount,
-                                certificationsCount = 0,
-                                avatarUrl = creatorUser?.avatar
-                            )
-                        }.sortedByDescending { it.coursesCount }.take(5)
-                    } catch (e: Exception) {
-                        Log.e("AdminDashboard", "Error loading top creators", e)
-                        emptyList<CreatorStats>()
+    private fun setGlobalPerformanceMetrics(view: View, metrics: GlobalMetrics, animated: Boolean) {
+        val completionRate = metrics.completionRate.coerceIn(0, 100)
+        val approvalRate = metrics.approvalRate.coerceIn(0, 100)
+        val satisfactionRate = metrics.satisfactionRate.coerceIn(0, 100)
+
+        val completedBar = view.findViewById<ProgressBar>(R.id.progressCompleted)
+        val approvedBar = view.findViewById<ProgressBar>(R.id.progressApproved)
+        val satisfactionBar = view.findViewById<ProgressBar>(R.id.progressSatisfaction)
+
+        val completedText = view.findViewById<TextView>(R.id.completedPercentText)
+        val approvedText = view.findViewById<TextView>(R.id.approvedPercentText)
+        val satisfactionText = view.findViewById<TextView>(R.id.satisfactionPercentText)
+
+        if (animated) {
+            completedBar?.let { animateProgressBar(it, completionRate) }
+            approvedBar?.let { animateProgressBar(it, approvalRate) }
+            satisfactionBar?.let { animateProgressBar(it, satisfactionRate) }
+
+            completedText?.let { animatePercentageText(it, completionRate) }
+            approvedText?.let { animatePercentageText(it, approvalRate) }
+            satisfactionText?.let { animatePercentageText(it, satisfactionRate) }
+        } else {
+            completedBar?.progress = completionRate
+            approvedBar?.progress = approvalRate
+            satisfactionBar?.progress = satisfactionRate
+
+            completedText?.text = "$completionRate%"
+            approvedText?.text = "$approvalRate%"
+            satisfactionText?.text = "$satisfactionRate%"
+        }
+    }
+
+    private fun animatePercentageText(textView: TextView, targetValue: Int) {
+        val currentValue = textView.text.toString().replace("%", "").toIntOrNull() ?: 0
+        if (currentValue == targetValue) return
+        android.animation.ValueAnimator.ofInt(currentValue, targetValue).apply {
+            duration = 800
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener { animator ->
+                textView.text = "${animator.animatedValue as Int}%"
+            }
+            start()
+        }
+    }
+
+    private suspend fun loadTopCreators(parentView: View) {
+        try {
+            val creators = withContext(Dispatchers.IO) {
+                try {
+                    val allCourses = BackendApiService.getCourses().getOrNull() ?: emptyList()
+                    val coursesByCreator = allCourses
+                        .groupBy { it.creatorUserId }
+                        .filterKeys { it > 0L }
+
+                    coroutineScope {
+                        coursesByCreator
+                            .map { (creatorUserId, courses) ->
+                                async {
+                                    val creatorUser = BackendApiService.getUserById(creatorUserId).getOrNull()
+                                    val creatorUsername = creatorUser?.usuario.orEmpty()
+                                    val subscriberCount = creatorUser?.let {
+                                        BackendApiService.getSubscriberCount(it.id).getOrNull() ?: 0
+                                    } ?: 0
+
+                                    CreatorStats(
+                                        username = creatorUsername,
+                                        coursesCount = courses.size,
+                                        subscribersCount = subscriberCount,
+                                        certificationsCount = 0,
+                                        avatarUrl = creatorUser?.avatar
+                                    )
+                                }
+                            }
+                            .awaitAll()
+                            .sortedByDescending { it.coursesCount }
+                            .take(TOP_ITEMS_LIMIT)
                     }
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error loading top creators", e)
+                    emptyList()
                 }
-                
-                val container = parentView.findViewById<LinearLayout>(R.id.topCreatorsContainer)
-                container?.removeAllViews()
-                
-                if (container == null) {
-                    Log.e("AdminDashboard", "topCreatorsContainer not found in layout")
-                    return@launch
-                }
-                
-                creators.forEachIndexed { index, creator ->
+            }
+
+            if (currentSection != DashboardSection.ANALYTICS) return
+
+            val container = parentView.findViewById<LinearLayout>(R.id.topCreatorsContainer)
+            container?.removeAllViews()
+
+            if (container == null) {
+                Log.e("AdminDashboard", "topCreatorsContainer not found in layout")
+                return
+            }
+
+            creators.forEachIndexed { index, creator ->
                 val itemView = LayoutInflater.from(requireContext())
                     .inflate(R.layout.item_top_creator, container, false)
-                
+
                 val avatarView = itemView.findViewById<de.hdodenhof.circleimageview.CircleImageView>(R.id.creatorAvatar)
-                
-                // Cargar avatar del creador
+
                 if (!creator.avatarUrl.isNullOrBlank()) {
                     try {
-                        com.bumptech.glide.Glide.with(requireContext())
+                        Glide.with(requireContext())
                             .load(creator.avatarUrl)
                             .placeholder(R.drawable.placeholder_avatar)
                             .error(R.drawable.placeholder_avatar)
@@ -446,189 +526,221 @@ class AdminDashboardFragment : Fragment() {
                 } else {
                     avatarView.setImageResource(R.drawable.placeholder_avatar)
                 }
-                
+
                 itemView.findViewById<TextView>(R.id.rankNumber).text = "${index + 1}"
                 itemView.findViewById<TextView>(R.id.creatorName).text = creator.username
                 itemView.findViewById<TextView>(R.id.coursesCount).text = "${creator.coursesCount} Cursos"
-                    itemView.findViewById<TextView>(R.id.subscribersCount).text = "${creator.subscribersCount}"
-                    container.addView(itemView)
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                Log.d("AdminDashboard", "Top creators loading cancelled")
-            } catch (e: Exception) {
-                Log.e("AdminDashboard", "Error displaying top creators", e)
+                itemView.findViewById<TextView>(R.id.subscribersCount).text = "${creator.subscribersCount}"
+                container.addView(itemView)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d("AdminDashboard", "Top creators loading cancelled")
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error displaying top creators", e)
         }
     }
 
-    private fun loadTopCourses(parentView: View) {
-        lifecycleScope.launch {
-            try {
-                val topCourses = withContext(Dispatchers.IO) {
-                    try {
-                        // Fetch courses via BackendApiService and compute enrollment counts
-                        val allCourses = BackendApiService.getCourses().getOrNull() ?: emptyList()
-                        
-                        val coursesWithCounts = allCourses.map { course ->
-                            val enrolledCount = BackendApiService.getEnrolledCount(course.id).getOrNull() ?: 0
-                            course to enrolledCount
-                        }.sortedByDescending { it.second }.take(5)
-                        
-                        coursesWithCounts.map { (course, count) ->
-                            CourseStats(
-                                id = course.id,
-                                title = course.title,
-                                description = course.description ?: "",
-                                thumbnailUri = course.thumbnailUri,
-                                enrollments = count,
-                                isPremium = course.isPremium,
-                                rating = 4.5f // Placeholder rating
-                            )
-                        }
-                    } catch (e: Exception) {
-                        Log.e("AdminDashboard", "Error loading top courses", e)
-                        emptyList()
+    private suspend fun loadTopCourses(parentView: View) {
+        try {
+            val topCourses = withContext(Dispatchers.IO) {
+                try {
+                    val allCourses = BackendApiService.getCourses().getOrNull() ?: emptyList()
+
+                    val coursesWithCounts = coroutineScope {
+                        allCourses
+                            .map { course ->
+                                async {
+                                    val enrolledCount = BackendApiService.getEnrolledCount(course.id).getOrNull() ?: 0
+                                    course to enrolledCount
+                                }
+                            }
+                            .awaitAll()
+                            .sortedByDescending { it.second }
+                            .take(TOP_ITEMS_LIMIT)
                     }
+
+                    coursesWithCounts.map { (course, count) ->
+                        CourseStats(
+                            id = course.id,
+                            title = course.title,
+                            description = course.description ?: "",
+                            thumbnailUri = course.thumbnailUri,
+                            enrollments = count,
+                            isPremium = course.isPremium,
+                            rating = 4.5f
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error loading top courses", e)
+                    emptyList()
                 }
-                
-                val container = parentView.findViewById<LinearLayout>(R.id.topCoursesContainer)
-                container?.removeAllViews()
-                
-                if (container == null) {
-                    Log.e("AdminDashboard", "topCoursesContainer not found in layout")
-                    return@launch
-                }
-            
+            }
+
+            if (currentSection != DashboardSection.ANALYTICS) return
+
+            val container = parentView.findViewById<LinearLayout>(R.id.topCoursesContainer)
+            container?.removeAllViews()
+
+            if (container == null) {
+                Log.e("AdminDashboard", "topCoursesContainer not found in layout")
+                return
+            }
+
             topCourses.forEach { course ->
                 val itemView = LayoutInflater.from(requireContext())
                     .inflate(R.layout.item_top_course, container, false)
-                
+
                 itemView.findViewById<TextView>(R.id.courseTitle).text = course.title
                 itemView.findViewById<TextView>(R.id.courseDescription).text = course.description
                 itemView.findViewById<TextView>(R.id.enrollmentsText).text = "${course.enrollments} inscritos"
                 itemView.findViewById<TextView>(R.id.courseRating).text = String.format("%.1f", course.rating)
-                itemView.findViewById<ImageView>(R.id.premiumBadge).visibility = 
+                itemView.findViewById<ImageView>(R.id.premiumBadge).visibility =
                     if (course.isPremium) View.VISIBLE else View.GONE
-                
-                // Load thumbnail if available
+
                 val thumbnail = itemView.findViewById<ImageView>(R.id.courseThumbnail)
-                if (!course.thumbnailUri.isNullOrEmpty()) {
-                    // Use Glide or Coil to load image
-                    try {
-                        com.bumptech.glide.Glide.with(requireContext())
-                            .load(course.thumbnailUri)
-                            .placeholder(R.drawable.placeholder_image)
-                            .error(R.drawable.placeholder_image)
-                            .into(thumbnail)
-                    } catch (e: Exception) {
-                        thumbnail.setImageResource(R.drawable.placeholder_image)
-                    }
-                } else {
-                    thumbnail.setImageResource(R.drawable.placeholder_image)
+                loadRoundedCourseThumbnail(thumbnail, course.thumbnailUri)
+
+                itemView.setOnClickListener {
+                    navigateToCourseDetail(course)
                 }
-                
-                    container.addView(itemView)
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                Log.d("AdminDashboard", "Top courses loading cancelled")
-            } catch (e: Exception) {
-                Log.e("AdminDashboard", "Error displaying top courses", e)
+
+                container.addView(itemView)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d("AdminDashboard", "Top courses loading cancelled")
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error displaying top courses", e)
         }
     }
 
-    private fun loadTopStudents(parentView: View) {
-        lifecycleScope.launch {
-            try {
-                val topStudents = withContext(Dispatchers.IO) {
-                    try {
-                        Log.d("AdminDashboard", "Loading global top students via BackendApiService")
-                        
-                        val topStudentsData = BackendApiService.getTopStudents(5).getOrNull() ?: emptyList()
-
-                        Log.d("AdminDashboard", "Retrieved ${topStudentsData.size} top students from BackendApiService")
-
-                        topStudentsData.mapIndexed { index, studentData ->
-                            val avgGrade = studentData.get("avg_grade")?.asDouble?.toFloat() ?: 0f
-                            val username = studentData.get("username")?.asString?.takeIf { it.isNotBlank() }
-                                ?: "Usuario ${studentData.get("user_id")?.asLong ?: 0}"
-                            val coursesCount = studentData.get("courses_count")?.asInt ?: 0
-
-                            Log.d("AdminDashboard", "Mapping student #${index + 1}: $username - Grade: $avgGrade - Courses: $coursesCount")
-
-                            StudentStats(
-                                username = username,
-                                averageGrade = avgGrade,
-                                completedCourses = coursesCount,
-                                hasCertificate = avgGrade >= 9.0
-                            )
-                        }
-                    } catch (e: Exception) {
-                        Log.e("AdminDashboard", "Error loading top students", e)
-                        emptyList<StudentStats>()
-                    }
-                }
-                
-                val container = parentView.findViewById<LinearLayout>(R.id.topStudentsContainer)
-                container?.removeAllViews()
-                
-                if (container == null) {
-                    Log.e("AdminDashboard", "topStudentsContainer not found in layout")
-                    return@launch
-                }
-                
-                if (topStudents.isEmpty()) {
-                     val emptyView = TextView(requireContext()).apply {
-                        text = "No hay estudiantes inscritos en tus cursos aún.\n\n" +
-                               "Para ver estudiantes destacados:\n" +
-                               "1. Los estudiantes deben inscribirse a tus cursos\n" +
-                               "2. Debe existir registro en la tabla 'progreso_estudiante'\n" +
-                               "3. El campo 'calificacion_promedio' debe tener valores"
-                        setTextColor(Color.parseColor("#B0BEC5"))
-                        textSize = 14f
-                        gravity = android.view.Gravity.CENTER
-                        setPadding(32, 40, 32, 40)
-                        layoutParams = LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT
-                        )
-                     }
-                     container.addView(emptyView)
-                     Log.d("AdminDashboard", "Showing empty state for top students")
-                } else {
-                    Log.d("AdminDashboard", "Displaying ${topStudents.size} top students")
-                    topStudents.forEachIndexed { index, student ->
-                        val itemView = LayoutInflater.from(requireContext())
-                            .inflate(R.layout.item_top_student, container, false)
-                        
-                        // Set student name with rank
-                        itemView.findViewById<TextView>(R.id.studentName)?.text = 
-                            "#${index + 1} ${student.username}"
-
-                        // Set completed courses count
-                        itemView.findViewById<TextView>(R.id.coursesCompletedText)?.text = 
-                            "${student.completedCourses} cursos completados"
-                        
-                        // Set average grade
-                        itemView.findViewById<TextView>(R.id.averageGrade)?.text = 
-                            String.format("%.1f", student.averageGrade)
-                        
-                        // Show certificate icon if applicable
-                        itemView.findViewById<ImageView>(R.id.certificateIcon)?.visibility = 
-                            if (student.hasCertificate) View.VISIBLE else View.GONE
-                        
-                        container.addView(itemView)
-                        
-                        Log.d("AdminDashboard", "Added student to UI: #${index + 1} ${student.username}")
-                    }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                Log.d("AdminDashboard", "Top students loading cancelled")
-            } catch (e: Exception) {
-                Log.e("AdminDashboard", "Error displaying top students", e)
-                Toast.makeText(requireContext(), "Error al cargar estudiantes destacados: ${e.message}", Toast.LENGTH_LONG).show()
-            }
+    private fun navigateToCourseDetail(course: CourseStats) {
+        if (course.id <= 0L) {
+            Log.w("AdminDashboard", "Ignoring navigation to invalid course id=${course.id}")
+            return
         }
+
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.adminDashboardFragment) {
+            return
+        }
+
+        val bundle = Bundle().apply {
+            putLong("courseId", course.id)
+            putString("courseName", course.title)
+        }
+
+        navController.navigate(R.id.action_adminDashboardFragment_to_courseDetailFragment, bundle)
+    }
+
+    private suspend fun loadTopStudents(parentView: View) {
+        try {
+            val topStudents = withContext(Dispatchers.IO) {
+                try {
+                    Log.d("AdminDashboard", "Loading global top students via BackendApiService")
+                    val topStudentsData = BackendApiService.getTopStudents(TOP_ITEMS_LIMIT).getOrNull() ?: emptyList()
+
+                    Log.d("AdminDashboard", "Retrieved ${topStudentsData.size} top students from BackendApiService")
+
+                    topStudentsData.mapIndexed { index, studentData ->
+                        val userId = studentData.get("user_id")?.asLong ?: 0L
+                        val username = studentData.get("username")?.asString?.takeIf { it.isNotBlank() }
+                            ?: "Usuario $userId"
+                        val approvedCourses = studentData.get("approved_courses")?.asInt ?: 0
+                        val averageGrade = studentData.get("average_grade")?.asFloat ?: 0f
+                        val avatarUrl = studentData.get("avatar")?.asString?.takeIf { it.isNotBlank() }
+
+                        Log.d("AdminDashboard", "Mapping student #${index + 1}: $username - Approved: $approvedCourses - Grade: $averageGrade")
+
+                        StudentStats(
+                            userId = userId,
+                            username = username,
+                            approvedCourses = approvedCourses,
+                            averageGrade = averageGrade,
+                            avatarUrl = avatarUrl
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error loading top students", e)
+                    emptyList<StudentStats>()
+                }
+            }
+
+            if (currentSection != DashboardSection.ANALYTICS) return
+
+            val container = parentView.findViewById<LinearLayout>(R.id.topStudentsContainer)
+            container?.removeAllViews()
+
+            if (container == null) {
+                Log.e("AdminDashboard", "topStudentsContainer not found in layout")
+                return
+            }
+
+            if (topStudents.isEmpty()) {
+                val emptyView = TextView(requireContext()).apply {
+                    text = "No hay estudiantes inscritos en tus cursos aún.\n\n" +
+                        "Para ver estudiantes destacados:\n" +
+                        "1. Los estudiantes deben inscribirse a tus cursos\n" +
+                        "2. Debe existir registro en la tabla 'progreso_estudiante'\n" +
+                        "3. El estado debe estar en 'Ganado'"
+                    setTextColor(Color.parseColor("#B0BEC5"))
+                    textSize = 14f
+                    gravity = android.view.Gravity.CENTER
+                    setPadding(32, 40, 32, 40)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                container.addView(emptyView)
+                Log.d("AdminDashboard", "Showing empty state for top students")
+            } else {
+                Log.d("AdminDashboard", "Displaying ${topStudents.size} top students")
+                topStudents.forEachIndexed { index, student ->
+                    val itemView = LayoutInflater.from(requireContext())
+                        .inflate(R.layout.item_top_student, container, false)
+
+                    itemView.findViewById<TextView>(R.id.studentName)?.text =
+                        "#${index + 1} ${student.username}"
+                    itemView.findViewById<TextView>(R.id.coursesCompletedText)?.text =
+                        "${student.approvedCourses} cursos aprobados"
+
+                    itemView.findViewById<TextView>(R.id.averageGrade)?.text = String.format("%.2f", student.averageGrade)
+                    itemView.findViewById<ImageView>(R.id.certificateIcon)?.visibility = View.GONE
+
+                    val avatarView = itemView.findViewById<ImageView>(R.id.studentAvatar)
+                    Glide.with(this@AdminDashboardFragment)
+                        .load(student.avatarUrl)
+                        .placeholder(R.drawable.placeholder_avatar)
+                        .error(R.drawable.placeholder_avatar)
+                        .circleCrop()
+                        .into(avatarView)
+
+                    itemView.setOnClickListener {
+                        navigateToUserProfile(student)
+                    }
+
+                    container.addView(itemView)
+                    Log.d("AdminDashboard", "Added student to UI: #${index + 1} ${student.username}")
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d("AdminDashboard", "Top students loading cancelled")
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error displaying top students", e)
+            Toast.makeText(requireContext(), "Error al cargar estudiantes destacados: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun navigateToUserProfile(student: StudentStats) {
+        if (student.userId <= 0L) return
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.adminDashboardFragment) return
+
+        val bundle = Bundle().apply {
+            putLong("userId", student.userId)
+        }
+
+        navController.navigate(R.id.action_adminDashboardFragment_to_profileFragment, bundle)
     }
 
     // ==================== SECCIÓN 2: GESTIÓN DE USUARIOS ====================
@@ -786,91 +898,618 @@ class AdminDashboardFragment : Fragment() {
 
     // ==================== SECCIÓN 3: MODERACIÓN ====================
     
+    // Cache for moderation data
+    private var cachedPendingSubmissions: List<com.example.tareamov.data.entity.TaskSubmission> = emptyList()
+    private var cachedCoursesToFinish: List<CourseProgressInfo> = emptyList()
+    
+    data class CourseProgressInfo(
+        val course: com.example.tareamov.data.entity.Course,
+        val progress: com.example.tareamov.data.entity.ProgresoEstudiante,
+        val enrolledCount: Int = 0
+    )
+    
+    data class SubmissionDetail(
+        val submission: com.example.tareamov.data.entity.TaskSubmission,
+        val task: com.example.tareamov.data.entity.Task?,
+        val student: com.example.tareamov.data.entity.Usuario?,
+        val courseName: String = ""
+    )
+    
     private fun loadModerationSection() {
         titleTextView.text = "Moderación de Contenido"
         
         val moderationView = LayoutInflater.from(requireContext())
             .inflate(R.layout.section_moderation, sectionsContainer, false)
         
+        // Start with alpha 0 for fade-in animation
+        moderationView.alpha = 0f
         sectionsContainer.addView(moderationView)
         
-        // Submissions pendientes de calificación
+        // Animate the whole section in
+        moderationView.animate()
+            .alpha(1f)
+            .setDuration(400)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .start()
+        
+        // Load all data in parallel
+        loadModerationMetrics(moderationView)
         loadPendingSubmissions(moderationView)
-        
-        // Mensajes de chat recientes
-        loadRecentChatMessages(moderationView)
-        
-        // Notificaciones del sistema
-        loadSystemNotifications(moderationView)
+        loadCoursesToFinish(moderationView)
+    }
+    
+    private fun loadModerationMetrics(parentView: View) {
+        lifecycleScope.launch {
+            try {
+                // Fetch progress and submissions data in parallel
+                val progressDeferred = async(Dispatchers.IO) {
+                    BackendApiService.getMyProgress().getOrNull() ?: emptyList()
+                }
+                val submissionsDeferred = async(Dispatchers.IO) {
+                    BackendApiService.getMySubmissions(1, 200).getOrNull() ?: emptyList()
+                }
+                
+                val myProgress = progressDeferred.await()
+                val allSubmissions = submissionsDeferred.await()
+                
+                // Calculate metrics
+                val totalTareasHoy = myProgress.sumOf { 
+                    (it.tareasTotales - it.tareasCompletadas).coerceAtLeast(0) 
+                }
+                
+                val promedio = if (myProgress.isNotEmpty()) {
+                    val grades = myProgress.mapNotNull { it.promedio ?: it.calificacionPonderada }
+                    if (grades.isNotEmpty()) grades.average().toFloat() else 0f
+                } else 0f
+                
+                // Estimate time: ~30 min per pending task
+                val tiempoEstHours = (totalTareasHoy * 0.5f)
+                
+                // This week submissions count
+                val oneWeekAgo = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)
+                val estaSemana = allSubmissions.count { it.submissionDate > oneWeekAgo }
+                
+                // Animate metric values
+                animateModerationMetric(parentView.findViewById(R.id.metricTareasHoy), totalTareasHoy.toString())
+                animateModerationMetric(parentView.findViewById(R.id.metricPromedio), String.format("%.1f", promedio))
+                animateModerationMetric(parentView.findViewById(R.id.metricTiempoEst), String.format("%.1fh", tiempoEstHours))
+                animateModerationMetric(parentView.findViewById(R.id.metricEstaSemana), estaSemana.toString())
+                
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading moderation metrics", e)
+            }
+        }
+    }
+    
+    private fun animateModerationMetric(textView: TextView, targetText: String) {
+        // Slide up + fade in animation
+        textView.translationY = 20f
+        textView.alpha = 0f
+        textView.text = targetText
+        textView.animate()
+            .translationY(0f)
+            .alpha(1f)
+            .setDuration(500)
+            .setStartDelay(100)
+            .setInterpolator(android.view.animation.OvershootInterpolator(1.2f))
+            .start()
     }
 
     private fun loadPendingSubmissions(parentView: View) {
         lifecycleScope.launch {
-            val pendingSubmissions = withContext(Dispatchers.IO) {
-                val allSubmissions = BackendApiService.getMySubmissions(1, 100).getOrNull() ?: emptyList()
-                allSubmissions.filter { it.grade == null || it.grade == 0f }.take(10)
-            }
-            
-            val container = parentView.findViewById<LinearLayout>(R.id.pendingSubmissionsContainer)
-            container.removeAllViews()
-            
-            parentView.findViewById<TextView>(R.id.pendingSubmissionsCount).text = 
-                "${pendingSubmissions.size} pendientes"
-            
-            pendingSubmissions.forEach { submission ->
-                val task = withContext(Dispatchers.IO) {
-                    BackendApiService.getTaskById(submission.taskId).getOrNull()
+            try {
+                showLoadingIndicator()
+                
+                val userId = sessionManager.getUserId()
+                val maxCards = TOP_ITEMS_LIMIT
+                
+                val submissionDetails = withContext(Dispatchers.IO) {
+                    val creatorCourses = BackendApiService.getCoursesByCreatorId(userId).getOrNull() ?: emptyList()
+                    val courseTitleById = creatorCourses.associateBy({ it.id }, { it.title })
+
+                    val ungradedByCourse = coroutineScope {
+                        creatorCourses
+                            .map { course ->
+                                async {
+                                    // Fetch only ungraded submissions from backend (grade IS NULL at DB level)
+                                    val allSubmissions = BackendApiService
+                                        .getSubmissionsByCourse(course.id, 1, MAX_SUBMISSIONS_PER_COURSE, ungradedOnly = true)
+                                        .getOrNull()
+                                        .orEmpty()
+
+                                    // Defense in depth: also filter client-side + deduplicate by student+task
+                                    val ungraded = allSubmissions
+                                        .groupBy { submission -> "${submission.studentId}_${submission.taskId}" }
+                                        .mapNotNull { (_, submissionsByStudentTask) ->
+                                            submissionsByStudentTask
+                                                .maxByOrNull { submission -> submission.submissionDate }
+                                                ?: submissionsByStudentTask.firstOrNull()
+                                        }
+                                        .filter { submission ->
+                                            submission.grade == null
+                                        }
+
+                                    Log.d("AdminDashboard", "Course ${course.id}: ${allSubmissions.size} from API → ${ungraded.size} truly ungraded")
+                                    course.id to ungraded
+                                }
+                            }
+                            .awaitAll()
+                    }
+
+                    val selectedPairs = ungradedByCourse
+                        .asSequence()
+                        .flatMap { (courseId, submissions) -> submissions.asSequence().map { courseId to it } }
+                        .take(maxCards)
+                        .toList()
+
+                    val taskIds = selectedPairs.map { it.second.taskId }.distinct()
+                    val studentIds = selectedPairs.map { it.second.studentId }.distinct()
+
+                    val taskMap = coroutineScope {
+                        taskIds
+                            .map { taskId ->
+                                async { taskId to BackendApiService.getTaskById(taskId).getOrNull() }
+                            }
+                            .awaitAll()
+                            .toMap()
+                    }
+
+                    val studentMap = coroutineScope {
+                        studentIds
+                            .map { studentId ->
+                                async { studentId to BackendApiService.getUserById(studentId).getOrNull() }
+                            }
+                            .awaitAll()
+                            .toMap()
+                    }
+
+                    selectedPairs.map { (courseId, submission) ->
+                        SubmissionDetail(
+                            submission = submission,
+                            task = taskMap[submission.taskId],
+                            student = studentMap[submission.studentId],
+                            courseName = courseTitleById[courseId].orEmpty()
+                        )
+                    }
+                }
+
+                if (currentSection != DashboardSection.MODERATION) {
+                    hideLoadingIndicator()
+                    return@launch
                 }
                 
-                val student = withContext(Dispatchers.IO) {
-                    BackendApiService.getUserById(submission.studentId).getOrNull()
+                cachedPendingSubmissions = submissionDetails.map { it.submission }
+                
+                val container = parentView.findViewById<LinearLayout>(R.id.pendingSubmissionsContainer)
+                container.removeAllViews()
+                
+                parentView.findViewById<TextView>(R.id.pendingSubmissionsCount).text = 
+                    "${submissionDetails.size} pendientes"
+                
+                if (submissionDetails.isEmpty()) {
+                    val emptyView = createEmptyStateView("No hay tareas pendientes por calificar", "✅")
+                    container.addView(emptyView)
+                } else {
+                    submissionDetails.forEachIndexed { index, detail ->
+                        val itemView = createSubmissionItemView(detail, container)
+                        
+                        // Staggered animation (fade + slide + slight scale)
+                        itemView.alpha = 0f
+                        itemView.translationY = 28f
+                        itemView.scaleX = 0.98f
+                        itemView.scaleY = 0.98f
+                        container.addView(itemView)
+                        
+                        itemView.animate()
+                            .alpha(1f)
+                            .translationY(0f)
+                            .scaleX(1f)
+                            .scaleY(1f)
+                            .setDuration(360)
+                            .setStartDelay((index * 90).toLong())
+                            .setInterpolator(FastOutSlowInInterpolator())
+                            .start()
+                    }
+                }
+
+                parentView.findViewById<TextView>(R.id.viewAllSubmissionsLink)?.setOnClickListener {
+                    val firstPending = submissionDetails.firstOrNull() ?: return@setOnClickListener
+                    navigateToTaskSubmissionFromModeration(firstPending)
                 }
                 
-                val itemView = LayoutInflater.from(requireContext())
-                    .inflate(R.layout.item_pending_submission, container, false)
+                hideLoadingIndicator()
                 
-                itemView.findViewById<TextView>(R.id.taskTitle).text = task?.name ?: "Tarea desconocida"
-                itemView.findViewById<TextView>(R.id.studentName).text = student?.usuario ?: "Estudiante desconocido"
-                itemView.findViewById<TextView>(R.id.submissionDate).text = 
-                    android.text.format.DateFormat.format("dd/MM/yyyy", submission.submissionDate)
-                
-                itemView.setOnClickListener {
-                    // Navegar a detalles de submission
-                    showSubmissionDetails(submission, task, student)
-                }
-                
-                container.addView(itemView)
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading pending submissions", e)
+                hideLoadingIndicator()
             }
         }
     }
-
-    private fun loadRecentChatMessages(parentView: View) {
-        lifecycleScope.launch {
-            val container = parentView.findViewById<LinearLayout>(R.id.recentChatContainer)
-            container.removeAllViews()
-            
-            parentView.findViewById<TextView>(R.id.totalChatMessages).text = "0 recientes"
-            
-            // Placeholder - implementar cuando exista getAllChatMessages
-            val placeholderText = TextView(requireContext()).apply {
-                text = "Sin mensajes recientes"
-                setPadding(16, 16, 16, 16)
-                setTextColor(android.graphics.Color.WHITE)
-            }
-            container.addView(placeholderText)
-        }
-    }
-
-    private fun loadSystemNotifications(parentView: View) {
-        val container = parentView.findViewById<LinearLayout>(R.id.systemNotificationsContainer)
-        container.removeAllViews()
+    
+    private fun createSubmissionItemView(
+        detail: SubmissionDetail,
+        container: LinearLayout
+    ): View {
+        val itemView = LayoutInflater.from(requireContext())
+            .inflate(R.layout.item_pending_submission, container, false)
         
-        // Placeholder - necesitarías NotificationDao
-        val placeholderText = TextView(requireContext()).apply {
-            text = "Sistema de notificaciones disponible"
-            setPadding(16, 16, 16, 16)
+        val submission = detail.submission
+        val task = detail.task
+        val student = detail.student
+        
+        // Task title
+        itemView.findViewById<TextView>(R.id.taskTitle).text = task?.name ?: "Tarea desconocida"
+        
+        // Course name
+        itemView.findViewById<TextView>(R.id.courseName).text = detail.courseName
+        
+        // Student name
+        itemView.findViewById<TextView>(R.id.studentName).text = student?.usuario ?: "Estudiante"
+        
+        // Student avatar
+        val avatarView = itemView.findViewById<ImageView>(R.id.studentAvatar)
+        val avatarUrl = student?.avatar
+        Glide.with(this)
+            .load(avatarUrl)
+            .placeholder(R.drawable.placeholder_avatar)
+            .error(R.drawable.placeholder_avatar)
+            .fallback(R.drawable.placeholder_avatar)
+            .circleCrop()
+            .into(avatarView)
+        
+        // Relative time
+        val timeDiff = System.currentTimeMillis() - submission.submissionDate
+        val timeText = when {
+            timeDiff < 3600000 -> "hace ${timeDiff / 60000}m"
+            timeDiff < 86400000 -> "hace ${timeDiff / 3600000}h"
+            timeDiff < 604800000 -> "hace ${timeDiff / 86400000}d"
+            else -> android.text.format.DateFormat.format("dd/MM", submission.submissionDate).toString()
         }
-        container.addView(placeholderText)
+        itemView.findViewById<TextView>(R.id.submissionDate).text = timeText
+        
+        // Priority badge based on time
+        val priorityBadge = itemView.findViewById<TextView>(R.id.priorityBadge)
+        when {
+            timeDiff < 7200000 -> { // < 2 hours
+                priorityBadge.text = "alta"
+                priorityBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#FF5252"))
+            }
+            timeDiff < 21600000 -> { // < 6 hours
+                priorityBadge.text = "media"
+                priorityBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#FF9800"))
+            }
+            else -> {
+                priorityBadge.text = "baja"
+                priorityBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#4ADE80"))
+            }
+        }
+        
+        // Points (estimated from task context)
+        val points = when {
+            task?.name?.contains("Final", true) == true -> 100
+            task?.name?.contains("Quiz", true) == true -> 25
+            task?.name?.contains("Práctica", true) == true -> 40
+            task?.name?.contains("Ensayo", true) == true -> 75
+            task?.name?.contains("Ejercicio", true) == true -> 50
+            else -> 30
+        }
+        itemView.findViewById<TextView>(R.id.submissionPoints).text = "$points pts"
+        
+        applyPendingItemPressAnimation(itemView)
+
+        // Approve button (quick grade)
+        itemView.findViewById<ImageView>(R.id.btnApprove).setOnClickListener {
+            showGradeDialog(submission, task, student)
+        }
+        
+        // Open task submissions directly on selected pending task
+        itemView.findViewById<ImageView>(R.id.btnReject).setOnClickListener {
+            navigateToTaskSubmissionFromModeration(detail)
+        }
+        
+        // Click on whole card opens the task to grade
+        itemView.setOnClickListener {
+            navigateToTaskSubmissionFromModeration(detail)
+        }
+        
+        return itemView
+    }
+
+    private fun navigateToTaskSubmissionFromModeration(detail: SubmissionDetail) {
+        val task = detail.task
+        val studentUsername = detail.student?.usuario
+
+        if (task == null || task.id <= 0L) {
+            Toast.makeText(requireContext(), "No se pudo abrir la tarea pendiente", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.adminDashboardFragment) return
+
+        val creatorUsername = sessionManager.getUsername().orEmpty()
+        val bundle = Bundle().apply {
+            putLong("taskId", task.id)
+            putString("taskName", task.name)
+            putString("courseCreatorUsername", creatorUsername)
+            putString("scrollToSubmissionUsername", studentUsername)
+        }
+
+        try {
+            navController.navigate(R.id.action_adminDashboardFragment_to_taskSubmissionFragment, bundle)
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error navigating to pending task submissions", e)
+            Toast.makeText(requireContext(), "No se pudo abrir la tarea", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun applyPendingItemPressAnimation(itemView: View) {
+        itemView.setOnTouchListener { view, motionEvent ->
+            when (motionEvent.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    view.animate()
+                        .scaleX(0.985f)
+                        .scaleY(0.985f)
+                        .setDuration(120)
+                        .setInterpolator(FastOutSlowInInterpolator())
+                        .start()
+                }
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL -> {
+                    view.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(150)
+                        .setInterpolator(FastOutSlowInInterpolator())
+                        .start()
+                }
+            }
+            false
+        }
+    }
+    
+    private fun showGradeDialog(
+        submission: com.example.tareamov.data.entity.TaskSubmission,
+        task: com.example.tareamov.data.entity.Task?,
+        student: com.example.tareamov.data.entity.Usuario?
+    ) {
+        val dialogView = LayoutInflater.from(requireContext())
+            .inflate(android.R.layout.simple_list_item_1, null)
+        
+        val editText = android.widget.EditText(requireContext()).apply {
+            hint = "Calificación (0-10)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setPadding(48, 32, 48, 32)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor("#9B9BB3"))
+        }
+        
+        val feedbackEdit = android.widget.EditText(requireContext()).apply {
+            hint = "Retroalimentación (opcional)"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setPadding(48, 16, 48, 32)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor("#9B9BB3"))
+            minLines = 2
+        }
+        
+        val container = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(editText)
+            addView(feedbackEdit)
+        }
+        
+        androidx.appcompat.app.AlertDialog.Builder(requireContext(), R.style.Theme_TareaMov_Dialog)
+            .setTitle("Calificar: ${task?.name ?: "Tarea"}")
+            .setView(container)
+            .setPositiveButton("Calificar") { _, _ ->
+                val grade = editText.text.toString().toFloatOrNull() ?: return@setPositiveButton
+                val feedback = feedbackEdit.text.toString().takeIf { it.isNotBlank() }
+                
+                lifecycleScope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            BackendApiService.gradeSubmission(submission.id, grade, feedback ?: "")
+                        }
+                        Toast.makeText(requireContext(), "Calificación enviada ✓", Toast.LENGTH_SHORT).show()
+                        // Refresh section
+                        sectionsContainer.removeAllViews()
+                        loadModerationSection()
+                    } catch (e: Exception) {
+                        Toast.makeText(requireContext(), "Error al calificar", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+    
+    private fun loadCoursesToFinish(parentView: View) {
+        lifecycleScope.launch {
+            try {
+                val currentUserId = sessionManager.getUserId()
+                val courseDetails = withContext(Dispatchers.IO) {
+                    val myProgress = BackendApiService.getMyProgress().getOrNull() ?: emptyList()
+
+                    val incompleteCourses = myProgress.filter {
+                        val progress = if (it.tareasTotales > 0) {
+                            (it.tareasCompletadas.toFloat() / it.tareasTotales.toFloat()) * 100f
+                        } else {
+                            it.porcentajeProgreso
+                        }
+                        progress < 90f
+                    }
+
+                    coroutineScope {
+                        incompleteCourses
+                            .mapNotNull { progress ->
+                                val courseId = progress.cursoId
+                                if (courseId <= 0L) {
+                                    Log.w("AdminDashboard", "Skipping invalid progress record with courseId=$courseId")
+                                    null
+                                } else {
+                                    async {
+                                        val courseDeferred = async { BackendApiService.getCourseById(courseId).getOrNull() }
+                                        val enrolledCountDeferred = async {
+                                            BackendApiService.getEnrolledCount(courseId).getOrNull() ?: 0
+                                        }
+                                        val course = courseDeferred.await()
+                                        val enrolledCount = enrolledCountDeferred.await()
+
+                                        course
+                                            ?.takeIf { it.creatorUserId != currentUserId }
+                                            ?.let { CourseProgressInfo(it, progress, enrolledCount) }
+                                    }
+                                }
+                            }
+                            .awaitAll()
+                            .filterNotNull()
+                    }
+                }
+
+                if (currentSection != DashboardSection.MODERATION) return@launch
+                
+                cachedCoursesToFinish = courseDetails
+                
+                val container = parentView.findViewById<LinearLayout>(R.id.pendingCoursesContainer)
+                container.removeAllViews()
+                
+                parentView.findViewById<TextView>(R.id.pendingCoursesCount).text = 
+                    "${courseDetails.size} cursos"
+                
+                if (courseDetails.isEmpty()) {
+                    val emptyView = createEmptyStateView("¡Todos tus cursos están al día!", "🎉")
+                    container.addView(emptyView)
+                } else {
+                    courseDetails.forEachIndexed { index, info ->
+                        val itemView = createCourseProgressItemView(info, container)
+                        
+                        // Staggered slide-up animation
+                        itemView.alpha = 0f
+                        itemView.translationY = 40f
+                        container.addView(itemView)
+                        
+                        itemView.animate()
+                            .alpha(1f)
+                            .translationY(0f)
+                            .setDuration(400)
+                            .setStartDelay((index * 100 + 200).toLong())
+                            .setInterpolator(android.view.animation.DecelerateInterpolator())
+                            .start()
+                    }
+                }
+                
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading courses to finish", e)
+            }
+        }
+    }
+    
+    private fun createCourseProgressItemView(
+        info: CourseProgressInfo,
+        container: LinearLayout
+    ): View {
+        val itemView = LayoutInflater.from(requireContext())
+            .inflate(R.layout.item_course_progress, container, false)
+        
+        val course = info.course
+        val progress = info.progress
+
+        val thumbnailView = itemView.findViewById<ImageView>(R.id.courseThumbnail)
+        loadRoundedCourseThumbnail(thumbnailView, course.thumbnailUri)
+        
+        // Title
+        itemView.findViewById<TextView>(R.id.courseTitle).text = course.title
+        
+        // Calculate actual progress percentage
+        val progressPercent = if (progress.tareasTotales > 0) {
+            ((progress.tareasCompletadas.toFloat() / progress.tareasTotales.toFloat()) * 100f).toInt()
+        } else {
+            progress.porcentajeProgreso.toInt()
+        }
+        
+        // Status badge
+        val statusBadge = itemView.findViewById<TextView>(R.id.statusBadge)
+        when {
+            progressPercent >= 80 -> {
+                statusBadge.text = "Casi listo"
+                statusBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#4ADE80"))
+            }
+            progressPercent >= 40 -> {
+                statusBadge.text = "En progreso"
+                statusBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#8B7FFF"))
+            }
+            else -> {
+                statusBadge.text = "Pendiente"
+                statusBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#FF9800"))
+            }
+        }
+        
+        // Lessons text
+        itemView.findViewById<TextView>(R.id.lessonsText).text = 
+            "${progress.tareasCompletadas}/${progress.tareasTotales} lecciones"
+        
+        // Students text
+        itemView.findViewById<TextView>(R.id.studentsText).text = 
+            "${info.enrolledCount} estudiantes"
+        
+        // Progress percentage
+        itemView.findViewById<TextView>(R.id.progressPercentText).text = "$progressPercent%"
+        
+        // Progress bar with animation
+        val progressBar = itemView.findViewById<ProgressBar>(R.id.courseProgressBar)
+        progressBar.progress = 0
+        progressBar.postDelayed({
+            val animator = android.animation.ObjectAnimator.ofInt(progressBar, "progress", 0, progressPercent)
+            animator.duration = 800
+            animator.interpolator = android.view.animation.DecelerateInterpolator()
+            animator.start()
+        }, 300)
+        
+        // Due date (estimate based on creation)
+        val dueDateText = itemView.findViewById<TextView>(R.id.dueDateText)
+        if (course.lastModifiedDate.isNotEmpty()) {
+            dueDateText.text = "Fecha límite: ${course.lastModifiedDate}"
+        } else {
+            dueDateText.text = "Sin fecha límite"
+        }
+        
+        // Continue button
+        itemView.findViewById<TextView>(R.id.btnContinue).setOnClickListener {
+            navigateToCourseDetail(CourseStats(
+                id = course.id,
+                title = course.title,
+                description = course.description,
+                thumbnailUri = course.thumbnailUri,
+                enrollments = info.enrolledCount,
+                isPremium = course.isPremium,
+                rating = course.rating
+            ))
+        }
+        
+        return itemView
+    }
+    
+    private fun createEmptyStateView(message: String, emoji: String): View {
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(32, 48, 32, 48)
+            
+            addView(TextView(requireContext()).apply {
+                text = emoji
+                textSize = 36f
+                gravity = android.view.Gravity.CENTER
+            })
+            
+            addView(TextView(requireContext()).apply {
+                text = message
+                setTextColor(Color.parseColor("#B8B3FF"))
+                textSize = 14f
+                gravity = android.view.Gravity.CENTER
+                setPadding(0, 12, 0, 0)
+            })
+        }
     }
 
     private fun showSubmissionDetails(
@@ -879,18 +1518,21 @@ class AdminDashboardFragment : Fragment() {
         student: com.example.tareamov.data.entity.Usuario?
     ) {
         val message = buildString {
-            append("Tarea: ${task?.name ?: "Desconocida"}\n")
-            append("Estudiante: ${student?.usuario ?: "Desconocido"}\n")
-            append("Archivo: ${submission.fileName}\n")
-            append("Fecha: ${android.text.format.DateFormat.format("dd/MM/yyyy HH:mm", submission.submissionDate)}\n")
-            append("Calificación: ${submission.grade ?: "Sin calificar"}\n")
-            append("Retroalimentación: ${submission.feedback ?: "Sin retroalimentación"}\n")
+            append("📋 Tarea: ${task?.name ?: "Desconocida"}\n\n")
+            append("👤 Estudiante: ${student?.usuario ?: "Desconocido"}\n")
+            append("📎 Archivo: ${submission.fileName}\n")
+            append("📅 Fecha: ${android.text.format.DateFormat.format("dd/MM/yyyy HH:mm", submission.submissionDate)}\n\n")
+            append("📊 Calificación: ${submission.grade ?: "Sin calificar"}\n")
+            append("💬 Retroalimentación: ${submission.feedback ?: "Sin retroalimentación"}\n")
         }
         
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        androidx.appcompat.app.AlertDialog.Builder(requireContext(), R.style.Theme_TareaMov_Dialog)
             .setTitle("Detalles de Envío")
             .setMessage(message)
-            .setPositiveButton("OK", null)
+            .setPositiveButton("Calificar") { _, _ ->
+                showGradeDialog(submission, task, student)
+            }
+            .setNegativeButton("Cerrar", null)
             .show()
     }
 
@@ -927,42 +1569,142 @@ class AdminDashboardFragment : Fragment() {
     // ==================== SECCIÓN 5: SISTEMA DE PERMISOS ====================
     
     private fun loadPermissionsSection() {
-        titleTextView.text = "Sistema de Permisos"
+        titleTextView.text = "Gestión de Roles"
         
         val permissionsView = LayoutInflater.from(requireContext())
             .inflate(R.layout.section_permissions, sectionsContainer, false)
         
         sectionsContainer.addView(permissionsView)
+
+        val rolesContainer = permissionsView.findViewById<LinearLayout>(R.id.rolesContainer)
+        permissionsView.findViewById<TextView>(R.id.configureRolesButton).visibility = View.GONE
+
+        rolesContainer.removeAllViews()
         
         lifecycleScope.launch {
-            // Cargar roles
-            val roles = withContext(Dispatchers.IO) {
-                BackendApiService.getRoles().getOrNull() ?: emptyList()
-            }
-            
-            val rolesContainer = permissionsView.findViewById<LinearLayout>(R.id.rolesContainer)
-            rolesContainer.removeAllViews()
-            
-            roles.forEach { role ->
-                val roleView = LayoutInflater.from(requireContext())
-                    .inflate(R.layout.item_role, rolesContainer, false)
-                
-                roleView.findViewById<TextView>(R.id.roleName).text = role.nombre
-                roleView.findViewById<TextView>(R.id.roleLevel).text = "Nivel: ${role.nivel}"
-                roleView.findViewById<ImageView>(R.id.defaultIcon).visibility = 
-                    if (role.default) View.VISIBLE else View.GONE
-                
-                roleView.setOnClickListener {
-                    showRolePermissions(role)
+            try {
+                val currentUserId = sessionManager.getUserId()
+                if (currentUserId <= 0L) {
+                    showEmptyRolesState(rolesContainer)
+                    return@launch
                 }
-                
-                rolesContainer.addView(roleView)
+
+                val roleCards = withContext(Dispatchers.IO) {
+                    val allRoles = BackendApiService.getRoles().getOrNull() ?: emptyList()
+                    val userRoleIds = BackendApiService.getUserRoles(currentUserId).getOrNull()?.toSet() ?: emptySet()
+
+                    val assignedRoles = if (userRoleIds.isNotEmpty()) {
+                        allRoles.filter { it.id in userRoleIds }
+                    } else {
+                        allRoles.filter { sessionManager.hasRole(it.id.toInt()) }
+                    }
+
+                    coroutineScope {
+                        assignedRoles
+                            .map { role ->
+                                async {
+                                    val permissionCount = BackendApiService
+                                        .getRecursosByRol(role.id)
+                                        .getOrNull()
+                                        ?.size ?: 0
+                                    RoleCardData(role, permissionCount)
+                                }
+                            }
+                            .map { it.await() }
+                            .sortedByDescending { it.role.nivel }
+                    }
+                }
+
+                if (roleCards.isEmpty()) {
+                    showEmptyRolesState(rolesContainer)
+                    return@launch
+                }
+
+                roleCards.forEachIndexed { index, roleCard ->
+                    val roleView = LayoutInflater.from(requireContext())
+                        .inflate(R.layout.item_role, rolesContainer, false)
+
+                    roleView.findViewById<ImageView>(R.id.roleIcon)
+                        .setImageResource(getRoleIconResource(roleCard.role.nombre))
+                    roleView.findViewById<TextView>(R.id.roleName).text = formatRoleName(roleCard.role.nombre)
+                    roleView.findViewById<TextView>(R.id.roleMeta).text =
+                        "Asignado a tu cuenta · ${roleCard.permissionsCount} permisos"
+                    roleView.findViewById<TextView>(R.id.roleStatusChip).text =
+                        if (roleCard.role.default) "Predeterminado" else "Activo"
+
+                    applyRoleTouchAnimation(roleView)
+                    roleView.setOnClickListener { showRolePermissions(roleCard.role) }
+
+                    rolesContainer.addView(roleView)
+                    animateRoleItemEntry(roleView, index)
+                }
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error cargando roles del usuario", e)
+                showEmptyRolesState(rolesContainer)
             }
-            
-            // Cargar recursos
-            loadResourcesTree(permissionsView)
         }
     }
+
+    private fun showEmptyRolesState(container: LinearLayout) {
+        container.removeAllViews()
+        val emptyState = TextView(requireContext()).apply {
+            text = "No se encontraron roles activos para esta cuenta"
+            setTextColor(ContextCompat.getColor(requireContext(), R.color.light_purple))
+            textSize = 14f
+            setPadding(8, 14, 8, 14)
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+        }
+        container.addView(emptyState)
+    }
+
+    private fun animateRoleItemEntry(roleView: View, index: Int) {
+        roleView.alpha = 0f
+        roleView.translationY = 24f
+        roleView.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(index * 65L)
+            .setDuration(280)
+            .setInterpolator(FastOutSlowInInterpolator())
+            .start()
+    }
+
+    private fun applyRoleTouchAnimation(roleView: View) {
+        roleView.setOnTouchListener { view, motionEvent ->
+            when (motionEvent.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    view.animate().scaleX(0.98f).scaleY(0.98f).setDuration(90).start()
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+                }
+            }
+            false
+        }
+    }
+
+    private fun formatRoleName(roleName: String): String {
+        val cleaned = roleName.trim().replace("_", " ")
+        return cleaned.lowercase(Locale.getDefault()).replaceFirstChar {
+            if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+        }
+    }
+
+    private fun getRoleIconResource(roleName: String): Int {
+        val normalized = roleName.trim().lowercase(Locale.getDefault())
+        return when {
+            normalized.contains("admin") -> R.drawable.ic_admin
+            normalized.contains("docente") || normalized.contains("profesor") -> R.drawable.ic_school
+            normalized.contains("estudiante") || normalized.contains("usuario") -> R.drawable.ic_person
+            else -> R.drawable.ic_profile
+        }
+    }
+
+    private data class RoleCardData(
+        val role: com.example.tareamov.data.entity.Rol,
+        val permissionsCount: Int
+    )
 
     private fun showRolePermissions(role: com.example.tareamov.data.entity.Rol) {
         lifecycleScope.launch {
@@ -987,59 +1729,7 @@ class AdminDashboardFragment : Fragment() {
                 .setTitle("Permisos de ${role.nombre}")
                 .setMessage(message)
                 .setPositiveButton("OK", null)
-                .setNeutralButton("Editar Permisos") { _, _ ->
-                    showPermissionEditor(role)
-                }
                 .show()
-        }
-    }
-
-    private fun showPermissionEditor(role: com.example.tareamov.data.entity.Rol) {
-        lifecycleScope.launch {
-            val allResources = withContext(Dispatchers.IO) {
-                BackendApiService.getRecursos().getOrNull() ?: emptyList()
-            }
-            
-            val assignedResources = withContext(Dispatchers.IO) {
-                BackendApiService.getRecursosByRol(role.id).getOrNull()?.map { it.id } ?: emptyList()
-            }
-            
-            val resourceNames = allResources.map { it.nombre }.toTypedArray()
-            val checkedItems = BooleanArray(allResources.size) { index ->
-                allResources[index].id in assignedResources
-            }
-            
-            androidx.appcompat.app.AlertDialog.Builder(requireContext())
-                .setTitle("Editar permisos de ${role.nombre}")
-                .setMultiChoiceItems(resourceNames, checkedItems) { _, which, isChecked ->
-                    checkedItems[which] = isChecked
-                }
-                .setPositiveButton("Guardar") { _, _ ->
-                    saveRolePermissions(role, allResources, checkedItems)
-                }
-                .setNegativeButton("Cancelar", null)
-                .show()
-        }
-    }
-
-    private fun saveRolePermissions(
-        role: com.example.tareamov.data.entity.Rol,
-        allResources: List<com.example.tareamov.data.entity.Recurso>,
-        checkedItems: BooleanArray
-    ) {
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                // TODO: Backend currently lacks endpoints for bulk role-resource management.
-                // When available, replace with proper API calls.
-                allResources.forEachIndexed { index, recurso ->
-                    if (checkedItems[index]) {
-                        Log.d("AdminDashboard", "Would assign resource ${recurso.id} to role ${role.id}")
-                    }
-                }
-            }
-            
-            Toast.makeText(requireContext(), "Permisos actualizados", Toast.LENGTH_SHORT).show()
-            loadPermissionsSection()
         }
     }
 
@@ -1099,97 +1789,19 @@ class AdminDashboardFragment : Fragment() {
         }
     }
 
+    private fun loadRoundedCourseThumbnail(imageView: ImageView, imageUrl: String?) {
+        val cornerRadiusPx = (12 * resources.displayMetrics.density).toInt()
+        val source: Any = imageUrl?.takeIf { it.isNotBlank() } ?: R.drawable.placeholder_image
+
+        Glide.with(this)
+            .load(source)
+            .placeholder(R.drawable.placeholder_image)
+            .error(R.drawable.placeholder_image)
+            .transform(CenterCrop(), RoundedCorners(cornerRadiusPx))
+            .into(imageView)
+    }
+
     // ==================== UTILIDADES ====================
-    
-    private fun setupBottomNavigation(view: View) {
-        val bottomNavView = view.findViewById<View>(R.id.bottomNavigation)
-        bottomNavBinding = ComponentBottomNavigationBinding.bind(bottomNavView)
-        
-        bottomNavView.visibility = View.VISIBLE
-        
-        // Setup admin button with role verification
-        setupAdminButton(bottomNavBinding)
-        
-        // Update notification badge
-        updateNotificationBadge(bottomNavBinding)
-        
-        bottomNavBinding.homeNavLayout.setOnClickListener {
-            findNavController().navigate(R.id.videoHomeFragment)
-        }
-        
-        bottomNavBinding.exploreButton.setOnClickListener {
-            findNavController().navigate(R.id.exploreFragment)
-        }
-        
-        bottomNavBinding.goToHomeButton.setOnClickListener {
-            findNavController().navigate(R.id.contentUploadFragment)
-        }
-        
-        bottomNavBinding.activityButton.setOnClickListener {
-            findNavController().navigate(R.id.notificacionesFragment)
-        }
-        
-        bottomNavBinding.profileNavButton.setOnClickListener {
-            findNavController().navigate(R.id.profileFragment)
-        }
-    }
-    
-    private fun setupAdminButton(bottomNavBinding: ComponentBottomNavigationBinding) {
-        val adminSlot = bottomNavBinding.adminSlot
-        val goToAdminButton = bottomNavBinding.goToAdminButton
-
-        // Inicializa como INVISIBLE para evitar salto al inflar
-        goToAdminButton.visibility = View.INVISIBLE
-
-        val sess = SessionManager.getInstance(requireContext())
-        
-        // Verificar específicamente el rol 3
-        if (!sess.hasRole(3)) {
-            // Ocultar el slot antes del render para que no quede hueco visible
-            adminSlot.visibility = View.GONE
-            return
-        }
-
-        // Usuario tiene rol 3: mostrar botón y asignar listener
-        adminSlot.visibility = View.VISIBLE
-        goToAdminButton.visibility = View.VISIBLE
-        goToAdminButton.setOnClickListener {
-            // Ya estamos en AdminDashboard, no hacer nada o recargar
-            loadAnalyticsSection()
-        }
-    }
-
-    /**
-     * Actualiza el badge de notificaciones no leídas
-     */
-    private fun updateNotificationBadge(bottomNavBinding: ComponentBottomNavigationBinding) {
-        val userId = sessionManager.getUserId()
-        if (userId == -1L) {
-            bottomNavBinding.notificationBadge.visibility = View.GONE
-            return
-        }
-
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val unreadCount = withContext(Dispatchers.IO) {
-                    val result = BackendApiService.getUnreadNotificationCount()
-                    if (result is ApiResult.Success) {
-                        result.data ?: 0
-                    } else 0
-                }
-                
-                if (unreadCount > 0) {
-                    bottomNavBinding.notificationBadge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
-                    bottomNavBinding.notificationBadge.visibility = View.VISIBLE
-                } else {
-                    bottomNavBinding.notificationBadge.visibility = View.GONE
-                }
-            } catch (e: Exception) {
-                Log.w("AdminDashboard", "Error updating notification badge", e)
-                bottomNavBinding.notificationBadge.visibility = View.GONE
-            }
-        }
-    }
 
     private fun checkAdminAccess() {
         // Permitir acceso a todos los usuarios
@@ -1206,7 +1818,13 @@ class AdminDashboardFragment : Fragment() {
         val totalSubmissions: Int,
         val totalNotifications: Int,
         val totalChatMessages: Int,
-        val certificatesIssued: Int
+        val certificatesIssued: Int,
+        val completionRate: Int,
+        val approvalRate: Int,
+        val satisfactionRate: Int,
+        val weeklyEnrollmentSeries: List<Float> = List(7) { 0f },
+        val monthlyEnrollmentSeries: List<Float> = List(6) { 0f },
+        val monthlyEnrollmentLabels: List<String> = listOf("Ene", "Feb", "Mar", "Abr", "May", "Jun")
     )
 
     data class CreatorStats(
@@ -1228,10 +1846,11 @@ class AdminDashboardFragment : Fragment() {
     )
 
     data class StudentStats(
+        val userId: Long,
         val username: String,
+        val approvedCourses: Int,
         val averageGrade: Float,
-        val completedCourses: Int,
-        val hasCertificate: Boolean
+        val avatarUrl: String?
     )
 
     enum class UserAction {

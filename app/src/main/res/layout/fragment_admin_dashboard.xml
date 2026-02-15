@@ -137,7 +137,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Progreso"
+                            android:text="Roles"
                             android:textColor="#B8B3FF"
                             android:textSize="14sp" />
                     </LinearLayout>
@@ -163,13 +163,5 @@
             android:paddingBottom="100dp"
             android:clipToPadding="false" />
     </androidx.core.widget.NestedScrollView>
-
-    <!-- Bottom Navigation -->
-    <include
-        android:id="@+id/bottomNavigation"
-        layout="@layout/component_bottom_navigation"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

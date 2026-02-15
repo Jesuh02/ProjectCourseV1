@@ -90,15 +90,20 @@ object StorageHelper {
                 originalName
             }
 
-            val inputStream = contentResolver.openInputStream(fileUri)
-                ?: return UploadResult.Error("Cannot open file")
-            val fileBytes = inputStream.readBytes()
-            inputStream.close()
-
             onProgress?.invoke(30)
 
             BackendApiService.initialize(context)
-            val result = BackendApiService.uploadFile(fileBytes, fileName, mimeType, folder)
+            val result = BackendApiService.uploadFile(
+                context = context,
+                fileUri = fileUri,
+                fileName = fileName,
+                mimeType = mimeType,
+                folder = folder,
+                onProgress = { progress ->
+                    val mappedProgress = 30 + (progress * 0.7).toInt()
+                    onProgress?.invoke(mappedProgress.coerceIn(30, 100))
+                }
+            )
 
             onProgress?.invoke(100)
 

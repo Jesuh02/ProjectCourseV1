@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/primary_variant" />
+            <corners android:radius="20dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/light_purple" />
+        </shape>
+    </item>
+
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/card_purple_glass" />
+            <corners android:radius="20dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/purple_accent" />
+        </shape>
+    </item>
+</selector>

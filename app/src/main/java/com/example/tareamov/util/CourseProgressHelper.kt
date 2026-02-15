@@ -5,9 +5,12 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.animation.ObjectAnimator
 import androidx.fragment.app.FragmentActivity
 import com.example.tareamov.R
 import com.example.tareamov.data.AppDatabase
+import com.example.tareamov.service.ApiResult
+import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.ui.CourseDetailFragment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,40 +25,30 @@ import com.example.tareamov.util.SessionManager
 class CourseProgressHelper(private val activity: FragmentActivity) {
 
     fun setupStudentProgress(courseId: Long) {
-        val username = SessionManager.getInstance(activity).getUsername() ?: return
-        val courseCreator = getCourseCreator(courseId)
+        CoroutineScope(Dispatchers.Main).launch {
+            val username = SessionManager.getInstance(activity).getUsername() ?: return@launch
+            val courseCreator = getCourseCreator(courseId)
 
-        // Only show progress for non-creators
-        if (username == courseCreator) {
-            return
-        }
+            if (username == courseCreator) return@launch
 
-        // Find the course detail fragment
-        val fragmentManager = activity.supportFragmentManager
-        val courseDetailFragment = fragmentManager.findFragmentById(R.id.nav_host_fragment)
-            ?.childFragmentManager?.fragments?.firstOrNull { it is CourseDetailFragment }
+            val fragmentManager = activity.supportFragmentManager
+            val courseDetailFragment = fragmentManager.findFragmentById(R.id.nav_host_fragment)
+                ?.childFragmentManager?.fragments?.firstOrNull { it is CourseDetailFragment }
 
-        val fragmentView = courseDetailFragment?.view ?: return
+            val fragmentView = courseDetailFragment?.view ?: return@launch
+            val progressContainer = fragmentView.findViewById<LinearLayout>(R.id.courseProgressContainer) ?: return@launch
+            val progressBar = progressContainer.findViewById<ProgressBar>(R.id.courseProgressBar) ?: return@launch
+            val progressPercentTextView = progressContainer.findViewById<TextView>(R.id.progressPercentTextView) ?: return@launch
+            val progressStatusTextView = progressContainer.findViewById<TextView>(R.id.progressStatusTextView) ?: return@launch
 
-        // Find the progress container in the layout by its ID
-        val progressContainer = fragmentView.findViewById<LinearLayout>(R.id.courseProgressContainer)
-        if (progressContainer != null) {
-            // Get the progress bar and text views
-            val progressBar = progressContainer.findViewById<ProgressBar>(R.id.courseProgressBar)
-            val progressPercentTextView = progressContainer.findViewById<TextView>(R.id.progressPercentTextView)
-            val progressStatusTextView = progressContainer.findViewById<TextView>(R.id.progressStatusTextView)
-
-            if (progressBar != null && progressPercentTextView != null && progressStatusTextView != null) {
-                // Load and display progress
-                loadStudentProgress(
-                    courseId,
-                    username,
-                    progressContainer,
-                    progressBar,
-                    progressPercentTextView,
-                    progressStatusTextView
-                )
-            }
+            loadStudentProgress(
+                courseId,
+                username,
+                progressContainer,
+                progressBar,
+                progressPercentTextView,
+                progressStatusTextView
+            )
         }
     }
 
@@ -70,6 +63,41 @@ class CourseProgressHelper(private val activity: FragmentActivity) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 val db = AppDatabase.getDatabase(activity)
+                val roomUserId = withContext(Dispatchers.IO) {
+                    db.usuarioDao().getUsuarioByUsername(username)?.id
+                } ?: SessionManager.getInstance(activity).getUserId()
+
+                if (BackendApiService.isAuthenticated) {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.recalculateProgress(courseId)
+                    }
+                    val backendProgress = withContext(Dispatchers.IO) {
+                        BackendApiService.getProgressByCourseRaw(courseId)
+                    }
+
+                    if (backendProgress is ApiResult.Success && backendProgress.data != null) {
+                        val data = backendProgress.data
+                        val progressPercent = runCatching {
+                            when {
+                                data.has("progressPercentage") && !data.get("progressPercentage").isJsonNull -> data.get("progressPercentage").asFloat.toInt()
+                                data.has("porcentajeProgreso") && !data.get("porcentajeProgreso").isJsonNull -> data.get("porcentajeProgreso").asFloat.toInt()
+                                else -> 0
+                            }
+                        }.getOrDefault(0).coerceIn(0, 100)
+
+                        val averageGrade = runCatching {
+                            when {
+                                data.has("averageGrade") && !data.get("averageGrade").isJsonNull -> data.get("averageGrade").asFloat
+                                data.has("calificacionPonderada") && !data.get("calificacionPonderada").isJsonNull -> data.get("calificacionPonderada").asFloat
+                                data.has("promedio") && !data.get("promedio").isJsonNull -> data.get("promedio").asFloat
+                                else -> 0f
+                            }
+                        }.getOrDefault(0f)
+
+                        updateProgressUi(progressContainer, progressBar, progressPercentTextView, progressStatusTextView, progressPercent, averageGrade)
+                        return@launch
+                    }
+                }
 
                 // Get all topics for this course
                 val topics = withContext(Dispatchers.IO) {
@@ -94,10 +122,7 @@ class CourseProgressHelper(private val activity: FragmentActivity) {
 
                 // Get all submissions for this student in this course
                 val submissions = withContext(Dispatchers.IO) {
-                    // Resolve username -> userId for local DB (Room) which now stores studentId as Long
-                    val studentId = db.usuarioDao().getUsuarioByUsername(username)?.id
-                        ?: SessionManager.getInstance(activity).getUserId()
-                    db.taskSubmissionDao().getStudentSubmissionsForCourse(studentId, courseId)
+                    db.taskSubmissionDao().getStudentSubmissionsForCourse(roomUserId, courseId)
                 }
 
                 // Calculate progress
@@ -126,39 +151,7 @@ class CourseProgressHelper(private val activity: FragmentActivity) {
                     0f
                 }
 
-                // Update UI
-                withContext(Dispatchers.Main) {
-                    // Show progress container
-                    progressContainer.visibility = View.VISIBLE
-
-                    // Update progress bar
-                    progressBar.progress = progressPercent
-
-                    // Update progress text
-                    progressPercentTextView.text = "${progressPercent}% completado"
-
-                    // Update status text with average grade
-                    val gradeColor = if (averageGrade >= 6.0f) {
-                        android.graphics.Color.parseColor("#4CAF50") // Green for passing
-                    } else if (averageGrade > 0) {
-                        android.graphics.Color.parseColor("#F44336") // Red for failing
-                    } else {
-                        android.graphics.Color.parseColor("#AAAAAA") // Gray for no grades yet
-                    }
-
-                    progressStatusTextView.text = "Calificación: ${String.format("%.1f", averageGrade)}/10"
-                    progressStatusTextView.setTextColor(gradeColor)
-
-                    // Add pass/fail status if there are graded submissions
-                    if (gradedSubmissionsCount > 0) {
-                        val passFailText = if (averageGrade >= 6.0f) {
-                            "Aprobando"
-                        } else {
-                            "Reprobando"
-                        }
-                        progressStatusTextView.text = "${progressStatusTextView.text} ($passFailText)"
-                    }
-                }
+                updateProgressUi(progressContainer, progressBar, progressPercentTextView, progressStatusTextView, progressPercent, averageGrade)
             } catch (e: Exception) {
                 android.util.Log.e("CourseProgressHelper", "Error calculating progress", e)
                 withContext(Dispatchers.Main) {
@@ -168,18 +161,52 @@ class CourseProgressHelper(private val activity: FragmentActivity) {
         }
     }
 
-    private fun getCourseCreator(courseId: Long): String? {
+    private suspend fun getCourseCreator(courseId: Long): String? {
         // Get the course creator from the database
-        var creator: String? = null
-        CoroutineScope(Dispatchers.IO).launch {
+        return withContext(Dispatchers.IO) {
             try {
                 val db = AppDatabase.getDatabase(activity)
                 val video = db.videoDao().getVideoById(courseId)
-                creator = video?.username
+                video?.username
             } catch (e: Exception) {
                 android.util.Log.e("CourseProgressHelper", "Error getting course creator", e)
+                null
             }
         }
-        return creator
+    }
+
+    private fun updateProgressUi(
+        progressContainer: LinearLayout,
+        progressBar: ProgressBar,
+        progressPercentTextView: TextView,
+        progressStatusTextView: TextView,
+        progressPercent: Int,
+        averageGrade: Float
+    ) {
+        progressContainer.visibility = View.VISIBLE
+        progressBar.max = 100
+        val safeProgress = progressPercent.coerceIn(0, 100)
+        val startProgress = progressBar.progress.coerceIn(0, 100)
+        ObjectAnimator.ofInt(progressBar, "progress", startProgress, safeProgress).apply {
+            duration = 500L
+            start()
+        }
+
+        progressPercentTextView.text = "${safeProgress}% completado"
+
+        val gradeColor = when {
+            averageGrade >= 6.0f -> android.graphics.Color.parseColor("#4CAF50")
+            averageGrade > 0f -> android.graphics.Color.parseColor("#F44336")
+            else -> android.graphics.Color.parseColor("#AAAAAA")
+        }
+
+        val statusLabel = when {
+            averageGrade >= 6.0f -> "Aprobando"
+            averageGrade > 0f -> "Reprobando"
+            else -> "Sin calificar"
+        }
+
+        progressStatusTextView.text = "Calificación: ${String.format("%.1f", averageGrade)}/10 ($statusLabel)"
+        progressStatusTextView.setTextColor(gradeColor)
     }
 }

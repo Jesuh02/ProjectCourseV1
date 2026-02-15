@@ -35,6 +35,10 @@ import com.example.tareamov.network.PaymentInitiationRequest
 import com.google.android.material.textfield.TextInputEditText
 import androidx.navigation.fragment.findNavController
 import android.os.Bundle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
 
 // Instance of PaymentApi pointing to Backend
 // CHANGE THIS TO TRUE IF RUNNING LOCALLY (Emulator), FALSE FOR PRODUCTION
@@ -85,20 +89,17 @@ fun Fragment.initializeAndLoadCourseProgress(
     // Initialize progress manager
     val progressManager = CourseProgressManager(requireContext())
 
-    // Calculate and display progress
+    // Calculate, display and keep progress fresh while this view is active
     viewLifecycleOwner.lifecycleScope.launch {
-        val effectiveUserId = if (userId > 0L) {
-            userId
-        } else {
-            val userResult = withContext(Dispatchers.IO) {
-                BackendApiService.getUserByUsername(username)
-            }
+        val effectiveUserId = if (userId > 0L) userId else {
+            val userResult = withContext(Dispatchers.IO) { BackendApiService.getUserByUsername(username) }
             (userResult as? ApiResult.Success)?.data?.id ?: -1L
         }
 
         if (effectiveUserId <= 0L) {
             Log.w("CourseDetailExt", "No se pudo resolver userId para progreso. username=$username")
             progressContainer.visibility = View.VISIBLE
+            progressBar.max = 100
             progressBar.progress = 0
             progressPercentTextView.text = "0% completado"
             progressStatusTextView.text = "Calificación: 0/10"
@@ -108,64 +109,63 @@ fun Fragment.initializeAndLoadCourseProgress(
             return@launch
         }
 
-        val progressState = progressManager.calculateAndDisplayCourseProgress(
-            courseId = courseId,
-            userId = effectiveUserId,
-            progressContainer = progressContainer,
-            progressBar = progressBar,
-            progressPercentTextView = progressPercentTextView,
-            progressStatusTextView = progressStatusTextView
-        )
+        var firstRender = true
+        viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                val previousProgress = progressBar.progress.coerceIn(0, 100)
+                val progressState = progressManager.calculateAndDisplayCourseProgress(
+                    courseId = courseId,
+                    userId = effectiveUserId,
+                    progressContainer = progressContainer,
+                    progressBar = progressBar,
+                    progressPercentTextView = progressPercentTextView,
+                    progressStatusTextView = progressStatusTextView
+                )
 
-        val targetProgress = progressState.progressPercent.coerceIn(0, 100)
-        val currentProgress = progressBar.progress.coerceIn(0, 100)
-        val startProgress = if (targetProgress == currentProgress) 0 else currentProgress
-        progressBar.progress = startProgress
-        ObjectAnimator.ofInt(progressBar, "progress", startProgress, targetProgress).apply {
-            duration = 650L
-            start()
-        }
+                val targetProgress = progressState.progressPercent.coerceIn(0, 100)
+                val startProgress = if (firstRender) 0 else previousProgress
+                progressBar.progress = startProgress
+                ObjectAnimator.ofInt(progressBar, "progress", startProgress, targetProgress).apply {
+                    duration = if (firstRender) 700L else 450L
+                    start()
+                }
 
-        if (progressContainer.visibility != View.VISIBLE) {
-            progressContainer.visibility = View.VISIBLE
-            progressBar.progress = 0
-            progressPercentTextView.text = "0% completado"
-            progressStatusTextView.text = "Calificación: 0/10"
-            progressStatusTextView.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
-        }
+                if (firstRender) {
+                    progressContainer.visibility = View.VISIBLE
+                    val offset = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
+                    progressContainer.alpha = 0f
+                    progressContainer.translationY = offset
+                    progressContainer.animate()
+                        .alpha(1f)
+                        .translationY(0f)
+                        .setDuration(520)
+                        .setInterpolator(android.view.animation.DecelerateInterpolator(1.8f))
+                        .start()
+                }
 
-        if (!isAdded) return@launch
+                if (progressState.canDownloadCertificate) {
+                    if (certificateButtonContainer?.visibility != View.VISIBLE) {
+                        certificateButtonContainer?.visibility = View.VISIBLE
+                        certificateButtonContainer?.alpha = 0f
+                        certificateButtonContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
+                        certificateButtonContainer?.animate()
+                            ?.alpha(1f)
+                            ?.translationY(0f)
+                            ?.setDuration(480)
+                            ?.setInterpolator(android.view.animation.DecelerateInterpolator(1.6f))
+                            ?.start()
+                    }
+                    certificateButton?.setOnClickListener {
+                        showCertificateTypeDialog(requireContext(), courseId.toInt(), username, progressState.averageGrade)
+                    }
+                } else {
+                    certificateButtonContainer?.visibility = View.GONE
+                    certificateButtonContainer?.alpha = 0f
+                }
 
-        if (progressContainer.visibility == View.VISIBLE) {
-            val offset = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
-            progressContainer.alpha = 0f
-            progressContainer.translationY = offset
-            progressContainer.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(520)
-                .setInterpolator(android.view.animation.DecelerateInterpolator(1.8f))
-                .start()
-        }
-
-        // Show certificate button if student passed the course (grade >= 6)
-        if (progressState.canDownloadCertificate) {
-            certificateButtonContainer?.visibility = View.VISIBLE
-            certificateButtonContainer?.alpha = 0f
-            certificateButtonContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
-            certificateButtonContainer?.animate()
-                ?.alpha(1f)
-                ?.translationY(0f)
-                ?.setDuration(480)
-                ?.setInterpolator(android.view.animation.DecelerateInterpolator(1.6f))
-                ?.start()
-            certificateButton?.setOnClickListener {
-                // Show dialog to choose certificate type
-                showCertificateTypeDialog(requireContext(), courseId.toInt(), username, progressState.averageGrade)
+                firstRender = false
+                delay(8000)
             }
-        } else {
-            certificateButtonContainer?.visibility = View.GONE
-            certificateButtonContainer?.alpha = 0f
         }
     }
 }

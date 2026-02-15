@@ -259,9 +259,12 @@ class NotificacionesFragment : Fragment() {
                     }
                 }
             }
+            Notification.TYPE_VIDEO_LIKE -> {
+                navigateToVideoInHome(notification)
+            }
             Notification.TYPE_COMMENT, Notification.TYPE_LIKE,
             Notification.TYPE_VIDEO_COMMENT, Notification.TYPE_COMMENT_REPLY,
-            Notification.TYPE_VIDEO_LIKE, Notification.TYPE_COMMENT_LIKE -> {
+            Notification.TYPE_COMMENT_LIKE -> {
                 // Navigate SYNCHRONOUSLY — no coroutine needed since metadata parsing is synchronous
                 navigateToCommentInVideo(notification)
             }
@@ -270,6 +273,36 @@ class NotificacionesFragment : Fragment() {
             }
             else -> {
                 Log.w("NotificacionesFragment", "⚠️ Unhandled notification type: '${notification.type}' for notification id=${notification.id}")
+            }
+        }
+    }
+
+    /**
+     * Navigates to VideoHomeFragment focusing the video from relatedId.
+     * Used for video_like notifications where metadata can be null.
+     */
+    private fun navigateToVideoInHome(notification: Notification) {
+        val videoId = notification.relatedId
+        if (videoId == null) {
+            Log.w("NotificacionesFragment", "⚠️ relatedId is null for video_like notification id=${notification.id}")
+            return
+        }
+
+        val bundle = Bundle().apply {
+            putLong("videoId", videoId)
+            putBoolean("openComments", false)
+        }
+
+        Log.d("NotificacionesFragment", "🎬 Navigating to VideoHomeFragment for video_like: videoId=$videoId")
+
+        try {
+            findNavController().navigate(R.id.action_notificacionesFragment_to_videoHomeFragment, bundle)
+        } catch (e: Exception) {
+            Log.e("NotificacionesFragment", "❌ Navigation failed for video_like: ${e.message}", e)
+            try {
+                findNavController().navigate(R.id.videoHomeFragment, bundle)
+            } catch (e2: Exception) {
+                Log.e("NotificacionesFragment", "❌ Fallback navigation failed for video_like: ${e2.message}", e2)
             }
         }
     }
@@ -312,7 +345,7 @@ class NotificacionesFragment : Fragment() {
 
     /**
      * Navigates to VideoHomeFragment and opens the comments dialog scrolled to the specific comment.
-     * Handles comment, like, comment_reply, video_comment, video_like, comment_like notification types.
+        * Handles comment, like, comment_reply, video_comment and comment_like notification types.
      * Navigation is synchronous (no coroutine) to avoid race conditions with loadNotifications().
      */
     private fun navigateToCommentInVideo(notification: Notification) {

@@ -513,6 +513,11 @@
             android:name="courseCreatorUsername"
             app:argType="string"
             android:defaultValue="" />
+        <argument
+            android:name="scrollToSubmissionUsername"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
         <!-- Action to go back to CourseDetailFragment -->
         <action
             android:id="@+id/action_taskSubmissionFragment_to_courseDetailFragment"
@@ -602,6 +607,10 @@
         android:name="com.example.tareamov.ui.ProfileFragment"
         android:label="Profile"
         tools:layout="@layout/fragment_profile">
+        <argument
+            android:name="userId"
+            app:argType="long"
+            android:defaultValue="-1L" />
         <action
             android:id="@+id/action_profileFragment_to_videoHomeFragment"
             app:destination="@id/videoHomeFragment" />
@@ -764,8 +773,14 @@
             android:id="@+id/action_adminDashboardFragment_to_exploreFragment"
             app:destination="@id/exploreFragment" />
         <action
+            android:id="@+id/action_adminDashboardFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment" />
+        <action
             android:id="@+id/action_adminDashboardFragment_to_profileFragment"
             app:destination="@id/profileFragment" />
+        <action
+            android:id="@+id/action_adminDashboardFragment_to_taskSubmissionFragment"
+            app:destination="@id/taskSubmissionFragment" />
     </fragment>
 
     <!-- Subscriptions Fragment -->

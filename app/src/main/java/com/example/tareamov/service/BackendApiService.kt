@@ -585,18 +585,20 @@ object BackendApiService {
 
             val contentResolver = context.contentResolver
             val mimeType = contentResolver.getType(fileUri) ?: "image/jpeg"
-            val inputStream = contentResolver.openInputStream(fileUri)
-                ?: return@withContext ApiResult.Error("Cannot open file", 0)
-            
-            val bytes = inputStream.readBytes()
-            inputStream.close()
+            val contentLength = getUriContentLength(contentResolver, fileUri)
             
             val requestBody = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart(
                     "avatar", 
                     "avatar.${if (mimeType.contains("png")) "png" else "jpg"}", 
-                    bytes.toRequestBody(mimeType.toMediaType())
+                    createProgressRequestBody(
+                        resolver = contentResolver,
+                        fileUri = fileUri,
+                        mediaType = mimeType.toMediaType(),
+                        contentLength = contentLength,
+                        onProgress = { }
+                    )
                 )
                 .build()
 
@@ -665,6 +667,27 @@ object BackendApiService {
         /** Return whichever token field the backend provides */
         fun effectiveToken(): String? = accessToken ?: token
     }
+
+    data class CreatorDashboardMetrics(
+        val creatorUserId: Long = 0,
+        val totalCourses: Int = 0,
+        val enrolledUsersCount: Int = 0,
+        val certifiedUsersCount: Int = 0,
+        val completionRate: Int = 0,
+        val approvalRate: Int = 0,
+        val satisfactionRate: Int = 0,
+    )
+
+    data class EnrollmentChartSeries(
+        val labels: List<String> = emptyList(),
+        val values: List<Int> = emptyList(),
+    )
+
+    data class CreatorEnrollmentAnalytics(
+        val weekly: EnrollmentChartSeries = EnrollmentChartSeries(),
+        val monthly: EnrollmentChartSeries = EnrollmentChartSeries(),
+        val totalEnrollments: Int = 0,
+    )
 
     suspend fun login(username: String, password: String): ApiResult<AuthResponse> {
         val result = execute<AuthResponse>(post("/auth/login", LoginRequest(username, password)))
@@ -905,6 +928,9 @@ object BackendApiService {
     suspend fun getCoursesByCreatorId(userId: Long): ApiResult<List<Course>> =
         executeList(get("/courses/creator-id/$userId"))
 
+    suspend fun getMyCreatorDashboardMetrics(): ApiResult<CreatorDashboardMetrics> =
+        execute(get("/courses/my/creator-metrics"))
+
     suspend fun getCourseById(id: Long): ApiResult<Course> =
         execute(get("/courses/$id"))
 
@@ -1063,12 +1089,8 @@ object BackendApiService {
 
             val resolver = context.contentResolver
 
-            // Read video bytes
             val videoMime = resolver.getType(videoUri) ?: "video/mp4"
-            val videoStream = resolver.openInputStream(videoUri)
-                ?: return@withContext ApiResult.Error("Cannot open video file", 0)
-            val videoBytes = videoStream.readBytes()
-            videoStream.close()
+            val videoLength = getUriContentLength(resolver, videoUri)
 
             onProgress?.invoke(15)
 
@@ -1078,7 +1100,12 @@ object BackendApiService {
                 .addFormDataPart(
                     "video",
                     "${title.replace(Regex("[^a-zA-Z0-9]"), "_")}.mp4",
-                    createProgressRequestBody(videoBytes, videoMime.toMediaType()) { progress ->
+                    createProgressRequestBody(
+                        resolver = resolver,
+                        fileUri = videoUri,
+                        mediaType = videoMime.toMediaType(),
+                        contentLength = videoLength
+                    ) { progress ->
                         // Map upload progress from 20% to 85%
                         val mapped = 20 + (progress * 0.65).toInt()
                         onProgress?.invoke(mapped)
@@ -1096,16 +1123,17 @@ object BackendApiService {
             // Attach thumbnail if provided
             if (thumbnailUri != null) {
                 val thumbMime = resolver.getType(thumbnailUri) ?: "image/jpeg"
-                val thumbStream = resolver.openInputStream(thumbnailUri)
-                if (thumbStream != null) {
-                    val thumbBytes = thumbStream.readBytes()
-                    thumbStream.close()
-                    multipartBuilder.addFormDataPart(
-                        "thumbnail",
-                        "thumbnail.jpg",
-                        thumbBytes.toRequestBody(thumbMime.toMediaType())
-                    )
-                }
+                val thumbLength = getUriContentLength(resolver, thumbnailUri)
+                multipartBuilder.addFormDataPart(
+                    "thumbnail",
+                    "thumbnail.jpg",
+                    createProgressRequestBody(
+                        resolver = resolver,
+                        fileUri = thumbnailUri,
+                        mediaType = thumbMime.toMediaType(),
+                        contentLength = thumbLength
+                    ) { _ -> }
+                )
             }
 
             val requestBody = multipartBuilder.build()
@@ -1166,27 +1194,45 @@ object BackendApiService {
      * Creates a RequestBody that reports write progress.
      */
     private fun createProgressRequestBody(
-        bytes: ByteArray,
+        resolver: android.content.ContentResolver,
+        fileUri: android.net.Uri,
         mediaType: okhttp3.MediaType,
+        contentLength: Long,
         onProgress: (Int) -> Unit
     ): okhttp3.RequestBody {
         return object : okhttp3.RequestBody() {
             override fun contentType() = mediaType
-            override fun contentLength() = bytes.size.toLong()
+            override fun contentLength() = contentLength
+
             override fun writeTo(sink: okio.BufferedSink) {
-                val total = bytes.size.toLong()
-                var written = 0L
-                val chunkSize = 8192
-                var offset = 0
-                while (offset < bytes.size) {
-                    val len = minOf(chunkSize, bytes.size - offset)
-                    sink.write(bytes, offset, len)
-                    offset += len
-                    written += len
-                    val progress = ((written * 100) / total).toInt()
-                    onProgress(progress)
+                val inputStream = resolver.openInputStream(fileUri)
+                    ?: throw java.io.IOException("Cannot open file stream for upload: $fileUri")
+
+                inputStream.use { stream ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var written = 0L
+                    var read = stream.read(buffer)
+                    while (read != -1) {
+                        sink.write(buffer, 0, read)
+                        written += read
+                        if (contentLength > 0L) {
+                            val progress = ((written * 100) / contentLength).toInt().coerceIn(0, 100)
+                            onProgress(progress)
+                        }
+                        read = stream.read(buffer)
+                    }
                 }
             }
+        }
+    }
+
+    private fun getUriContentLength(resolver: android.content.ContentResolver, fileUri: android.net.Uri): Long {
+        return try {
+            resolver.openAssetFileDescriptor(fileUri, "r")?.use { afd ->
+                afd.length
+            } ?: -1L
+        } catch (_: Exception) {
+            -1L
         }
     }
 
@@ -1277,8 +1323,10 @@ object BackendApiService {
         return execute(get("/submissions/task/$taskId/student$query"))
     }
 
-    suspend fun getSubmissionsByCourse(courseId: Long, page: Int = 1, limit: Int = 50): ApiResult<List<TaskSubmission>> =
-        executeList(get("/submissions/course/$courseId?page=$page&pageSize=$limit"))
+    suspend fun getSubmissionsByCourse(courseId: Long, page: Int = 1, limit: Int = 50, ungradedOnly: Boolean = false): ApiResult<List<TaskSubmission>> {
+        val ungradedParam = if (ungradedOnly) "&ungradedOnly=true" else ""
+        return executeList(get("/submissions/course/$courseId?page=$page&pageSize=$limit$ungradedParam"))
+    }
 
     suspend fun getSubmissionById(id: Long): ApiResult<TaskSubmission> =
         execute(get("/submissions/$id"))
@@ -1379,11 +1427,20 @@ object BackendApiService {
     suspend fun getMyProgress(): ApiResult<List<ProgresoEstudiante>> =
         executeList(get("/progress/my"))
 
+    suspend fun getMyProgressForMyCourses(): ApiResult<List<ProgresoEstudiante>> =
+        executeList(get("/progress/my?creatorOnly=true"))
+
     suspend fun getMyEnrolledCourseIds(): ApiResult<List<Long>> =
         executeList(get("/progress/my/enrolled-course-ids"))
 
     suspend fun getTopStudents(limit: Int = 10): ApiResult<List<JsonObject>> =
         executeList(get("/progress/top-students?limit=$limit"))
+
+    suspend fun getCreatorEnrollmentAnalytics(
+        weeklyDays: Int = 7,
+        monthlyMonths: Int = 6,
+    ): ApiResult<CreatorEnrollmentAnalytics> =
+        execute(get("/progress/creator/enrollment-analytics?weeklyDays=$weeklyDays&monthlyMonths=$monthlyMonths"))
 
     suspend fun getProgressByCourse(courseId: Long): ApiResult<ProgresoEstudiante> =
         execute(get("/progress/course/$courseId"))
@@ -1682,6 +1739,54 @@ object BackendApiService {
                     jwtToken?.let { add("Authorization", "Bearer $it") }
                 }.build())
                 .post(multipartBody)
+                .build()
+
+            execute(request)
+        } catch (e: Exception) {
+            ApiResult.Error("Upload error: ${e.message}", 0)
+        }
+    }
+
+    /**
+     * Sube un archivo al backend por streaming desde un Uri, sin cargar todo en memoria.
+     */
+    suspend fun uploadFile(
+        context: Context,
+        fileUri: android.net.Uri,
+        fileName: String,
+        mimeType: String,
+        folder: String? = null,
+        onProgress: ((Int) -> Unit)? = null
+    ): ApiResult<JsonObject> = withContext(Dispatchers.IO) {
+        try {
+            ensureTokenLoaded(context)
+            if (jwtToken == null) return@withContext ApiResult.Error("Not logged in", 401)
+
+            val resolver = context.contentResolver
+            val contentLength = getUriContentLength(resolver, fileUri)
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart(
+                    "file",
+                    fileName,
+                    createProgressRequestBody(
+                        resolver = resolver,
+                        fileUri = fileUri,
+                        mediaType = mimeType.toMediaType(),
+                        contentLength = contentLength
+                    ) { progress ->
+                        onProgress?.invoke(progress)
+                    }
+                )
+                .apply { folder?.let { addFormDataPart("folder", it) } }
+                .build()
+
+            val request = Request.Builder()
+                .url("$apiBase/storage/upload")
+                .headers(Headers.Builder().apply {
+                    jwtToken?.let { add("Authorization", "Bearer $it") }
+                }.build())
+                .post(requestBody)
                 .build()
 
             execute(request)

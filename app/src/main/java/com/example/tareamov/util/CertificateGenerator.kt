@@ -236,8 +236,18 @@ object CertificateGenerator {
                 
                 Log.d(TAG, "📝 Actualizando certificado para usuario=$studentUsername curso=$courseId")
                 
-                // Get user ID from username
-                val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(studentUsername)
+                // Get user ID from username (prefer SupabaseClient, fallback to backend API)
+                var userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(studentUsername)
+                if (userId == null) {
+                    try {
+                        val userResult = com.example.tareamov.service.BackendApiService.getUserByUsername(studentUsername)
+                        if (userResult is com.example.tareamov.service.ApiResult.Success) {
+                            userId = userResult.data?.id
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "⚠️ Backend fallback failed resolving userId for $studentUsername", e)
+                    }
+                }
                 if (userId == null) {
                     Log.e(TAG, "❌ Failed to get user ID for username: $studentUsername")
                     return@launch

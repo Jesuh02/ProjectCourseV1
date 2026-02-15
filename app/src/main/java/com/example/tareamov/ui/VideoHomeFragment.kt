@@ -41,6 +41,7 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.TimeUtils
 import android.graphics.Color
 import android.graphics.PorterDuff
+import android.graphics.drawable.Animatable
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaPlayer // Required for MediaPlayer interactions if direct
 import android.widget.EditText
@@ -112,6 +113,11 @@ class VideoHomeFragment : Fragment() {
     
     // Flag to open comments automatically (e.g. from notification)
     private var shouldOpenComments = false
+    private var pendingNavigationVideoId: Long = -1L
+    // Persists across reloads so network callbacks don't reset the position
+    private var lastNavigatedVideoId: Long = -1L
+    // Avoid immediate network callback refresh after opening from notification target
+    private var skipNextNetworkAutoRefresh: Boolean = false
 
     // Restore state variables
     private var restorePosition = 0
@@ -174,9 +180,11 @@ class VideoHomeFragment : Fragment() {
         val videoTitle = arguments?.getString("videoTitle")
         val videoUsername = arguments?.getString("videoUsername")
         shouldOpenComments = arguments?.getBoolean("openComments", false) ?: false
+        pendingNavigationVideoId = videoId
         val targetCommentId = arguments?.getLong("targetCommentId", -1L) ?: -1L
 
         if (videoId != -1L) {
+            skipNextNetworkAutoRefresh = true
             Log.d("VideoHomeFragment", "📹 Video specific navigation requested:")
             Log.d("VideoHomeFragment", "  - videoId: $videoId")
             Log.d("VideoHomeFragment", "  - videoTitle: $videoTitle")
@@ -268,42 +276,64 @@ class VideoHomeFragment : Fragment() {
                 }
                 
                 val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
+                var handledNavigationTarget = false
                 
-                // Handle auto-opening comments if requested (e.g. from notification)
-                if (shouldOpenComments && videos.isNotEmpty()) {
-                    // content is loaded, try to find the video
-                    val reqVideoId = arguments?.getLong("videoId", -1L) ?: -1L
-                    val targetCommentId = arguments?.getLong("targetCommentId", -1L) ?: -1L
-                    val targetIndex = if (reqVideoId != -1L) videos.indexOfFirst { it.id == reqVideoId } else 0
-                    
-                    Log.d("VideoHomeFragment", "🎬 Auto-opening comments: videoId=$reqVideoId, commentId=$targetCommentId, videoIndex=$targetIndex")
-                    
+                // Handle navigation target video from notifications (with or without comments)
+                if (pendingNavigationVideoId != -1L && videos.isNotEmpty()) {
+                    val reqVideoId = pendingNavigationVideoId
+                    val targetIndex = videos.indexOfFirst { it.id == reqVideoId }
+
                     if (targetIndex != -1 && targetIndex < videos.size) {
-                         // Capture video to avoid IndexOutOfBounds if list changes during postDelayed
-                         val targetVideo = videos[targetIndex]
-                         
-                         // Post to message queue to ensure view is ready
-                         viewPager?.post {
-                             if (viewPager.currentItem != targetIndex) {
-                                 viewPager.setCurrentItem(targetIndex, false)
-                             }
-                             
-                             // Esperar un poco más para asegurar que el video está completamente cargado
-                             viewPager.postDelayed({
-                                 Log.d("VideoHomeFragment", "🎯 Opening comments dialog for video ${targetVideo.id} with target comment $targetCommentId")
-                                 showCommentsDialog(targetVideo, targetCommentId)
-                                 shouldOpenComments = false // Reset flag
-                             }, 500) // Delay adicional para asegurar que el video está listo
-                         }
+                        handledNavigationTarget = true
+                        val targetCommentId = arguments?.getLong("targetCommentId", -1L) ?: -1L
+                        val targetVideo = videos[targetIndex]
+
+                        Log.d("VideoHomeFragment", "🎯 Notification target found: videoId=$reqVideoId, index=$targetIndex, openComments=$shouldOpenComments")
+
+                        viewPager?.post {
+                            if (viewPager.currentItem != targetIndex) {
+                                viewPager.setCurrentItem(targetIndex, false)
+                            }
+                            currentVideoIndex = targetIndex
+                            viewModel.currentVideoIndex = targetIndex
+
+                            if (shouldOpenComments) {
+                                viewPager.postDelayed({
+                                    Log.d("VideoHomeFragment", "💬 Opening comments dialog for video ${targetVideo.id} with target comment $targetCommentId")
+                                    showCommentsDialog(targetVideo, targetCommentId)
+                                    shouldOpenComments = false
+                                }, 500)
+                            }
+                        }
+
+                        // Consume navigation target after successful positioning
+                        pendingNavigationVideoId = -1L
+                        // Persist so reloads (e.g. network callback) re-navigate to this video
+                        lastNavigatedVideoId = reqVideoId
                     } else {
-                        Log.w("VideoHomeFragment", "⚠️ Video not found in list for videoId=$reqVideoId")
-                        shouldOpenComments = false
+                        Log.w("VideoHomeFragment", "⚠️ Notification target video not found yet: videoId=$reqVideoId")
+                    }
+                }
+
+                // Re-navigate to last target video if list was reloaded (e.g. onAvailable callback)
+                if (!handledNavigationTarget && lastNavigatedVideoId > 0 && videos.isNotEmpty()) {
+                    val idx = videos.indexOfFirst { it.id == lastNavigatedVideoId }
+                    if (idx >= 0 && viewPager != null) {
+                        handledNavigationTarget = true
+                        Log.d("VideoHomeFragment", "🎯 Re-navigating to lastNavigatedVideoId=$lastNavigatedVideoId at index=$idx after reload")
+                        viewPager.post {
+                            if (viewPager.currentItem != idx) {
+                                viewPager.setCurrentItem(idx, false)
+                            }
+                            currentVideoIndex = idx
+                            viewModel.currentVideoIndex = idx
+                        }
                     }
                 }
 
                 // 
                 // Check for restore path first
-                if (restorePath != null && restorePosition > 0) {
+                if (!handledNavigationTarget && restorePath != null && restorePosition > 0) {
                     val index = videos.indexOfFirst { it.videoUriString == restorePath || it.localFilePath == restorePath }
                     if (index != -1) {
                         viewPager?.setCurrentItem(index, false)
@@ -319,7 +349,7 @@ class VideoHomeFragment : Fragment() {
                             }
                         }
                     }
-                } else {
+                } else if (!handledNavigationTarget) {
                     // Restore scroll position from ViewModel
                     if (viewPager != null && viewModel.currentVideoIndex > 0 && viewModel.currentVideoIndex < videos.size) {
                         if (viewPager.currentItem != viewModel.currentVideoIndex) {
@@ -757,6 +787,7 @@ class VideoHomeFragment : Fragment() {
                 
                 // Database icon particle animation (without movement)
                 if (databaseIcon.visibility == View.VISIBLE) {
+                    (databaseIcon.drawable as? Animatable)?.start()
                     val particleAnimation = android.view.animation.AnimationUtils.loadAnimation(requireContext(), R.anim.particle_float)
                     databaseIcon.startAnimation(particleAnimation)
                 }
@@ -1332,7 +1363,20 @@ class VideoHomeFragment : Fragment() {
         // Desactivar el overscroll effect (el efecto de rebote al final de la lista)
         viewPager.getChildAt(0).overScrollMode = View.OVER_SCROLL_NEVER        // Listener para cambios de página
         var previousPosition = -1
+        var isUserDraggingViewPager = false
         viewPager.registerOnPageChangeCallback(object : androidx.viewpager2.widget.ViewPager2.OnPageChangeCallback() {
+            override fun onPageScrollStateChanged(state: Int) {
+                super.onPageScrollStateChanged(state)
+                when (state) {
+                    androidx.viewpager2.widget.ViewPager2.SCROLL_STATE_DRAGGING -> {
+                        isUserDraggingViewPager = true
+                    }
+                    androidx.viewpager2.widget.ViewPager2.SCROLL_STATE_IDLE -> {
+                        isUserDraggingViewPager = false
+                    }
+                }
+            }
+
             override fun onPageSelected(position: Int) {
                 super.onPageSelected(position)
                 
@@ -1352,6 +1396,16 @@ class VideoHomeFragment : Fragment() {
                 
                 currentVideoIndex = position
                 viewModel.currentVideoIndex = position
+
+                // Clear notification target only when the user DRAGS away from the target video.
+                // Avoid clearing on programmatic setCurrentItem() done by notification navigation.
+                if (isUserDraggingViewPager && lastNavigatedVideoId > 0) {
+                    val selectedVideoId = videoList.getOrNull(position)?.id ?: -1L
+                    if (selectedVideoId != lastNavigatedVideoId) {
+                        lastNavigatedVideoId = -1L
+                        Log.d("VideoHomeFragment", "🧹 Cleared lastNavigatedVideoId after user swipe away")
+                    }
+                }
 
                 // INSTANT LOADING: Trigger pre-fetch of adjacent videos
                 // This batch-signs URLs and downloads first 2 MB of N±2 videos
@@ -1579,6 +1633,11 @@ class VideoHomeFragment : Fragment() {
                         // This ensures fresh data with complete usernames, etc.
                         // Same logic as ExploreFragment
                         if (!isLoadingVideos) {
+                            if (skipNextNetworkAutoRefresh) {
+                                skipNextNetworkAutoRefresh = false
+                                Log.d("VideoHomeFragment", "⏭️ Skipping one network auto-refresh after notification navigation")
+                                return@launch
+                            }
                             Log.d("VideoHomeFragment", "Network restored - forcing full reload from Supabase")
                             if (::viewModel.isInitialized) {
                                 viewModel.loadVideos(isRefresh = true)
@@ -2851,6 +2910,10 @@ class VideoHomeFragment : Fragment() {
             repliesMap = allComments.filter { it.parentId != null && it.parentId != 0L }
                 .groupBy { it.parentId!! }
 
+            // Keep expansion state only for existing top-level comments to avoid stale recycled states
+            val validParentIds = topLevelComments.map { it.id }.toSet()
+            expandedReplies.keys.retainAll(validParentIds)
+
             notifyDataSetChanged()
         }
         
@@ -3073,6 +3136,7 @@ class VideoHomeFragment : Fragment() {
 
                 // --- Replies Logic ---
                 repliesContainer.removeAllViews() // Clear previous views
+                viewRepliesContainer.setOnClickListener(null)
 
                 if (replies.isNotEmpty()) {
                     repliesSection.visibility = View.VISIBLE
@@ -3089,13 +3153,18 @@ class VideoHomeFragment : Fragment() {
                     }
 
                     viewRepliesContainer.setOnClickListener {
-                        val newState = !isExpanded
+                        val currentExpanded = expandedReplies[comment.id] ?: false
+                        val newState = !currentExpanded
                         expandedReplies[comment.id] = newState
-                        // Refresh just this item to update view
-                        notifyItemChanged(adapterPosition)
+                        val position = bindingAdapterPosition
+                        if (position != RecyclerView.NO_POSITION) {
+                            // Refresh just this item to update view
+                            notifyItemChanged(position)
+                        }
                     }
                 } else {
                     repliesSection.visibility = View.GONE
+                    repliesContainer.visibility = View.GONE
                 }
             }
 
