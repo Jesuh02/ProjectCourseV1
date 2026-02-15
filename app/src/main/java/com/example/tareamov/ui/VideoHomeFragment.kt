@@ -112,6 +112,9 @@ class VideoHomeFragment : Fragment() {
     
     // Flag to open comments automatically (e.g. from notification)
     private var shouldOpenComments = false
+    // Tracks when the initial load (with target video) has completed, to prevent
+    // the network callback from immediately overwriting it with a generic refresh.
+    private var initialLoadCompleted = false
 
     // Restore state variables
     private var restorePosition = 0
@@ -247,6 +250,12 @@ class VideoHomeFragment : Fragment() {
                 Log.w("VideoHomeFragment", "Failed to log remote_id for no-course videos", e)
             }
             
+            // Mark initial load as done so the network callback won't
+            // immediately overwrite the targeted video list.
+            if (!initialLoadCompleted && videoList.isNotEmpty()) {
+                initialLoadCompleted = true
+            }
+
             // Control visibility: skeleton vs ViewPager based on video list AND network
             // Same logic as ExploreFragment: only show content when network is available
             if (videoList.isNotEmpty() && isNetworkAvailable()) {
@@ -1575,14 +1584,16 @@ class VideoHomeFragment : Fragment() {
                         // Add delay to ensure network is stable
                         kotlinx.coroutines.delay(1000)
                         
-                        // ALWAYS reload from network when connection returns
-                        // This ensures fresh data with complete usernames, etc.
-                        // Same logic as ExploreFragment
-                        if (!isLoadingVideos) {
+                        // Reload from network when connection returns,
+                        // but skip if the initial targeted load just finished (avoid
+                        // overwriting the target-video list immediately).
+                        if (!isLoadingVideos && initialLoadCompleted) {
                             Log.d("VideoHomeFragment", "Network restored - forcing full reload from Supabase")
                             if (::viewModel.isInitialized) {
                                 viewModel.loadVideos(isRefresh = true)
                             }
+                        } else {
+                            Log.d("VideoHomeFragment", "Network callback skipped: initialLoadCompleted=$initialLoadCompleted, isLoading=$isLoadingVideos")
                         }
                     }
                 }
