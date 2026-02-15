@@ -64,6 +64,9 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
     var totalVideos: Int = 0
         private set
 
+    /** Stores the target video ID so refreshes also include it. */
+    private var lastTargetVideoId: Long = -1L
+
     private var loadJob: Job? = null
 
     init {
@@ -94,6 +97,13 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
         // Skip if data is already loaded and no refresh is requested
         if (!isRefresh && _videoList.value?.isNotEmpty() == true && targetVideoId == -1L) return
 
+        // Remember target video ID so refreshes also include it
+        if (targetVideoId > 0) {
+            lastTargetVideoId = targetVideoId
+        }
+        // On refresh, reuse the stored target video ID if none provided
+        val effectiveTargetId = if (targetVideoId > 0) targetVideoId else lastTargetVideoId
+
         // Cancel any in-flight load before starting a new one
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -114,7 +124,7 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
                 FallbackDnsResolver.clearCache()
             }
 
-            val result = fetchVideosWithRetry(targetVideoId, pageSize)
+            val result = fetchVideosWithRetry(effectiveTargetId, pageSize)
 
             if (result.isNotEmpty()) {
                 _videoList.value = result
