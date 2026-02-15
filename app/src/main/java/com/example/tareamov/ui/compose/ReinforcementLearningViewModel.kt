@@ -154,11 +154,18 @@ class ReinforcementLearningViewModel(
         loadQuestionsInternal(courseId, courseName, topicId, taskId, retryAttempt = 0, previouslyExcluded = emptyList())
     }
 
+    companion object {
+        /** Maximum number of retry attempts when all generated questions are duplicates. */
+        private const val MAX_RETRY_ATTEMPTS = 5
+    }
+
     /**
      * Internal question loading with retry support.
      * If all generated questions are duplicates, retries with existing questions
      * explicitly excluded in the prompt for semantic differentiation.
-     * @param retryAttempt current retry (max 1 retry)
+     * Uses escalating prompt strategies on each retry to force the LLM to
+     * produce fundamentally different questions.
+     * @param retryAttempt current retry (max [MAX_RETRY_ATTEMPTS])
      * @param previouslyExcluded question texts from DB that MUST NOT be repeated
      */
     private fun loadQuestionsInternal(
@@ -196,240 +203,223 @@ class ReinforcementLearningViewModel(
                 val sessionManager = com.example.tareamov.util.SessionManager.getInstance(getApplication())
                 val userId = sessionManager.getUserId()
 
-                // 2. Fetch Context from BackendApiService
-                // Use IO dispatcher explicitly for network operations
-                val (topics, tasks, contentItems) = withContext(Dispatchers.IO) {
-                    var t = when (val result = BackendApiService.getTopicsByCourse(courseId)) {
-                        is ApiResult.Success -> result.data ?: emptyList()
-                        is ApiResult.Error -> emptyList()
-                    }
-
-                    // Filter by Topic if selected
-                    if (topicId != -1L) {
-                        t = t.filter { it.id == topicId }
-                    }
-
-                    val tIds = t.map { it.id }
-                    var k = if (tIds.isNotEmpty()) {
-                        // Fetch tasks for each topic
-                        tIds.flatMap { tid ->
-                            when (val result = BackendApiService.getTasksByTopic(tid)) {
-                                is ApiResult.Success -> result.data ?: emptyList()
-                                is ApiResult.Error -> emptyList()
-                            }
-                        }
-                    } else {
-                        emptyList()
-                    }
-
-                    // Filter by Task if selected
-                    if (taskId != -1L) {
-                        k = k.filter { it.id == taskId }
-                    }
-
-                    // Fetch Content Items (Files) from backend
-                    val c = if (taskId != -1L) {
-                        val taskItems = when (val result = BackendApiService.getContentItemsByTask(taskId)) {
-                            is ApiResult.Success -> result.data ?: emptyList()
-                            is ApiResult.Error -> emptyList()
-                        }
-                        // Also get topic-level items
-                        val topicItems = tIds.flatMap { tid ->
-                            // Get tasks for this topic, then content items
-                            when (val tResult = BackendApiService.getTasksByTopic(tid)) {
-                                is ApiResult.Success -> (tResult.data ?: emptyList()).flatMap { task ->
-                                    when (val ciResult = BackendApiService.getContentItemsByTask(task.id)) {
-                                        is ApiResult.Success -> ciResult.data ?: emptyList()
-                                        is ApiResult.Error -> emptyList()
-                                    }
-                                }
-                                is ApiResult.Error -> emptyList()
-                            }
-                        }
-                        val relevantTopicItems = topicItems.filter { it.taskId == null || it.taskId == 0L || it.taskId == taskId }
-                        (taskItems + relevantTopicItems).distinctBy { it.id }
-                    } else if (tIds.isNotEmpty()) {
-                        tIds.flatMap { tid ->
-                            when (val tResult = BackendApiService.getTasksByTopic(tid)) {
-                                is ApiResult.Success -> (tResult.data ?: emptyList()).flatMap { task ->
-                                    when (val ciResult = BackendApiService.getContentItemsByTask(task.id)) {
-                                        is ApiResult.Success -> ciResult.data ?: emptyList()
-                                        is ApiResult.Error -> emptyList()
-                                    }
-                                }
-                                is ApiResult.Error -> emptyList()
-                            }
-                        }
-                    } else {
-                        emptyList()
-                    }
-
-                    Triple(t, k, c)
-                }
-
-                // Update UI with files being analyzed
-                val analyzedFileList = contentItems.map {
-                    AnalyzedFile(
-                        name = it.name ?: "Archivo sin nombre",
-                        url = it.uriString,
-                        type = it.contentType
+                // 2. Fetch unified Learning Context from backend (single API call)
+                // Hybrid Retrieval: on retries, pass an explicit sessionIndex to
+                // force the backend to return a DIFFERENT section of the document.
+                // Also pass a query derived from topic/task for semantic search.
+                // On the first attempt (retryAttempt=0), let the backend auto-calculate
+                // the page based on how many questions already exist in history.
+                val sessionIndex = if (retryAttempt > 0) retryAttempt else null
+                
+                // Build semantic search query from course/topic/task context
+                val semanticQuery = buildSemanticQuery(courseName, topicId, taskId)
+                // Hybrid retrieval v2: semantic + window expansion ONLY.
+                // Progressive is used ONLY as fallback when semantic returns 0 results.
+                // sessionIndex is passed for progressive fallback page calculation.
+                val retrievalMode = "hybrid"
+                
+                val learningContext = withContext(Dispatchers.IO) {
+                    BackendApiService.getLearningContext(
+                        courseId = courseId,
+                        topicId = if (topicId > 0) topicId else null,
+                        taskId = if (taskId > 0) taskId else null,
+                        sessionIndex = sessionIndex,
+                        query = semanticQuery,
+                        retrievalMode = retrievalMode
                     )
                 }
-                _analyzedFiles.value = analyzedFileList
 
-                if (topics.isEmpty() && tasks.isEmpty() && contentItems.isEmpty()) {
-                    _uiState.value = ReinforcementState.Error("Este curso no tiene contenido suficiente (temas, tareas o materiales) para generar preguntas.")
+                // Parse the unified context response
+                val contextData = when (learningContext) {
+                    is ApiResult.Success -> learningContext.data
+                    is ApiResult.Error -> {
+                        Log.e("ReinforcementVM", "Failed to fetch learning context: ${learningContext.message}")
+                        null
+                    }
+                }
+
+                if (contextData == null) {
+                    _uiState.value = ReinforcementState.Error("No se pudo obtener el contexto de aprendizaje del servidor.")
                     return@launch
                 }
 
-                // ═══════════════════════════════════════════════════════════
-                // 🔥 RAG INGESTION: Ensure content_items are ingested into
-                // rag_documents BEFORE generating questions.
-                // First time: downloads files, chunks, embeds, stores.
-                // Second time (same task+topic): skips automatically.
-                // ═══════════════════════════════════════════════════════════
-                if (taskId > 0) {
-                    try {
-                        Log.d("ReinforcementVM", "📥 Triggering RAG ingestion for task=$taskId, topic=$topicId, course=$courseId...")
-                        val ingestResult = withContext(Dispatchers.IO) {
-                            BackendApiService.ingestTaskContent(
-                                taskId = taskId,
-                                topicId = if (topicId > 0) topicId else null,
-                                courseId = if (courseId > 0) courseId else null
-                            )
-                        }
-                        when (ingestResult) {
-                            is ApiResult.Success -> {
-                                val data = ingestResult.data
-                                val skipped = data?.get("skipped")?.asBoolean ?: false
-                                if (skipped) {
-                                    Log.d("ReinforcementVM", "ℹ️ RAG ingestion skipped (content already exists)")
-                                } else {
-                                    val filesProcessed = data?.get("filesProcessed")?.asInt ?: 0
-                                    val chunksStored = data?.get("totalChunksStored")?.asInt ?: 0
-                                    Log.d("ReinforcementVM", "✅ RAG ingestion complete: $filesProcessed files, $chunksStored chunks")
-                                }
-                            }
-                            is ApiResult.Error -> {
-                                Log.w("ReinforcementVM", "⚠️ RAG ingestion failed (non-blocking): ${ingestResult.message}")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w("ReinforcementVM", "⚠️ RAG ingestion error (non-blocking): ${e.message}")
-                    }
+                // Extract topic details
+                val topicObj = contextData.getAsJsonObject("topic")
+                val topicName = topicObj?.get("name")?.asString ?: ""
+                val topicDescription = topicObj?.get("description")?.asString ?: ""
+
+                // Extract task details
+                val taskObj = contextData.getAsJsonObject("task")
+                val taskName = taskObj?.get("title")?.asString ?: ""
+                val taskDescription = taskObj?.get("description")?.asString ?: ""
+
+                // Extract RAG content (already ingested by the backend)
+                val ragDocumentContent = contextData.get("ragContent")?.asString ?: ""
+                val ragChunks = contextData.get("ragChunks")?.asInt ?: 0
+                val ragPage = contextData.get("ragPage")?.asInt ?: 0
+                val ragTotalPages = contextData.get("ragTotalPages")?.asInt ?: 1
+                val ragTotalChunks = contextData.get("ragTotalChunks")?.asInt ?: ragChunks
+                val ragFileNames = try {
+                    contextData.getAsJsonArray("ragFiles")?.map { it.asString } ?: emptyList()
+                } catch (_: Exception) { emptyList() }
+                
+                // Hybrid Retrieval metadata
+                val activeRetrievalMode = contextData.get("retrievalMode")?.asString ?: "progressive"
+                val semanticHits = contextData.get("semanticHits")?.asInt ?: 0
+                val expandedChunks = contextData.get("expandedChunks")?.asInt ?: 0
+                val usedProgressiveFallback = contextData.get("usedProgressiveFallback")?.asBoolean ?: false
+                val wasReranked = contextData.get("reranked")?.asBoolean ?: false
+                val rerankMethod = contextData.get("rerankMethod")?.asString ?: "none"
+
+                // Extract content items metadata (combined — backward compatible)
+                val contentItemsArray = try {
+                    contextData.getAsJsonArray("contentItems") ?: com.google.gson.JsonArray()
+                } catch (_: Exception) { com.google.gson.JsonArray() }
+
+                // Extract content items separated by origin: topic vs task
+                val topicContentItemsArray = try {
+                    contextData.getAsJsonArray("topicContentItems") ?: com.google.gson.JsonArray()
+                } catch (_: Exception) { com.google.gson.JsonArray() }
+                val taskContentItemsArray = try {
+                    contextData.getAsJsonArray("taskContentItems") ?: com.google.gson.JsonArray()
+                } catch (_: Exception) { com.google.gson.JsonArray() }
+
+                // Extract existing questions for deduplication
+                val existingQuestionsArray = try {
+                    contextData.getAsJsonArray("existingQuestions") ?: com.google.gson.JsonArray()
+                } catch (_: Exception) { com.google.gson.JsonArray() }
+
+                val existingQuestions = existingQuestionsArray.mapNotNull { elem ->
+                    elem.asJsonObject?.get("question")?.asString
+                }
+                val existingQuestionTexts = (existingQuestions + previouslyExcluded).distinct()
+                val existingQuestionsForPrompt = existingQuestionTexts
+
+                Log.d("ReinforcementVM", "📚 Learning context received: topic='$topicName', task='$taskName', " +
+                    "mode=$activeRetrievalMode, semanticHits=$semanticHits, expanded=$expandedChunks, " +
+                    "reranked=$wasReranked ($rerankMethod), " +
+                    "progressiveFallback=$usedProgressiveFallback, " +
+                    "ragChunks=$ragChunks/$ragTotalChunks (page ${ragPage + 1}/$ragTotalPages), " +
+                    "files=${ragFileNames.size}, topicFiles=${topicContentItemsArray.size()}, taskFiles=${taskContentItemsArray.size()}, " +
+                    "existingQ=${existingQuestionTexts.size}, retryAttempt=$retryAttempt")
+
+                // Update UI state with topic/task names
+                _selectedTopicName.value = topicName.ifBlank { "General" }
+                _selectedTaskName.value = taskName.ifBlank { "General" }
+
+                // Update analyzed files list — label each file with its source (topic/task)
+                val topicFileNames = (0 until topicContentItemsArray.size()).mapNotNull { i ->
+                    val item = topicContentItemsArray[i].asJsonObject
+                    val title = item?.get("title")?.asString ?: return@mapNotNull null
+                    AnalyzedFile(name = "📖 [Tema] $title", url = null, type = item.get("contentType")?.asString)
+                }
+                val taskFileNames = (0 until taskContentItemsArray.size()).mapNotNull { i ->
+                    val item = taskContentItemsArray[i].asJsonObject
+                    val title = item?.get("title")?.asString ?: return@mapNotNull null
+                    AnalyzedFile(name = "📝 [Tarea] $title", url = null, type = item.get("contentType")?.asString)
+                }
+                val ragAnalyzedFiles = ragFileNames.map { fileName ->
+                    AnalyzedFile(name = fileName, url = null, type = null)
+                }
+                _analyzedFiles.value = (topicFileNames + taskFileNames + ragAnalyzedFiles).distinctBy { it.name }
+
+                // Validate sufficient content
+                if (topicName.isBlank() && taskName.isBlank() && ragDocumentContent.isBlank()) {
+                    _uiState.value = ReinforcementState.Error(
+                        "Este curso no tiene contenido suficiente (temas, tareas o materiales) para generar preguntas."
+                    )
+                    return@launch
                 }
 
-                // ═══════════════════════════════════════════════════════════
-                // 📄 FETCH RAG CONTENT: Get the actual document text from
-                // rag_documents to include directly in the prompt.
-                // This ensures the LLM only uses verified content (no hallucination).
-                // ═══════════════════════════════════════════════════════════
-                var ragDocumentContent = ""
-                var ragFileNames = emptyList<String>()
-                try {
-                    Log.d("ReinforcementVM", "📄 Fetching RAG content for grounding (course=$courseId, topic=$topicId, task=$taskId)...")
-                    val ragResult = withContext(Dispatchers.IO) {
-                        BackendApiService.getRagContent(
-                            courseId = courseId,
-                            topicId = if (topicId > 0) topicId else null,
-                            taskId = if (taskId > 0) taskId else null
-                        )
-                    }
-                    when (ragResult) {
-                        is ApiResult.Success -> {
-                            val data = ragResult.data
-                            ragDocumentContent = data?.get("content")?.asString ?: ""
-                            val chunks = data?.get("chunks")?.asInt ?: 0
-                            ragFileNames = try {
-                                data?.getAsJsonArray("files")?.map { it.asString } ?: emptyList()
-                            } catch (_: Exception) { emptyList() }
-                            Log.d("ReinforcementVM", "✅ RAG content fetched: ${ragDocumentContent.length} chars, $chunks chunks, ${ragFileNames.size} files")
-                        }
-                        is ApiResult.Error -> {
-                            Log.w("ReinforcementVM", "⚠️ RAG content fetch failed (non-blocking): ${ragResult.message}")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("ReinforcementVM", "⚠️ RAG content fetch error (non-blocking): ${e.message}")
-                }
-
-                // Fetch existing questions (full objects) to avoid repetition
-                val existingQuestionTexts: List<String>
-                val existingQuestionsForPrompt: List<String>
-
-                if (userId > 0) {
-                    // Use the new endpoint that returns full question objects filtered by topic+task
-                    val existingResult = withContext(Dispatchers.IO) {
-                        BackendApiService.getExistingQuestions(
-                            courseId = courseId,
-                            topicId = if (topicId > 0) topicId else null,
-                            taskId = if (taskId > 0) taskId else null
-                        )
-                    }
-                    val existingQuestions = when (existingResult) {
-                        is ApiResult.Success -> {
-                            val data = existingResult.data
-                            val questionsArray = data?.getAsJsonArray("questions")
-                            questionsArray?.mapNotNull { elem ->
-                                val obj = elem.asJsonObject
-                                obj?.get("question")?.asString
-                            } ?: emptyList()
-                        }
-                        is ApiResult.Error -> emptyList()
-                    }
-                    // Merge with any previously excluded questions from retry
-                    existingQuestionTexts = (existingQuestions + previouslyExcluded).distinct()
-                    existingQuestionsForPrompt = existingQuestionTexts
-                    Log.d("ReinforcementVM", "📋 Found ${existingQuestionTexts.size} existing questions for dedup (topic=$topicId, task=$taskId)")
-                } else {
-                    existingQuestionTexts = previouslyExcluded
-                    existingQuestionsForPrompt = previouslyExcluded
-                }
-
-                // 3. Build Prompt (Concise)
+                // 3. Build Prompt using structured context from backend
+                //    Blend BOTH topic and task context for comprehensive question generation.
                 val contextBuilder = StringBuilder()
-                contextBuilder.append("Curso: $courseName\n")
+                // NOTE: Course name is for reference only — questions must NOT be based on it
+                contextBuilder.append("(Curso de referencia: $courseName — NO generar preguntas basadas en el nombre del curso)\n")
 
-                // Find selected Topic/Task details for thematic focus
-                val selectedTopic = topics.find { it.id == topicId }
-                val selectedTask = tasks.find { it.id == taskId }
-
-                if (selectedTopic != null) {
-                    _selectedTopicName.value = selectedTopic.name
-                    contextBuilder.append("TEMA PRINCIPAL: ${selectedTopic.name}\n")
-                    contextBuilder.append("DESCRIPCIÓN DEL TEMA: ${selectedTopic.description}\n")
-                } else {
-                    _selectedTopicName.value = "General"
+                // ═══ CONTEXTO DEL TEMA ═══
+                if (topicName.isNotBlank()) {
+                    contextBuilder.append("\n╔══════════════════════════════════════════════╗\n")
+                    contextBuilder.append("║  TEMA: $topicName\n")
+                    contextBuilder.append("╚══════════════════════════════════════════════╝\n")
+                    if (topicDescription.isNotBlank()) {
+                        contextBuilder.append("Descripción del tema: $topicDescription\n")
+                    }
+                    // List topic-specific files
+                    if (topicContentItemsArray.size() > 0) {
+                        contextBuilder.append("Archivos del tema (${topicContentItemsArray.size()}):\n")
+                        for (i in 0 until topicContentItemsArray.size()) {
+                            val item = topicContentItemsArray[i].asJsonObject
+                            val title = item?.get("title")?.asString ?: "Sin nombre"
+                            val type = item?.get("contentType")?.asString ?: "unknown"
+                            contextBuilder.append("  - $title ($type)\n")
+                        }
+                    }
                 }
 
-                if (selectedTask != null) {
-                    _selectedTaskName.value = selectedTask.name
-                    contextBuilder.append("TAREA ESPECÍFICA (FOCO CENTRAL): ${selectedTask.name}\n")
-                    contextBuilder.append("DESCRIPCIÓN DE LA TAREA: ${selectedTask.description ?: "Sin descripción"}\n")
-                } else {
-                    _selectedTaskName.value = "General"
+                // ═══ CONTEXTO DE LA TAREA ═══
+                if (taskName.isNotBlank()) {
+                    contextBuilder.append("\n╔══════════════════════════════════════════════╗\n")
+                    contextBuilder.append("║  TAREA: $taskName\n")
+                    contextBuilder.append("╚══════════════════════════════════════════════╝\n")
+                    contextBuilder.append("Descripción de la tarea: ${taskDescription.ifBlank { "Sin descripción" }}\n")
+                    // List task-specific files
+                    if (taskContentItemsArray.size() > 0) {
+                        contextBuilder.append("Archivos de la tarea (${taskContentItemsArray.size()}):\n")
+                        for (i in 0 until taskContentItemsArray.size()) {
+                            val item = taskContentItemsArray[i].asJsonObject
+                            val title = item?.get("title")?.asString ?: "Sin nombre"
+                            val type = item?.get("contentType")?.asString ?: "unknown"
+                            contextBuilder.append("  - $title ($type)\n")
+                        }
+                    }
+                }
+
+                // ═══ INSTRUCCIÓN DE MEZCLA TEMÁTICA ═══
+                val hasBothSources = topicName.isNotBlank() && taskName.isNotBlank()
+                if (hasBothSources) {
+                    contextBuilder.append("\n═══════════════════════════════════════════════════\n")
+                    contextBuilder.append("INSTRUCCIÓN DE MEZCLA TEMÁTICA:\n")
+                    contextBuilder.append("Las preguntas DEBEN combinar AMBAS fuentes:\n")
+                    contextBuilder.append("  • Tema: \"$topicName\" — conceptos teóricos, definiciones y fundamentos\n")
+                    contextBuilder.append("  • Tarea: \"$taskName\" — aplicación práctica, requisitos y ejercicios\n")
+                    contextBuilder.append("Genera preguntas que integren los conceptos del TEMA con la práctica de la TAREA.\n")
+                    contextBuilder.append("═══════════════════════════════════════════════════\n")
                 }
 
                 // Include RAG document content directly for strict grounding
+                // Content is retrieved via Hybrid Retrieval Architecture:
+                //   - Semantic search finds the most relevant chunks
+                //   - Reranking reorders by TRUE relevance (LLM cross-encoder or TF-IDF)
+                //   - Window expansion adds surrounding context
+                //   - Progressive coverage rotates through different document sections
                 if (ragDocumentContent.isNotBlank()) {
                     contextBuilder.append("\n═══════════════════════════════════════════════════\n")
-                    contextBuilder.append("MATERIAL DE REFERENCIA VERIFICADO (rag_documents):\n")
-                    contextBuilder.append("═══════════════════════════════════════════════════\n")
-                    // Limit to ~12000 chars to avoid excessive prompt size
-                    val truncatedContent = if (ragDocumentContent.length > 12000) {
-                        ragDocumentContent.take(12000) + "\n[... contenido truncado por longitud ...]"
-                    } else {
-                        ragDocumentContent
+                    contextBuilder.append("MATERIAL DE REFERENCIA VERIFICADO — Hybrid Retrieval + Reranking\n")
+                    if (activeRetrievalMode == "hybrid" || activeRetrievalMode == "semantic") {
+                        contextBuilder.append("  Búsqueda semántica: $semanticHits coincidencias relevantes\n")
+                        contextBuilder.append("  Contexto expandido: $expandedChunks fragmentos con ventana contextual\n")
+                        if (wasReranked) {
+                            contextBuilder.append("  Reranking: activado ($rerankMethod) — fragmentos reordenados por relevancia REAL\n")
+                        }
                     }
-                    contextBuilder.append(truncatedContent)
+                    if (ragTotalPages > 1) {
+                        contextBuilder.append("  Cobertura: Sección ${ragPage + 1} de $ragTotalPages\n")
+                    }
+                    contextBuilder.append("═══════════════════════════════════════════════════\n")
+                    contextBuilder.append(ragDocumentContent)
                     contextBuilder.append("\n═══════════════════════════════════════════════════\n")
                     if (ragFileNames.isNotEmpty()) {
                         contextBuilder.append("Archivos fuente: ${ragFileNames.joinToString(", ")}\n")
                     }
-                } else if (contentItems.isNotEmpty()) {
+                    contextBuilder.append("Fragmentos: $ragChunks de $ragTotalChunks totales (ventana progresiva)\n")
+                } else if (contentItemsArray.size() > 0) {
                     contextBuilder.append("\nMATERIAL DE REFERENCIA (ARCHIVOS ADJUNTOS):\n")
-                    contentItems.forEach { item ->
-                        contextBuilder.append("- Archivo: ${item.name} (${item.contentType})\n")
+                    for (i in 0 until contentItemsArray.size()) {
+                        val item = contentItemsArray[i].asJsonObject
+                        val title = item?.get("title")?.asString ?: "Sin nombre"
+                        val type = item?.get("contentType")?.asString ?: "unknown"
+                        contextBuilder.append("- Archivo: $title ($type)\n")
                     }
                 } else {
                     Log.w("ReinforcementVM", "⚠️ No RAG content nor files found.")
@@ -446,16 +436,16 @@ class ReinforcementLearningViewModel(
                     contextBuilder.append("═══════════════════════════════════════════════════\n")
                 }
 
-                // Add a unique timestamp to force fresh generation and avoid caching
                 contextBuilder.append("\n(Generación ID: ${System.currentTimeMillis()})\n")
 
-                // Serialize content items to JSON for backend processing
-                val contentList = contentItems.map {
+                // Serialize content items metadata for backend processing
+                val contentList = (0 until contentItemsArray.size()).map { i ->
+                    val item = contentItemsArray[i].asJsonObject
                     mapOf(
-                        "name" to (it.name ?: "Sin nombre"),
-                        "uri" to (it.uriString ?: ""),
-                        "type" to (it.contentType ?: "application/octet-stream"),
-                        "id" to it.id
+                        "name" to (item?.get("title")?.asString ?: "Sin nombre"),
+                        "uri" to "",
+                        "type" to (item?.get("contentType")?.asString ?: "application/octet-stream"),
+                        "id" to (item?.get("id")?.asLong ?: 0L)
                     )
                 }
                 val jsonContentString = Gson().toJson(contentList)
@@ -463,15 +453,25 @@ class ReinforcementLearningViewModel(
 
                 // Determine grounding instruction based on RAG availability
                 val hasRagContent = ragDocumentContent.isNotBlank()
+                val sectionInfo = if (ragTotalPages > 1) {
+                    "\n- Estás viendo la SECCIÓN ${ragPage + 1} de $ragTotalPages del documento. Genera preguntas SOLO sobre el contenido de ESTA sección."
+                } else ""
+                
+                val hybridInfo = if (activeRetrievalMode == "hybrid" || activeRetrievalMode == "semantic") {
+                    val rerankInfo = if (wasReranked) " y reranking ($rerankMethod) para máxima precisión" else ""
+                    "\n- El contenido ha sido seleccionado mediante búsqueda semántica ($semanticHits coincidencias) con contexto expandido ($expandedChunks fragmentos)$rerankInfo."
+                } else ""
+
                 val groundingInstruction = if (hasRagContent) {
                     """
                     REGLA DE GROUNDING ESTRICTO (ANTI-ALUCINACIÓN):
                     - TODAS las preguntas, respuestas y explicaciones DEBEN basarse EXCLUSIVAMENTE en el MATERIAL DE REFERENCIA VERIFICADO incluido arriba.
-                    - Cada respuesta correcta DEBE poder verificarse directamente en el texto del material.
+                    - Cada respuesta correcta DEBE poder verificarse directamente en el texto del material.$sectionInfo$hybridInfo
                     - NO inventes, infieras ni añadas información que NO aparezca EXPLÍCITAMENTE en el material.
                     - Si un concepto NO está en el material, NO generes preguntas sobre él.
                     - Las explicaciones DEBEN citar o parafrasear directamente frases del material de referencia.
-                    - Genera preguntas variadas que cubran DIFERENTES secciones y conceptos del material.
+                    - Genera preguntas variadas que cubran DIFERENTES conceptos, párrafos y datos del material proporcionado.
+                    - Cada pregunta debe extraer información de un PÁRRAFO o SECCIÓN DISTINTA del texto.
                     """.trimIndent()
                 } else {
                     """
@@ -481,21 +481,107 @@ class ReinforcementLearningViewModel(
                     """.trimIndent()
                 }
 
+                // ═══════════════════════════════════════════════════════════
+                // 🔄 ESCALATING PROMPT STRATEGY: On each retry, change the
+                // question style to force the LLM to generate fundamentally
+                // different questions instead of paraphrasing the same ones.
+                // ═══════════════════════════════════════════════════════════
+                val retryDifferentiationInstruction = when (retryAttempt) {
+                    0 -> ""
+                    1 -> """
+                        
+                        ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: Las preguntas anteriores fueron RECHAZADAS por ser duplicadas.
+                        NOTA: El material de referencia ha sido ACTUALIZADO con una NUEVA SECCIÓN del documento (sección ${ragPage + 1}/$ragTotalPages).
+                        ESTRATEGIA OBLIGATORIA: Genera preguntas sobre DETALLES NUMÉRICOS, EJEMPLOS CONCRETOS y DATOS ESPECÍFICOS de ESTA NUEVA sección.
+                        Enfócate en cifras, nombres propios, fechas, cantidades, unidades y valores exactos mencionados en el texto.
+                        NO preguntes sobre definiciones generales — esas YA EXISTEN.
+                    """.trimIndent()
+                    2 -> """
+                        
+                        ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: TODAS las preguntas previas fueron duplicadas.
+                        NOTA: Estás viendo la SECCIÓN ${ragPage + 1}/$ragTotalPages del documento — contenido NUEVO respecto al intento anterior.
+                        ESTRATEGIA OBLIGATORIA: Genera preguntas de APLICACIÓN y ESCENARIOS PRÁCTICOS.
+                        Cada pregunta debe plantear una SITUACIÓN HIPOTÉTICA donde el estudiante aplique los conceptos.
+                        Formato sugerido: "Si un estudiante necesita...", "En una situación donde...", "¿Qué pasaría si...?"
+                        NO repitas el estilo de preguntas de conocimiento directo.
+                    """.trimIndent()
+                    3 -> """
+                        
+                        ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: AÚN se detectaron duplicados.
+                        ESTRATEGIA OBLIGATORIA: Genera preguntas de COMPARACIÓN y CONTRASTE entre conceptos del material.
+                        Cada pregunta debe comparar DOS o más elementos del texto.
+                        Formato sugerido: "¿Cuál es la diferencia entre X e Y?", "¿En qué se parecen X e Y?", "Comparando X con Y..."
+                        PROHIBIDO preguntar sobre un solo concepto aislado.
+                    """.trimIndent()
+                    4 -> """
+                        
+                        ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: ÚLTIMO INTENTO.
+                        ESTRATEGIA OBLIGATORIA: Genera preguntas de VERDADERO/FALSO reformuladas como opción múltiple.
+                        Cada pregunta debe presentar una AFIRMACIÓN y preguntar si es correcta o incorrecta según el material.
+                        Formato: "¿Cuál de las siguientes afirmaciones sobre [concepto] es CORRECTA/INCORRECTA?"
+                        Usa afirmaciones que mezclen datos reales del material con datos inventados sutilmente incorrectos.
+                    """.trimIndent()
+                    else -> """
+                        
+                        ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: Genera preguntas COMPLETAMENTE DIFERENTES a todo lo anterior.
+                        Usa un enfoque creativo: preguntas de secuencia, de causa-efecto, o de clasificación.
+                    """.trimIndent()
+                }
+
+                // Build the thematic distribution instruction based on available sources
+                val thematicDistribution = if (hasBothSources) {
+                    """
+                    DISTRIBUCIÓN TEMÁTICA OBLIGATORIA (MEZCLA TEMA + TAREA):
+                    Las preguntas DEBEN distribuirse así:
+                    - 3 preguntas sobre conceptos del TEMA "$topicName" (definiciones, teoría, fundamentos)
+                    - 3 preguntas sobre la TAREA "$taskName" (requisitos, procedimientos, aplicación práctica)
+                    - 4 preguntas que INTEGREN AMBOS: apliquen conceptos del tema a la tarea o relacionen
+                      la práctica de la tarea con la teoría del tema
+                    
+                    IMPORTANTE: Las preguntas integradoras deben mencionar elementos de AMBAS fuentes.
+                    Ejemplo de pregunta integradora: "Según el tema '$topicName', ¿cómo se aplica [concepto] en la tarea '$taskName'?"
+                    
+                    ARCHIVOS FUENTE:
+                    ${if (topicContentItemsArray.size() > 0) "- Archivos del Tema: ${(0 until topicContentItemsArray.size()).map { topicContentItemsArray[it].asJsonObject?.get("title")?.asString ?: "?" }.joinToString(", ")}" else "- Sin archivos del Tema"}
+                    ${if (taskContentItemsArray.size() > 0) "- Archivos de la Tarea: ${(0 until taskContentItemsArray.size()).map { taskContentItemsArray[it].asJsonObject?.get("title")?.asString ?: "?" }.joinToString(", ")}" else "- Sin archivos de la Tarea"}
+                    """.trimIndent()
+                } else if (topicName.isNotBlank()) {
+                    """
+                    ENFOQUE: Genera preguntas centradas en el TEMA "$topicName".
+                    Cubre conceptos, definiciones, procesos y aplicaciones del tema.
+                    ${if (topicContentItemsArray.size() > 0) "Archivos del Tema: ${(0 until topicContentItemsArray.size()).map { topicContentItemsArray[it].asJsonObject?.get("title")?.asString ?: "?" }.joinToString(", ")}" else ""}
+                    """.trimIndent()
+                } else {
+                    """
+                    ENFOQUE: Genera preguntas centradas en la TAREA "$taskName".
+                    Cubre requisitos, procedimientos y aplicación práctica de la tarea.
+                    ${if (taskContentItemsArray.size() > 0) "Archivos de la Tarea: ${(0 until taskContentItemsArray.size()).map { taskContentItemsArray[it].asJsonObject?.get("title")?.asString ?: "?" }.joinToString(", ")}" else ""}
+                    """.trimIndent()
+                }
+
                 val prompt = """
                     Eres un profesor experto generando preguntas de repaso.
                     
-                    OBJETIVO: Generar EXACTAMENTE 10 preguntas de opción múltiple basadas en el material de referencia.
+                    OBJETIVO: Generar EXACTAMENTE 10 preguntas de opción múltiple basadas EXCLUSIVAMENTE en el TEMA y la TAREA.
                     
-                    TEMÁTICA:
-                    - TAREA: "${selectedTask?.name ?: "General"}"
-                    - TEMA: "${selectedTopic?.name ?: ""}"
+                    ⚠️ REGLA FUNDAMENTAL — FOCO EN TEMA Y TAREA (NO en el curso):
+                    Las preguntas deben estar 100% basadas en el TÍTULO y DESCRIPCIÓN del TEMA y la TAREA.
+                    PROHIBIDO generar preguntas generales basadas en el nombre del curso.
+                    El nombre del curso es solo contexto organizativo — NO es contenido para preguntas.
+                    
+                    TEMÁTICA COMBINADA:
+                    - TEMA: "${topicName.ifBlank { "General" }}"${if (topicDescription.isNotBlank()) "\n                      Descripción: $topicDescription" else ""}
+                    - TAREA: "${taskName.ifBlank { "General" }}"${if (taskDescription.isNotBlank()) "\n                      Descripción: $taskDescription" else ""}
+                    
+                    $thematicDistribution
                     
                     $groundingInstruction
+                    $retryDifferentiationInstruction
                     
                     DISTRIBUCIÓN DE DIFICULTAD (10 PREGUNTAS):
-                    - 3 Introductorias (conceptos y definiciones del material)
+                    - 3 Introductorias (conceptos básicos y definiciones del material)
                     - 4 Técnicas (detalles específicos, procesos o datos del material)
-                    - 3 Avanzadas (relaciones entre conceptos, análisis o aplicaciones del material)
+                    - 3 Avanzadas (relaciones entre conceptos del tema y la tarea, análisis o aplicaciones)
                     
                     RESTRICCIONES:
                     1. Genera EXACTAMENTE 10 preguntas. Ni una menos.
@@ -503,6 +589,9 @@ class ReinforcementLearningViewModel(
                     3. Tu ÚNICA salida debe ser el array JSON.
                     4. Cada pregunta debe ser semánticamente DISTINTA a las existentes (${existingQuestionsForPrompt.size} previas).
                     5. Si hay preguntas existentes, aborda aspectos DIFERENTES del material no cubiertos.
+                    6. NUNCA parafrasees una pregunta existente — cambia completamente el enfoque y la estructura.
+                    7. Las preguntas DEBEN reflejar los TÍTULOS del tema y la tarea por nombre cuando corresponda.
+                    8. PROHIBIDO hacer preguntas genéricas sobre el curso — TODAS deben ser específicas al TEMA y TAREA indicados.
                     
                     FORMATO JSON ESTRICTO (completa CADA objeto antes del siguiente):
                     [
@@ -646,12 +735,15 @@ class ReinforcementLearningViewModel(
                 if (questions.isEmpty()) {
                     Log.w("ReinforcementVM", "No valid questions from LLM (empty or parse error); using fallback. Raw: $jsonText")
 
-                    // FALLBACK GENERATOR IMPROVED
+                    // FALLBACK GENERATOR: Blend topic and task titles for seed variety
                     val fallback = mutableListOf<QuizQuestion>()
-                    val seeds: List<String> = when {
-                        tasks.isNotEmpty() && taskId != -1L -> tasks.filter { it.id == taskId }.map { it.name }
-                        topics.isNotEmpty() && topicId != -1L -> topics.filter { it.id == topicId }.map { it.name }
-                        else -> emptyList()
+                    val seeds: List<String> = buildList {
+                        if (topicName.isNotBlank()) add(topicName)
+                        if (taskName.isNotBlank()) add(taskName)
+                        // Blended seed combining both
+                        if (topicName.isNotBlank() && taskName.isNotBlank()) {
+                            add("$topicName aplicado en $taskName")
+                        }
                     }
 
                     val effectiveSeeds = if (seeds.isNotEmpty()) seeds else listOf("Conceptos Generales", "Fundamentos", "Práctica", "Teoría", "Análisis")
@@ -709,16 +801,21 @@ class ReinforcementLearningViewModel(
                     Log.d("ReinforcementVM", "🔍 Local dedup: ${sanitizedGenerated.size} generated → ${uniqueQuestions.size} unique (${sanitizedGenerated.size - uniqueQuestions.size} local dupes removed)")
 
                     // Retry if we still don't have a full set of 10 unique questions.
-                    if (uniqueQuestions.size < 10 && retryAttempt < 2) {
-                        Log.w("ReinforcementVM", "⚠️ Only ${uniqueQuestions.size}/10 unique questions after local dedup. Retrying (attempt ${retryAttempt + 1})...")
+                    // Uses escalating prompt strategies on each retry to force different question styles.
+                    if (uniqueQuestions.size < 10 && retryAttempt < MAX_RETRY_ATTEMPTS) {
+                        Log.w("ReinforcementVM", "⚠️ Only ${uniqueQuestions.size}/10 unique questions after local dedup. Retrying with escalated strategy (attempt ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)...")
                         val allExcluded = (existingQuestionTexts + sanitizedGenerated.map { it.question }).distinct()
                         loadQuestionsInternal(courseId, courseName, topicId, taskId, retryAttempt + 1, allExcluded)
                         return@launch
                     }
 
-                    val selectedTask = tasks.find { it.id == taskId }
-                    val selectedTopic = topics.find { it.id == topicId }
-                    val fallbackSeeds = listOfNotNull(selectedTask?.name, selectedTopic?.name).ifEmpty {
+                    val fallbackSeeds = buildList {
+                        if (topicName.isNotBlank()) add(topicName)
+                        if (taskName.isNotBlank()) add(taskName)
+                        if (topicName.isNotBlank() && taskName.isNotBlank()) {
+                            add("$topicName en $taskName")
+                        }
+                    }.ifEmpty {
                         listOf("Conceptos Generales", "Fundamentos", "Práctica", "Teoría", "Análisis")
                     }
 
@@ -734,7 +831,14 @@ class ReinforcementLearningViewModel(
                     }
 
                     if (finalQuestions.size < 10) {
-                        _uiState.value = ReinforcementState.Error("No fue posible construir 10 preguntas únicas. Intenta nuevamente.")
+                        val attemptsUsed = retryAttempt + 1
+                        Log.w("ReinforcementVM", "⚠️ Could not build 10 unique questions after $attemptsUsed attempts " +
+                            "(ragPage=${ragPage + 1}/$ragTotalPages, totalChunks=$ragTotalChunks, existing=${existingQuestionTexts.size})")
+                        _uiState.value = ReinforcementState.Error(
+                            "No fue posible construir 10 preguntas únicas después de $attemptsUsed intentos " +
+                            "(secciones ${ragPage + 1}/$ragTotalPages del documento exploradas). " +
+                            "El material disponible puede no tener suficiente variedad. Intenta con otro tópico o tarea."
+                        )
                         clearPendingTaskData()
                         return@launch
                     }
@@ -771,8 +875,8 @@ class ReinforcementLearningViewModel(
                                     val requiredCount = data?.get("requiredCount")?.asInt ?: 10
                                     val isShortBatch = savedCount < requiredCount
 
-                                    if ((allDuplicates || isShortBatch) && retryAttempt < 2) {
-                                        Log.w("ReinforcementVM", "⚠️ Backend accepted only $savedCount/$requiredCount unique questions. Retrying (attempt ${retryAttempt + 1})...")
+                                    if ((allDuplicates || isShortBatch) && retryAttempt < MAX_RETRY_ATTEMPTS) {
+                                        Log.w("ReinforcementVM", "⚠️ Backend accepted only $savedCount/$requiredCount unique questions. Retrying with escalated strategy (attempt ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)...")
                                         val backendExisting = try {
                                             data?.getAsJsonArray("existingQuestions")?.mapNotNull { elem ->
                                                 elem.asJsonObject?.get("question")?.asString
@@ -817,6 +921,35 @@ class ReinforcementLearningViewModel(
                 clearPendingTaskData()
             }
         }
+    }
+
+    /**
+     * Builds a composite semantic search query from available context.
+     * Used for Hybrid Retrieval to find the most relevant chunks via embedding similarity.
+     * Combines course name, topic name, and task name for optimal retrieval
+     * that covers material from BOTH sources.
+     */
+    private fun buildSemanticQuery(courseName: String, topicId: Long, taskId: Long): String {
+        val parts = mutableListOf<String>()
+        // DO NOT include courseName — it causes overly general retrieval.
+        // Topic/task names may not be available yet on first call;
+        // the backend will build a proper query from DB topic/task details.
+
+        val topic = _selectedTopicName.value
+        val task = _selectedTaskName.value
+
+        if (!topic.isNullOrBlank() && topic != "General") parts.add(topic)
+        if (!task.isNullOrBlank() && task != "General") parts.add(task)
+
+        // Duplicate both names together for higher semantic weight
+        if (!topic.isNullOrBlank() && topic != "General" && !task.isNullOrBlank() && task != "General") {
+            parts.add("$topic $task")
+        }
+
+        // Return empty string if no topic/task names available yet;
+        // the backend LearningContextService._buildSearchQuery() will
+        // construct the proper query from topic/task titles in the DB.
+        return parts.joinToString(" ").trim()
     }
 
     fun loadPreloadedQuestions(questionsJson: String) {

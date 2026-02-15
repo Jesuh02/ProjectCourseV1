@@ -2,6 +2,7 @@ package com.example.tareamov.service
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
 import android.util.Log
 import com.example.tareamov.BuildConfig
 import com.example.tareamov.data.entity.*
@@ -905,7 +906,7 @@ object BackendApiService {
     }
 
     suspend fun searchCourses(query: String): ApiResult<List<Course>> =
-        executeList(get("/courses/search?q=$query"))
+        executeList(get("/courses/search?q=${Uri.encode(query)}"))
 
     suspend fun getFreeCourses(): ApiResult<List<Course>> =
         executeList(get("/courses/free"))
@@ -1433,8 +1434,11 @@ object BackendApiService {
     suspend fun getMyEnrolledCourseIds(): ApiResult<List<Long>> =
         executeList(get("/progress/my/enrolled-course-ids"))
 
-    suspend fun getTopStudents(limit: Int = 10): ApiResult<List<JsonObject>> =
+    suspend fun getTopStudentsByCreatorCourses(limit: Int = 10): ApiResult<List<JsonObject>> =
         executeList(get("/progress/top-students?limit=$limit"))
+
+    suspend fun getTopStudents(limit: Int = 10): ApiResult<List<JsonObject>> =
+        getTopStudentsByCreatorCourses(limit)
 
     suspend fun getCreatorEnrollmentAnalytics(
         weeklyDays: Int = 7,
@@ -1947,6 +1951,45 @@ object BackendApiService {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // Learning Context (Contexto unificado para generación de preguntas)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Obtiene TODO el contexto de aprendizaje en una sola llamada:
+     *   - Detalles del tema (título, descripción)
+     *   - Detalles de la tarea (título, descripción)
+     *   - Contenido RAG procesado (texto completo de archivos)
+     *   - Archivos RAG fuente
+     *   - Preguntas existentes para deduplicación
+     *   - Metadata de content_items
+     *
+     * Reemplaza las llamadas separadas a getTopicsByCourse, getTasksByTopic,
+     * getContentItemsByTask, ingestTaskContent, getRagContent y getExistingQuestions.
+     *
+     * @param courseId ID del curso
+     * @param topicId ID del tema (opcional)
+     * @param taskId ID de la tarea (opcional)
+     * @return ApiResult<JsonObject> con todo el contexto estructurado
+     */
+    suspend fun getLearningContext(
+        courseId: Long,
+        topicId: Long? = null,
+        taskId: Long? = null,
+        sessionIndex: Int? = null,
+        query: String? = null,
+        retrievalMode: String? = null
+    ): ApiResult<JsonObject> {
+        val params = mutableListOf("courseId=$courseId")
+        if (topicId != null && topicId > 0) params.add("topicId=$topicId")
+        if (taskId != null && taskId > 0) params.add("taskId=$taskId")
+        if (sessionIndex != null && sessionIndex >= 0) params.add("sessionIndex=$sessionIndex")
+        if (!query.isNullOrBlank()) params.add("query=${java.net.URLEncoder.encode(query, "UTF-8")}")
+        if (!retrievalMode.isNullOrBlank()) params.add("retrievalMode=$retrievalMode")
+        val queryString = params.joinToString("&")
+        return execute(get("/reinforcement/learning-context?$queryString"))
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // RAG (Document Ingestion)
     // ═══════════════════════════════════════════════════════════
 
@@ -1993,7 +2036,7 @@ object BackendApiService {
             "calificationAdded" to chatMessage.calificationAdded,
             "username" to chatMessage.senderUsername
         )
-        if (chatMessage.id > 0) body["id"] = chatMessage.id
+        // Do NOT send local Room DB id — the backend column is GENERATED ALWAYS AS IDENTITY
         return execute(post("/chat-messages/upsert", body))
     }
 

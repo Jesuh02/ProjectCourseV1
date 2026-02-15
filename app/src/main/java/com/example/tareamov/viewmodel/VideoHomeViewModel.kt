@@ -61,6 +61,14 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
     val errorMessage: LiveData<String?> = _errorMessage
 
     var currentVideoIndex: Int = 0
+    var savedPlaybackPositionMs: Int = 0
+    var savedPlaybackVideoId: Long = -1L
+    var savedPlaybackVideoPath: String? = null
+
+    /** Survives fragment recreation — prevents the network callback from
+     *  forcing a full reload when the user returns to this tab. */
+    var skipNextNetworkAutoRefresh: Boolean = false
+
     var totalVideos: Int = 0
         private set
 
@@ -398,4 +406,5 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
     }
+
 }

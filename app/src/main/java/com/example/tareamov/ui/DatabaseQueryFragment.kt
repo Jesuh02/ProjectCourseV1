@@ -432,7 +432,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 val active = mcpHttpClient.getActiveBaseUrl() ?: "http://10.0.2.2:3000"
                 Log.d(TAG, "✅ MCP HTTP client connected to server at $active")
                 withContext(Dispatchers.Main) {
-                    addMessageToChat("✅ Conectado a servidor MCP CourseV by YisusFactory (HTTP) \n$active", false)
+                    addMessageToChat("✅ Conectado a servidor MCP CourseV by YisusFactory (HTTP)", false)
                 }
             } else {
                 Log.w(TAG, "⚠️ MCP HTTP client initial initialization failed, attempting ChatBotFragment-style host detection...")
@@ -511,7 +511,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                         initialized = mcpHttpClient.initialize(force = true)
                         if (initialized) {
                             withContext(Dispatchers.Main) {
-                                addMessageToChat("✅ Conectado a servidor MCP (forzado): $found", false)
+                                addMessageToChat("✅ Conectado a servidor MCP (forzado)", false)
                             }
                         } else {
                             Log.w(TAG, "Forced initialization failed for $found")
@@ -548,9 +548,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                                             val ok = mcpHttpClient.initialize(force = true)
                                             withContext(Dispatchers.Main) {
                                                 if (ok) {
-                                                    addMessageToChat("✅ Conectado a servidor MCP (manual): $url", false)
+                                                    addMessageToChat("✅ Conectado a servidor MCP (manual)", false)
                                                 } else {
-                                                    addMessageToChat("❌ No se pudo conectar a $url", false)
+                                                    addMessageToChat("❌ No se pudo conectar al servidor MCP", false)
                                                 }
                                             }
                                         }
@@ -910,7 +910,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                     val activeUrl = mcpClient.getActiveBaseUrl() ?: com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty { "http://10.0.2.2:3000" }
 
                     val status = if (mcpAvailable) {
-                        "✓ MCP HTTP server disponible ($activeUrl). El LLM se puede usar a través del MCP bridge."
+                        "✓ MCP HTTP server disponible. El LLM se puede usar a través del MCP bridge."
                     } else {
                         "❌ MCP HTTP server no disponible. Asegúrate de que el servidor Node.js esté corriendo."
                     }

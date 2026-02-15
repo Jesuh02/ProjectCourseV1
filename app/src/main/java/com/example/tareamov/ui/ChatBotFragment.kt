@@ -1906,7 +1906,7 @@ class ChatBotFragment : Fragment() {
                             if (res.respuesta_texto.isNullOrBlank()) {
                                 // Verificar si el contenido del archivo estaba vacío
                                 if (effectiveFileContent.isBlank() || effectiveFileContent.length < 50) {
-                                    LLMResponse("""📊 **CALIFICACIÓN: 0/100**
+                                    LLMResponse("""📊 **CALIFICACIÓN: 0/10**
 
 ❌ **RESULTADO:** No aprobado
 
@@ -1930,21 +1930,15 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                             }
                         }
                     } catch (e: HttpException) {
-                        Log.e("ChatBotFragment", "❌ HttpException: ${e.message()}")
-                        Log.e("ChatBotFragment", "❌ HTTP Code: ${e.code()}")
-                        Log.e("ChatBotFragment", "❌ HTTP Response: ${e.response()}")
                         try {
                             val errorBody = e.response()?.errorBody()?.string()
-                            Log.e("ChatBotFragment", "❌ Error Body: $errorBody")
                             LLMResponse("Error del microservicio (HTTP ${e.code()}): $errorBody", null)
                         } catch (ex: Exception) {
                             LLMResponse("Error al conectar con el microservicio (HTTP ${e.code()}): ${e.message()}", null)
                         }
                     } catch (e: SocketTimeoutException) {
-                        Log.e("ChatBotFragment", "❌ SocketTimeoutException: ${e.message}")
                         // Try immediate cloud fallback when local model times out
                         try {
-                            Log.i("ChatBotFragment", "SocketTimeoutException -> attempting immediate cloud fallback")
                             val ok = okhttp3.OkHttpClient.Builder()
                                 .connectTimeout(800, java.util.concurrent.TimeUnit.MILLISECONDS)
                                 .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
@@ -1995,16 +1989,11 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 LLMResponse("El modelo en la nube no devolvió respuesta válida: ${cloudResWrapper.error}", null)
                             }
                         } catch (ce: Exception) {
-                            Log.e("ChatBotFragment", "Cloud fallback failed after timeout: ${ce.message}")
                             LLMResponse("El modelo está tardando más de lo esperado. Intenta nuevamente en unos minutos.", null)
                         }
                     } catch (e: java.net.ConnectException) {
-                        Log.e("ChatBotFragment", "❌ ConnectException: ${e.message}")
                         LLMResponse("No se puede conectar con el microservicio. Verifica que esté ejecutándose en ${getMicroserviceBaseUrl()}", null)
                     } catch (e: Exception) {
-                        Log.e("ChatBotFragment", "❌ Exception: ${e.message}")
-                        Log.e("ChatBotFragment", "❌ Exception Type: ${e::class.java.simpleName}")
-                        Log.e("ChatBotFragment", "❌ Stack Trace: ${e.stackTrace.contentToString()}")
                         LLMResponse("Error inesperado: ${e.message}", null)
                     }
                 }
@@ -2265,7 +2254,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 // Normalizar el formato decimal: reemplazar coma por punto
                 val normalizedGrade = grade.replace(",", ".")
 
-                // Convertir a escala de 10 si es necesario
+                // La nota ya viene en escala 0-10 del backend
                 val gradeValue = try {
                     normalizedGrade.toFloat()
                 } catch (e: NumberFormatException) {
@@ -2274,12 +2263,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 }
 
                 return if (gradeValue != null) {
-                    if (gradeValue > 10) {
-                        // Convertir de escala 100 a 10
-                        String.format("%.1f", gradeValue / 10)
-                    } else {
-                        String.format("%.1f", gradeValue)
-                    }
+                    String.format("%.1f", gradeValue.coerceIn(0f, 10f))
                 } else null
             }
         }
@@ -2387,7 +2371,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     // Intentar extraer el número del # del mensaje para determinar qué TaskSubmission actualizar
                     val taskSubmissionId = extractTaskSubmissionIdFromMessage(message.message)
                         ?: findTaskSubmissionIdInContext() // Buscar en contexto si no se encuentra en el mensaje
-                    val targetSubmissionId = taskSubmissionId ?: currentFileContext?.submissionId
+                    val targetSubmissionId = taskSubmissionId
+                        ?: currentFileContext?.submissionId
+                        ?: selectedTaskSubmissionId // Fallback: usar el submission seleccionado previamente
 
                     calificationManager.storePendingCalification(
                         grade = grade,

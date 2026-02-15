@@ -27,6 +27,7 @@ import com.example.tareamov.viewmodel.CourseCreationViewModel
 import com.example.tareamov.service.StorageHelper
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -422,7 +423,7 @@ class CourseTaskFragment : Fragment() {
         val topicNumber = arguments?.getInt("topicNumber", 0) ?: 0
 
         if (taskName.isBlank()) {
-            Toast.makeText(context, "El nombre de la tarea no puede estar vacío", Toast.LENGTH_SHORT).show()
+            showToastSafe("El nombre de la tarea no puede estar vacío")
             return
         }
 
@@ -436,7 +437,7 @@ class CourseTaskFragment : Fragment() {
                         courseId = topicResult.data.courseId
                         Log.d("CourseTaskFragment", "Fetched courseId=$courseId from topic $topicId")
                     } else {
-                        Toast.makeText(context, "Error: No se pudo obtener información del curso", Toast.LENGTH_SHORT).show()
+                        showToastSafe("Error: No se pudo obtener información del curso")
                         Log.e("CourseTaskFragment", "Could not fetch topic $topicId to get courseId")
                         return@launch
                     }
@@ -465,7 +466,7 @@ class CourseTaskFragment : Fragment() {
 
                 // Validate that topicId exists before attempting to save task
                 if (topicId <= 0) {
-                    Toast.makeText(context, "Error: ID de tema inválido", Toast.LENGTH_SHORT).show()
+                    showToastSafe("Error: ID de tema inválido")
                     Log.e("CourseTaskFragment", "Invalid topicId: $topicId")
                     return@launch
                 }
@@ -487,7 +488,7 @@ class CourseTaskFragment : Fragment() {
                 }
 
                 if (!topicExists) {
-                    Toast.makeText(context, "Error: El tema no existe", Toast.LENGTH_SHORT).show()
+                    showToastSafe("Error: El tema no existe")
                     Log.e("CourseTaskFragment", "Topic $topicId not found")
                     return@launch
                 }
@@ -512,10 +513,8 @@ class CourseTaskFragment : Fragment() {
                         if (taskId > 0) {
                             Log.d("CourseTaskFragment", "Updating existing task $taskId")
                             val updateResult = BackendApiService.updateTask(taskId, mapOf(
-                                "name" to remoteTask.name,
-                                "description" to remoteTask.description,
-                                "topic_id" to remoteTask.topicId,
-                                "order_index" to remoteTask.orderIndex
+                                "title" to remoteTask.name,
+                                "description" to remoteTask.description
                             ))
                             if (updateResult is ApiResult.Success) {
                                 Log.d("CourseTaskFragment", "Task updated successfully")
@@ -553,7 +552,7 @@ class CourseTaskFragment : Fragment() {
                 } else {
                     // Remote push failed - provide more specific error message
                     val errorMsg = "No se pudo guardar la tarea en el servidor. Verifica tu conexión y los logs."
-                    Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                    showToastSafe(errorMsg, Toast.LENGTH_LONG)
                     Log.e("CourseTaskFragment", "Failed to save task to Supabase - topicId=$topicId, taskName=$taskName, taskId=$taskId")
                     return@launch
                 }
@@ -638,9 +637,9 @@ class CourseTaskFragment : Fragment() {
                 
                 // Show appropriate message
                 if (contentItemsToSave.isNotEmpty() && successCount < contentItemsToSave.size) {
-                    Toast.makeText(context, "Tarea guardada, pero algunos contenidos no se pudieron guardar", Toast.LENGTH_LONG).show()
+                    showToastSafe("Tarea guardada, pero algunos contenidos no se pudieron guardar", Toast.LENGTH_LONG)
                 } else {
-                    Toast.makeText(context, "Tarea guardada exitosamente", Toast.LENGTH_SHORT).show()
+                    showToastSafe("Tarea guardada exitosamente")
                 }
 
                 // NUEVO: Create default submissions via backend for new tasks
@@ -692,11 +691,22 @@ class CourseTaskFragment : Fragment() {
 
                 // Navigate back to CourseDetailFragment specifically, clearing this fragment
                 findNavController().popBackStack(R.id.courseDetailFragment, false)
+            } catch (e: CancellationException) {
+                Log.w("CourseTaskFragment", "saveTask cancelled", e)
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error saving task", e)
-                Toast.makeText(context, "Error al guardar la tarea", Toast.LENGTH_SHORT).show()
+                showToastSafe("Error al guardar la tarea")
             }
         }
+    }
+
+    private fun showToastSafe(message: String, duration: Int = Toast.LENGTH_SHORT) {
+        val safeContext = context
+        if (!isAdded || safeContext == null) {
+            Log.w("CourseTaskFragment", "Skipping toast because fragment is not attached: $message")
+            return
+        }
+        Toast.makeText(safeContext, message, duration).show()
     }
 
     private fun openGalleryForVideo() {

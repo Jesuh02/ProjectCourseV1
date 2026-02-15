@@ -282,7 +282,7 @@ class NotificacionesFragment : Fragment() {
      * Used for video_like notifications where metadata can be null.
      */
     private fun navigateToVideoInHome(notification: Notification) {
-        val videoId = notification.relatedId
+        val videoId = notification.relatedId ?: extractVideoIdFromMetadata(notification.metadata)
         if (videoId == null) {
             Log.w("NotificacionesFragment", "⚠️ relatedId is null for video_like notification id=${notification.id}")
             return
@@ -349,7 +349,7 @@ class NotificacionesFragment : Fragment() {
      * Navigation is synchronous (no coroutine) to avoid race conditions with loadNotifications().
      */
     private fun navigateToCommentInVideo(notification: Notification) {
-        val videoId = notification.relatedId
+        val videoId = notification.relatedId ?: extractVideoIdFromMetadata(notification.metadata)
         if (videoId == null) {
             Log.w("NotificacionesFragment", "⚠️ relatedId is null for comment/like notification id=${notification.id}")
             return
@@ -358,27 +358,8 @@ class NotificacionesFragment : Fragment() {
         Log.d("NotificacionesFragment", "💬 Processing comment/like notification: type='${notification.type}', videoId=$videoId")
 
         // Parse metadata synchronously to extract comment_id
-        var commentId: Long? = null
-        val metadataStr = notification.metadata
-        if (metadataStr != null) {
-            try {
-                Log.d("NotificacionesFragment", "🔍 Parsing metadata: $metadataStr")
-                if (metadataStr.trim().startsWith("{")) {
-                    val jsonObject = org.json.JSONObject(metadataStr)
-                    if (jsonObject.has("comment_id")) {
-                        val idVal = jsonObject.get("comment_id")
-                        commentId = if (idVal is Number) idVal.toLong() else idVal.toString().toLongOrNull()
-                        Log.d("NotificacionesFragment", "✅ Extracted commentId from JSON: $commentId")
-                    }
-                } else if (metadataStr.contains("comment_id")) {
-                    val extracted = metadataStr.substringAfter("comment_id").substringAfter(":").substringBefore(",").trim().replace("}", "").replace("\"", "")
-                    commentId = extracted.toLongOrNull()
-                    Log.d("NotificacionesFragment", "✅ Extracted commentId from text: $commentId")
-                }
-            } catch (e: Exception) {
-                Log.e("NotificacionesFragment", "❌ Error parsing metadata for comment_id", e)
-            }
-        } else {
+        val commentId = extractCommentIdFromMetadata(notification.metadata)
+        if (notification.metadata == null) {
             Log.w("NotificacionesFragment", "⚠️ Metadata is NULL, navigating without targetCommentId")
         }
 
@@ -403,6 +384,66 @@ class NotificacionesFragment : Fragment() {
                 Log.e("NotificacionesFragment", "❌ Fallback navigation also failed: ${e2.message}", e2)
             }
         }
+    }
+
+    private fun extractCommentIdFromMetadata(metadata: String?): Long? {
+        if (metadata.isNullOrBlank()) return null
+
+        return try {
+            val normalized = normalizeMetadata(metadata)
+            if (normalized.trim().startsWith("{")) {
+                val jsonObject = org.json.JSONObject(normalized)
+                if (jsonObject.has("comment_id")) {
+                    val idVal = jsonObject.get("comment_id")
+                    return if (idVal is Number) idVal.toLong() else idVal.toString().toLongOrNull()
+                }
+                if (jsonObject.has("commentId")) {
+                    val idVal = jsonObject.get("commentId")
+                    return if (idVal is Number) idVal.toLong() else idVal.toString().toLongOrNull()
+                }
+            }
+
+            val regex = Regex("""(?:comment_id|commentId)\s*[:=]\s*\"?(\d+)\"?""")
+            regex.find(normalized)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        } catch (e: Exception) {
+            Log.e("NotificacionesFragment", "❌ Error parsing metadata for comment_id", e)
+            null
+        }
+    }
+
+    private fun extractVideoIdFromMetadata(metadata: String?): Long? {
+        if (metadata.isNullOrBlank()) return null
+
+        return try {
+            val normalized = normalizeMetadata(metadata)
+            if (normalized.trim().startsWith("{")) {
+                val jsonObject = org.json.JSONObject(normalized)
+                if (jsonObject.has("video_id")) {
+                    val idVal = jsonObject.get("video_id")
+                    return if (idVal is Number) idVal.toLong() else idVal.toString().toLongOrNull()
+                }
+                if (jsonObject.has("videoId")) {
+                    val idVal = jsonObject.get("videoId")
+                    return if (idVal is Number) idVal.toLong() else idVal.toString().toLongOrNull()
+                }
+            }
+
+            val regex = Regex("""(?:video_id|videoId)\s*[:=]\s*\"?(\d+)\"?""")
+            regex.find(normalized)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        } catch (e: Exception) {
+            Log.e("NotificacionesFragment", "❌ Error parsing metadata for video_id", e)
+            null
+        }
+    }
+
+    private fun normalizeMetadata(metadata: String): String {
+        var normalized = metadata.trim()
+        if (normalized.startsWith("\"") && normalized.endsWith("\"") && normalized.length > 1) {
+            normalized = normalized.substring(1, normalized.length - 1)
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\")
+        }
+        return normalized
     }
 
     private fun updateBottomNavSelection(selected: String) {

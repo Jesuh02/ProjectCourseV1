@@ -139,6 +139,14 @@ class NotificationAdapter(
                 Notification.TYPE_TASK_SUBMISSION,
                 Notification.TYPE_NEW_TASK
             )
+            val isVideoInteractionRelated = notification.type in listOf(
+                Notification.TYPE_VIDEO_LIKE,
+                Notification.TYPE_VIDEO_COMMENT,
+                Notification.TYPE_COMMENT_REPLY,
+                Notification.TYPE_COMMENT_LIKE,
+                Notification.TYPE_COMMENT,
+                Notification.TYPE_LIKE
+            )
             
             if (!notification.thumbnailUrl.isNullOrEmpty()) {
                 // Use the provided thumbnail_url from DB (highest priority)
@@ -153,6 +161,16 @@ class NotificationAdapter(
             } else if (notification.type == Notification.TYPE_NEW_VIDEO && notification.relatedId != null) {
                 // For video notifications without thumbnail, fetch from video
                 loadVideoThumbnailById(notification.relatedId, thumbnailCache)
+            } else if (isVideoInteractionRelated) {
+                // For like/comment notifications, always try to resolve the video thumbnail
+                val videoId = notification.relatedId ?: extractVideoIdFromMetadata(notification.metadata)
+                if (videoId != null) {
+                    loadVideoThumbnailById(videoId, thumbnailCache)
+                } else if (!notification.senderAvatarUrl.isNullOrEmpty()) {
+                    loadThumbnail(notification.senderAvatarUrl)
+                } else {
+                    thumbnailImage.setImageResource(R.drawable.bg_course_placeholder_card)
+                }
             } else if (!notification.senderAvatarUrl.isNullOrEmpty()) {
                 // Fallback to sender avatar
                 loadThumbnail(notification.senderAvatarUrl)
@@ -294,6 +312,30 @@ class NotificationAdapter(
                 .error(R.drawable.bg_course_placeholder_card)
                 .centerCrop()
                 .into(thumbnailImage)
+        }
+
+        private fun extractVideoIdFromMetadata(metadata: String?): Long? {
+            if (metadata.isNullOrBlank()) return null
+
+            return try {
+                val normalized = metadata.trim()
+                if (normalized.startsWith("{")) {
+                    val json = org.json.JSONObject(normalized)
+                    if (json.has("video_id")) {
+                        val v = json.get("video_id")
+                        return if (v is Number) v.toLong() else v.toString().toLongOrNull()
+                    }
+                    if (json.has("videoId")) {
+                        val v = json.get("videoId")
+                        return if (v is Number) v.toLong() else v.toString().toLongOrNull()
+                    }
+                }
+
+                val regex = Regex("""(?:video_id|videoId)\s*[:=]\s*\"?(\d+)\"?""")
+                regex.find(normalized)?.groupValues?.getOrNull(1)?.toLongOrNull()
+            } catch (_: Exception) {
+                null
+            }
         }
 
         private fun formatTime(createdAt: String?): String {

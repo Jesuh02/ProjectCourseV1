@@ -779,6 +779,9 @@
             android:id="@+id/action_adminDashboardFragment_to_profileFragment"
             app:destination="@id/profileFragment" />
         <action
+            android:id="@+id/action_adminDashboardFragment_to_userProfileViewFragment"
+            app:destination="@id/userProfileViewFragment" />
+        <action
             android:id="@+id/action_adminDashboardFragment_to_taskSubmissionFragment"
             app:destination="@id/taskSubmissionFragment" />
     </fragment>
