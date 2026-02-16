@@ -118,6 +118,8 @@ class VideoHomeFragment : Fragment() {
     private var lastNavigatedVideoId: Long = -1L
     // Avoid immediate network callback refresh after opening from notification target
     private var skipNextNetworkAutoRefresh: Boolean = false
+    // Tracks when the initial load (with target video) has completed
+    private var initialLoadCompleted = false
 
     // Restore state variables
     private var restorePosition = 0
@@ -1649,7 +1651,7 @@ class VideoHomeFragment : Fragment() {
                                 viewModel.loadVideos(isRefresh = true)
                             }
                         } else {
-                            Log.d("VideoHomeFragment", "Network callback skipped: initialLoadCompleted=$initialLoadCompleted, isLoading=$isLoadingVideos")
+                            Log.d("VideoHomeFragment", "Network callback skipped: isLoading=$isLoadingVideos")
                         }
                     }
                 }
