@@ -1213,7 +1213,6 @@ class CourseDetailFragment : Fragment() {
             } catch (e: Exception) { // This is the correct catch block for the main try
                 stopSkeletonAnimation()
                 Log.e("CourseDetailFragment", "Error loading course details", e)
-                showSafeToast("Error al cargar detalles del curso")
                 noTopicsTextView?.text = "Error al cargar datos." // Generic error message
                 noTopicsTextView?.visibility = View.VISIBLE
                 noTopicsTextView?.alpha = 0f

@@ -2468,14 +2468,14 @@ class TaskSubmissionsFragment : Fragment() {
         return try {
             if (metadata == null) return 0f
             
-            // Buscar patrón "Grade: XX/100" o similar
-            val gradePattern = Regex("Grade:\\s*(\\d+)/100")
+            // Buscar patrón "Grade: XX/10" o similar
+            val gradePattern = Regex("Grade:\\s*(\\d+(?:\\.\\d+)?)/10")
             val match = gradePattern.find(metadata)
             
             if (match != null) {
-                val gradeValue = match.groupValues[1].toInt()
-                // Convertir de escala 0-100 a 0-10
-                (gradeValue / 10f).coerceIn(0f, 10f)
+                val gradeValue = match.groupValues[1].toFloat()
+                // Ya está en escala 0-10
+                gradeValue.coerceIn(0f, 10f)
             } else {
                 0f
             }

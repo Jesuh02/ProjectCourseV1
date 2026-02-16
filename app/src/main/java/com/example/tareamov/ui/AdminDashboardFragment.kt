@@ -636,28 +636,50 @@ class AdminDashboardFragment : Fragment() {
         try {
             val topStudents = withContext(Dispatchers.IO) {
                 try {
-                    Log.d("AdminDashboard", "Loading global top students via BackendApiService")
-                    val topStudentsData = BackendApiService.getTopStudents(TOP_ITEMS_LIMIT).getOrNull() ?: emptyList()
+                    Log.d("AdminDashboard", "Loading top students associated with creator courses")
+                    val apiResult = BackendApiService
+                        .getTopStudentsByCreatorCourses(TOP_ITEMS_LIMIT)
 
-                    Log.d("AdminDashboard", "Retrieved ${topStudentsData.size} top students from BackendApiService")
+                    when (apiResult) {
+                        is ApiResult.Success -> {
+                            val topStudentsData = apiResult.data ?: emptyList()
+                            Log.d("AdminDashboard", "Retrieved ${topStudentsData.size} top students from BackendApiService")
 
-                    topStudentsData.mapIndexed { index, studentData ->
-                        val userId = studentData.get("user_id")?.asLong ?: 0L
-                        val username = studentData.get("username")?.asString?.takeIf { it.isNotBlank() }
-                            ?: "Usuario $userId"
-                        val approvedCourses = studentData.get("approved_courses")?.asInt ?: 0
-                        val averageGrade = studentData.get("average_grade")?.asFloat ?: 0f
-                        val avatarUrl = studentData.get("avatar")?.asString?.takeIf { it.isNotBlank() }
+                            topStudentsData.mapIndexed { index, studentData ->
+                                val userId = studentData.get("user_id")?.takeIf { !it.isJsonNull }?.asLong ?: 0L
+                                val username = studentData.get("username")
+                                    ?.takeIf { !it.isJsonNull }
+                                    ?.asString
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: "Usuario $userId"
+                                val approvedCourses = studentData.get("approved_courses")
+                                    ?.takeIf { !it.isJsonNull }
+                                    ?.asInt
+                                    ?: 0
+                                val averageGrade = studentData.get("average_grade")
+                                    ?.takeIf { !it.isJsonNull }
+                                    ?.asFloat
+                                    ?: 0f
+                                val avatarUrl = studentData.get("avatar")
+                                    ?.takeIf { !it.isJsonNull }
+                                    ?.asString
+                                    ?.takeIf { it.isNotBlank() }
 
-                        Log.d("AdminDashboard", "Mapping student #${index + 1}: $username - Approved: $approvedCourses - Grade: $averageGrade")
+                                Log.d("AdminDashboard", "Mapping student #${index + 1}: $username - Approved: $approvedCourses - Grade: $averageGrade")
 
-                        StudentStats(
-                            userId = userId,
-                            username = username,
-                            approvedCourses = approvedCourses,
-                            averageGrade = averageGrade,
-                            avatarUrl = avatarUrl
-                        )
+                                StudentStats(
+                                    userId = userId,
+                                    username = username,
+                                    approvedCourses = approvedCourses,
+                                    averageGrade = averageGrade,
+                                    avatarUrl = avatarUrl
+                                )
+                            }
+                        }
+                        is ApiResult.Error -> {
+                            Log.e("AdminDashboard", "API error loading top students: ${apiResult.message} (code: ${apiResult.code})")
+                            emptyList<StudentStats>()
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e("AdminDashboard", "Error loading top students", e)
@@ -737,10 +759,10 @@ class AdminDashboardFragment : Fragment() {
         if (navController.currentDestination?.id != R.id.adminDashboardFragment) return
 
         val bundle = Bundle().apply {
-            putLong("userId", student.userId)
+            putString("username", student.username)
         }
 
-        navController.navigate(R.id.action_adminDashboardFragment_to_profileFragment, bundle)
+        navController.navigate(R.id.action_adminDashboardFragment_to_userProfileViewFragment, bundle)
     }
 
     // ==================== SECCIÓN 2: GESTIÓN DE USUARIOS ====================
@@ -1007,29 +1029,40 @@ class AdminDashboardFragment : Fragment() {
                     val creatorCourses = BackendApiService.getCoursesByCreatorId(userId).getOrNull() ?: emptyList()
                     val courseTitleById = creatorCourses.associateBy({ it.id }, { it.title })
 
+                    fun isSubmissionGraded(submission: com.example.tareamov.data.entity.TaskSubmission): Boolean {
+                        val gradeValue = submission.grade
+                        return gradeValue != null && gradeValue.isFinite()
+                    }
+
                     val ungradedByCourse = coroutineScope {
                         creatorCourses
                             .map { course ->
                                 async {
-                                    // Fetch only ungraded submissions from backend (grade IS NULL at DB level)
+                                    // Fetch all submissions to apply strict local filtering by student+task history
+                                    // Rule: if any submission of a pair already has grade, do not show it as pending.
                                     val allSubmissions = BackendApiService
-                                        .getSubmissionsByCourse(course.id, 1, MAX_SUBMISSIONS_PER_COURSE, ungradedOnly = true)
+                                        .getSubmissionsByCourse(course.id, 1, MAX_SUBMISSIONS_PER_COURSE, ungradedOnly = false)
                                         .getOrNull()
                                         .orEmpty()
 
-                                    // Defense in depth: also filter client-side + deduplicate by student+task
+                                    // Group by student+task and keep only truly pending pairs
                                     val ungraded = allSubmissions
                                         .groupBy { submission -> "${submission.studentId}_${submission.taskId}" }
                                         .mapNotNull { (_, submissionsByStudentTask) ->
-                                            submissionsByStudentTask
-                                                .maxByOrNull { submission -> submission.submissionDate }
-                                                ?: submissionsByStudentTask.firstOrNull()
+                                            val hasAnyGradeInPair = submissionsByStudentTask.any { isSubmissionGraded(it) }
+                                            if (hasAnyGradeInPair) {
+                                                null
+                                            } else {
+                                                submissionsByStudentTask
+                                                    .maxByOrNull { submission -> submission.submissionDate }
+                                                    ?: submissionsByStudentTask.firstOrNull()
+                                            }
                                         }
                                         .filter { submission ->
-                                            submission.grade == null
+                                            !isSubmissionGraded(submission)
                                         }
 
-                                    Log.d("AdminDashboard", "Course ${course.id}: ${allSubmissions.size} from API → ${ungraded.size} truly ungraded")
+                                    Log.d("AdminDashboard", "Course ${course.id}: ${allSubmissions.size} total → ${ungraded.size} strictly pending")
                                     course.id to ungraded
                                 }
                             }

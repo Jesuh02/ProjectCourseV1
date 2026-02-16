@@ -101,6 +101,7 @@ class VideoHomeFragment : Fragment() {
     private val pageSize = 10
     private var totalVideos = 0
     private var isLoadingVideos = false
+    private var initialLoadCompleted = false
 
     // Search variables
     private var isSearchMode = false
@@ -116,10 +117,8 @@ class VideoHomeFragment : Fragment() {
     private var pendingNavigationVideoId: Long = -1L
     // Persists across reloads so network callbacks don't reset the position
     private var lastNavigatedVideoId: Long = -1L
-    // Avoid immediate network callback refresh after opening from notification target
-    private var skipNextNetworkAutoRefresh: Boolean = false
-    // Tracks when the initial load (with target video) has completed
-    private var initialLoadCompleted = false
+    // NOTE: skipNextNetworkAutoRefresh now lives in VideoHomeViewModel so it
+    // survives fragment destruction/recreation during tab switches.
 
     // Restore state variables
     private var restorePosition = 0
@@ -186,7 +185,6 @@ class VideoHomeFragment : Fragment() {
         val targetCommentId = arguments?.getLong("targetCommentId", -1L) ?: -1L
 
         if (videoId != -1L) {
-            skipNextNetworkAutoRefresh = true
             Log.d("VideoHomeFragment", "📹 Video specific navigation requested:")
             Log.d("VideoHomeFragment", "  - videoId: $videoId")
             Log.d("VideoHomeFragment", "  - videoTitle: $videoTitle")
@@ -194,7 +192,11 @@ class VideoHomeFragment : Fragment() {
         }
 
         // Initialize ViewModel
-        viewModel = ViewModelProvider(this)[VideoHomeViewModel::class.java]
+        viewModel = ViewModelProvider(requireActivity())[VideoHomeViewModel::class.java]
+
+        if (videoId != -1L) {
+            viewModel.skipNextNetworkAutoRefresh = true
+        }
         
         // Observe loading state
         viewModel.isLoading.observe(viewLifecycleOwner) { isLoading ->
@@ -365,20 +367,63 @@ class VideoHomeFragment : Fragment() {
                         }
                     }
                 }
+
+                // Restore exact playback position saved when leaving this tab
+                var restoredPlayback = false
+                if (!handledNavigationTarget && viewModel.savedPlaybackPositionMs > 0 && videos.isNotEmpty()) {
+                    var savedIndex = -1
+                    if (viewModel.savedPlaybackVideoId > 0) {
+                        savedIndex = videos.indexOfFirst { it.id == viewModel.savedPlaybackVideoId }
+                    }
+                    if (savedIndex == -1 && !viewModel.savedPlaybackVideoPath.isNullOrEmpty()) {
+                        val savedPath = viewModel.savedPlaybackVideoPath
+                        savedIndex = videos.indexOfFirst { it.videoUriString == savedPath || it.localFilePath == savedPath }
+                    }
+
+                    if (savedIndex >= 0 && savedIndex < videos.size) {
+                        restoredPlayback = true
+                        val savedMs = viewModel.savedPlaybackPositionMs
+                        if (viewPager != null) {
+                            if (viewPager.currentItem != savedIndex) {
+                                viewPager.setCurrentItem(savedIndex, false)
+                            }
+                            // Use position-based seek (URL-independent, avoids signed-URL mismatch)
+                            videoAdapter.setPendingSeekForPosition(savedIndex, savedMs)
+                            videoAdapter.setActivePosition(savedIndex)
+                            currentVideoIndex = savedIndex
+                            viewModel.currentVideoIndex = savedIndex
+                            Log.d("VideoHomeFragment", "Restoring playback -> index=$savedIndex, seekMs=$savedMs")
+
+                            // Ensure the video actually plays after the seek
+                            viewPager.postDelayed({
+                                val rv = viewPager.getChildAt(0) as? RecyclerView
+                                val holder = rv?.findViewHolderForAdapterPosition(savedIndex) as? VideoAdapter.VideoViewHolder
+                                holder?.playVideo()
+                            }, 200)
+                        }
+                        // Clear saved state so subsequent observer firings won't re-apply stale seek
+                        viewModel.savedPlaybackPositionMs = 0
+                        viewModel.savedPlaybackVideoId = -1L
+                        viewModel.savedPlaybackVideoPath = null
+                    }
+                }
                 
                 // CRITICAL: Ensure the current video starts playing after data loads
                 // This handles the case where onPageSelected(0) was called before videos were loaded
-                // or where the video was prepared but never got the play signal
-                viewPager?.postDelayed({
-                    val currentPosition = viewPager.currentItem
-                    val recyclerView = viewPager.getChildAt(0) as? RecyclerView
-                    val holder = recyclerView?.findViewHolderForAdapterPosition(currentPosition) as? VideoAdapter.VideoViewHolder
-                    if (holder != null) {
-                        Log.d("VideoHomeFragment", "Ensuring video plays at position $currentPosition after data load")
-                        videoAdapter.setActivePosition(currentPosition)
-                        holder.playVideo()
-                    }
-                }, 100) // Small delay to ensure ViewHolder is bound
+                // or where the video was prepared but never got the play signal.
+                // Skip if we just restored playback — the pending seek will auto-play via ExoPlayer.
+                if (!restoredPlayback) {
+                    viewPager?.postDelayed({
+                        val currentPosition = viewPager.currentItem
+                        val recyclerView = viewPager.getChildAt(0) as? RecyclerView
+                        val holder = recyclerView?.findViewHolderForAdapterPosition(currentPosition) as? VideoAdapter.VideoViewHolder
+                        if (holder != null) {
+                            Log.d("VideoHomeFragment", "Ensuring video plays at position $currentPosition after data load")
+                            videoAdapter.setActivePosition(currentPosition)
+                            holder.playVideo()
+                        }
+                    }, 100) // Small delay to ensure ViewHolder is bound
+                }
             }
         }
 
@@ -577,7 +622,11 @@ class VideoHomeFragment : Fragment() {
         // Set up Explorar button to navigate to ExploreFragment
         val exploreButton = view.findViewById<LinearLayout>(R.id.exploreButton)
         exploreButton?.setOnClickListener {
-            // Instant visual feedback
+            // Save + pause immediately so audio stops before navigation transition
+            saveCurrentPlaybackState()
+            pauseAllVideos()
+
+            // Instant visual feedback & navigate
             updateBottomNavSelection("explore")
             try {
                 if (findNavController().currentDestination?.id == R.id.videoHomeFragment) {
@@ -1450,6 +1499,53 @@ class VideoHomeFragment : Fragment() {
                  restorePosition = 0
              }
         }
+
+        // ── Early restore: apply saved playback position from ViewModel ──────
+        // The LiveData observer may have fired BEFORE videoAdapter was initialized,
+        // so the restore block inside the observer was skipped. Apply it here
+        // immediately, before the ViewPager page-change callback can play from 0.
+        if (viewModel.savedPlaybackPositionMs > 0 && videoList.isNotEmpty()) {
+            var savedIndex = -1
+            if (viewModel.savedPlaybackVideoId > 0) {
+                savedIndex = videoList.indexOfFirst { it.id == viewModel.savedPlaybackVideoId }
+            }
+            if (savedIndex == -1 && !viewModel.savedPlaybackVideoPath.isNullOrEmpty()) {
+                savedIndex = videoList.indexOfFirst {
+                    it.videoUriString == viewModel.savedPlaybackVideoPath ||
+                    it.localFilePath == viewModel.savedPlaybackVideoPath
+                }
+            }
+            if (savedIndex >= 0 && savedIndex < videoList.size) {
+                val savedMs = viewModel.savedPlaybackPositionMs
+                viewPager.setCurrentItem(savedIndex, false)
+                videoAdapter.setPendingSeekForPosition(savedIndex, savedMs)
+                videoAdapter.setActivePosition(savedIndex)
+                currentVideoIndex = savedIndex
+                viewModel.currentVideoIndex = savedIndex
+                Log.d("VideoHomeFragment", "Early restore in initAdapter -> index=$savedIndex, seekMs=$savedMs")
+                // Clear so observer won't re-apply
+                viewModel.savedPlaybackPositionMs = 0
+                viewModel.savedPlaybackVideoId = -1L
+                viewModel.savedPlaybackVideoPath = null
+            }
+        }
+
+        // CRITICAL: Ensure the video auto-plays after adapter initialization.
+        // When the fragment view is recreated (tab switch), onResume and the
+        // LiveData observer both fire BEFORE the adapter is initialized (async
+        // coroutine), so neither triggers playback. This delayed call guarantees
+        // the current video starts playing once the ViewHolder is bound.
+        viewPager.postDelayed({
+            val pos = viewPager.currentItem.coerceIn(0, videoList.lastIndex.coerceAtLeast(0))
+            val rv = viewPager.getChildAt(0) as? RecyclerView
+            val holder = rv?.findViewHolderForAdapterPosition(pos) as? VideoAdapter.VideoViewHolder
+            if (holder != null) {
+                videoAdapter.setActivePosition(pos)
+                holder.playVideo()
+                holder.setMuteState(isMuted)
+                Log.d("VideoHomeFragment", "Auto-play after adapter init at position $pos")
+            }
+        }, 400)
     }
 
     // Update these methods to work with ViewPager2
@@ -1541,6 +1637,9 @@ class VideoHomeFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         registerNetworkCallback()
+
+        // Ensure current video resumes automatically when coming back to this tab
+        resumeCurrentVideoPlayback()
         
         // Reload avatar in case it changed
         loadCurrentUserAvatar()
@@ -1552,8 +1651,18 @@ class VideoHomeFragment : Fragment() {
     override fun onPause() {
         super.onPause()
         unregisterNetworkCallback()
+
+        // Save current playback state before pausing/releasing players
+        saveCurrentPlaybackState()
+
+        // Prevent the network callback from forcing a full reload when we return
+        // to this tab; the ViewModel already has the data cached.
+        // Stored in ViewModel so it survives fragment recreation.
+        if (::viewModel.isInitialized) {
+            viewModel.skipNextNetworkAutoRefresh = true
+        }
         
-        // Pause and mute all videos when leaving fragment
+        // Always pause when leaving this tab so no audio leaks to other tabs
         pauseAllVideos()
         
         // Disable full screen mode via MainActivity
@@ -1562,12 +1671,10 @@ class VideoHomeFragment : Fragment() {
 
     override fun onStop() {
         super.onStop()
-        // Release videos when fragment is no longer visible to free memory
-        releaseAllVideos()
-        
-        // Force garbage collection to free memory immediately
-        System.gc()
-        Log.d("VideoHomeFragment", "🗑️ Released all videos and triggered GC to free memory")
+        // Do NOT release videos here — pauseAllVideos() in onPause() already silences
+        // audio, and releasing the ExoPlayer instances would prevent auto-resume when
+        // the user returns to this tab. Full cleanup happens in onDestroyView().
+        Log.d("VideoHomeFragment", "onStop — players kept alive (paused) for quick resume")
     }
 
     override fun onDestroyView() {
@@ -1585,6 +1692,27 @@ class VideoHomeFragment : Fragment() {
         
         super.onDestroyView()
     }
+
+    private fun resumeCurrentVideoPlayback() {
+        val rootView = view ?: return
+        if (!::videoAdapter.isInitialized || videoList.isEmpty()) return
+
+        val viewPager = rootView.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager) ?: return
+        val safePosition = viewPager.currentItem.coerceIn(0, videoList.lastIndex)
+        currentVideoIndex = safePosition
+        viewModel.currentVideoIndex = safePosition
+        videoAdapter.setActivePosition(safePosition)
+
+        val tryPlay: () -> Unit = {
+            val recyclerView = viewPager.getChildAt(0) as? RecyclerView
+            val holder = recyclerView?.findViewHolderForAdapterPosition(safePosition) as? VideoAdapter.VideoViewHolder
+            holder?.playVideo()
+            holder?.setMuteState(isMuted)
+        }
+
+        viewPager.postDelayed({ tryPlay() }, 120)
+        viewPager.postDelayed({ tryPlay() }, 320)
+    }
     
     /**
      * Pause all videos in the ViewPager
@@ -1601,6 +1729,41 @@ class VideoHomeFragment : Fragment() {
             }
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "Error pausing all videos", e)
+        }
+    }
+
+    private fun saveCurrentPlaybackState() {
+        if (!::viewModel.isInitialized || !::videoAdapter.isInitialized) return
+
+        try {
+            val viewPager = view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager) ?: return
+            val index = viewPager.currentItem
+            if (index < 0 || index >= videoList.size) return
+
+            currentVideoIndex = index
+            viewModel.currentVideoIndex = index
+
+            val recyclerView = viewPager.getChildAt(0) as? RecyclerView
+            val holder = recyclerView?.findViewHolderForAdapterPosition(index) as? VideoAdapter.VideoViewHolder
+            val playbackPositionMs = holder?.getCurrentPlaybackPositionMs() ?: 0
+
+            val currentVideo = videoList[index]
+            val restoreKey = currentVideo.videoUriString ?: currentVideo.localFilePath
+
+            viewModel.savedPlaybackVideoId = currentVideo.id
+            viewModel.savedPlaybackVideoPath = restoreKey
+            viewModel.savedPlaybackPositionMs = playbackPositionMs.coerceAtLeast(0)
+
+            if (!restoreKey.isNullOrEmpty() && playbackPositionMs > 0) {
+                videoAdapter.setPendingSeek(restoreKey, playbackPositionMs)
+            }
+
+            Log.d(
+                "VideoHomeFragment",
+                "Saved playback state -> index=$index, videoId=${currentVideo.id}, position=${viewModel.savedPlaybackPositionMs}ms"
+            )
+        } catch (e: Exception) {
+            Log.e("VideoHomeFragment", "Error saving playback state", e)
         }
     }
     
@@ -1641,9 +1804,9 @@ class VideoHomeFragment : Fragment() {
                         // This ensures fresh data with complete usernames, etc.
                         // Same logic as ExploreFragment
                         if (!isLoadingVideos) {
-                            if (skipNextNetworkAutoRefresh) {
-                                skipNextNetworkAutoRefresh = false
-                                Log.d("VideoHomeFragment", "⏭️ Skipping one network auto-refresh after notification navigation")
+                            if (::viewModel.isInitialized && viewModel.skipNextNetworkAutoRefresh) {
+                                viewModel.skipNextNetworkAutoRefresh = false
+                                Log.d("VideoHomeFragment", "⏭️ Skipping network auto-refresh (tab switch)")
                                 return@launch
                             }
                             Log.d("VideoHomeFragment", "Network restored - forcing full reload from Supabase")

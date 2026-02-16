@@ -68,6 +68,10 @@ class VideoAdapter(
     
     // Track the currently active (playing with audio) video position
     private var currentActivePosition: Int = -1
+
+    // Position-based pending seek (avoids URL-string mismatch with signed URLs)
+    private var pendingSeekForPosition: Int = -1
+    private var pendingSeekPositionMs: Int = 0
     
     /**
      * Set the active position - only this position will have audio enabled
@@ -86,6 +90,15 @@ class VideoAdapter(
 
     fun setPendingSeek(path: String, position: Int) {
         pendingSeeks[path] = position
+    }
+
+    /**
+     * Set a pending seek by adapter position (URL-independent, more reliable).
+     */
+    fun setPendingSeekForPosition(position: Int, seekMs: Int) {
+        pendingSeekForPosition = position
+        pendingSeekPositionMs = seekMs
+        Log.d("VideoAdapter", "setPendingSeekForPosition: pos=$position, seekMs=$seekMs")
     }
 
     fun setCurrentUserId(userId: Long) {
@@ -583,15 +596,23 @@ class VideoAdapter(
                                         thumbnailView?.visibility = View.GONE
                                     }?.start()
                                     
-                                    // Check for pending seek
-                                    val uriString = uri.toString()
-                                    val pathString = uri.path
-                                    val seekPos = pendingSeeks[uriString] ?: (if (pathString != null) pendingSeeks[pathString] else null)
-                                    if (seekPos != null && seekPos > 0) {
-                                        player.seekTo(seekPos.toLong())
-                                        pendingSeeks.remove(uriString)
-                                        if (pathString != null) pendingSeeks.remove(pathString)
-                                        Log.d("VideoAdapter", "ExoPlayer: Restored position to $seekPos ms")
+                                    // Check for pending seek (position-based first, then URL-based)
+                                    val currentBindPos = bindingAdapterPosition
+                                    if (currentBindPos == pendingSeekForPosition && pendingSeekPositionMs > 0) {
+                                        player.seekTo(pendingSeekPositionMs.toLong())
+                                        Log.d("VideoAdapter", "ExoPlayer: Restored position to $pendingSeekPositionMs ms (by adapter position $currentBindPos)")
+                                        pendingSeekForPosition = -1
+                                        pendingSeekPositionMs = 0
+                                    } else {
+                                        val uriString = uri.toString()
+                                        val pathString = uri.path
+                                        val seekPos = pendingSeeks[uriString] ?: (if (pathString != null) pendingSeeks[pathString] else null)
+                                        if (seekPos != null && seekPos > 0) {
+                                            player.seekTo(seekPos.toLong())
+                                            pendingSeeks.remove(uriString)
+                                            if (pathString != null) pendingSeeks.remove(pathString)
+                                            Log.d("VideoAdapter", "ExoPlayer: Restored position to $seekPos ms (by URL)")
+                                        }
                                     }
                                     
                                     // ExoPlayer uses playWhenReady to control auto-play
@@ -735,14 +756,22 @@ class VideoAdapter(
                 } catch (e: Exception) { -1 }
                 Log.d("VideoAdapter", "VideoView prepared, duration: $duration ms")
                 
-                // Check for pending seek
-                val uriString = bestUri.toString()
-                val pathString = bestUri.path
-                val seekPos = pendingSeeks[uriString] ?: (if (pathString != null) pendingSeeks[pathString] else null)
-                if (seekPos != null && seekPos > 0) {
-                    mp.seekTo(seekPos)
-                    pendingSeeks.remove(uriString)
-                    if (pathString != null) pendingSeeks.remove(pathString)
+                // Check for pending seek (position-based first, then URL-based)
+                val currentBindPos = bindingAdapterPosition
+                if (currentBindPos == pendingSeekForPosition && pendingSeekPositionMs > 0) {
+                    mp.seekTo(pendingSeekPositionMs)
+                    Log.d("VideoAdapter", "VideoView: Restored position to $pendingSeekPositionMs ms (by adapter position $currentBindPos)")
+                    pendingSeekForPosition = -1
+                    pendingSeekPositionMs = 0
+                } else {
+                    val uriString = bestUri.toString()
+                    val pathString = bestUri.path
+                    val seekPos = pendingSeeks[uriString] ?: (if (pathString != null) pendingSeeks[pathString] else null)
+                    if (seekPos != null && seekPos > 0) {
+                        mp.seekTo(seekPos)
+                        pendingSeeks.remove(uriString)
+                        if (pathString != null) pendingSeeks.remove(pathString)
+                    }
                 }
 
                 // Configure video sizing
@@ -958,7 +987,20 @@ class VideoAdapter(
                 Log.e("VideoAdapter", "Error releasing VideoView/MediaPlayer", e)
             }
         }
-        
+
+        fun getCurrentPlaybackPositionMs(): Int {
+            return try {
+                if (useExoPlayer) {
+                    exoPlayer?.currentPosition?.toInt() ?: 0
+                } else {
+                    videoView.currentPosition
+                }
+            } catch (e: Exception) {
+                Log.w("VideoAdapter", "Could not read playback position", e)
+                0
+            }
+        }
+
         /**
          * Inicia la reproducción del video
          * Solo reproduce con audio si esta es la posición activa
