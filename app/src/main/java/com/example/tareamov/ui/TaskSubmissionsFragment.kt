@@ -26,17 +26,18 @@ import com.example.tareamov.data.entity.FileContext
 import com.example.tareamov.data.entity.Notification
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
-import com.example.tareamov.service.FileAnalysisService
-import com.example.tareamov.service.FileConverterService
 import com.example.tareamov.util.CalificationManager
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.BufferedReader
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.io.File
+import java.io.InputStreamReader
+import java.nio.charset.StandardCharsets
 // Avatar removed from item layout; CircleImageView no longer required here
 
 class TaskSubmissionsFragment : Fragment() {
@@ -48,8 +49,6 @@ class TaskSubmissionsFragment : Fragment() {
     private lateinit var recyclerView: RecyclerView
     private lateinit var adapter: SubmissionsAdapter
     private lateinit var sessionManager: SessionManager
-    private lateinit var fileAnalysisService: FileAnalysisService
-    private lateinit var fileConverterService: FileConverterService
 
     private var taskId: Long = -1
     private var taskName: String = ""
@@ -119,8 +118,6 @@ class TaskSubmissionsFragment : Fragment() {
             Log.d("TaskSubmissionsFragment", "Received scrollToSubmissionUsername: $scrollToSubmissionUsername")
         }
         sessionManager = SessionManager.getInstance(requireContext())
-        fileAnalysisService = FileAnalysisService(requireContext())
-    fileConverterService = FileConverterService(requireContext())
 
     val currentUsername = sessionManager.getUsername()
         isCourseCreator = (courseCreatorUsername != null && courseCreatorUsername == currentUsername)
@@ -1196,7 +1193,7 @@ class TaskSubmissionsFragment : Fragment() {
                 findViewByName<TextView>("progressTextView")?.text = "Analizando contenido del archivo..."
                 Log.d("TaskSubmissionsFragment", "🔄 Extrayendo contenido del archivo antes de subir...")
                 val analysisResult = withContext(Dispatchers.IO) {
-                    fileAnalysisService.extractFileContent(uri, fileName)
+                    extractFileContent(uri, fileName)
                 }
                 Log.d("TaskSubmissionsFragment", "📊 Contenido extraído: ${analysisResult.content.take(100)}...")
 
@@ -1204,13 +1201,11 @@ class TaskSubmissionsFragment : Fragment() {
                 findViewByName<ProgressBar>("taskProgressBar")?.progress = 50
                 var structuredFileContext: FileContext? = null
                 try {
-                    structuredFileContext = withContext(Dispatchers.IO) {
-                        fileConverterService.convertFileToStructuredJson(uri, fileName)
-                    }
+                    structuredFileContext = createStructuredContextFromAnalysis(fileName, analysisResult)
                     structuredFileContext?.let {
                         Log.d(
                             "TaskSubmissionsFragment",
-                            "🧩 FileConverterService generó contexto -> tipo=${it.fileType}, longitud=${(it.fileContent ?: "").length}"
+                            "🧩 Contexto estructurado generado localmente -> tipo=${it.fileType}, longitud=${(it.fileContent ?: "").length}"
                         )
                     }
                 } catch (e: Exception) {
@@ -1334,10 +1329,10 @@ class TaskSubmissionsFragment : Fragment() {
         submissionId: Long,
         originalFileName: String,
         structuredContext: FileContext?,
-        analysisResult: FileAnalysisService.FileAnalysisResult,
+        analysisResult: LocalFileAnalysisResult,
         taskDescription: String
     ): FileContext {
-        val fallbackType = analysisResult.fileType.name.lowercase(Locale.getDefault())
+        val fallbackType = analysisResult.fileType.lowercase(Locale.getDefault())
         val candidateType = structuredContext?.fileType?.takeIf { !it.isNullOrBlank() }?.lowercase(Locale.getDefault())
             ?: fallbackType
         val sanitizedFileName = sanitizeFileName(
@@ -1560,10 +1555,10 @@ class TaskSubmissionsFragment : Fragment() {
                 val uri = Uri.parse(submission.fileUri)
                 Log.d("TaskSubmissionsFragment", "📂 URI del archivo: $uri")
                 val analysisResult = withContext(Dispatchers.IO) {
-                    fileAnalysisService.extractFileContent(uri, submission.fileName)
+                    extractFileContent(uri, submission.fileName)
                 }
                 Log.d("TaskSubmissionsFragment", "📊 Resultado del análisis - Éxito: ${analysisResult.success}")
-                val fileType = fileAnalysisService.getFileType(submission.fileName)
+                val fileType = getFileType(submission.fileName)
                 Log.d("TaskSubmissionsFragment", "📄 Tipo de archivo detectado: $fileType para archivo: ${submission.fileName}")
                 Log.d("TaskSubmissionsFragment", "📝 Extensión del archivo: ${submission.fileName.substringAfterLast('.', "sin extensión")}")
                 Log.d("TaskSubmissionsFragment", "📝 Contenido extraído (${analysisResult.content.length} caracteres): ${analysisResult.content.take(100)}...")
@@ -1599,7 +1594,7 @@ class TaskSubmissionsFragment : Fragment() {
                 val fileContext = FileContext(
                     submissionId = submission.id,
                     fileName = submission.fileName,
-                    fileType = fileType.name,
+                    fileType = fileType,
 
                     // [MODIFICADO] NO enviar URI como contenido. Dejar vacío para que backend lo busque por ID.
                     fileContent = if (analysisResult.content.isNotBlank() && !analysisResult.content.startsWith("http")) analysisResult.content else "",
@@ -1652,14 +1647,15 @@ class TaskSubmissionsFragment : Fragment() {
                     navigateToChatWithFileContext(errorFileContext, true)
                 }
                 
-                // PRIMERA ESTRATEGIA: Usar FileConverterService para convertir a JSON
+                // PRIMERA ESTRATEGIA: Conversión local del archivo
                 try {
-                    Log.d("TaskSubmissionsFragment", "🌐 Intentando procesar con FileConverterService")
+                    Log.d("TaskSubmissionsFragment", "🌐 Intentando procesar con conversión local")
                     Toast.makeText(context, "Procesando archivo...", Toast.LENGTH_SHORT).show()
-                    
-                    val fileContext = withContext(Dispatchers.IO) {
-                        fileConverterService.convertFileToStructuredJson(Uri.parse(submission.fileUri), submission.fileName)
+
+                    val conversionResult = withContext(Dispatchers.IO) {
+                        extractFileContent(Uri.parse(submission.fileUri), submission.fileName)
                     }
+                    val fileContext = createStructuredContextFromAnalysis(submission.fileName, conversionResult)
                     
                     // Actualizar el ID de la entrega
                     val updatedFileContext = fileContext.copy(submissionId = submission.id)
@@ -1667,20 +1663,20 @@ class TaskSubmissionsFragment : Fragment() {
                     // Guardar el contexto en la base de datos y navegar al chat
                     navigateToChatWithFileContext(
                         updatedFileContext,
-                        fileContext.fileType == "google_drive_error" // Es error si es de tipo google_drive_error
+                        !conversionResult.success
                     )
                     return@launch
                 } catch (e: Exception) {
-                    Log.e("TaskSubmissionsFragment", "❌ Error usando FileConverterService: ${e.message}", e)
-                    // Continuamos con FileAnalysisService como fallback
+                    Log.e("TaskSubmissionsFragment", "❌ Error usando conversión local: ${e.message}", e)
+                    // Continuamos con extracción local como fallback
                 }
                 
-                // SEGUNDA ESTRATEGIA (Fallback): Usar FileAnalysisService 
+                // SEGUNDA ESTRATEGIA (Fallback): extracción local
                 // Solo si MCP no está disponible o falló
-                Log.d("TaskSubmissionsFragment", "🔄 Intentando con FileAnalysisService como fallback")
+                Log.d("TaskSubmissionsFragment", "🔄 Intentando con extracción local como fallback")
                 
                 val analysisResult = withContext(Dispatchers.IO) {
-                    fileAnalysisService.extractFileContent(Uri.parse(submission.fileUri), submission.fileName)
+                    extractFileContent(Uri.parse(submission.fileUri), submission.fileName)
                 }
                 
                 Log.d("TaskSubmissionsFragment", "📊 Resultado del análisis - Éxito: ${analysisResult.success}")
@@ -1699,7 +1695,7 @@ class TaskSubmissionsFragment : Fragment() {
                     val errorFileContext = FileContext(
                         submissionId = submission.id,
                         fileName = submission.fileName,
-                        fileType = analysisResult.fileType.name,
+                        fileType = analysisResult.fileType,
                         fileContent = errorMsg,
                         extractedText = "Error de acceso: ${analysisResult.error}",
                         metadata = if (submission.fileUri.contains("google") || submission.fileUri.contains("docs")) 
@@ -1713,7 +1709,7 @@ class TaskSubmissionsFragment : Fragment() {
                     return@launch
                 }
                 
-                val fileType = fileAnalysisService.getFileType(submission.fileName)
+                val fileType = getFileType(submission.fileName)
                 Log.d("TaskSubmissionsFragment", "📄 Tipo de archivo: $fileType")
                 Log.d("TaskSubmissionsFragment", "📝 Contenido extraído (${analysisResult.content.length} caracteres): ${analysisResult.content.take(100)}...")
                 
@@ -1731,7 +1727,7 @@ class TaskSubmissionsFragment : Fragment() {
                 val fileContext = FileContext(
                     submissionId = submission.id,
                     fileName = submission.fileName,
-                    fileType = fileType.name, // Convert enum to string
+                    fileType = fileType,
                     fileContent = analysisResult.content, // Get content from result
                     extractedText = analysisResult.content, // Use the same content
                     metadata = analysisResult.metadata, // Include metadata from analysis
@@ -2663,6 +2659,99 @@ class TaskSubmissionsFragment : Fragment() {
         Log.w("TaskSubmissionsFragment", "⚠️ No se pudo obtener nombre real, usando fallback: $fallbackName")
         Log.w("TaskSubmissionsFragment", "⚠️ URI completo: $uri")
         return fallbackName
+    }
+
+    private data class LocalFileAnalysisResult(
+        val success: Boolean,
+        val content: String = "",
+        val fileType: String,
+        val metadata: String = "",
+        val error: String? = null
+    )
+
+    private fun getFileType(fileName: String): String {
+        val extension = fileName.substringAfterLast('.', "").lowercase(Locale.getDefault())
+        return when (extension) {
+            "txt", "md", "readme" -> "text"
+            "java", "kt", "py", "js", "ts", "cpp", "c", "h", "cs", "php", "rb", "go", "rs" -> "code"
+            "sql" -> "sql"
+            "json" -> "json"
+            "xml", "html", "htm" -> "xml"
+            "pdf" -> "pdf"
+            "doc", "docx" -> "word"
+            "xls", "xlsx" -> "excel"
+            "ppt", "pptx" -> "powerpoint"
+            "jpg", "jpeg", "png", "gif", "bmp" -> "image"
+            "mp4", "avi", "mov", "wmv" -> "video"
+            "mp3", "wav", "flac" -> "audio"
+            else -> "unknown"
+        }
+    }
+
+    private fun extractFileContent(uri: Uri, fileName: String): LocalFileAnalysisResult {
+        return try {
+            val uriString = uri.toString()
+            if (uriString.startsWith("http://") || uriString.startsWith("https://")) {
+                return LocalFileAnalysisResult(
+                    success = true,
+                    content = uriString,
+                    fileType = getFileType(fileName),
+                    metadata = "type: remote_url, url: $uriString"
+                )
+            }
+
+            val textContent = requireContext().contentResolver.openInputStream(uri)?.use { inputStream ->
+                BufferedReader(InputStreamReader(inputStream, StandardCharsets.UTF_8)).use { reader ->
+                    reader.readText()
+                }
+            }.orEmpty()
+
+            if (textContent.isBlank()) {
+                return LocalFileAnalysisResult(
+                    success = false,
+                    fileType = getFileType(fileName),
+                    error = "El archivo está vacío o no se pudo leer su contenido."
+                )
+            }
+
+            LocalFileAnalysisResult(
+                success = true,
+                content = textContent,
+                fileType = getFileType(fileName),
+                metadata = "fileName: $fileName, contentLength: ${textContent.length}, lineCount: ${textContent.lines().size}"
+            )
+        } catch (e: Exception) {
+            LocalFileAnalysisResult(
+                success = false,
+                fileType = getFileType(fileName),
+                error = "Error: ${e.message}"
+            )
+        }
+    }
+
+    private fun createStructuredContextFromAnalysis(
+        fileName: String,
+        analysisResult: LocalFileAnalysisResult
+    ): FileContext {
+        val fileType = analysisResult.fileType.ifBlank { getFileType(fileName) }
+        val safeContent = when {
+            analysisResult.content.isNotBlank() -> analysisResult.content
+            !analysisResult.error.isNullOrBlank() -> analysisResult.error
+            else -> "Archivo sin contenido extraíble"
+        }
+        return FileContext(
+            submissionId = 0,
+            fileName = sanitizeFileName(fileName, fileType),
+            fileType = fileType,
+            fileContent = safeContent,
+            extractedText = safeContent,
+            metadata = analysisResult.metadata.ifBlank { null },
+            contentSummary = if (analysisResult.success) {
+                "Archivo procesado (${safeContent.length} caracteres)."
+            } else {
+                "No se pudo procesar completamente el archivo."
+            }
+        )
     }
     
     /**

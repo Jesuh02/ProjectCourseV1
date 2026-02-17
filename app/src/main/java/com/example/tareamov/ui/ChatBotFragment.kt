@@ -21,7 +21,6 @@ import com.example.tareamov.data.entity.ChatMessage
 import com.example.tareamov.data.entity.FileContext
 import com.example.tareamov.data.entity.TaskSubmission
 
-import com.example.tareamov.service.FileAnalysisService
 import com.example.tareamov.service.TTSService
 import com.example.tareamov.service.ServerEndpointResolver
 import okhttp3.OkHttpClient
@@ -179,7 +178,6 @@ class ChatBotFragment : Fragment() {
 
     private lateinit var chatAdapter: ChatMessageAdapter
 
-    private lateinit var fileAnalysisService: FileAnalysisService
     private lateinit var ttsService: TTSService
     private lateinit var sessionManager: com.example.tareamov.util.SessionManager
     // Listener instance so we can remove it in onDestroyView
@@ -481,7 +479,6 @@ class ChatBotFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        fileAnalysisService = FileAnalysisService(requireContext())
         ttsService = TTSService.getInstance(requireContext())
         sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
         BackendApiService.initialize(requireContext())

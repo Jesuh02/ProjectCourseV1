@@ -1814,7 +1814,7 @@ class VideoHomeFragment : Fragment() {
                                 viewModel.loadVideos(isRefresh = true)
                             }
                         } else {
-                            Log.d("VideoHomeFragment", "Network callback skipped: initialLoadCompleted=$initialLoadCompleted, isLoading=$isLoadingVideos")
+                            Log.d("VideoHomeFragment", "Network callback skipped: isLoading=$isLoadingVideos")
                         }
                     }
                 }
