@@ -571,17 +571,25 @@ class CourseTaskFragment : Fragment() {
                 // This prevents duplicates when updating a task
                 if (taskId > 0 && savedTaskId > 0) {
                     Log.d("CourseTaskFragment", "Deleting existing content items for taskId=$savedTaskId before saving new ones")
-                    withContext(Dispatchers.IO) {
+                    val deleteOldContentOk = withContext(Dispatchers.IO) {
                         try {
                             val delResult = BackendApiService.deleteContentItemsByTask(savedTaskId)
                             if (delResult is ApiResult.Success) {
                                 Log.d("CourseTaskFragment", "Successfully deleted old content items for taskId=$savedTaskId")
+                                true
                             } else {
-                                Log.w("CourseTaskFragment", "Failed to delete old content items for taskId=$savedTaskId")
+                                Log.w("CourseTaskFragment", "Failed to delete old content items for taskId=$savedTaskId: ${(delResult as? ApiResult.Error)?.message}")
+                                false
                             }
                         } catch (e: Exception) {
                             Log.e("CourseTaskFragment", "Error deleting old content items", e)
+                            false
                         }
+                    }
+
+                    if (!deleteOldContentOk) {
+                        showToastSafe("No se pudieron eliminar los contenidos anteriores de la tarea", Toast.LENGTH_LONG)
+                        return@launch
                     }
                 }
                 
@@ -943,15 +951,43 @@ class CourseTaskFragment : Fragment() {
 
         // Handle delete button click
         deleteButton.setOnClickListener {
-            contentContainer.removeView(contentView)
-            // Si es URL de R2, eliminar del servidor
-            if (r2Url != null) {
-                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                    try {
-                        StorageHelper.deleteFile(r2Url)
-                        Log.d("CourseTaskFragment", "🗑️ Deleted from R2: $r2Url")
-                    } catch (e: Exception) {
-                        Log.e("CourseTaskFragment", "Error deleting from R2", e)
+            val existingContentId = contentView.getTag(CONTENT_ID_TAG) as? Long
+
+            viewLifecycleOwner.lifecycleScope.launch {
+                var backendDeleted = true
+
+                if (existingContentId != null && existingContentId > 0) {
+                    backendDeleted = withContext(Dispatchers.IO) {
+                        try {
+                            when (val result = BackendApiService.deleteContentItem(existingContentId)) {
+                                is ApiResult.Success -> true
+                                is ApiResult.Error -> {
+                                    Log.e("CourseTaskFragment", "❌ Failed deleting content item $existingContentId: ${result.message}")
+                                    false
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("CourseTaskFragment", "Error deleting content item $existingContentId", e)
+                            false
+                        }
+                    }
+                }
+
+                if (!backendDeleted) {
+                    showToastSafe("No se pudo eliminar el contenido en el servidor", Toast.LENGTH_LONG)
+                    return@launch
+                }
+
+                contentContainer.removeView(contentView)
+
+                if (r2Url != null) {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            StorageHelper.deleteFile(r2Url)
+                            Log.d("CourseTaskFragment", "🗑️ Deleted from R2: $r2Url")
+                        } catch (e: Exception) {
+                            Log.e("CourseTaskFragment", "Error deleting from R2", e)
+                        }
                     }
                 }
             }

@@ -2351,13 +2351,16 @@ class VideoHomeFragment : Fragment() {
 
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    // Decide remote strategy: if explicit username filter OR query looks like a username
+                    // Decide remote strategy:
+                    // Only query by creator username when the user explicitly asks for it
+                    // (username filter selected) or uses @mention style.
+                    // This avoids treating plain title queries (e.g. "fool") as usernames.
                     val explicitUsername = currentSearchType == "username"
-                    val looksLikeUsername = query.startsWith("@") || (!query.contains(" ") && query.length <= 40)
+                    val looksLikeUsername = query.startsWith("@")
 
                     val usernameTerm = query.removePrefix("@").trim()
 
-                    val resultsByUsername: List<com.example.tareamov.data.entity.VideoData> = if (explicitUsername || looksLikeUsername) {
+                    val resultsByUsername: List<com.example.tareamov.data.entity.VideoData> = if ((explicitUsername || looksLikeUsername) && usernameTerm.isNotEmpty()) {
                         try {
                             val result = BackendApiService.getVideosByCreator(usernameTerm)
                             result.getOrNull() ?: emptyList()

@@ -164,8 +164,33 @@ class VideoDetailsFragment : Fragment() {
 
         // Set up video preview
         val videoPreview = view.findViewById<VideoView>(R.id.videoPreview)
-        videoPreview.setVideoURI(videoUri)
-        videoPreview.start()
+        if (videoUri != Uri.EMPTY) {
+            try {
+                val mediaController = android.widget.MediaController(requireContext())
+                mediaController.setAnchorView(videoPreview)
+                videoPreview.setMediaController(mediaController)
+
+                videoPreview.setVideoURI(videoUri)
+                videoPreview.requestFocus()
+                videoPreview.setOnPreparedListener { mp ->
+                    try {
+                        mp.isLooping = true
+                    } catch (_: Exception) {}
+                    videoPreview.start()
+                }
+                videoPreview.setOnErrorListener { _, what, extra ->
+                    Log.e("VideoDetailsFragment", "VideoView error: what=$what extra=$extra")
+                    try {
+                        Toast.makeText(requireContext(), "No se pudo reproducir la vista previa del video", Toast.LENGTH_SHORT).show()
+                    } catch (_: Exception) {}
+                    true
+                }
+            } catch (e: Exception) {
+                Log.e("VideoDetailsFragment", "Error configurando la vista previa del video", e)
+            }
+        } else {
+            Log.w("VideoDetailsFragment", "No video URI provided for preview")
+        }
 
         // Set up back button
         view.findViewById<View>(R.id.backButton).setOnClickListener {

@@ -3095,10 +3095,14 @@ class CourseDetailFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 var deleteSuccess = false
+                var deleteErrorMessage: String? = null
                 withContext(Dispatchers.IO) {
                     // Delete content item via backend
                     val result = BackendApiService.deleteContentItem(contentItem.id)
                     deleteSuccess = result is ApiResult.Success
+                    if (result is ApiResult.Error) {
+                        deleteErrorMessage = result.message
+                    }
                 }
                 
                 withContext(Dispatchers.Main) {
@@ -3107,7 +3111,8 @@ class CourseDetailFragment : Fragment() {
                         container.removeView(contentView)
                         Toast.makeText(requireContext(), "Contenido eliminado exitosamente", Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(requireContext(), "Error: No se pudo eliminar el contenido. Verifique su conexión e intente nuevamente.", Toast.LENGTH_LONG).show()
+                        val msg = deleteErrorMessage ?: "No se pudo eliminar el contenido. Verifique su conexión e intente nuevamente."
+                        Toast.makeText(requireContext(), "Error: $msg", Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Exception) {

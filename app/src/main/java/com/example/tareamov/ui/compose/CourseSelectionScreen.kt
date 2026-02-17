@@ -293,7 +293,8 @@ fun CourseSelectionScreen(
                                 // Handle subscription click
                                 viewModel.handleSubscriptionClick(course, isCurrentlySubscribed)
                             },
-                            subscriptionStatus = subscriptionStatus
+                            subscriptionStatus = subscriptionStatus,
+                            showMoreOptions = false // Hide 3-dot menu in Course Selection screen
                         )
                         // Set current user ID for subscription logic
                         currentUserId?.let { adapter.setCurrentUserId(it) }

@@ -349,19 +349,47 @@ class LLMBackgroundWorker(
             Log.d(TAG, "📚 Processing reinforcement task for course $courseId")
             
             val prompt = """
-                Genera EXACTAMENTE 10 preguntas de opción múltiple para el curso "$courseName".
+                Genera EXACTAMENTE 10 preguntas de opción múltiple de NIVEL MÁXIMO (10/10) para el curso "$courseName".
+                
+                ═══ INSTRUCCIÓN PEDAGÓGICA 10/10 (OBLIGATORIO) ═══
+                
+                PRINCIPIO #1 — PENSAR, NO BUSCAR:
+                - PROHIBIDO preguntas donde el estudiante solo localiza un dato ("¿Cuál es el valor de X?").
+                - OBLIGATORIO: El estudiante debe ANALIZAR, INTERPRETAR y DECIDIR.
+                - Cada pregunta DEBE presentar un ESCENARIO concreto (mín. 1 oración de contexto).
+                  Usa: "Un ingeniero debe decidir...", "Al comparar dos enfoques...", "Si se elimina el componente X..."
+                
+                PRINCIPIO #2 — OPCIONES SIN COINCIDENCIA VISUAL:
+                - PROHIBIDO opciones que sean datos literales del material (ej: "Model A – 41h30m").
+                - Las opciones deben ser CONCEPTOS o INTERPRETACIONES al mismo nivel de plausibilidad.
+                - Un estudiante que no entienda debe encontrar TODAS las opciones tentadoras.
+                
+                PRINCIPIO #3 — EVALUAR CONSECUENCIAS (★ MÁS IMPORTANTE ★):
+                - PROHIBIDO: "¿Cuál es el tiempo?" (dato).
+                - OBLIGATORIO: "¿Qué IMPLICA/CAUSA/PRODUCE ese tiempo?"
+                - El estudiante debe entender MECANISMOS, no solo números.
+                
+                PRINCIPIO #4 — TRAMPAS CONCEPTUALES SUTILES:
+                - Los 3 distractores deben ser TODOS plausibles a primera vista.
+                - Tipos: inversión causa-efecto, concepto correcto en contexto equivocado,
+                  verdad general que no responde la pregunta específica, confusión entre conceptos del mismo dominio.
+                - PROHIBIDO distractores absurdos o fuera de tema.
+                
+                DISTRIBUCIÓN: 4 aplicación+consecuencia, 3 análisis+comparación, 3 evaluación+decisión.
+                
+                La explicación DEBE indicar por qué la correcta es correcta Y por qué CADA distractor es incorrecto.
                 
                 FORMATO JSON REQUERIDO:
                 [
                   {
-                    "question": "¿Pregunta?",
-                    "options": ["A", "B", "C", "D"],
+                    "question": "Un ingeniero debe elegir entre dos enfoques [escenario del material]. ¿Qué consecuencia directa tiene elegir el enfoque A?",
+                    "options": ["Opción plausible A", "Opción plausible B", "Opción plausible C", "Opción plausible D"],
                     "correctIndex": 0,
-                    "explanation": "Explicación..."
+                    "explanation": "Correcta: A porque [mecanismo]. B incorrecta: [invierte causa-efecto]. C incorrecta: [confunde conceptos]. D incorrecta: [verdad general que no aplica aquí]."
                   }
                 ]
                 
-                Genera preguntas variadas sobre el contenido del curso.
+                Genera preguntas que sean IMPOSIBLES de responder sin comprender el material.
             """.trimIndent()
             
             val request = MicroservicioPromptRequest(

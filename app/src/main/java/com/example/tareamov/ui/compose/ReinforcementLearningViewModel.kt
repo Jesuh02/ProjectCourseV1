@@ -157,6 +157,7 @@ class ReinforcementLearningViewModel(
     companion object {
         /** Maximum number of retry attempts when all generated questions are duplicates. */
         private const val MAX_RETRY_ATTEMPTS = 5
+        private const val DUPLICATE_SIMILARITY_THRESHOLD = 0.85
     }
 
     /**
@@ -292,7 +293,9 @@ class ReinforcementLearningViewModel(
                 val existingQuestions = existingQuestionsArray.mapNotNull { elem ->
                     elem.asJsonObject?.get("question")?.asString
                 }
-                val existingQuestionTexts = (existingQuestions + previouslyExcluded).distinct()
+                val existingQuestionTexts = (existingQuestions + previouslyExcluded)
+                    .distinct()
+                    .takeLast(80)
                 val existingQuestionsForPrompt = existingQuestionTexts
 
                 Log.d("ReinforcementVM", "📚 Learning context received: topic='$topicName', task='$taskName', " +
@@ -560,7 +563,7 @@ class ReinforcementLearningViewModel(
                 }
 
                 val prompt = """
-                    Eres un profesor experto generando preguntas de repaso.
+                    Eres un profesor experto generando preguntas de nivel MÁXIMO (10/10).
                     
                     OBJETIVO: Generar EXACTAMENTE 10 preguntas de opción múltiple basadas EXCLUSIVAMENTE en el TEMA y la TAREA.
                     
@@ -578,10 +581,65 @@ class ReinforcementLearningViewModel(
                     $groundingInstruction
                     $retryDifferentiationInstruction
                     
-                    DISTRIBUCIÓN DE DIFICULTAD (10 PREGUNTAS):
-                    - 3 Introductorias (conceptos básicos y definiciones del material)
-                    - 4 Técnicas (detalles específicos, procesos o datos del material)
-                    - 3 Avanzadas (relaciones entre conceptos del tema y la tarea, análisis o aplicaciones)
+                    ═══════════════════════════════════════════════════
+                    INSTRUCCIÓN PEDAGÓGICA — NIVEL 10/10 (OBLIGATORIO ESTRICTO)
+                    ═══════════════════════════════════════════════════
+                    
+                    PRINCIPIO #1 — EL ESTUDIANTE DEBE PENSAR, NO BUSCAR:
+                    - PROHIBIDO preguntas donde el estudiante solo localiza un dato en el material.
+                      Ejemplo PROHIBIDO: "¿Qué modelo tiene menor tiempo?" → solo buscar un número.
+                    - OBLIGATORIO: El estudiante debe ANALIZAR, INTERPRETAR y DECIDIR.
+                                            Ejemplo CORRECTO: "Te encuentras en el caso de elegir un modelo que mantenga arquitectura MoE
+                                            y reduzca el tiempo respecto a SMoE. ¿Cuál cumple esa condición?"
+                      → Debe entender qué es SMoE, comparar y elegir. No copiar.
+                    - Cada pregunta DEBE presentar un ESCENARIO o SITUACIÓN concreta (mín. 1 oración).
+                                            Usa: "Te encuentras en el caso de...", "Durante tu análisis de...", "Al comparar dos enfoques..."
+                                        - OBLIGATORIO: en escenarios hipotéticos, redacta en SEGUNDA PERSONA ("tú", "te", "tu").
+                                        - PROHIBIDO iniciar escenarios con tercera persona genérica: "un investigador", "un estudiante", "un ingeniero".
+                    
+                    PRINCIPIO #2 — OPCIONES QUE REQUIEREN COMPRENSIÓN, NO COINCIDENCIA VISUAL:
+                    - PROHIBIDO opciones que sean datos literales del material (ej: "Dense – 41h30m").
+                      El estudiante solo buscaría coincidencia visual. Eso es nivel medio.
+                    - Las opciones deben ser CONCEPTOS, ESTRATEGIAS o INTERPRETACIONES.
+                    - Las 4 opciones deben estar al MISMO NIVEL de plausibilidad visual.
+                      Ejemplo CORRECTO: "¿Qué enfoque demuestra mayor eficiencia dentro de su categoría?"
+                      Opciones: 4 nombres de modelos/técnicas sin métricas → obliga a pensar qué significa eficiencia.
+                    
+                    PRINCIPIO #3 — EVALUAR CONSECUENCIAS E IMPLICACIONES, NO DATOS:
+                    ★ ESTE ES EL CRITERIO MÁS IMPORTANTE ★
+                    - PROHIBIDO: "¿Cuál es el tiempo de X?" (solo dato).
+                    - OBLIGATORIO: "¿Qué IMPLICA ese tiempo?" / "¿Qué EFECTO produce?" / "¿Qué CONSECUENCIA tiene?"
+                    - Ejemplo: "Si un modelo elimina cálculo de routing por token, ¿qué efecto directo
+                      tiene en el entrenamiento?"
+                      Opciones: "reduce tiempo ✓", "aumenta parámetros", "reduce GPU", "aumenta dataset"
+                      → Debe entender el MECANISMO, no solo el número.
+                    - Verbos obligatorios: implica, causa, produce, permite, impide, optimiza, degrada, predice.
+                    
+                    PRINCIPIO #4 — TRAMPAS CONCEPTUALES SUTILES:
+                    - Los 3 distractores DEBEN ser TODOS plausibles a primera vista.
+                    - Solo quien ENTIENDE el concepto puede distinguir la correcta.
+                    - Tipos de trampas efectivas:
+                      a) Suena técnicamente correcto pero INVIERTE causa-efecto.
+                      b) Aplica el concepto correcto al CONTEXTO equivocado.
+                      c) Es verdadero en general pero NO responde la pregunta ESPECÍFICA.
+                      d) Confunde dos conceptos DEL MISMO DOMINIO (ej: optimización kernel vs arquitectura).
+                    - PROHIBIDO opciones descartables por absurdas o fuera de tema.
+                    - La explicación DEBE decir por qué CADA distractor es incorrecto, no solo la correcta.
+                    
+                    DISTRIBUCIÓN OBLIGATORIA (10 preguntas):
+                    - 4 de APLICACIÓN+CONSECUENCIA: "Si haces X, ¿qué efecto produce?" / "¿Qué implica elegir Y?"
+                    - 3 de ANÁLISIS+COMPARACIÓN: "Comparando X e Y, ¿cuál demuestra mayor Z y por qué?"
+                    - 3 de EVALUACIÓN+DECISIÓN: "Te encuentras en el caso de decidir entre A y B considerando C. ¿Cuál es mejor?"
+                    
+                    ══════════════════════════════════════════════════
+                    RESUMEN: NIVEL MEDIO (PROHIBIDO) vs NIVEL 10/10 (OBLIGATORIO)
+                    ══════════════════════════════════════════════════
+                    ❌ Buscar dato → ✅ Analizar datos
+                    ❌ Coincidencia visual en opciones → ✅ Interpretación conceptual
+                    ❌ "¿Cuál es el valor?" → ✅ "¿Qué IMPLICA ese valor?"
+                    ❌ Distractores obvios → ✅ Todo parece válido, solo comprensión distingue
+                    ❌ Responder sin entender → ✅ Imposible responder sin comprender
+                    ══════════════════════════════════════════════════
                     
                     RESTRICCIONES:
                     1. Genera EXACTAMENTE 10 preguntas. Ni una menos.
@@ -592,11 +650,13 @@ class ReinforcementLearningViewModel(
                     6. NUNCA parafrasees una pregunta existente — cambia completamente el enfoque y la estructura.
                     7. Las preguntas DEBEN reflejar los TÍTULOS del tema y la tarea por nombre cuando corresponda.
                     8. PROHIBIDO hacer preguntas genéricas sobre el curso — TODAS deben ser específicas al TEMA y TAREA indicados.
+                    9. PROHIBIDO preguntas de puro recuerdo ("¿Qué es...?", "¿Cuál es...?", "¿Cómo se define...?", "¿Qué valor tiene...?").
+                    10. Cada pregunta DEBE requerir que el estudiante ENTIENDA un mecanismo o implicación para poder responder.
                     
                     FORMATO JSON ESTRICTO (completa CADA objeto antes del siguiente):
                     [
-                      {"question": "¿Pregunta?", "options": ["A", "B", "C", "D"], "correctIndex": 2, "explanation": "Según el material: [cita o paráfrasis del documento]"},
-                      {"question": "¿Pregunta?", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "El documento establece que: [referencia directa]"}
+                                            {"question": "Te encuentras en el caso de elegir entre dos arquitecturas para optimizar el entrenamiento. Considerando que el modelo A elimina routing por token y el modelo B usa routing dinámico, ¿qué consecuencia directa tiene elegir A?", "options": ["Reduce el tiempo de entrenamiento al eliminar cómputo de selección de expertos", "Aumenta la cantidad de parámetros activos por inferencia", "Requiere más memoria GPU por la eliminación del routing", "Mejora la calidad del dataset de entrenamiento"], "correctIndex": 0, "explanation": "La respuesta correcta es la primera porque según el material: [cita]. La segunda es incorrecta porque eliminar routing no cambia parámetros activos. La tercera invierte el efecto: menos cómputo = menos memoria, no más. La cuarta confunde optimización de arquitectura con calidad de datos."},
+                      {"question": "Al comparar dos modelos de la misma categoría MoE, se observa que uno logra resultados similares en la mitad del tiempo. ¿Qué factor del material explica mejor esta diferencia de eficiencia?", "options": ["A", "B", "C", "D"], "correctIndex": 2, "explanation": "Explicación que analiza cada opción y su relación con el material."}
                     ]
                     - Cada objeto COMPLETO antes de iniciar el siguiente
                     - Campos en ESTE ORDEN: question, options, correctIndex, explanation
@@ -828,16 +888,31 @@ class ReinforcementLearningViewModel(
                         finalQuestions = (finalQuestions + fallbackUnique)
                             .distinctBy { normalizeForComparison(it.question) }
                             .take(10)
+
+                        if (finalQuestions.size < 10) {
+                            val relaxedPool = (sanitizedGenerated + fallbackCandidates)
+                                .distinctBy { normalizeForComparison(it.question) }
+                                .filterNot { candidate ->
+                                    finalQuestions.any { existing ->
+                                        normalizeForComparison(existing.question) == normalizeForComparison(candidate.question)
+                                    }
+                                }
+
+                            finalQuestions = (finalQuestions + relaxedPool)
+                                .distinctBy { normalizeForComparison(it.question) }
+                                .take(10)
+                        }
                     }
 
                     if (finalQuestions.size < 10) {
                         val attemptsUsed = retryAttempt + 1
-                        Log.w("ReinforcementVM", "⚠️ Could not build 10 unique questions after $attemptsUsed attempts " +
+                        Log.w("ReinforcementVM", "⚠️ Could not build 10 unique-after-history questions after $attemptsUsed attempts; continuing with ${finalQuestions.size} available " +
                             "(ragPage=${ragPage + 1}/$ragTotalPages, totalChunks=$ragTotalChunks, existing=${existingQuestionTexts.size})")
+                    }
+
+                    if (finalQuestions.isEmpty()) {
                         _uiState.value = ReinforcementState.Error(
-                            "No fue posible construir 10 preguntas únicas después de $attemptsUsed intentos " +
-                            "(secciones ${ragPage + 1}/$ragTotalPages del documento exploradas). " +
-                            "El material disponible puede no tener suficiente variedad. Intenta con otro tópico o tarea."
+                            "No fue posible construir preguntas válidas para este material. Intenta con otro tópico o tarea."
                         )
                         clearPendingTaskData()
                         return@launch
@@ -1128,17 +1203,30 @@ class ReinforcementLearningViewModel(
         return generated.filter { q ->
             val normalizedQ = normalizeForComparison(q.question)
             val isDuplicate = existingNormalized.any { existing ->
-                // Exact match
-                if (normalizedQ == existing) return@any true
-                // Jaccard similarity on word sets (threshold 0.70 = 70% word overlap)
-                val similarity = jaccardSimilarity(normalizedQ, existing)
-                similarity >= 0.70
+                isLikelyDuplicate(normalizedQ, existing)
             }
             if (isDuplicate) {
                 Log.d("ReinforcementVM", "🚫 Local dup filtered: ${q.question.take(60)}...")
             }
             !isDuplicate
         }
+    }
+
+    private fun isLikelyDuplicate(a: String, b: String): Boolean {
+        if (a == b) return true
+
+        val similarity = jaccardSimilarity(a, b)
+        if (similarity < DUPLICATE_SIMILARITY_THRESHOLD) return false
+
+        val tokensA = a.split(" ").filter { it.length > 2 }
+        val tokensB = b.split(" ").filter { it.length > 2 }
+        if (tokensA.isEmpty() || tokensB.isEmpty()) return false
+
+        val minSize = minOf(tokensA.size, tokensB.size).toDouble()
+        val maxSize = maxOf(tokensA.size, tokensB.size).toDouble()
+        val sizeRatio = if (maxSize > 0) minSize / maxSize else 0.0
+
+        return sizeRatio >= 0.75
     }
 
     /** Normalize text for comparison: lowercase, remove punctuation, trim */

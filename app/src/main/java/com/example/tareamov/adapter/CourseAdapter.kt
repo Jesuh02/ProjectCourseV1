@@ -34,7 +34,8 @@ class CourseAdapter(
     private val onEnrollClickListener: ((Course) -> Unit)? = null, // Enrollment callback
     private val onCreatorClickListener: ((String) -> Unit)? = null, // Creator profile callback
     private val onPaymentClickListener: ((Course) -> Unit)? = null, // Payment callback
-    private val subscriptionStatus: Map<Long, Boolean> = emptyMap() // Subscription status map
+    private val subscriptionStatus: Map<Long, Boolean> = emptyMap(), // Subscription status map
+    private val showMoreOptions: Boolean = true // Whether to show the 3-dot menu
 ) : RecyclerView.Adapter<CourseAdapter.CourseViewHolder>() {
 
     // Cache current user's id to avoid blocking lookups during bind
@@ -156,7 +157,7 @@ class CourseAdapter(
                 try {
                     val userResult = BackendApiService.getUserByUsername(currentUsername!!)
                     val userId = (userResult as? ApiResult.Success)?.data?.id
-                    if (userId != null) {
+                        if (userId != null) {
                         currentUserIdCached = userId
                         val isOwner = userId == course.creatorUserId
                         withContext(Dispatchers.Main) {
@@ -164,14 +165,14 @@ class CourseAdapter(
                                 // HIDE creatorInfoContainer completely for course owners
                                 holder.creatorInfoContainer?.visibility = View.GONE
                                 holder.subscribeButton.visibility = View.GONE
-                                holder.moreOptionsButton?.visibility = View.VISIBLE
+                                    if (showMoreOptions) holder.moreOptionsButton?.visibility = View.VISIBLE
                                 holder.enrollButtonContainer?.visibility = View.GONE
                                 holder.enrolledStatusContainer?.visibility = View.GONE
                                 
                                 // Set up 3-dot menu click listener
-                                holder.moreOptionsButton?.setOnClickListener { view ->
-                                    showPopupMenu(view, course)
-                                }
+                                    if (showMoreOptions) holder.moreOptionsButton?.setOnClickListener { view ->
+                                        showPopupMenu(view, course)
+                                    }
                                 Log.d("CourseAdapter", "Async check: User IS creator of course: ${course.title}")
                             }
                         }
@@ -195,7 +196,7 @@ class CourseAdapter(
             holder.subscribeButton.visibility = View.GONE
             
             // Show 3-dot menu for creators (now in Course Info Row)
-            holder.moreOptionsButton?.visibility = View.VISIBLE
+            if (showMoreOptions) holder.moreOptionsButton?.visibility = View.VISIBLE
             
             // CRITICAL: Hide ALL enrollment UI for creators (both button and enrolled status)
             // This ensures course owners never see enrollment options
@@ -206,7 +207,7 @@ class CourseAdapter(
             // Owner badge removed from layout
             
             // Set up 3-dot menu click listener
-            holder.moreOptionsButton?.setOnClickListener { view ->
+            if (showMoreOptions) holder.moreOptionsButton?.setOnClickListener { view ->
                 showPopupMenu(view, course)
             }
         } else {
@@ -250,12 +251,15 @@ class CourseAdapter(
                             holder.enrollButtonContainer?.visibility = View.GONE
                             holder.enrollButton?.visibility = View.GONE
                             holder.enrolledStatusContainer?.visibility = View.GONE
-                            holder.moreOptionsButton?.visibility = View.VISIBLE
-                            holder.creatorInfoContainer?.visibility = View.VISIBLE
-                            
-                            // Set up 3-dot menu click listener for this case too
-                            holder.moreOptionsButton?.setOnClickListener { view ->
-                                showPopupMenu(view, course)
+                            if (showMoreOptions) {
+                                holder.moreOptionsButton?.visibility = View.VISIBLE
+                                holder.creatorInfoContainer?.visibility = View.VISIBLE
+                                // Set up 3-dot menu click listener for this case too
+                                holder.moreOptionsButton?.setOnClickListener { view ->
+                                    showPopupMenu(view, course)
+                                }
+                            } else {
+                                holder.creatorInfoContainer?.visibility = View.VISIBLE
                             }
                         } else {
                             holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"

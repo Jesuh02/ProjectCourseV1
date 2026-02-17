@@ -255,21 +255,40 @@ class CourseTopicFragment : Fragment() {
         
         // Set up delete button
         deleteButton.setOnClickListener {
-            // Remove from UI
-            contentContainer.removeView(contentView)
-            
-            // Delete from Supabase
-            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    BackendApiService.deleteContentItem(contentItem.id)
-                    Log.d("CourseTopicFragment", "✅ Deleted content item ${contentItem.id} from Supabase")
-                    
-                    // Also delete from R2 if applicable
-                    if (isR2Url) {
-                        StorageHelper.deleteFile(contentItem.uriString)
+            viewLifecycleOwner.lifecycleScope.launch {
+                val backendDeleted = withContext(Dispatchers.IO) {
+                    try {
+                        when (val result = BackendApiService.deleteContentItem(contentItem.id)) {
+                            is ApiResult.Success -> true
+                            is ApiResult.Error -> {
+                                Log.e("CourseTopicFragment", "❌ Failed deleting content item ${contentItem.id}: ${result.message}")
+                                false
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("CourseTopicFragment", "Error deleting content item", e)
+                        false
                     }
-                } catch (e: Exception) {
-                    Log.e("CourseTopicFragment", "Error deleting content item", e)
+                }
+
+                if (!backendDeleted) {
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "No se pudo eliminar el contenido en el servidor", Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+
+                contentContainer.removeView(contentView)
+                Log.d("CourseTopicFragment", "✅ Deleted content item ${contentItem.id} from Supabase")
+
+                if (isR2Url) {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            StorageHelper.deleteFile(contentItem.uriString)
+                        } catch (e: Exception) {
+                            Log.e("CourseTopicFragment", "Error deleting content file from R2", e)
+                        }
+                    }
                 }
             }
         }
