@@ -401,92 +401,162 @@ class ProfileFragment : Fragment() {
         // Check current WhatsApp status
         checkWhatsAppStatus(whatsappStatusText!!, whatsappStatusBadge!!)
 
-        whatsappItem.setOnClickListener {
-            animateButtonPress(it)
+        whatsappItem.setOnClickListener { clickedView ->
+            animateButtonPress(clickedView)
 
-            if (!isWhatsAppChannelAvailable) {
-                Toast.makeText(
-                    requireContext(),
-                    "Servicio de WhatsApp no disponible temporalmente. Intenta más tarde.",
-                    Toast.LENGTH_LONG
-                ).show()
-                return@setOnClickListener
-            }
+            viewLifecycleOwner.lifecycleScope.launch {
+                // Si el canal está marcado como no disponible, reintentar comprobación
+                if (!isWhatsAppChannelAvailable) {
+                    val available = fetchAndUpdateWhatsAppStatus(whatsappStatusText!!, whatsappStatusBadge!!)
+                    if (!available) {
+                        // Permitir al usuario continuar bajo su responsabilidad
+                        AlertDialog.Builder(requireContext(), R.style.Theme_TareaMov_Dialog)
+                            .setTitle("WhatsApp temporalmente no disponible")
+                            .setMessage("El servicio de WhatsApp parece no estar disponible en este momento. ¿Deseas intentar vincular de todas formas?")
+                            .setPositiveButton("Intentar") { _, _ ->
+                                showLinkWhatsAppDialog()
+                            }
+                            .setNegativeButton("Cancelar", null)
+                            .show()
+                        return@launch
+                    }
+                }
 
-            val currentText = whatsappStatusText!!.text.toString()
-            if (currentText.contains("Desvincular")) {
-                showUnlinkWhatsAppDialog(whatsappStatusText!!, whatsappStatusBadge!!)
-            } else if (currentText.contains("Verificar")) {
-                // Si está pendiente de verificación, permitir reingresar/cambiar número
-                // para reenviar OTP y evitar bloqueo en el flujo.
-                showLinkWhatsAppDialog()
-            } else {
-                showLinkWhatsAppDialog()
+                val currentText = whatsappStatusText!!.text.toString()
+                if (currentText.contains("Desvincular")) {
+                    showUnlinkWhatsAppDialog(whatsappStatusText!!, whatsappStatusBadge!!)
+                } else if (currentText.contains("Verificar")) {
+                    showLinkWhatsAppDialog()
+                } else {
+                    showLinkWhatsAppDialog()
+                }
             }
         }
     }
 
     private fun checkWhatsAppStatus(textView: TextView, badge: TextView) {
+        // Legacy wrapper for non-suspending callers
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                BackendApiService.initialize(requireContext())
-                val result = withContext(Dispatchers.IO) {
-                    BackendApiService.getWhatsAppStatus()
-                }
-                when (result) {
-                    is ApiResult.Success -> {
-                        val data = result.data
-                        val isLinked = runCatching {
-                            data?.get("isLinked")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
-                        }.getOrDefault(false)
-                        val phone = runCatching {
-                            data?.get("phoneNumber")?.takeIf { !it.isJsonNull }?.asString ?: ""
-                        }.getOrDefault("")
-                        val otpPending = runCatching {
-                            data?.get("otpPending")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
-                        }.getOrDefault(false)
-                        val channelAvailable = runCatching {
-                            data?.get("channelAvailable")?.takeIf { !it.isJsonNull }?.asBoolean ?: true
-                        }.getOrDefault(true)
-
-                        isWhatsAppChannelAvailable = channelAvailable
-
-                        if (!channelAvailable) {
-                            textView.text = "WhatsApp no disponible"
-                            badge.text = "INTENTA MÁS TARDE"
-                            badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
-                            badge.visibility = View.VISIBLE
-                            return@launch
-                        }
-
-                        if (isLinked) {
-                            textView.text = "Desvincular WhatsApp"
-                            badge.text = phone
-                            badge.setTextColor(android.graphics.Color.parseColor("#25D366"))
-                            badge.visibility = View.VISIBLE
-                        } else if (otpPending && phone.isNotEmpty()) {
-                            textView.text = "Verificar WhatsApp"
-                            badge.text = phone
-                            badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
-                            badge.visibility = View.VISIBLE
-                        } else {
-                            textView.text = "Vincular WhatsApp"
-                            badge.text = "NO VINCULADO"
-                            badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
-                            badge.visibility = View.VISIBLE
-                        }
-                    }
-                    is ApiResult.Error -> {
-                        isWhatsAppChannelAvailable = true
-                        textView.text = "Vincular WhatsApp"
-                        badge.text = "NO VINCULADO"
-                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
-                    }
-                }
+                fetchAndUpdateWhatsAppStatus(textView, badge)
             } catch (e: Exception) {
                 isWhatsAppChannelAvailable = true
                 Log.w("ProfileFragment", "Error checking WhatsApp status", e)
             }
+        }
+    }
+
+    /**
+     * Suspender que consulta el backend y actualiza la UI en consecuencia.
+     * Retorna `true` si el canal está disponible.
+     */
+    private suspend fun fetchAndUpdateWhatsAppStatus(textView: TextView, badge: TextView): Boolean {
+        return try {
+            BackendApiService.initialize(requireContext())
+            val result = withContext(Dispatchers.IO) {
+                BackendApiService.getWhatsAppStatus()
+            }
+
+            when (result) {
+                is ApiResult.Success -> {
+                    val data = result.data
+                    val isLinked = runCatching {
+                        data?.get("isLinked")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                    }.getOrDefault(false)
+                    val phone = runCatching {
+                        data?.get("phoneNumber")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    }.getOrDefault("")
+                    // Provider info (may be null or different shapes). Use runCatching to avoid crashes.
+                    val providerName = runCatching {
+                        val p = data?.get("provider")
+                        if (p == null || p.isJsonNull) return@runCatching ""
+                        val obj = p.asJsonObject
+                        when {
+                            obj.has("name") && !obj.get("name").isJsonNull -> obj.get("name").asString
+                            obj.has("provider") && !obj.get("provider").isJsonNull -> obj.get("provider").asString
+                            else -> ""
+                        }
+                    }.getOrDefault("")
+
+                    val providerPhone = runCatching {
+                        val p = data?.get("provider")
+                        if (p == null || p.isJsonNull) return@runCatching ""
+                        val obj = p.asJsonObject
+                        when {
+                            obj.has("phoneNumber") && !obj.get("phoneNumber").isJsonNull -> obj.get("phoneNumber").asString
+                            obj.has("phone") && !obj.get("phone").isJsonNull -> obj.get("phone").asString
+                            else -> ""
+                        }
+                    }.getOrDefault("")
+                    val providerConnected = runCatching {
+                        val p = data?.get("provider")
+                        if (p == null || p.isJsonNull) return@runCatching false
+                        val obj = p.asJsonObject
+                        if (obj.has("connected") && !obj.get("connected").isJsonNull) obj.get("connected").asBoolean else false
+                    }.getOrDefault(false)
+                    val otpPending = runCatching {
+                        data?.get("otpPending")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                    }.getOrDefault(false)
+                    val channelAvailable = runCatching {
+                        data?.get("channelAvailable")?.takeIf { !it.isJsonNull }?.asBoolean ?: true
+                    }.getOrDefault(true)
+
+                    isWhatsAppChannelAvailable = channelAvailable
+
+                    if (!channelAvailable) {
+                        textView.text = "WhatsApp no disponible"
+                        badge.text = "INTENTA MÁS TARDE"
+                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                        badge.visibility = View.VISIBLE
+                        return channelAvailable
+                    }
+
+                    if (isLinked) {
+                        val via = if (providerName.isNotEmpty()) " — via $providerName" else ""
+                        textView.text = "Desvincular WhatsApp$via"
+                        badge.text = if (phone.isNotEmpty()) phone else providerPhone
+                        badge.setTextColor(android.graphics.Color.parseColor("#25D366"))
+                        badge.visibility = View.VISIBLE
+                    } else if (otpPending && phone.isNotEmpty()) {
+                        val via = if (providerName.isNotEmpty()) " — via $providerName" else ""
+                        textView.text = "Verificar WhatsApp$via"
+                        badge.text = phone
+                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                        badge.visibility = View.VISIBLE
+                    } else {
+                        // Channel not linked and no OTP pending: show provider availability
+                        val via = if (providerName.isNotEmpty()) " — $providerName" else ""
+                        textView.text = "Vincular WhatsApp$via"
+                        if (providerPhone.isNotEmpty()) {
+                            badge.text = providerPhone
+                        } else {
+                            badge.text = "NO VINCULADO"
+                        }
+                        // If provider is connected show green 'Conectado' badge color and suffix in text
+                        if (providerConnected) {
+                            badge.setTextColor(android.graphics.Color.parseColor("#25D366"))
+                            // Append Connected status to title for clarity
+                            textView.text = textView.text.toString() + " — Conectado"
+                        } else {
+                            badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                        }
+                        badge.visibility = View.VISIBLE
+                    }
+                    channelAvailable
+                }
+                is ApiResult.Error -> {
+                    // Keep channel available by default on errors (transient/backend auth issues)
+                    isWhatsAppChannelAvailable = true
+                    textView.text = "Vincular WhatsApp"
+                    badge.text = "NO VINCULADO"
+                    badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                    true
+                }
+            }
+        } catch (e: Exception) {
+            isWhatsAppChannelAvailable = true
+            Log.w("ProfileFragment", "Error fetching WhatsApp status", e)
+            true
         }
     }
 
@@ -525,7 +595,37 @@ class ProfileFragment : Fragment() {
 
                 when (result) {
                     is ApiResult.Success -> {
-                        Toast.makeText(requireContext(), "✅ Código enviado a WhatsApp", Toast.LENGTH_SHORT).show()
+                        // Show provider response details to help debugging delivery
+                        val data = result.data
+                        var providerInfo = ""
+                        try {
+                            val prov = data?.getAsJsonObject("providerResponse")
+                            if (prov != null) {
+                                val pname = prov.get("provider")?.asString ?: ""
+                                val presp = prov.get("response")
+                                var msgId = ""
+                                if (presp != null && presp.isJsonObject) {
+                                    msgId = presp.asJsonObject.get("id")?.asString ?: presp.asJsonObject.get("messageId")?.asString ?: ""
+                                }
+                                providerInfo = if (pname.isNotEmpty()) "$pname${if (msgId.isNotEmpty()) " (id: $msgId)" else ""}" else ""
+                                    // Try to read delivery status if available
+                                    try {
+                                        val deliveryObj = prov.get("delivery")
+                                        if (deliveryObj != null && deliveryObj.isJsonObject) {
+                                            val dstatus = deliveryObj.asJsonObject.get("status")?.asString
+                                                ?: deliveryObj.asJsonObject.get("state")?.asString
+                                                ?: deliveryObj.asJsonObject.get("delivery_status")?.asString
+                                                ?: deliveryObj.asJsonObject.get("deliveryStatus")?.asString
+                                                ?: null
+                                            if (!dstatus.isNullOrEmpty()) {
+                                                providerInfo += " — delivery: $dstatus"
+                                            }
+                                        }
+                                    } catch (_: Exception) { /* ignore */ }
+                            }
+                        } catch (_: Exception) { /* ignore parse errors */ }
+
+                        Toast.makeText(requireContext(), "✅ Código enviado a WhatsApp${if (providerInfo.isNotEmpty()) ": $providerInfo" else ""}", Toast.LENGTH_SHORT).show()
                         textView.text = "Verificar WhatsApp"
                         badge.text = phoneNumber
                         badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
@@ -571,6 +671,18 @@ class ProfileFragment : Fragment() {
                 when (result) {
                     is ApiResult.Success -> {
                         Toast.makeText(requireContext(), "✅ WhatsApp vinculado correctamente", Toast.LENGTH_LONG).show()
+                        // If backend returned canUseMCP, enable admin/MCP capabilities in SessionManager
+                        try {
+                            val dataObj = result.data
+                            val canUse = dataObj?.get("canUseMCP")?.asBoolean ?: false
+                            if (canUse) {
+                                val sm = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                                sm.setAdminStatus(true)
+                                Toast.makeText(requireContext(), "Funciones MCP habilitadas", Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (e: Exception) {
+                            // ignore parsing errors
+                        }
                         checkWhatsAppStatus(textView, badge)
                     }
                     is ApiResult.Error -> {

@@ -550,9 +550,49 @@ fun WelcomeView(
         if (uiState is ReinforcementState.Loading) {
             TicTacToeGame()
         } else if (uiState is ReinforcementState.Error) {
-             Text((uiState as ReinforcementState.Error).message, color = Color.Red, fontSize = 14.sp)
-             Spacer(modifier = Modifier.height(16.dp))
-             Button(onClick = onGenerateClick) { Text("Reintentar") } // Logic to retry load needed
+             // Friendly handling for errors: avoid showing raw "respuesta vacia" and
+             // perform automatic exponential-backoff retries while keeping the UI calm.
+             val errorState = uiState as ReinforcementState.Error
+             val isEmptyResponse = errorState.message.isNullOrBlank() || errorState.message.contains("respuesta vacia", true)
+
+             var retryCount by remember { mutableStateOf(0) }
+             val maxRetries = 5
+
+             // Auto-retry with exponential backoff to avoid leaving the user stuck.
+             LaunchedEffect(errorState.message, retryCount) {
+                 if (retryCount < maxRetries) {
+                     val delayMs = (1000L * Math.pow(2.0, retryCount.toDouble())).toLong().coerceAtMost(10000L)
+                     delay(delayMs)
+                     retryCount++
+                     try {
+                         onGenerateClick()
+                     } catch (e: Exception) {
+                         android.util.Log.w("ReinforcementScreen", "Auto-retry failed", e)
+                     }
+                 }
+             }
+
+             if (isEmptyResponse) {
+                 Text("Esperando respuesta del servidor... Reintentando (${retryCount}/${maxRetries})", color = Color.Gray, fontSize = 14.sp)
+             } else {
+                 Text("Ocurrió un problema: ${errorState.message}", color = Color.Yellow, fontSize = 14.sp)
+             }
+
+             Spacer(modifier = Modifier.height(12.dp))
+
+             Row(horizontalArrangement = Arrangement.Start) {
+                 Button(onClick = {
+                     // manual immediate retry
+                     retryCount = 0
+                     onGenerateClick()
+                 }) { Text("Reintentar ahora") }
+
+                 Spacer(modifier = Modifier.width(8.dp))
+
+                 Button(onClick = {
+                     // allow user to remain in initial state or cancel
+                 }) { Text("Cancelar") }
+             }
         } else if (uiState is ReinforcementState.Success) {
             Button(
                 onClick = onStartQuizClick,

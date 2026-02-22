@@ -2422,13 +2422,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                         // 📧📱 NOTIFICAR AL ESTUDIANTE que recibió una calificación
                                         val graderUsername = sessionManager.getUsername() ?: "Profesor"
 
-                                        notifyStudentAboutGrade(
-                                            studentId = taskSubmission.studentId,
-                                            taskName = effectiveTaskName,
-                                            grade = gradeFloat,
-                                            feedback = feedback,
-                                            gradedByUsername = graderUsername
-                                        )
+                                        // Notificación al estudiante deshabilitada desde la UI de chat
 
                                         // Añadir la tarea calificada a la lista en memoria y actualizar UI
                                         try {
@@ -4281,71 +4275,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
      * @param feedback Retroalimentación del profesor
      * @param gradedByUsername Nombre del usuario que calificó
      */
-    private fun notifyStudentAboutGrade(
-        studentId: Long,
-        taskName: String,
-        grade: Float,
-        feedback: String,
-        gradedByUsername: String
-    ) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                Log.d("ChatBotFragment", "📧 Enviando notificación de calificación al estudiante $studentId")
-                Log.d("ChatBotFragment", "   📝 Tarea: $taskName")
-                Log.d("ChatBotFragment", "   📊 Nota: $grade/10")
-                Log.d("ChatBotFragment", "   👤 Calificado por: $gradedByUsername")
-
-                val baseUrl = getMicroserviceBaseUrl().trimEnd('/')
-
-                // Crear el payload JSON
-                // Nota: JSONObject en Android no tiene put(String, Float), usar toDouble()
-                val payload = JSONObject().apply {
-                    put("studentId", studentId)
-                    put("taskName", taskName)
-                    put("grade", grade.toDouble())
-                    put("feedback", feedback)
-                    put("gradedByUsername", gradedByUsername)
-                }
-
-                // Configurar el cliente HTTP
-                val client = okhttp3.OkHttpClient.Builder()
-                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
-
-                val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-                val request = okhttp3.Request.Builder()
-                    .url("$baseUrl/notify-grade")
-                    .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
-                    .post(body)
-                    .build()
-
-                val response = client.newCall(request).execute()
-
-                if (response.isSuccessful) {
-                    val responseBody = response.body?.string()
-                    Log.i("ChatBotFragment", "✅ Notificación de calificación enviada al estudiante $studentId")
-                    Log.d("ChatBotFragment", "   Response: $responseBody")
-
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(
-                            context,
-                            "📧 Estudiante notificado de su calificación",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                } else {
-                    val errorBody = response.body?.string()
-                    Log.w("ChatBotFragment", "⚠️ Error enviando notificación de calificación: ${response.code} - $errorBody")
-                }
-
-                response.close()
-
-            } catch (e: Exception) {
-                Log.e("ChatBotFragment", "❌ Error enviando notificación de calificación: ${e.message}", e)
-            }
-        }
-    }
+    // Notificación de calificación deshabilitada desde la UI de chat.
 
     // ============================================================================================
     // VOICE RECOGNITION LOGIC

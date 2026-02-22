@@ -1092,9 +1092,14 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                                 )
                                 
                                 // Add message with attachment (file only in message metadata, NOT in input bar)
-                                addMessageToChat("✅ Excel generado ($rows filas). Descargar aquí: $url", false, file)
+                                val msgText = if (rows == 0) {
+                                    "⚠️ Excel generado pero sin filas (archivo vacío). Revisa la consulta o abre el archivo para detalles. $url"
+                                } else {
+                                    "✅ Excel generado ($rows filas). Descargar aquí: $url"
+                                }
+                                addMessageToChat(msgText, false, file)
                                 
-                                // Open URL
+                                // Open URL regardless so user can inspect file
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
                                 intent.data = android.net.Uri.parse(url)
                                 startActivity(intent)
@@ -1368,10 +1373,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                     }
                 }
                 
-                // Enviar notificación después de añadir el mensaje para tener el ID
-                if (messageId != null) {
-                    sendNotificationAfterResponse(messageId)
-                }
+                // Notificaciones deshabilitadas para respuestas de chat en el cliente
 
             } catch (e: Exception) {
                 // Check if binding is still valid before accessing it
@@ -1398,135 +1400,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     /**
      * Detect if query is asking for Business Intelligence analysis
      */
-    /**
-     * Send email notification to current user after LLM response
-     * 🔒 SEGURIDAD: NO envía la respuesta completa por email
-     * Solo notifica que hay una respuesta disponible
-     * 
-     * NUEVO: También envía notificación push si la app está en background
-     */
-    private suspend fun sendNotificationAfterResponse(messageId: String?) = withContext(Dispatchers.IO) {
-        try {
-            val currentUserId = sessionManager.getUserId()
-            if (currentUserId == null || currentUserId <= 0) {
-                Log.w(TAG, "⚠️ No user ID available for notification")
-                return@withContext
-            }
-            
-            Log.d(TAG, "📧 Sending email notification to user $currentUserId (without sensitive data)")
-            
-            // Obtener la URL base del backend (priorizar la conexión activa del cliente MCP)
-            val activeUrl = mcpHttpClient.getActiveBaseUrl()
-            val baseUrl = if (!activeUrl.isNullOrBlank()) {
-                activeUrl
-            } else {
-                com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
-                    "http://10.0.2.2:3000"  // Fallback para emulador
-                }
-            }
-            
-            // 🔒 SEGURIDAD: NO enviar la respuesta completa
-            // El backend solo notifica que hay una respuesta disponible
-            val payload = JSONObject().apply {
-                put("userId", currentUserId)
-                put("messageId", messageId)
-                put("data", JSONObject().apply {
-                     put("fragment", "database_query")
-                     put("action", "OPEN_CHAT")
-                })
-                // responsePreview se ignora en el backend por seguridad
-                put("responsePreview", "")  // Vacío por seguridad
-            }
-            
-            // Hacer la petición HTTP POST al backend (email)
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-            
-            val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-            val request = okhttp3.Request.Builder()
-                .url("$baseUrl/notify-chat-response")
-                .post(body)
-                .build()
-            
-            val response = client.newCall(request).execute()
-            
-            if (response.isSuccessful) {
-                Log.d(TAG, "✅ Email notification sent successfully to user $currentUserId (secure mode)")
-            } else {
-                Log.w(TAG, "⚠️ Email notification failed: ${response.code} - ${response.message}")
-            }
-            
-            response.close()
-            
-            // 📱 NUEVO: Enviar notificación push si la app está en background
-            sendPushNotification(currentUserId, messageId)
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error sending notification: ${e.message}", e)
-        }
-    }
-    
-    /**
-     * Envía notificación push cuando la app está en background
-     * Utiliza Firebase Cloud Messaging via backend
-     */
-    private suspend fun sendPushNotification(userId: Long, messageId: String?) = withContext(Dispatchers.IO) {
-        try {
-            // Verificar si la app está en background
-            val isInBackground = !isAppInForeground()
-            
-            if (!isInBackground) {
-                Log.d(TAG, "📱 App en foreground, skip push notification")
-                return@withContext
-            }
-            
-            Log.d(TAG, "📱 App en background, enviando push notification para userId $userId")
-            
-            val baseUrl = com.example.tareamov.service.ServerEndpointResolver.RAILWAY_MCP_URL.ifEmpty {
-                "http://10.0.2.2:3000"
-            }
-            
-            // Preparar datos de la notificación
-            val notificationPayload = JSONObject().apply {
-                put("userId", userId)
-                put("title", "🤖 Nueva respuesta del chat")
-                put("body", "Tu consulta ha sido procesada. Toca para ver la respuesta.")
-                put("data", JSONObject().apply {
-                    put("type", "chat_response")
-                    put("userId", userId)
-                    put("action", "OPEN_CHAT")
-                    put("messageId", messageId)
-                    put("fragment", "database_query")
-                })
-            }
-            
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-            
-            val body = notificationPayload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-            val request = okhttp3.Request.Builder()
-                .url("$baseUrl/send-push-notification")
-                .post(body)
-                .build()
-            
-            val response = client.newCall(request).execute()
-            
-            if (response.isSuccessful) {
-                Log.d(TAG, "✅ Push notification enviada exitosamente")
-            } else {
-                Log.w(TAG, "⚠️ Push notification failed: ${response.code} - ${response.message}")
-            }
-            
-            response.close()
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error sending push notification: ${e.message}", e)
-        }
-    }
+    // Notificaciones deshabilitadas desde el cliente para respuestas de chat.
     
     /**
      * Detecta si la aplicación está en foreground
