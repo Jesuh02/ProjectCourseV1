@@ -152,8 +152,12 @@ class ProfileFragment : Fragment() {
             // Set up menu item clicks
             setupMenuItems(view)
 
-            // Set up WhatsApp link/unlink
-            setupWhatsAppItem(view)
+            // Set up WhatsApp link/unlink only for admin users (role 3)
+            if (userHasAdminRole()) {
+                setupWhatsAppItem(view)
+            } else {
+                view.findViewById<LinearLayout>(R.id.whatsappItem)?.visibility = View.GONE
+            }
         } else {
             editProfileButton.visibility = View.GONE
             view.findViewById<LinearLayout>(R.id.whatsappItem)?.visibility = View.GONE
@@ -919,6 +923,16 @@ class ProfileFragment : Fragment() {
         goToAdminButton.visibility = View.VISIBLE
         goToAdminButton.setOnClickListener {
             findNavController().navigate(R.id.action_profileFragment_to_homeFragment)
+        }
+    }
+
+    private fun userHasAdminRole(): Boolean {
+        return try {
+            val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+            sess.hasRole(3)
+        } catch (e: Exception) {
+            Log.w("ProfileFragment", "Error checking admin role", e)
+            false
         }
     }
 
