@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_liquid_glass_dark"
+    android:padding="28dp"
+    android:gravity="center_horizontal">
+
+    <!-- Warning icon container -->
+    <FrameLayout
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_marginBottom="20dp">
+
+        <!-- Red circle background -->
+        <View
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:background="#33FF3B30" />
+
+        <!-- WhatsApp icon with red tint -->
+        <ImageView
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_whatsapp"
+            android:backgroundTint="#FF3B30"
+            android:background="@drawable/bg_rounded_icon_background"
+            android:padding="7dp"
+            android:alpha="0.9"
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            app:tint="#FFFFFF" />
+    </FrameLayout>
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Desvincular WhatsApp"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Linked phone number chip -->
+    <TextView
+        android:id="@+id/unlinkPhoneChip"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="+57 300 000 0000"
+        android:textColor="#25D366"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:background="@drawable/bg_badge_premium"
+        android:backgroundTint="#1A25D366"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="6dp"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Warning message -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Ya no recibirás notificaciones ni podrás usar el asistente por WhatsApp desde esta cuenta."
+        android:textColor="#AAAAAA"
+        android:textSize="13sp"
+        android:lineSpacingExtra="3dp"
+        android:gravity="center"
+        android:layout_marginBottom="28dp" />
+
+    <!-- Divider -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="#333333"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Buttons row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <!-- Cancel -->
+        <TextView
+            android:id="@+id/unlinkCancelButton"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:text="Cancelar"
+            android:textColor="#CCCCCC"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_action_button_pill_outline"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground" />
+
+        <!-- Unlink (red) -->
+        <TextView
+            android:id="@+id/unlinkConfirmButton"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:text="Desvincular"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_button_red"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground" />
+
+    </LinearLayout>
+
+</LinearLayout>

@@ -51,6 +51,8 @@ class ProfileFragment : Fragment() {
     // WhatsApp Views
     private var whatsappStatusText: TextView? = null
     private var whatsappStatusBadge: TextView? = null
+    private var whatsappSubtitleText: TextView? = null
+    private var whatsappIconView: ImageView? = null
     private var isWhatsAppChannelAvailable: Boolean = true
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -399,7 +401,9 @@ class ProfileFragment : Fragment() {
         val whatsappItem = view.findViewById<LinearLayout>(R.id.whatsappItem) ?: return
         whatsappStatusText = view.findViewById<TextView>(R.id.whatsappItemText)
         whatsappStatusBadge = view.findViewById<TextView>(R.id.whatsappStatusBadge)
-        
+        whatsappSubtitleText = view.findViewById<TextView>(R.id.whatsappItemSubtitle)
+        whatsappIconView = view.findViewById<ImageView>(R.id.whatsappIcon)
+
         if (whatsappStatusText == null || whatsappStatusBadge == null) return
 
         // Check current WhatsApp status
@@ -509,40 +513,48 @@ class ProfileFragment : Fragment() {
 
                     if (!channelAvailable) {
                         textView.text = "WhatsApp no disponible"
-                        badge.text = "INTENTA MÁS TARDE"
+                        whatsappSubtitleText?.text = "El servicio no está disponible ahora"
+                        badge.text = "NO DISPONIBLE"
                         badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
                         badge.visibility = View.VISIBLE
+                        whatsappIconView?.backgroundTintList =
+                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#555555"))
                         return channelAvailable
                     }
 
                     if (isLinked) {
-                        val via = if (providerName.isNotEmpty()) " — via $providerName" else ""
-                        textView.text = "Desvincular WhatsApp$via"
-                        badge.text = if (phone.isNotEmpty()) phone else providerPhone
+                        textView.text = "Desvincular WhatsApp"
+                        val linkedPhone = if (phone.isNotEmpty()) phone else providerPhone
+                        val viaInfo = if (providerName.isNotEmpty()) " · via $providerName" else ""
+                        whatsappSubtitleText?.text = if (linkedPhone.isNotEmpty()) "$linkedPhone$viaInfo" else "Cuenta vinculada$viaInfo"
+                        badge.text = "VINCULADO"
                         badge.setTextColor(android.graphics.Color.parseColor("#25D366"))
                         badge.visibility = View.VISIBLE
+                        whatsappIconView?.backgroundTintList =
+                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#FF3B30"))
                     } else if (otpPending && phone.isNotEmpty()) {
-                        val via = if (providerName.isNotEmpty()) " — via $providerName" else ""
-                        textView.text = "Verificar WhatsApp$via"
-                        badge.text = phone
-                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                        textView.text = "Verificar WhatsApp"
+                        whatsappSubtitleText?.text = "Código enviado a $phone — toca para verificar"
+                        badge.text = "PENDIENTE"
+                        badge.setTextColor(android.graphics.Color.parseColor("#FF9500"))
                         badge.visibility = View.VISIBLE
+                        whatsappIconView?.backgroundTintList =
+                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#FF9500"))
                     } else {
-                        // Channel not linked and no OTP pending: show provider availability
-                        val via = if (providerName.isNotEmpty()) " — $providerName" else ""
-                        textView.text = "Vincular WhatsApp$via"
-                        if (providerPhone.isNotEmpty()) {
-                            badge.text = providerPhone
-                        } else {
-                            badge.text = "NO VINCULADO"
-                        }
-                        // If provider is connected show green 'Conectado' badge color and suffix in text
+                        val via = if (providerName.isNotEmpty()) " · $providerName" else ""
+                        textView.text = "Vincular WhatsApp"
                         if (providerConnected) {
+                            whatsappSubtitleText?.text = "Disponible$via · toca para conectar"
+                            badge.text = "DISPONIBLE"
                             badge.setTextColor(android.graphics.Color.parseColor("#25D366"))
-                            // Append Connected status to title for clarity
-                            textView.text = textView.text.toString() + " — Conectado"
+                            whatsappIconView?.backgroundTintList =
+                                android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#25D366"))
                         } else {
+                            whatsappSubtitleText?.text = "Conecta tu cuenta para recibir notificaciones"
+                            badge.text = "NO VINCULADO"
                             badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                            whatsappIconView?.backgroundTintList =
+                                android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#25D366"))
                         }
                         badge.visibility = View.VISIBLE
                     }
@@ -552,8 +564,11 @@ class ProfileFragment : Fragment() {
                     // Keep channel available by default on errors (transient/backend auth issues)
                     isWhatsAppChannelAvailable = true
                     textView.text = "Vincular WhatsApp"
+                    whatsappSubtitleText?.text = "Conecta tu cuenta para recibir notificaciones"
                     badge.text = "NO VINCULADO"
                     badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                    whatsappIconView?.backgroundTintList =
+                        android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#25D366"))
                     true
                 }
             }
@@ -631,9 +646,12 @@ class ProfileFragment : Fragment() {
 
                         Toast.makeText(requireContext(), "✅ Código enviado a WhatsApp${if (providerInfo.isNotEmpty()) ": $providerInfo" else ""}", Toast.LENGTH_SHORT).show()
                         textView.text = "Verificar WhatsApp"
-                        badge.text = phoneNumber
-                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                        whatsappSubtitleText?.text = "Código enviado a $phoneNumber — toca para verificar"
+                        badge.text = "PENDIENTE"
+                        badge.setTextColor(android.graphics.Color.parseColor("#FF9500"))
                         badge.visibility = View.VISIBLE
+                        whatsappIconView?.backgroundTintList =
+                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#FF9500"))
                         showVerifyOtpDialog()
                     }
                     is ApiResult.Error -> {
@@ -701,14 +719,46 @@ class ProfileFragment : Fragment() {
     }
 
     private fun showUnlinkWhatsAppDialog(textView: TextView, badge: TextView) {
-        AlertDialog.Builder(requireContext(), R.style.Theme_TareaMov_Dialog)
-            .setTitle("Desvincular WhatsApp")
-            .setMessage("¿Estás seguro de que deseas desvincular tu cuenta de WhatsApp? Ya no recibirás mensajes del asistente.")
-            .setPositiveButton("Desvincular") { _, _ ->
-                unlinkWhatsApp(textView, badge)
-            }
-            .setNegativeButton("Cancelar", null)
-            .show()
+        val dialogView = layoutInflater.inflate(R.layout.dialog_whatsapp_unlink, null)
+
+        // Show the linked phone if available
+        val phoneChip = dialogView.findViewById<TextView>(R.id.unlinkPhoneChip)
+        val currentSubtitle = whatsappSubtitleText?.text?.toString() ?: ""
+        val phoneFromSubtitle = currentSubtitle.substringBefore(" ·").trim()
+        if (phoneFromSubtitle.startsWith("+") || phoneFromSubtitle.matches(Regex("\\d{7,}.*"))) {
+            phoneChip.text = phoneFromSubtitle
+            phoneChip.visibility = View.VISIBLE
+        } else {
+            phoneChip.visibility = View.GONE
+        }
+
+        val dialog = AlertDialog.Builder(requireContext(), R.style.Theme_TareaMov_Dialog)
+            .setView(dialogView)
+            .create()
+
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        dialogView.findViewById<TextView>(R.id.unlinkCancelButton).setOnClickListener {
+            dialog.dismiss()
+        }
+        dialogView.findViewById<TextView>(R.id.unlinkConfirmButton).setOnClickListener {
+            dialog.dismiss()
+            unlinkWhatsApp(textView, badge)
+        }
+
+        dialog.show()
+
+        // Entry animation
+        dialogView.alpha = 0f
+        dialogView.scaleX = 0.92f
+        dialogView.scaleY = 0.92f
+        dialogView.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(220)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .start()
     }
 
     private fun unlinkWhatsApp(textView: TextView, badge: TextView) {
@@ -723,8 +773,11 @@ class ProfileFragment : Fragment() {
                     is ApiResult.Success -> {
                         Toast.makeText(requireContext(), "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
                         textView.text = "Vincular WhatsApp"
+                        whatsappSubtitleText?.text = "Conecta tu cuenta para recibir notificaciones"
                         badge.text = "NO VINCULADO"
                         badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                        whatsappIconView?.backgroundTintList =
+                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#25D366"))
                     }
                     is ApiResult.Error -> {
                         Toast.makeText(requireContext(), "❌ ${result.message}", Toast.LENGTH_LONG).show()

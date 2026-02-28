@@ -957,6 +957,7 @@ class AdminDashboardFragment : Fragment() {
         // Load all data in parallel
         loadModerationMetrics(moderationView)
         loadPendingSubmissions(moderationView)
+        loadStudentProgress(moderationView)
         loadCoursesToFinish(moderationView)
     }
     
@@ -1357,6 +1358,159 @@ class AdminDashboardFragment : Fragment() {
             .show()
     }
     
+    private fun loadStudentProgress(parentView: View) {
+        lifecycleScope.launch {
+            try {
+                val userId = sessionManager.getUserId()
+                val container = parentView.findViewById<LinearLayout>(R.id.studentProgressContainer)
+                val countBadge = parentView.findViewById<TextView>(R.id.studentProgressCount)
+
+                val (courseProgress, users) = withContext(Dispatchers.IO) {
+                    val courses = BackendApiService.getCoursesByCreatorId(userId).getOrNull().orEmpty()
+                    val courseProgress = coroutineScope {
+                        courses.map { course ->
+                            async { course to BackendApiService.getAllProgressByCourse(course.id).getOrNull().orEmpty() }
+                        }.awaitAll()
+                    }
+                    val allStudentIds = courseProgress
+                        .flatMap { (_, progs) -> progs.map { it.usuarioEstudiante } }.distinct()
+                    val users = if (allStudentIds.isNotEmpty())
+                        BackendApiService.getUsersByIds(allStudentIds).getOrNull().orEmpty().associateBy { it.id }
+                    else emptyMap()
+                    courseProgress to users
+                }
+
+                val totalStudents = courseProgress.sumOf { (_, progs) -> progs.size }
+                countBadge.text = "$totalStudents estudiantes"
+                container.removeAllViews()
+
+                if (totalStudents == 0) {
+                    container.addView(createEmptyStateView("Sin estudiantes inscritos aún", "📚"))
+                    return@launch
+                }
+
+                var globalIndex = 0
+                courseProgress.forEach { (course, progs) ->
+                    if (progs.isEmpty()) return@forEach
+
+                    // Course group header
+                    container.addView(TextView(requireContext()).apply {
+                        text = "${course.title}  ·  ${progs.size} inscritos"
+                        setTextColor(Color.parseColor("#64B5F6"))
+                        textSize = 12f
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        setPadding(4, if (globalIndex == 0) 0 else 20, 4, 8)
+                    })
+
+                    progs.forEach { prog ->
+                        val user = users[prog.usuarioEstudiante]
+                        val username = user?.usuario ?: "#${prog.usuarioEstudiante}"
+                        val itemView = createStudentProgressRow(username, user?.avatar, prog, container)
+
+                        // Staggered entrance animation
+                        itemView.alpha = 0f
+                        itemView.translationY = 32f
+                        container.addView(itemView)
+                        itemView.animate()
+                            .alpha(1f)
+                            .translationY(0f)
+                            .setDuration(350)
+                            .setStartDelay((globalIndex * 60).toLong())
+                            .setInterpolator(android.view.animation.DecelerateInterpolator())
+                            .start()
+                        globalIndex++
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading student progress", e)
+            }
+        }
+    }
+
+    private fun createStudentProgressRow(
+        username: String,
+        avatarUrl: String?,
+        prog: com.example.tareamov.data.entity.ProgresoEstudiante,
+        container: LinearLayout
+    ): View {
+        val itemView = LayoutInflater.from(requireContext())
+            .inflate(R.layout.item_student_progress, container, false)
+
+        val progressPct = if (prog.tareasTotales > 0)
+            ((prog.tareasCompletadas.toFloat() / prog.tareasTotales) * 100).toInt()
+        else prog.porcentajeProgreso.toInt()
+
+        val grade = prog.promedio ?: prog.calificacionPonderada
+
+        // Avatar con Glide
+        val avatarView = itemView.findViewById<ImageView>(R.id.studentAvatar)
+        Glide.with(this)
+            .load(avatarUrl)
+            .placeholder(R.drawable.placeholder_avatar)
+            .error(R.drawable.placeholder_avatar)
+            .circleCrop()
+            .into(avatarView)
+
+        // Navegar a perfil al tocar el avatar
+        avatarView.setOnClickListener { navigateToUserProfileByUsername(username) }
+
+        itemView.findViewById<TextView>(R.id.studentUsername).text = username
+        itemView.findViewById<TextView>(R.id.studentProgressPercent).text = "$progressPct%"
+        itemView.findViewById<TextView>(R.id.studentTasksText).text =
+            "${prog.tareasCompletadas}/${prog.tareasTotales} tareas completadas"
+        itemView.findViewById<TextView>(R.id.studentGrade).text =
+            grade?.let { String.format(Locale.getDefault(), "%.1f", it) } ?: "—"
+
+        // Status badge con color semántico
+        val statusBadge = itemView.findViewById<TextView>(R.id.studentStatusBadge)
+        val estado = prog.estado ?: prog.calcularEstado()
+        when {
+            progressPct == 0 -> {
+                statusBadge.text = "Sin iniciar"
+                statusBadge.backgroundTintList =
+                    android.content.res.ColorStateList.valueOf(Color.parseColor("#FF9800"))
+            }
+            estado == "Ganado" -> {
+                statusBadge.text = "Aprobado"
+                statusBadge.backgroundTintList =
+                    android.content.res.ColorStateList.valueOf(Color.parseColor("#4ADE80"))
+            }
+            progressPct >= 50 -> {
+                statusBadge.text = "En progreso"
+                statusBadge.backgroundTintList =
+                    android.content.res.ColorStateList.valueOf(Color.parseColor("#8B7FFF"))
+            }
+            else -> {
+                statusBadge.text = "Iniciado"
+                statusBadge.backgroundTintList =
+                    android.content.res.ColorStateList.valueOf(Color.parseColor("#64B5F6"))
+            }
+        }
+
+        // Progress bar animada
+        val progressBar = itemView.findViewById<ProgressBar>(R.id.studentProgressBar)
+        progressBar.progress = 0
+        progressBar.postDelayed({
+            android.animation.ObjectAnimator.ofInt(progressBar, "progress", 0, progressPct).apply {
+                duration = 600
+                interpolator = android.view.animation.DecelerateInterpolator()
+                start()
+            }
+        }, 200)
+
+        return itemView
+    }
+
+    private fun navigateToUserProfileByUsername(username: String) {
+        if (username.startsWith("#")) return
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.adminDashboardFragment) return
+        navController.navigate(
+            R.id.action_adminDashboardFragment_to_userProfileViewFragment,
+            Bundle().apply { putString("username", username) }
+        )
+    }
+
     private fun loadCoursesToFinish(parentView: View) {
         lifecycleScope.launch {
             try {
