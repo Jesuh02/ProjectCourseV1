@@ -91,6 +91,16 @@ object BackendApiService {
 
     private val apiBase: String get() = "$baseUrl/api/v1"
 
+    /**
+     * Construye la URL del proxy público para un archivo R2.
+     * El backend intercepta la petición y sirve el archivo sin exponer la URL real de R2.
+     * No requiere autenticación — cualquier usuario puede acceder.
+     *
+     * Ejemplo: key = "topics/documents/123_archivo.xlsx"
+     *          → "https://backend.railway.app/api/v1/public/files/topics/documents/123_archivo.xlsx"
+     */
+    fun buildProxyFileUrl(key: String): String = "$apiBase/public/files/$key"
+
     // ─────────────────────────────────────────────────────────
     // Inicialización y Auth
     // ─────────────────────────────────────────────────────────
@@ -690,6 +700,16 @@ object BackendApiService {
         val totalEnrollments: Int = 0,
     )
 
+    data class CertificateItem(
+        val courseId: Long = 0,
+        val courseName: String = "",
+        val courseThumbnail: String? = null,
+        val certificateUrl: String = "",
+        val certificateIssuedAt: String? = null,
+        val status: String? = null,
+        val averageGrade: Float? = null,
+    )
+
     suspend fun login(username: String, password: String): ApiResult<AuthResponse> {
         val result = execute<AuthResponse>(post("/auth/login", LoginRequest(username, password)))
         if (result is ApiResult.Success && result.data?.effectiveToken() != null) {
@@ -1259,6 +1279,9 @@ object BackendApiService {
     suspend fun deleteTopic(id: Long): ApiResult<JsonObject> =
         execute(delete("/topics/$id"))
 
+    suspend fun deleteTopicOnly(id: Long): ApiResult<JsonObject> =
+        execute(delete("/topics/$id?preserveTasks=true"))
+
     // ═══════════════════════════════════════════════════════════
     // TASKS
     // ═══════════════════════════════════════════════════════════
@@ -1287,6 +1310,9 @@ object BackendApiService {
     // ═══════════════════════════════════════════════════════════
     // CONTENT ITEMS
     // ═══════════════════════════════════════════════════════════
+
+    suspend fun getContentItemsByCourse(courseId: Long): ApiResult<List<ContentItem>> =
+        executeList(get("/content-items/course/$courseId"))
 
     suspend fun getContentItemsByTask(taskId: Long): ApiResult<List<ContentItem>> =
         executeList(get("/content-items/task/$taskId"))
@@ -1351,7 +1377,7 @@ object BackendApiService {
     suspend fun getMySubscriptionCount(): ApiResult<Int> =
         execute(get("/subscriptions/my/count"))
 
-    suspend fun getMySubscribedCreators(): ApiResult<List<Long>> =
+    suspend fun getMySubscribedCreators(): ApiResult<List<Usuario>> =
         executeList(get("/subscriptions/my/creators"))
 
     suspend fun getMySubscribers(): ApiResult<List<Subscription>> =
@@ -1503,6 +1529,9 @@ object BackendApiService {
 
     suspend fun recalculateProgress(courseId: Long): ApiResult<JsonObject> =
         execute(post("/progress/course/$courseId/recalculate", null))
+
+    suspend fun getMyCertificates(): ApiResult<List<CertificateItem>> =
+        executeList(get("/progress/my/certificates"))
 
     // ═══════════════════════════════════════════════════════════
     // LIKES

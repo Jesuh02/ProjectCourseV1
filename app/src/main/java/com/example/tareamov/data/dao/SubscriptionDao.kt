@@ -42,7 +42,7 @@ interface SubscriptionDao {
         insertSubscription(Subscription(
             subscriberId = subscriberId,
             creatorId = creatorId,
-            subscriptionDate = System.currentTimeMillis()
+            subscriptionDate = null
         ))
     }
 

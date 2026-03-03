@@ -10,7 +10,7 @@
     <!-- Hero Section Skeleton -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
-        android:layout_height="280dp"
+        android:layout_height="240dp"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
         android:layout_marginBottom="20dp"
@@ -18,7 +18,7 @@
         android:padding="24dp"
         android:stateListAnimator="@animator/skeleton_shimmer">
 
-        <!-- Icon Skeleton -->
+        <!-- Icon + label row -->
         <View
             android:id="@+id/iconSkeleton"
             android:layout_width="28dp"
@@ -28,10 +28,9 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent" />
 
-        <!-- Meta Label Skeleton -->
         <View
-            android:layout_width="80dp"
-            android:layout_height="16dp"
+            android:layout_width="90dp"
+            android:layout_height="14dp"
             android:layout_marginStart="10dp"
             android:background="@drawable/bg_skeleton_shape"
             android:stateListAnimator="@animator/skeleton_shimmer"
@@ -39,126 +38,144 @@
             app:layout_constraintTop_toTopOf="@id/iconSkeleton"
             app:layout_constraintBottom_toBottomOf="@id/iconSkeleton" />
 
-        <!-- Divider Skeleton -->
+        <!-- Divider -->
         <View
             android:id="@+id/dividerSkeleton"
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:layout_marginTop="12dp"
-            android:background="#33FFFFFF"
+            android:layout_marginTop="14dp"
+            android:background="#22FFFFFF"
             app:layout_constraintTop_toBottomOf="@id/iconSkeleton" />
 
-        <!-- Title Skeleton -->
+        <!-- Title -->
         <View
             android:id="@+id/titleSkeleton"
-            android:layout_width="200dp"
-            android:layout_height="32dp"
-            android:layout_marginTop="16dp"
+            android:layout_width="220dp"
+            android:layout_height="28dp"
+            android:layout_marginTop="18dp"
             android:background="@drawable/bg_skeleton_shape"
             android:stateListAnimator="@animator/skeleton_shimmer"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/dividerSkeleton" />
 
-        <!-- Description Skeleton Lines -->
+        <!-- Title line 2 -->
+        <View
+            android:id="@+id/titleSkeleton2"
+            android:layout_width="160dp"
+            android:layout_height="28dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_skeleton_shape"
+            android:stateListAnimator="@animator/skeleton_shimmer"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/titleSkeleton" />
+
+        <!-- Description line 1 -->
         <View
             android:id="@+id/descLine1"
             android:layout_width="match_parent"
-            android:layout_height="16dp"
-            android:layout_marginTop="16dp"
+            android:layout_height="13dp"
+            android:layout_marginTop="18dp"
             android:background="@drawable/bg_skeleton_shape"
             android:stateListAnimator="@animator/skeleton_shimmer"
-            app:layout_constraintTop_toBottomOf="@id/titleSkeleton" />
+            app:layout_constraintTop_toBottomOf="@id/titleSkeleton2" />
 
+        <!-- Description line 2 -->
         <View
             android:id="@+id/descLine2"
-            android:layout_width="250dp"
-            android:layout_height="16dp"
+            android:layout_width="200dp"
+            android:layout_height="13dp"
             android:layout_marginTop="8dp"
             android:background="@drawable/bg_skeleton_shape"
             android:stateListAnimator="@animator/skeleton_shimmer"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/descLine1" />
 
-        <!-- Thematic Skeleton -->
-        <View
-            android:layout_width="120dp"
-            android:layout_height="20dp"
-            android:layout_marginTop="24dp"
-            android:background="@drawable/bg_skeleton_shape"
-            android:stateListAnimator="@animator/skeleton_shimmer"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/descLine2" />
-
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- Tabs Skeleton -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="50dp"
+        android:layout_height="48dp"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
-        android:layout_marginBottom="18dp"
+        android:layout_marginBottom="20dp"
         android:background="@drawable/bg_skeleton_shape"
         android:orientation="horizontal"
+        android:padding="4dp"
         android:stateListAnimator="@animator/skeleton_shimmer">
-        
+
         <View
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
-            android:layout_margin="4dp"
+            android:layout_marginEnd="2dp"
             android:background="@drawable/bg_skeleton_shape"
-            android:alpha="0.5"
-            android:stateListAnimator="@animator/skeleton_shimmer"/>
-            
+            android:alpha="0.6"
+            android:stateListAnimator="@animator/skeleton_shimmer" />
+
         <View
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
-            android:layout_margin="4dp"
+            android:layout_marginStart="2dp"
             android:background="@drawable/bg_skeleton_shape"
-            android:alpha="0.5"
-            android:stateListAnimator="@animator/skeleton_shimmer"/>
+            android:alpha="0.3"
+            android:stateListAnimator="@animator/skeleton_shimmer" />
     </LinearLayout>
 
-    <!-- Content List Skeleton -->
+    <!-- Content List Skeletons -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingHorizontal="24dp">
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp">
 
-        <!-- Item 1 -->
+        <!-- Topic card 1 -->
         <View
-            android:layout_width="150dp"
-            android:layout_height="24dp"
-            android:layout_marginBottom="12dp"
+            android:layout_width="130dp"
+            android:layout_height="20dp"
+            android:layout_marginBottom="10dp"
             android:background="@drawable/bg_skeleton_shape"
             android:stateListAnimator="@animator/skeleton_shimmer" />
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="60dp"
-            android:layout_marginBottom="16dp"
+            android:layout_height="80dp"
+            android:layout_marginBottom="20dp"
             android:background="@drawable/bg_skeleton_shape"
             android:stateListAnimator="@animator/skeleton_shimmer" />
 
-        <!-- Item 2 -->
+        <!-- Topic card 2 -->
         <View
-            android:layout_width="180dp"
-            android:layout_height="24dp"
-            android:layout_marginBottom="12dp"
+            android:layout_width="160dp"
+            android:layout_height="20dp"
+            android:layout_marginBottom="10dp"
             android:background="@drawable/bg_skeleton_shape"
             android:stateListAnimator="@animator/skeleton_shimmer" />
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="60dp"
-            android:layout_marginBottom="16dp"
+            android:layout_height="80dp"
+            android:layout_marginBottom="20dp"
             android:background="@drawable/bg_skeleton_shape"
             android:stateListAnimator="@animator/skeleton_shimmer" />
-            
 
+        <!-- Topic card 3 (partial) -->
+        <View
+            android:layout_width="110dp"
+            android:layout_height="20dp"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/bg_skeleton_shape"
+            android:alpha="0.5"
+            android:stateListAnimator="@animator/skeleton_shimmer" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:background="@drawable/bg_skeleton_shape"
+            android:alpha="0.5"
+            android:stateListAnimator="@animator/skeleton_shimmer" />
 
     </LinearLayout>
 

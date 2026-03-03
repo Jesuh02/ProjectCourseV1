@@ -3,6 +3,7 @@ package com.example.tareamov.repository
 import android.content.Context
 import android.util.Log
 import com.example.tareamov.data.entity.Subscription
+import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.BackendApiService
 import kotlinx.coroutines.Dispatchers
@@ -96,6 +97,25 @@ class SubscriptionRepository(context: Context) {
                 is ApiResult.Success -> result.data ?: emptyList()
                 is ApiResult.Error -> {
                     Log.e("SubscriptionRepository", "Error fetching subscriptions: ${result.message}")
+                    emptyList()
+                }
+            }
+        }
+    }
+
+    /**
+     * Devuelve los perfiles completos de los creadores a los que el usuario actual está suscrito.
+     * Primero obtiene los IDs desde /subscriptions/my y luego resuelve los usuarios con /users/by-ids.
+     */
+    suspend fun getSubscribedCreatorUsers(): List<Usuario> {
+        return withContext(Dispatchers.IO) {
+            val subscriptions = getSubscriptionsByUser(0)
+            val creatorIds = subscriptions.map { it.creatorId }.filter { it > 0 }
+            if (creatorIds.isEmpty()) return@withContext emptyList()
+            when (val result = BackendApiService.getUsersByIds(creatorIds)) {
+                is ApiResult.Success -> result.data ?: emptyList()
+                is ApiResult.Error -> {
+                    Log.e("SubscriptionRepository", "Error fetching subscribed creator users: ${result.message}")
                     emptyList()
                 }
             }

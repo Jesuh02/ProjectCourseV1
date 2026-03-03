@@ -307,48 +307,37 @@ class TaskSubmissionsFragment : Fragment() {
     private fun loadTaskWithCourseInfo() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                // Fetch task, topic and course info from backend
                 val taskInfo = withContext(Dispatchers.IO) {
                     try {
                         val taskResult = BackendApiService.getTaskById(taskId)
-                        val task = (taskResult as? ApiResult.Success)?.data
-                        if (task != null) {
-                            val topicResult = task.topicId?.let { tid -> BackendApiService.getTopicById(tid) }
-                            val topic = (topicResult as? ApiResult.Success)?.data
-                            val courseResult = topic?.courseId?.let { cid -> BackendApiService.getCourseById(cid) }
-                            val course = (courseResult as? ApiResult.Success)?.data
-                            mapOf(
-                                "taskName" to (task.name ?: ""),
-                                "taskDescription" to (task.description ?: "Sin descripción"),
-                                "topicName" to (topic?.name ?: ""),
-                                "courseTitle" to (course?.title ?: ""),
-                                "courseDescription" to (course?.description ?: "")
-                            )
-                        } else null
+                        val task = (taskResult as? ApiResult.Success)?.data ?: return@withContext null
+                        val topicResult = if (task.topicId > 0) BackendApiService.getTopicById(task.topicId) else null
+                        val topic = (topicResult as? ApiResult.Success)?.data
+                        val courseResult = if (topic?.courseId != null && topic.courseId > 0) BackendApiService.getCourseById(topic.courseId) else null
+                        val course = (courseResult as? ApiResult.Success)?.data
+                        mapOf(
+                            "taskName" to (task.name ?: ""),
+                            "taskDescription" to (task.description ?: "Sin descripción"),
+                            "topicName" to (topic?.name ?: ""),
+                            "courseTitle" to (course?.title ?: ""),
+                            "courseDescription" to (course?.description ?: "")
+                        )
                     } catch (e: Exception) {
-                        Log.e("TaskSubmissionsFragment", "Error fetching task/topic/course from backend", e)
+                        Log.w("TaskSubmissionsFragment", "Error fetching task/topic/course: ${e.message}")
                         null
                     }
                 }
-                
+
                 if (taskInfo != null) {
-                    // Actualizar las variables de instancia
                     taskName = taskInfo["taskName"] as String
                     taskDescription = taskInfo["taskDescription"] as String
                     topicName = taskInfo["topicName"] as String
                     courseTitle = taskInfo["courseTitle"] as String
                     courseDescription = taskInfo["courseDescription"] as String
-                    
-                    Log.d("TaskSubmissionsFragment", "Información de tarea cargada: $taskName - $topicName - $courseTitle")
-                    
-                    // Actualizar el adaptador para mostrar la nueva información
                     adapter.notifyDataSetChanged()
-                } else {
-                    Log.e("TaskSubmissionsFragment", "No se pudo cargar la información completa de la tarea")
                 }
-                
             } catch (e: Exception) {
-                Log.e("TaskSubmissionsFragment", "Error cargando información de tarea", e)
+                Log.w("TaskSubmissionsFragment", "Error cargando información de tarea: ${e.message}")
             }
         }
     }
@@ -797,7 +786,8 @@ class TaskSubmissionsFragment : Fragment() {
                         message = notificationMessage,
                         type = Notification.TYPE_TASK_GRADED,
                         relatedId = taskId,
-                        senderUsername = creatorUsername
+                        senderUsername = creatorUsername,
+                        metadata = """{"taskId":$taskId,"type":"task_graded"}"""
                     )
                 }
                 

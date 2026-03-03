@@ -80,13 +80,19 @@ class AdminDashboardFragment : Fragment() {
     
     // Secciones del dashboard
     private var currentSection: DashboardSection = DashboardSection.ANALYTICS
+    private var cachedCertificates: List<BackendApiService.CertificateItem> = emptyList()
+    private var cachedCourseProgressData: List<Pair<com.example.tareamov.data.entity.Course, List<com.example.tareamov.data.entity.ProgresoEstudiante>>> = emptyList()
+    private var cachedStudentUsersData: Map<Long, com.example.tareamov.data.entity.Usuario> = emptyMap()
+    private var studentProgressListContainer: LinearLayout? = null
+    private var coursesToFinishListContainer: LinearLayout? = null
 
     enum class DashboardSection {
         ANALYTICS,          // Métricas globales
         USER_MANAGEMENT,    // Gestión de usuarios y roles
         MODERATION,         // Moderación de contenido
         PROGRESS_TRACKING,  // Progreso y certificados
-        PERMISSIONS         // Sistema de permisos
+        PERMISSIONS,        // Sistema de permisos
+        CERTIFICATES        // Mis certificados
     }
 
     override fun onCreateView(
@@ -142,31 +148,35 @@ class AdminDashboardFragment : Fragment() {
             val tabAnalytics: LinearLayout = view.findViewById(R.id.tabAnalytics)
             val tabModeration: LinearLayout = view.findViewById(R.id.tabModeration)
             val tabProgress: LinearLayout = view.findViewById(R.id.tabProgress)
+            val tabCertificates: LinearLayout = view.findViewById(R.id.tabCertificates)
 
-            // Validar que los tabs necesarios fueron encontrados
-            if (tabAnalytics == null || tabModeration == null || tabProgress == null) {
+            if (tabAnalytics == null || tabModeration == null || tabProgress == null || tabCertificates == null) {
                 Log.e("AdminDashboard", "One or more section tabs not found")
                 return
             }
 
             tabAnalytics.setOnClickListener {
-                updateTabSelection(tabAnalytics, tabModeration, tabProgress)
+                updateTabSelection(tabAnalytics, tabModeration, tabProgress, tabCertificates)
                 switchSection(DashboardSection.ANALYTICS)
             }
 
             tabModeration.setOnClickListener {
-                updateTabSelection(tabModeration, tabAnalytics, tabProgress)
+                updateTabSelection(tabModeration, tabAnalytics, tabProgress, tabCertificates)
                 switchSection(DashboardSection.MODERATION)
             }
 
             tabProgress.setOnClickListener {
-                updateTabSelection(tabProgress, tabAnalytics, tabModeration)
+                updateTabSelection(tabProgress, tabAnalytics, tabModeration, tabCertificates)
                 switchSection(DashboardSection.PERMISSIONS)
             }
 
-            // Iniciar con Analytics
+            tabCertificates.setOnClickListener {
+                updateTabSelection(tabCertificates, tabAnalytics, tabModeration, tabProgress)
+                switchSection(DashboardSection.CERTIFICATES)
+            }
+
             switchSection(DashboardSection.ANALYTICS)
-            updateTabSelection(tabAnalytics, tabModeration, tabProgress)
+            updateTabSelection(tabAnalytics, tabModeration, tabProgress, tabCertificates)
         } catch (e: Exception) {
             Log.e("AdminDashboard", "Error setting up section tabs", e)
             Toast.makeText(requireContext(), "Error al configurar pestañas", Toast.LENGTH_SHORT).show()
@@ -188,6 +198,7 @@ class AdminDashboardFragment : Fragment() {
             DashboardSection.MODERATION -> loadModerationSection()
             DashboardSection.PROGRESS_TRACKING -> loadProgressTrackingSection()
             DashboardSection.PERMISSIONS -> loadPermissionsSection()
+            DashboardSection.CERTIFICATES -> loadCertificatesSection()
         }
     }
 
@@ -954,6 +965,9 @@ class AdminDashboardFragment : Fragment() {
             .setInterpolator(android.view.animation.DecelerateInterpolator())
             .start()
         
+        // Insertar headers colapsables antes de que lleguen los datos
+        setupAllModerationCollapsibles(moderationView)
+
         // Load all data in parallel
         loadModerationMetrics(moderationView)
         loadPendingSubmissions(moderationView)
@@ -1150,7 +1164,7 @@ class AdminDashboardFragment : Fragment() {
                     val firstPending = submissionDetails.firstOrNull() ?: return@setOnClickListener
                     navigateToTaskSubmissionFromModeration(firstPending)
                 }
-                
+
                 hideLoadingIndicator()
                 
             } catch (e: Exception) {
@@ -1365,64 +1379,155 @@ class AdminDashboardFragment : Fragment() {
                 val container = parentView.findViewById<LinearLayout>(R.id.studentProgressContainer)
                 val countBadge = parentView.findViewById<TextView>(R.id.studentProgressCount)
 
+                // ── Filtro por título de curso ──
+                val courseFilterEt = android.widget.EditText(requireContext()).apply {
+                    hint = "Filtrar por título de curso..."
+                    setHintTextColor(Color.parseColor("#6B6B7A"))
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                    setBackgroundResource(R.drawable.message_input_background)
+                    setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
+                    maxLines = 1
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).also { it.bottomMargin = 8.dpToPx() }
+                }
+
+                // ── Filtro por username del estudiante ──
+                val usernameFilterEt = android.widget.EditText(requireContext()).apply {
+                    hint = "Buscar estudiante por username..."
+                    setHintTextColor(Color.parseColor("#6B6B7A"))
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                    setBackgroundResource(R.drawable.message_input_background)
+                    setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
+                    maxLines = 1
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).also { it.bottomMargin = 12.dpToPx() }
+                }
+
+                // ── Contenedor interno de filas (separado de los filtros) ──
+                val innerList = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                studentProgressListContainer = innerList
+
+                container.removeAllViews()
+                container.addView(courseFilterEt)
+                container.addView(usernameFilterEt)
+                container.addView(innerList)
+
+                // ── Cargar datos ──
                 val (courseProgress, users) = withContext(Dispatchers.IO) {
                     val courses = BackendApiService.getCoursesByCreatorId(userId).getOrNull().orEmpty()
-                    val courseProgress = coroutineScope {
+                    val progress = coroutineScope {
                         courses.map { course ->
-                            async { course to BackendApiService.getAllProgressByCourse(course.id).getOrNull().orEmpty() }
+                            async {
+                                course to BackendApiService.getAllProgressByCourse(course.id).getOrNull().orEmpty()
+                            }
                         }.awaitAll()
                     }
-                    val allStudentIds = courseProgress
+                    val allStudentIds = progress
                         .flatMap { (_, progs) -> progs.map { it.usuarioEstudiante } }.distinct()
-                    val users = if (allStudentIds.isNotEmpty())
-                        BackendApiService.getUsersByIds(allStudentIds).getOrNull().orEmpty().associateBy { it.id }
+                    val usersMap = if (allStudentIds.isNotEmpty())
+                        BackendApiService.getUsersByIds(allStudentIds).getOrNull()
+                            .orEmpty().associateBy { it.id }
                     else emptyMap()
-                    courseProgress to users
+                    progress to usersMap
                 }
+
+                cachedCourseProgressData = courseProgress
+                cachedStudentUsersData = users
 
                 val totalStudents = courseProgress.sumOf { (_, progs) -> progs.size }
                 countBadge.text = "$totalStudents estudiantes"
-                container.removeAllViews()
 
-                if (totalStudents == 0) {
-                    container.addView(createEmptyStateView("Sin estudiantes inscritos aún", "📚"))
-                    return@launch
-                }
-
-                var globalIndex = 0
-                courseProgress.forEach { (course, progs) ->
-                    if (progs.isEmpty()) return@forEach
-
-                    // Course group header
-                    container.addView(TextView(requireContext()).apply {
-                        text = "${course.title}  ·  ${progs.size} inscritos"
-                        setTextColor(Color.parseColor("#64B5F6"))
-                        textSize = 12f
-                        setTypeface(typeface, android.graphics.Typeface.BOLD)
-                        setPadding(4, if (globalIndex == 0) 0 else 20, 4, 8)
-                    })
-
-                    progs.forEach { prog ->
-                        val user = users[prog.usuarioEstudiante]
-                        val username = user?.usuario ?: "#${prog.usuarioEstudiante}"
-                        val itemView = createStudentProgressRow(username, user?.avatar, prog, container)
-
-                        // Staggered entrance animation
-                        itemView.alpha = 0f
-                        itemView.translationY = 32f
-                        container.addView(itemView)
-                        itemView.animate()
-                            .alpha(1f)
-                            .translationY(0f)
-                            .setDuration(350)
-                            .setStartDelay((globalIndex * 60).toLong())
-                            .setInterpolator(android.view.animation.DecelerateInterpolator())
-                            .start()
-                        globalIndex++
+                // ── Conectar filtros al render ──
+                val filterWatcher = object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        renderStudentProgressFiltered(
+                            courseFilterEt.text.toString(),
+                            usernameFilterEt.text.toString()
+                        )
                     }
                 }
+                courseFilterEt.addTextChangedListener(filterWatcher)
+                usernameFilterEt.addTextChangedListener(filterWatcher)
+
+                // ── Render inicial sin filtros ──
+                renderStudentProgressFiltered("", "")
+
             } catch (e: Exception) {
                 Log.e("AdminDashboard", "Error loading student progress", e)
+            }
+        }
+    }
+
+    private fun renderStudentProgressFiltered(courseQuery: String, usernameQuery: String) {
+        val innerList = studentProgressListContainer ?: return
+        innerList.removeAllViews()
+
+        if (cachedCourseProgressData.isEmpty()) {
+            innerList.addView(createEmptyStateView("Sin estudiantes inscritos aún", "📚"))
+            return
+        }
+
+        val filtered = cachedCourseProgressData.mapNotNull { (course, progs) ->
+            val matchesCourse = courseQuery.isBlank() ||
+                course.title.contains(courseQuery, ignoreCase = true)
+            if (!matchesCourse) return@mapNotNull null
+
+            val filteredProgs = if (usernameQuery.isBlank()) progs
+            else progs.filter { prog ->
+                val user = cachedStudentUsersData[prog.usuarioEstudiante]
+                user?.usuario?.contains(usernameQuery, ignoreCase = true) == true ||
+                    "#${prog.usuarioEstudiante}".contains(usernameQuery, ignoreCase = true)
+            }
+            if (filteredProgs.isEmpty()) null else course to filteredProgs
+        }
+
+        if (filtered.isEmpty()) {
+            innerList.addView(createEmptyStateView(
+                if (courseQuery.isBlank() && usernameQuery.isBlank())
+                    "Sin estudiantes inscritos aún"
+                else "Sin resultados para los filtros aplicados",
+                "🔍"
+            ))
+            return
+        }
+
+        var globalIndex = 0
+        filtered.forEach { (course, progs) ->
+            innerList.addView(TextView(requireContext()).apply {
+                text = "${course.title}  ·  ${progs.size} inscritos"
+                setTextColor(Color.parseColor("#64B5F6"))
+                textSize = 12f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(4, if (globalIndex == 0) 0 else 20, 4, 8)
+            })
+            progs.forEach { prog ->
+                val user = cachedStudentUsersData[prog.usuarioEstudiante]
+                val username = user?.usuario ?: "#${prog.usuarioEstudiante}"
+                val itemView = createStudentProgressRow(username, user?.avatar, prog, innerList)
+                itemView.alpha = 0f
+                itemView.translationY = 32f
+                innerList.addView(itemView)
+                itemView.animate()
+                    .alpha(1f).translationY(0f).setDuration(350)
+                    .setStartDelay((globalIndex * 60).toLong())
+                    .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+                globalIndex++
             }
         }
     }
@@ -1501,6 +1606,82 @@ class AdminDashboardFragment : Fragment() {
         return itemView
     }
 
+    private fun setupAllModerationCollapsibles(parentView: View) {
+        listOf(
+            Triple(R.id.headerSubmissions, R.id.chevronSubmissions, R.id.collapsibleSubmissions),
+            Triple(R.id.headerStudents,    R.id.chevronStudents,    R.id.collapsibleStudents),
+            Triple(R.id.headerCourses,     R.id.chevronCourses,     R.id.collapsibleCourses),
+        ).forEach { (headerId, chevronId, collapsibleId) ->
+            val header      = parentView.findViewById<LinearLayout>(headerId)      ?: return@forEach
+            val chevron     = parentView.findViewById<TextView>(chevronId)         ?: return@forEach
+            val collapsible = parentView.findViewById<LinearLayout>(collapsibleId) ?: return@forEach
+            var expanded = false
+            header.setOnClickListener {
+                expanded = !expanded
+                chevron.animate()
+                    .rotation(if (expanded) 0f else -90f)
+                    .setDuration(250)
+                    .setInterpolator(FastOutSlowInInterpolator())
+                    .start()
+                animateSectionHeight(collapsible, expanded)
+            }
+        }
+    }
+
+    /** Anima la altura del contenido de 0→medido (expand) o medido→0 (collapse). */
+    private fun animateSectionHeight(content: View, expand: Boolean) {
+        if (expand) {
+            content.visibility = View.VISIBLE
+            content.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    (content.parent as? android.view.View)?.width ?: 0,
+                    android.view.View.MeasureSpec.EXACTLY
+                ),
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    0, android.view.View.MeasureSpec.UNSPECIFIED
+                )
+            )
+            val targetH = content.measuredHeight
+            content.layoutParams.height = 0
+            content.requestLayout()
+            android.animation.ValueAnimator.ofInt(0, targetH).apply {
+                duration = 300
+                interpolator = FastOutSlowInInterpolator()
+                addUpdateListener {
+                    content.layoutParams.height = it.animatedValue as Int
+                    content.requestLayout()
+                }
+                addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        content.layoutParams.height =
+                            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                        content.requestLayout()
+                    }
+                })
+                start()
+            }
+        } else {
+            val startH = content.measuredHeight
+            android.animation.ValueAnimator.ofInt(startH, 0).apply {
+                duration = 250
+                interpolator = FastOutSlowInInterpolator()
+                addUpdateListener {
+                    content.layoutParams.height = it.animatedValue as Int
+                    content.requestLayout()
+                }
+                addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        content.visibility = View.GONE
+                        content.layoutParams.height =
+                            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                        content.requestLayout()
+                    }
+                })
+                start()
+            }
+        }
+    }
+
     private fun navigateToUserProfileByUsername(username: String) {
         if (username.startsWith("#")) return
         val navController = findNavController()
@@ -1555,43 +1736,89 @@ class AdminDashboardFragment : Fragment() {
                 }
 
                 if (currentSection != DashboardSection.MODERATION) return@launch
-                
+
                 cachedCoursesToFinish = courseDetails
-                
+
                 val container = parentView.findViewById<LinearLayout>(R.id.pendingCoursesContainer)
-                container.removeAllViews()
-                
-                parentView.findViewById<TextView>(R.id.pendingCoursesCount).text = 
-                    "${courseDetails.size} cursos"
-                
-                if (courseDetails.isEmpty()) {
-                    val emptyView = createEmptyStateView("¡Todos tus cursos están al día!", "🎉")
-                    container.addView(emptyView)
-                } else {
-                    courseDetails.forEachIndexed { index, info ->
-                        val itemView = createCourseProgressItemView(info, container)
-                        
-                        // Staggered slide-up animation
-                        itemView.alpha = 0f
-                        itemView.translationY = 40f
-                        container.addView(itemView)
-                        
-                        itemView.animate()
-                            .alpha(1f)
-                            .translationY(0f)
-                            .setDuration(400)
-                            .setStartDelay((index * 100 + 200).toLong())
-                            .setInterpolator(android.view.animation.DecelerateInterpolator())
-                            .start()
-                    }
+                val countBadge = parentView.findViewById<TextView>(R.id.pendingCoursesCount)
+
+                // ── Filtro por título de curso ──
+                val courseFilterEt = android.widget.EditText(requireContext()).apply {
+                    hint = "Buscar curso por título..."
+                    setHintTextColor(Color.parseColor("#6B6B7A"))
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                    setBackgroundResource(R.drawable.message_input_background)
+                    setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
+                    maxLines = 1
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).also { it.bottomMargin = 12.dpToPx() }
                 }
-                
+
+                // ── Contenedor interno de tarjetas ──
+                val innerList = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                coursesToFinishListContainer = innerList
+
+                container.removeAllViews()
+                container.addView(courseFilterEt)
+                container.addView(innerList)
+
+                countBadge.text = "${courseDetails.size} cursos"
+
+                // ── Conectar filtro ──
+                courseFilterEt.addTextChangedListener(object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        renderCoursesToFinishFiltered(s?.toString() ?: "")
+                    }
+                })
+
+                // ── Render inicial ──
+                renderCoursesToFinishFiltered("")
+
             } catch (e: Exception) {
                 Log.e("AdminDashboard", "Error loading courses to finish", e)
             }
         }
     }
     
+    private fun renderCoursesToFinishFiltered(query: String) {
+        val innerList = coursesToFinishListContainer ?: return
+        innerList.removeAllViews()
+
+        val filtered = if (query.isBlank()) cachedCoursesToFinish
+        else cachedCoursesToFinish.filter { it.course.title.contains(query, ignoreCase = true) }
+
+        if (filtered.isEmpty()) {
+            innerList.addView(createEmptyStateView(
+                if (query.isBlank()) "¡Todos tus cursos están al día!" else "Sin resultados para \"$query\"",
+                if (query.isBlank()) "🎉" else "🔍"
+            ))
+            return
+        }
+
+        filtered.forEachIndexed { index, info ->
+            val itemView = createCourseProgressItemView(info, innerList)
+            itemView.alpha = 0f
+            itemView.translationY = 40f
+            innerList.addView(itemView)
+            itemView.animate()
+                .alpha(1f).translationY(0f).setDuration(400)
+                .setStartDelay((index * 100 + 200).toLong())
+                .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        }
+    }
+
     private fun createCourseProgressItemView(
         info: CourseProgressInfo,
         container: LinearLayout
@@ -1723,8 +1950,227 @@ class AdminDashboardFragment : Fragment() {
             .show()
     }
 
+    // ==================== SECCIÓN 6: MIS CERTIFICADOS ====================
+
+    private fun loadCertificatesSection() {
+        titleTextView.text = "Mis Certificados"
+
+        val root = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val countLabel = TextView(requireContext()).apply {
+            text = "Cargando..."
+            setTextColor(android.graphics.Color.parseColor("#6B6B7A"))
+            textSize = 12f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 12.dpToPx() }
+        }
+
+        val searchBar = android.widget.EditText(requireContext()).apply {
+            hint = "Buscar por curso..."
+            setHintTextColor(android.graphics.Color.parseColor("#6B6B7A"))
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setBackgroundResource(R.drawable.message_input_background)
+            setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
+            maxLines = 1
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 16.dpToPx() }
+        }
+
+        val listContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        root.addView(countLabel)
+        root.addView(searchBar)
+        root.addView(listContainer)
+        sectionsContainer.addView(root)
+
+        fun renderList(query: String) {
+            listContainer.removeAllViews()
+            val filtered = if (query.isBlank()) cachedCertificates
+                else cachedCertificates.filter { it.courseName.contains(query, ignoreCase = true) }
+
+            if (filtered.isEmpty()) {
+                listContainer.addView(createEmptyStateView(
+                    if (query.isBlank()) "No tienes certificados aún" else "Sin resultados para \"$query\"",
+                    "🎓"
+                ))
+                return
+            }
+
+            filtered.forEachIndexed { index, cert ->
+                val card = createCertificateCardView(cert)
+                card.alpha = 0f
+                card.translationY = 20f
+                listContainer.addView(card)
+                card.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(280)
+                    .setStartDelay((index * 60).toLong())
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .start()
+            }
+        }
+
+        searchBar.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: android.text.Editable?) { renderList(s?.toString() ?: "") }
+        })
+
+        lifecycleScope.launch {
+            try {
+                val certs = withContext(Dispatchers.IO) {
+                    BackendApiService.getMyCertificates().getOrNull() ?: emptyList()
+                }
+
+                if (currentSection != DashboardSection.CERTIFICATES) return@launch
+
+                cachedCertificates = certs
+                countLabel.text = "${certs.size} certificado${if (certs.size != 1) "s" else ""} obtenidos"
+                renderList(searchBar.text.toString())
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading certificates", e)
+                countLabel.text = "Error al cargar certificados"
+            }
+        }
+    }
+
+    private fun createCertificateCardView(cert: BackendApiService.CertificateItem): View {
+        val card = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 12.dpToPx() }
+            setBackgroundResource(R.drawable.profile_card_background)
+            setPadding(14.dpToPx(), 14.dpToPx(), 14.dpToPx(), 14.dpToPx())
+        }
+
+        val thumbnail = ImageView(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(76.dpToPx(), 76.dpToPx()).also {
+                it.marginEnd = 14.dpToPx()
+            }
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            clipToOutline = true
+            background = android.graphics.drawable.GradientDrawable().also {
+                it.cornerRadius = 12.dpToPx().toFloat()
+            }
+        }
+
+        val cornerRadius = 12.dpToPx()
+        Glide.with(this)
+            .load(cert.courseThumbnail.takeIf { !it.isNullOrBlank() } ?: R.drawable.placeholder_image)
+            .placeholder(R.drawable.placeholder_image)
+            .error(R.drawable.placeholder_image)
+            .transform(CenterCrop(), RoundedCorners(cornerRadius))
+            .into(thumbnail)
+
+        val info = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+
+        info.addView(TextView(requireContext()).apply {
+            text = cert.courseName
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 4.dpToPx() }
+        })
+
+        val metaRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 8.dpToPx() }
+        }
+
+        cert.averageGrade?.let { grade ->
+            metaRow.addView(TextView(requireContext()).apply {
+                text = "★ ${String.format(Locale.getDefault(), "%.1f", grade)}"
+                setTextColor(android.graphics.Color.parseColor("#B8B3FF"))
+                textSize = 11f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(7.dpToPx(), 3.dpToPx(), 7.dpToPx(), 3.dpToPx())
+                background = android.graphics.drawable.GradientDrawable().also {
+                    it.setColor(android.graphics.Color.parseColor("#2D1F5E"))
+                    it.cornerRadius = 20f
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).also { it.marginEnd = 6.dpToPx() }
+            })
+        }
+
+        cert.certificateIssuedAt?.let { issuedAt ->
+            metaRow.addView(TextView(requireContext()).apply {
+                text = issuedAt.take(10)
+                setTextColor(android.graphics.Color.parseColor("#6B6B7A"))
+                textSize = 11f
+            })
+        }
+
+        info.addView(metaRow)
+
+        info.addView(TextView(requireContext()).apply {
+            text = "Ver certificado →"
+            setTextColor(android.graphics.Color.parseColor("#1A1A1A"))
+            textSize = 11f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(10.dpToPx(), 5.dpToPx(), 10.dpToPx(), 5.dpToPx())
+            setBackgroundResource(R.drawable.certificate_button_background)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            setOnClickListener {
+                val intent = android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(cert.certificateUrl)
+                )
+                startActivity(intent)
+            }
+        })
+
+        card.addView(thumbnail)
+        card.addView(info)
+        return card
+    }
+
+    private fun Int.dpToPx(): Int =
+        (this * resources.displayMetrics.density).toInt()
+
     // ==================== SECCIÓN 4: PROGRESO Y CERTIFICADOS ====================
-    
+
     private fun loadProgressTrackingSection() {
         titleTextView.text = "Progreso y Certificados"
         

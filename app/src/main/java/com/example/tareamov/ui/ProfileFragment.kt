@@ -772,12 +772,8 @@ class ProfileFragment : Fragment() {
                 when (result) {
                     is ApiResult.Success -> {
                         Toast.makeText(requireContext(), "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
-                        textView.text = "Vincular WhatsApp"
-                        whatsappSubtitleText?.text = "Conecta tu cuenta para recibir notificaciones"
-                        badge.text = "NO VINCULADO"
-                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
-                        whatsappIconView?.backgroundTintList =
-                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#25D366"))
+                        // Refrescar estado desde el backend para confirmar el cambio
+                        fetchAndUpdateWhatsAppStatus(textView, badge)
                     }
                     is ApiResult.Error -> {
                         Toast.makeText(requireContext(), "❌ ${result.message}", Toast.LENGTH_LONG).show()

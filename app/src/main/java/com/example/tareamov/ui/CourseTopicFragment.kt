@@ -414,6 +414,8 @@ class CourseTopicFragment : Fragment() {
             val mimeTypes = arrayOf(
                 "application/msword",                     // .doc
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  // .docx
+                "application/vnd.ms-excel",               // .xls
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
                 "application/pdf",                        // .pdf
                 "text/plain"                              // .txt
             )

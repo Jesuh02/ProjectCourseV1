@@ -4953,7 +4953,7 @@ object SupabaseClient {
             val subscription = Subscription(
                 subscriberId = subscriberId,
                 creatorId = creatorId,
-                subscriptionDate = System.currentTimeMillis()
+                subscriptionDate = null
             )
             
             val json = underscoredGson.toJson(subscription)

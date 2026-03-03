@@ -247,9 +247,28 @@ class NotificacionesFragment : Fragment() {
             }
             Notification.TYPE_TASK_GRADED -> {
                 Log.d("Notificaciones", "Task graded notification clicked: ${notification.relatedId}")
-                notification.relatedId?.let { taskId ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val resolvedTaskId = withContext(Dispatchers.IO) {
+                        suspend fun isValidTask(id: Long): Boolean {
+                            val r = BackendApiService.getTaskById(id)
+                            return r is ApiResult.Success && r.data != null
+                        }
+                        val relatedId = notification.relatedId
+                        if (relatedId != null && isValidTask(relatedId)) return@withContext relatedId
+                        val metaTaskId = extractTaskIdFromMetadata(notification.metadata)
+                        if (metaTaskId != null && isValidTask(metaTaskId)) return@withContext metaTaskId
+                        if (relatedId != null) {
+                            val subResult = BackendApiService.getSubmissionById(relatedId)
+                            if (subResult is ApiResult.Success && subResult.data != null) {
+                                val taskIdFromSub = subResult.data.taskId
+                                if (taskIdFromSub > 0 && isValidTask(taskIdFromSub)) return@withContext taskIdFromSub
+                            }
+                        }
+                        relatedId ?: metaTaskId ?: -1L
+                    }
+                    if (resolvedTaskId <= 0L) return@launch
                     val bundle = Bundle().apply {
-                        putLong("taskId", taskId)
+                        putLong("taskId", resolvedTaskId)
                         putString("taskName", notification.title.substringAfter("en ").trim())
                     }
                     try {
@@ -434,6 +453,25 @@ class NotificacionesFragment : Fragment() {
             Log.e("NotificacionesFragment", "❌ Error parsing metadata for video_id", e)
             null
         }
+    }
+
+    private fun extractTaskIdFromMetadata(metadata: String?): Long? {
+        if (metadata.isNullOrBlank()) return null
+        return try {
+            val normalized = normalizeMetadata(metadata)
+            if (normalized.trim().startsWith("{")) {
+                val json = org.json.JSONObject(normalized)
+                for (key in listOf("taskId", "task_id")) {
+                    if (json.has(key)) {
+                        val v = json.get(key)
+                        val id = if (v is Number) v.toLong() else v.toString().toLongOrNull()
+                        if (id != null && id > 0) return id
+                    }
+                }
+            }
+            Regex("""(?:taskId|task_id)\s*[":=]\s*"?(\d+)"?""")
+                .find(normalized)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        } catch (e: Exception) { null }
     }
 
     private fun normalizeMetadata(metadata: String): String {

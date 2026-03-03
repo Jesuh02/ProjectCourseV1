@@ -32,9 +32,8 @@ import androidx.navigation.findNavController
 import coil.compose.AsyncImage
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.Usuario
-import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.repository.SubscriptionRepository
 import com.example.tareamov.util.SessionManager
-import kotlinx.coroutines.launch
 
 class SubscriptionsFragment : Fragment() {
     override fun onCreateView(
@@ -76,10 +75,8 @@ fun SubscriptionsScreen(onBackClick: () -> Unit, onUserClick: (String) -> Unit) 
         val sessionManager = SessionManager.getInstance(context)
         val userId = sessionManager.getUserId()
         if (userId != -1L) {
-            val creatorIds = BackendApiService.getMySubscribedCreators().getOrNull() ?: emptyList()
-            if (creatorIds.isNotEmpty()) {
-                subscriptions = BackendApiService.getUsersByIds(creatorIds).getOrNull() ?: emptyList()
-            }
+            val repository = SubscriptionRepository(context)
+            subscriptions = repository.getSubscribedCreatorUsers()
         }
         isLoading = false
     }
@@ -175,6 +172,16 @@ fun SubscriptionsScreen(onBackClick: () -> Unit, onUserClick: (String) -> Unit) 
             if (isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color.White)
+                }
+            } else if (filteredSubscriptions.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = if (searchQuery.isEmpty()) "No tienes suscripciones aún" else "Sin resultados",
+                            color = Color.Gray,
+                            fontSize = 16.sp
+                        )
+                    }
                 }
             } else {
                 LazyColumn(

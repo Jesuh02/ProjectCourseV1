@@ -627,6 +627,9 @@
         <action
             android:id="@+id/action_profileFragment_to_editProfileFragment"
             app:destination="@id/editProfileFragment" />
+        <action
+            android:id="@+id/action_profileFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment" />
         <!-- Add action to navigate to HomeFragment for admin users -->
         <action
             android:id="@+id/action_profileFragment_to_homeFragment"
