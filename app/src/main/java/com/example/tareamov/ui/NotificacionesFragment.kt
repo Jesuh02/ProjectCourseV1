@@ -57,7 +57,7 @@ class NotificacionesFragment : Fragment() {
         bottomNavBinding.activityIconImageView.setColorFilter(whiteColor)
         bottomNavBinding.profileIconImageView.setColorFilter(whiteColor)
 
-        val canUploadContent = sessionManager.hasRole(1) && sessionManager.hasRole(2)
+        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3)
         val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
         bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
@@ -521,7 +521,7 @@ class NotificacionesFragment : Fragment() {
             }
         }
 
-        if (sessionManager.hasRole(1) && sessionManager.hasRole(2)) {
+        if (sessionManager.hasRole(2) || sessionManager.hasRole(3)) {
             bottomNavBinding.goToHomeButton.setOnClickListener {
                 try {
                     if (findNavController().currentDestination?.id == R.id.notificacionesFragment) {

@@ -195,8 +195,8 @@ class UserProfileViewFragment : Fragment() {
             findNavController().navigate(R.id.action_userProfileViewFragment_to_exploreFragment)
         }
         
-        // Add/Upload Button (ic_add) only for users with both roles 1 and 2
-        val canUploadContent = sessionManager.hasRole(1) && sessionManager.hasRole(2)
+        // Add/Upload Button (ic_add) only for users with role 2 or 3
+        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3)
         val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
         bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE

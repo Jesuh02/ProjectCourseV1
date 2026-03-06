@@ -607,10 +607,10 @@ class VideoHomeFragment : Fragment() {
             navigateToProfileSafely()
         }
 
-        // Set up button to navigate to the content upload screen (requires roles 1 AND 2)
+        // Set up button to navigate to the content upload screen (requires role 2 or 3)
         val goToHomeButton = view.findViewById<ImageButton>(R.id.goToHomeButton)
         val goToHomeContainer = goToHomeButton?.parent as? View
-        val canUploadContent = sessionManager.hasRole(1) && sessionManager.hasRole(2)
+        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3)
         goToHomeButton?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         if (canUploadContent) {

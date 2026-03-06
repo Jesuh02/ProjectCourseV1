@@ -489,7 +489,7 @@ class ExploreFragment : Fragment() {
 
         val canUploadContent = com.example.tareamov.util.SessionManager
             .getInstance(requireContext())
-            .run { hasRole(1) && hasRole(2) }
+            .run { hasRole(2) || hasRole(3) }
         val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
         bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE

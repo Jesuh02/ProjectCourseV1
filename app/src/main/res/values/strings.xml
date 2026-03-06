@@ -2,9 +2,6 @@
 <resources>
     <string name="app_name">CourseV</string>
 
-    <!-- Google Sign-In Web Client ID -->
-    <string name="default_web_client_id">350567399298-nm30ojtig7u0n6t223vhvq8hpovag2jt.apps.googleusercontent.com</string>
-
     <!-- Explore Fragment -->
     <string name="search_hint">Buscar cursos, instructores...</string>
     <string name="filter_button">Filtrar</string>
