@@ -20,6 +20,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.bumptech.glide.Glide
+import androidx.transition.AutoTransition
+import androidx.transition.TransitionManager
 import com.example.tareamov.MainActivity
 import com.example.tareamov.R // Make sure this import is correct
 import com.example.tareamov.service.BackendApiService
@@ -67,8 +69,14 @@ class CourseDetailFragment : Fragment() {
     private lateinit var creatorUsernameTextView: TextView
     private lateinit var subscriberCountTextView: TextView
     private lateinit var subscribeButton: Button
-    private lateinit var tabDocumentos: TextView
-    private lateinit var tabTareas: TextView
+    private lateinit var tabDocumentos: LinearLayout
+    private lateinit var tabTareas: LinearLayout
+    private var tabDocumentosLabel: TextView? = null
+    private var tabTareasLabel: TextView? = null
+    private var tabDocumentosCount: TextView? = null
+    private var tabTareasCount: TextView? = null
+    private var cachedTopicsCount: Int = -1
+    private var cachedTasksCount: Int = -1
     private lateinit var continueWatchingContainer: LinearLayout
     private var currentTab = "documentos" // Add this property for tab tracking
     private lateinit var courseActionBar: LinearLayout // To control visibility of the whole bar
@@ -199,6 +207,10 @@ class CourseDetailFragment : Fragment() {
         // Initialize tab views
         tabDocumentos = view.findViewById(R.id.tabDocumentos)
         tabTareas = view.findViewById(R.id.tabTareas)
+        tabDocumentosLabel = view.findViewById(R.id.tabDocumentosLabel)
+        tabTareasLabel = view.findViewById(R.id.tabTareasLabel)
+        tabDocumentosCount = view.findViewById(R.id.tabDocumentosCount)
+        tabTareasCount = view.findViewById(R.id.tabTareasCount)
         //  continueWatchingContainer = view.findViewById(R.id.continueWatchingContainer) // Initialization
 
         // Set up tab click listeners with ultra-fast filtering
@@ -230,13 +242,13 @@ class CourseDetailFragment : Fragment() {
         updateTabSelection()
 
         // Add a button to create new topics
-        val addTopicButton = view.findViewById<Button>(R.id.addTopicButton)
+        val addTopicButton = view.findViewById<View>(R.id.addTopicButton)
         addTopicButton.setOnClickListener {
             navigateToAddTopic()
         }
 
         // *** MODIFIED BLOCK for addTaskButton ***
-        val addTaskButton = view.findViewById<Button>(R.id.addTaskButton)
+        val addTaskButton = view.findViewById<View>(R.id.addTaskButton)
         addTaskButton.setOnClickListener {
             if (courseId != -1L) {
                 // Try to get the course name from the ViewModel first, then the member variable
@@ -301,7 +313,6 @@ class CourseDetailFragment : Fragment() {
         coursePriceIcon = view.findViewById(R.id.coursePriceIcon)
         togglePriceButton = view.findViewById(R.id.togglePriceButton)
         editCourseButton = view.findViewById(R.id.editCourseButton)
-
         // Initially hide edit controls until we verify creator ownership remotely
         editCourseButton.visibility = View.GONE
         togglePriceButton.visibility = View.GONE
@@ -898,6 +909,51 @@ class CourseDetailFragment : Fragment() {
                     courseTitleTextView?.text = title
                     courseName = title
 
+                    // Load course hero thumbnail
+                    val heroImageView = view?.findViewById<android.widget.ImageView>(R.id.courseHeroImageView)
+                    if (!remoteCourse.thumbnailUri.isNullOrEmpty() && heroImageView != null) {
+                        try {
+                            Glide.with(this@CourseDetailFragment)
+                                .load(remoteCourse.thumbnailUri)
+                                .centerCrop()
+                                .into(heroImageView)
+                        } catch (e: Exception) {
+                            Log.w("CourseDetailFragment", "Could not load hero thumbnail", e)
+                        }
+                    }
+
+                    // Auto-play hero video after 1 second if videoUri available
+                    val heroVideoView = view?.findViewById<android.widget.VideoView>(R.id.heroVideoView)
+                    if (!remoteCourse.videoUri.isNullOrEmpty() && heroVideoView != null) {
+                        heroVideoView.postDelayed({
+                            if (!isAdded || view == null) return@postDelayed
+                            try {
+                                var vUri = remoteCourse.videoUri
+                                if (!vUri.isNullOrEmpty()) {
+                                    if (!vUri!!.startsWith("http") && !vUri!!.startsWith("content://") && !vUri!!.startsWith("file://")) {
+                                        val key = if (vUri!!.startsWith("/")) vUri!!.substring(1) else vUri!!
+                                        vUri = com.example.tareamov.service.BackendApiService.buildProxyFileUrl(key)
+                                    }
+                                }
+                                heroVideoView.setVideoURI(android.net.Uri.parse(vUri))
+                                heroVideoView.setOnPreparedListener { mp ->
+                                    mp.setVolume(0f, 0f) // Mute the video
+                                    mp.isLooping = true
+                                    heroVideoView.visibility = View.VISIBLE
+                                    heroImageView?.visibility = View.GONE
+                                    heroVideoView.start()
+                                }
+                                heroVideoView.setOnErrorListener { _, _, _ ->
+                                    heroVideoView.visibility = View.GONE
+                                    heroImageView?.visibility = View.VISIBLE
+                                    true
+                                }
+                            } catch (e: Exception) {
+                                Log.w("CourseDetailFragment", "Could not load hero video", e)
+                            }
+                        }, 1000L)
+                    }
+
                     // Map creator username from creator_user_id
                     creatorUserId = remoteCourse.creatorUserId
                     courseCreatorUsername = withContext(Dispatchers.IO) {
@@ -1082,6 +1138,8 @@ class CourseDetailFragment : Fragment() {
                     Log.w("CourseDetailFragment", "Topics fetch failed", e)
                 }
 
+                cachedTopicsCount = topics.size; refreshTabBadges()
+
                 Log.d("CourseDetailFragment", "📚 Total topics found: ${topics.size} for courseId: $courseId")
                 
                 // DEBUG: skipped (debug code removed during migration)
@@ -1133,6 +1191,7 @@ class CourseDetailFragment : Fragment() {
                                     }
                                 }
                                 tasksByTopic = allTasks.groupBy { it.topicId }
+                                cachedTasksCount = allTasks.size; refreshTabBadges()
                             }
                         } catch (e: Exception) {
                             Log.w("CourseDetailFragment", "Failed to fetch tasks for topics", e)
@@ -1173,6 +1232,20 @@ class CourseDetailFragment : Fragment() {
                             }
                         } catch (e: Exception) {
                             Log.e("CourseDetailFragment", "❌ Failed to fetch content items for topics", e)
+                        }
+
+                        // Background: count tasks for the stats chip (sin bloquear el hilo principal)
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            try {
+                                var total = 0
+                                for (topicId in sortedTopics.map { it.id }) {
+                                    val r = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        BackendApiService.getTasksByTopic(topicId)
+                                    }
+                                    if (r is ApiResult.Success) total += r.data?.size ?: 0
+                                }
+                                cachedTasksCount = total; refreshTabBadges()
+                            } catch (_: Exception) { }
                         }
                     }
 
@@ -1374,12 +1447,36 @@ class CourseDetailFragment : Fragment() {
         }
     }
 
+    private fun refreshTabBadges() {
+        if (cachedTopicsCount >= 0) {
+            tabDocumentosCount?.text = cachedTopicsCount.toString()
+            tabDocumentosCount?.visibility = View.VISIBLE
+        }
+        if (cachedTasksCount >= 0) {
+            tabTareasCount?.text = cachedTasksCount.toString()
+            tabTareasCount?.visibility = View.VISIBLE
+        }
+    }
+
     // Add this method to update tab visual selection
     private fun updateTabSelection() {
         val isDocs = currentTab == "documentos"
-        // Rely on stateful backgrounds and text color selectors from XML
         tabDocumentos.isSelected = isDocs
         tabTareas.isSelected = !isDocs
+        // Update text colors on inner labels: active = white (or dark on cyan), inactive = gray
+        tabDocumentosLabel?.setTextColor(if (isDocs) 0xFF080C1A.toInt() else 0xFF8B8FA8.toInt())
+        tabTareasLabel?.setTextColor(if (!isDocs) 0xFFFFFFFF.toInt() else 0xFF8B8FA8.toInt())
+        refreshTabBadges()
+        // Update section heading
+        val headingTitle = view?.findViewById<TextView>(R.id.sectionHeadingTitle)
+        val headingSubtitle = view?.findViewById<TextView>(R.id.sectionHeadingSubtitle)
+        if (isDocs) {
+            headingTitle?.text = "Contenido del Tema"
+            headingSubtitle?.visibility = View.GONE
+        } else {
+            headingTitle?.text = "Tareas"
+            headingSubtitle?.visibility = View.GONE
+        }
     }
 
     // Fast content filtering without full reload
@@ -1473,17 +1570,47 @@ class CourseDetailFragment : Fragment() {
         topicTitleTextView.text = topic.name
         topicDescriptionTextView.text = topic.description
 
-        // Setup containers based on current filter
-        when (currentTab) {
-            "documentos" -> {
-                setupContentContainerFast(topicContentContainer, contentItems)
-                tasksContainer.visibility = View.GONE
-                topicContentContainer.visibility = View.VISIBLE
-            }
-            "tareas" -> {
-                setupTasksContainerFast(tasksContainer, tasks, topic)
+        // Prepare labels and initial collapsed state
+        val chevron = topicView.findViewById<ImageView>(R.id.topicChevron)
+        val videosLabel = topicView.findViewById<TextView>(R.id.videosSectionLabel)
+        val filesLabel = topicView.findViewById<TextView>(R.id.filesSectionLabel)
+        // Determine if there is any video/content to show
+        val hasVideos = contentItems.any { it.contentType.equals("video", ignoreCase = true) }
+        val hasFiles = contentItems.isNotEmpty()
+        videosLabel.visibility = if (hasVideos) View.GONE else View.GONE // keep labels hidden by default, will show when expanded
+        filesLabel.visibility = View.GONE
+
+        // Prepare content but keep collapsed by default
+        setupContentContainerFast(topicContentContainer, contentItems)
+        setupTasksContainerFast(tasksContainer, tasks, topic)
+        topicContentContainer.visibility = View.GONE
+        tasksContainer.visibility = View.GONE
+
+        // Toggle expansion with animation when header is clicked
+        val headerRow = topicView.findViewById<LinearLayout>(R.id.topicHeaderRow)
+        headerRow.setOnClickListener {
+            val parentGroup = topicView as ViewGroup
+            TransitionManager.beginDelayedTransition(parentGroup, AutoTransition())
+            val isExpanded = topicContentContainer.visibility == View.VISIBLE || tasksContainer.visibility == View.VISIBLE
+            if (isExpanded) {
                 topicContentContainer.visibility = View.GONE
-                tasksContainer.visibility = View.VISIBLE
+                tasksContainer.visibility = View.GONE
+                videosLabel.visibility = View.GONE
+                filesLabel.visibility = View.GONE
+                chevron.animate().rotation(0f).setDuration(200).start()
+            } else {
+                if (currentTab == "documentos") {
+                    topicContentContainer.visibility = View.VISIBLE
+                    videosLabel.visibility = if (hasVideos) View.VISIBLE else View.GONE
+                    filesLabel.visibility = if (hasFiles) View.VISIBLE else View.GONE
+                    tasksContainer.visibility = View.GONE
+                } else {
+                    tasksContainer.visibility = View.VISIBLE
+                    videosLabel.visibility = View.GONE
+                    filesLabel.visibility = View.GONE
+                    topicContentContainer.visibility = View.GONE
+                }
+                chevron.animate().rotation(180f).setDuration(200).start()
             }
         }
 
@@ -1571,19 +1698,32 @@ class CourseDetailFragment : Fragment() {
         // Set icon and type based on content type
         when (item.contentType.lowercase()) {
             "video" -> {
-                iconView?.setImageResource(android.R.drawable.ic_media_play)
-                typeView?.text = "Video"
+                iconView?.setImageResource(R.drawable.ic_play_circle)
+                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF9B7EFF.toInt())
+                typeView?.text = "VIDEO"
             }
             "pdf" -> {
-                iconView?.setImageResource(android.R.drawable.ic_menu_agenda)
+                iconView?.setImageResource(R.drawable.ic_document)
+                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFFEF4444.toInt())
                 typeView?.text = "PDF"
             }
+            "image" -> {
+                iconView?.setImageResource(R.drawable.ic_image)
+                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF10B981.toInt())
+                typeView?.text = "IMAGEN"
+            }
+            "code" -> {
+                iconView?.setImageResource(R.drawable.ic_code)
+                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF00D4FF.toInt())
+                typeView?.text = "CÓDIGO"
+            }
             else -> {
-                iconView?.setImageResource(android.R.drawable.ic_menu_help)
-                typeView?.text = "Documento"
+                iconView?.setImageResource(R.drawable.ic_attach_file)
+                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF9B7EFF.toInt())
+                typeView?.text = "ARCHIVO"
             }
         }
-        
+
         contentView.setOnClickListener { openContent(item) }
         
         val params = LinearLayout.LayoutParams(
@@ -1631,23 +1771,24 @@ class CourseDetailFragment : Fragment() {
         val editTopicButton = topicView.findViewById<ImageButton>(R.id.editTopicButton)
         val deleteTopicButton = topicView.findViewById<ImageButton>(R.id.deleteTopicButton)
 
-        // Headers (keep them for context, but they might be inside hidden containers)
-        // Define contentHeader here, similar to tasksHeader
+        // Content section header (text removed)
         val contentHeader = TextView(context).apply {
-            text = "CONTENIDO DEL TEMA"
-            setTextAppearance(android.R.style.TextAppearance_Medium)
+            text = ""
             setTypeface(null, android.graphics.Typeface.BOLD)
-            setPadding(0, 16, 0, 8)
-            setTextColor(resources.getColor(android.R.color.holo_blue_dark, null))
+            setPadding(4, 12, 4, 6)
+            setTextColor(0xFF9B7EFF.toInt())
+            textSize = 11f
+            letterSpacing = 0.08f
         }
 
-        // Add a header for tasks
+        // Tasks section header
         val tasksHeader = TextView(context).apply {
-            text = "TAREAS"
-            setTextAppearance(android.R.style.TextAppearance_Medium)
+            text = "TAREAS DEL TEMA"
             setTypeface(null, android.graphics.Typeface.BOLD)
-            setPadding(0, 24, 0, 8)
-            setTextColor(resources.getColor(android.R.color.holo_green_dark, null))
+            setPadding(4, 12, 4, 6)
+            setTextColor(0xFF00D4FF.toInt())
+            textSize = 11f
+            letterSpacing = 0.08f
         }
 
         topicTitleTextView.text = topic.name
@@ -1671,94 +1812,111 @@ class CourseDetailFragment : Fragment() {
             showDeleteTopicConfirmation(topic)
         }
 
-        // --- Filtering Logic ---
-        if (currentTab == "documentos") {
-            // Show Content, Hide Tasks
-            tasksContainer.visibility = View.GONE
-
-            topicContentContainer.visibility = View.VISIBLE
-            topicContentContainer.removeAllViews() // Clear before adding
-            topicContentContainer.addView(contentHeader) // Add header (Now defined)
-
-            Log.d("CourseDetailFragment", "📄 addTopicView for topic '${topic.name}' (id=${topic.id}): received ${contentItems.size} content items")
-            
-            // Double-check: filter to ensure only topic-level content (taskId null/0)
-            val topicOnlyContent = contentItems.filter { it.taskId == null || it.taskId == 0L }
-            Log.d("CourseDetailFragment", "📄 After filtering taskId: ${topicOnlyContent.size} topic-level content items")
-            
-            val sortedContent = topicOnlyContent.sortedBy { it.orderIndex }
-            if (sortedContent.isNotEmpty()) {
-                Log.d("CourseDetailFragment", "📄 ✅ Showing ${sortedContent.size} content items for topic ${topic.id}")
-                for (item in sortedContent) {
-                    Log.d("CourseDetailFragment", "   📦 Content: id=${item.id}, name='${item.name}', uri='${item.uriString.take(60)}...', type=${item.contentType}")
-                    addContentView(item, topicContentContainer)
-                }
-            } else {
-                Log.w("CourseDetailFragment", "⚠️ No topic-level content items for topic ${topic.id} ('${topic.name}')")
-                val noContentMsg = TextView(context).apply { 
-                    text = "Sin contenido para este tema" 
-                    setTextColor(resources.getColor(android.R.color.darker_gray, null))
-                    setPadding(0, 8, 0, 8)
-                }
-                topicContentContainer.addView(noContentMsg)
+        // --- Build content and tasks containers but start collapsed; expansion toggles visibility with animation ---
+        // Build documents content (topic-level only)
+        topicContentContainer.removeAllViews()
+        topicContentContainer.addView(contentHeader)
+        val topicOnlyContent = contentItems.filter { it.taskId == null || it.taskId == 0L }
+        val sortedContent = topicOnlyContent.sortedBy { it.orderIndex }
+        if (sortedContent.isNotEmpty()) {
+            for (item in sortedContent) {
+                addContentView(item, topicContentContainer)
             }
-
-        } else { // currentTab == "tareas"
-            // Show Tasks, Hide Content
-            topicContentContainer.visibility = View.GONE
-
-            tasksContainer.visibility = View.VISIBLE
-            tasksContainer.removeAllViews() // Clear container before adding header/tasks/button
-            tasksContainer.addView(tasksHeader)
-
-            val sortedTasks = tasks.sortedBy { it.orderIndex }
-            if (sortedTasks.isNotEmpty()) {
-                for (task in sortedTasks) {
-                    addTaskView(task, tasksContainer) // Add the task view
-                }
-            } else {
-                val noTasksMsg = TextView(context).apply { text = "Sin tareas para este tema" }
-                tasksContainer.addView(noTasksMsg)
+        } else {
+            val noContentMsg = TextView(context).apply {
+                text = "Sin contenido para este tema"
+                setTextColor(resources.getColor(android.R.color.darker_gray, null))
+                setPadding(0, 8, 0, 8)
             }
+            topicContentContainer.addView(noContentMsg)
+        }
 
-            // Add the "Agregar Tarea" button directly to tasksContainer only when viewing tasks and if user is creator
-            if (isCurrentUserCreator) {
-                val addTaskBtn = Button(context).apply {
-                    text = "Agregar Tarea a este Tema"
-                    val params = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        topMargin = 16
-                        gravity = android.view.Gravity.CENTER_HORIZONTAL
-                    }
-                    layoutParams = params
-                    setBackgroundResource(R.drawable.button_background)
-                    setPadding(32, 16, 32, 16)
-                    setOnClickListener {
-                        // Navigate to CourseTaskFragment to add a new task for this topic
-                        // Use fragment's courseId instead of topic.courseId (which might be null)
-                        if (courseId != -1L) {
-                            navigateToAddTask(topic.id, courseId)
-                        } else {
-                            Log.e("CourseDetailFragment", "Cannot add task: courseId is invalid (-1)")
-                            showSafeToast("Error: ID del curso no válido")
-                        }
+        // Build tasks container
+        tasksContainer.removeAllViews()
+        tasksContainer.addView(tasksHeader)
+        val sortedTasks = tasks.sortedBy { it.orderIndex }
+        if (sortedTasks.isNotEmpty()) {
+            for (task in sortedTasks) {
+                addTaskView(task, tasksContainer)
+            }
+        } else {
+            val noTasksMsg = TextView(context).apply { text = "Sin tareas para este tema" }
+            tasksContainer.addView(noTasksMsg)
+        }
+        if (isCurrentUserCreator) {
+            val addTaskBtn = Button(context).apply {
+                text = "Agregar Tarea a este Tema"
+                val params = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = 16
+                    gravity = android.view.Gravity.CENTER_HORIZONTAL
+                }
+                layoutParams = params
+                setBackgroundResource(R.drawable.button_background)
+                setPadding(32, 16, 32, 16)
+                setOnClickListener {
+                    if (courseId != -1L) {
+                        navigateToAddTask(topic.id, courseId)
+                    } else {
+                        Log.e("CourseDetailFragment", "Cannot add task: courseId is invalid (-1)")
+                        showSafeToast("Error: ID del curso no válido")
                     }
                 }
-                tasksContainer.addView(addTaskBtn)
+            }
+            tasksContainer.addView(addTaskBtn)
+        }
+
+        // Prepare chevron and section labels
+        val chevron = topicView.findViewById<ImageView>(R.id.topicChevron)
+        val videosLabel = topicView.findViewById<TextView>(R.id.videosSectionLabel)
+        val filesLabel = topicView.findViewById<TextView>(R.id.filesSectionLabel)
+        val hasVideos = contentItems.any { it.contentType.equals("video", ignoreCase = true) }
+        val hasFiles = contentItems.isNotEmpty()
+        videosLabel.visibility = View.GONE
+        filesLabel.visibility = View.GONE
+
+        // Start collapsed
+        topicContentContainer.visibility = View.GONE
+        tasksContainer.visibility = View.GONE
+
+        // Header click toggles expansion with animated transition
+        val headerRow = topicView.findViewById<LinearLayout>(R.id.topicHeaderRow)
+        headerRow.setOnClickListener {
+            val parentGroup = topicView as ViewGroup
+            TransitionManager.beginDelayedTransition(parentGroup, AutoTransition())
+            val isExpanded = topicContentContainer.visibility == View.VISIBLE || tasksContainer.visibility == View.VISIBLE
+            if (isExpanded) {
+                topicContentContainer.visibility = View.GONE
+                tasksContainer.visibility = View.GONE
+                videosLabel.visibility = View.GONE
+                filesLabel.visibility = View.GONE
+                chevron.animate().rotation(0f).setDuration(200).start()
+            } else {
+                if (currentTab == "documentos") {
+                    topicContentContainer.visibility = View.VISIBLE
+                    videosLabel.visibility = if (hasVideos) View.VISIBLE else View.GONE
+                    filesLabel.visibility = if (hasFiles) View.VISIBLE else View.GONE
+                    tasksContainer.visibility = View.GONE
+                } else {
+                    tasksContainer.visibility = View.VISIBLE
+                    topicContentContainer.visibility = View.GONE
+                    videosLabel.visibility = View.GONE
+                    filesLabel.visibility = View.GONE
+                }
+                chevron.animate().rotation(180f).setDuration(200).start()
             }
         }
 
         topicsContainer.addView(topicView)
 
-        // Add a visual separator between topics
+        // No separator between topics — card margins handle spacing
         val separator = View(context).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                2 // Height of the separator line
+                0
             )
-            setBackgroundColor(resources.getColor(android.R.color.darker_gray))
         }
         topicsContainer.addView(separator)
     }
@@ -1785,9 +1943,7 @@ class CourseDetailFragment : Fragment() {
         val submitTaskButton = taskView.findViewById<Button>(R.id.uploadSubmissionButton)
         val gradeStatusTextView = taskView.findViewById<TextView>(R.id.gradeStatusTextView)
 
-        // Add a visual indicator that this is a task
-        val taskIndicator = taskView.findViewById<View>(R.id.taskIndicator)
-        taskIndicator?.setBackgroundColor(resources.getColor(android.R.color.holo_green_light))
+        // taskIndicator removed — badge chip handles status colors
 
     // Show local name if available; otherwise fetch from Supabase by id
     if (!task.name.isNullOrBlank()) {
@@ -1813,6 +1969,21 @@ class CourseDetailFragment : Fragment() {
             taskDescriptionTextView.visibility = View.VISIBLE
         } else {
             taskDescriptionTextView.visibility = View.GONE
+        }
+
+        // Set initial badge chip to "Pendiente" (updated async after submission check)
+        val taskBadgeChip = taskView.findViewById<TextView>(R.id.taskBadgeChip)
+        taskBadgeChip?.text = "Pendiente"
+        taskBadgeChip?.setTextColor(0xFFF59E0B.toInt())
+        taskBadgeChip?.setBackgroundResource(R.drawable.bg_status_pending)
+
+        // Set due date chip
+        val taskDueChip = taskView.findViewById<TextView>(R.id.taskDueChip)
+        if (!task.dueDate.isNullOrBlank()) {
+            taskDueChip?.text = task.dueDate.take(10) // show YYYY-MM-DD
+            taskDueChip?.visibility = View.VISIBLE
+        } else {
+            taskDueChip?.visibility = View.GONE
         }
 
         // Load and display content items
@@ -1888,16 +2059,29 @@ class CourseDetailFragment : Fragment() {
                         // Set icon and type based on content type
                         when (contentItem.contentType.lowercase()) {
                             "video" -> {
-                                iconView?.setImageResource(android.R.drawable.ic_media_play)
-                                typeView?.text = "Video"
+                                iconView?.setImageResource(R.drawable.ic_play_circle)
+                                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF9B7EFF.toInt())
+                                typeView?.text = "VIDEO"
                             }
                             "pdf" -> {
-                                iconView?.setImageResource(android.R.drawable.ic_menu_agenda)
+                                iconView?.setImageResource(R.drawable.ic_document)
+                                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFFEF4444.toInt())
                                 typeView?.text = "PDF"
                             }
+                            "image" -> {
+                                iconView?.setImageResource(R.drawable.ic_image)
+                                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF10B981.toInt())
+                                typeView?.text = "IMAGEN"
+                            }
+                            "code" -> {
+                                iconView?.setImageResource(R.drawable.ic_code)
+                                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF00D4FF.toInt())
+                                typeView?.text = "CÓDIGO"
+                            }
                             else -> {
-                                iconView?.setImageResource(android.R.drawable.ic_menu_help)
-                                typeView?.text = "Documento"
+                                iconView?.setImageResource(R.drawable.ic_attach_file)
+                                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF9B7EFF.toInt())
+                                typeView?.text = "ARCHIVO"
                             }
                         }
                         
@@ -2010,6 +2194,8 @@ class CourseDetailFragment : Fragment() {
                 val topicsResult = withContext(Dispatchers.IO) { BackendApiService.getTopicsByCourse(lookupId) }
                 val topics: List<Topic> = if (topicsResult is ApiResult.Success) topicsResult.data ?: emptyList() else emptyList()
 
+                cachedTopicsCount = topics.size; refreshTabBadges()
+
                 topicsContainer.removeAllViews()
 
                 val sortedTopics = topics.sortedBy { it.orderIndex }
@@ -2029,6 +2215,7 @@ class CourseDetailFragment : Fragment() {
                                 if (tasksResult is ApiResult.Success) allTasks.addAll(tasksResult.data ?: emptyList())
                             }
                             tasksByTopic = allTasks.groupBy { it.topicId }
+                            cachedTasksCount = allTasks.size; refreshTabBadges()
                         }
                     } catch (e: Exception) {
                         Log.w("CourseDetailFragment", "refreshTopics: failed fetching tasks for topics", e)
@@ -2108,17 +2295,31 @@ class CourseDetailFragment : Fragment() {
                 Log.w("CourseDetailFragment", "Error fetching submission for taskId=$taskId", e)
             }
 
+                // Find badge chip in the parent task card
+                val badgeChip = (gradeStatusTextView?.parent?.parent as? android.view.ViewGroup)
+                    ?.findViewById<TextView>(R.id.taskBadgeChip)
+
                 if (submission != null) {
                     if (submission.grade != null) {
-                        gradeStatusTextView.text = "Calificación: ${submission.grade}/10"
-                        gradeStatusTextView.setTextColor(resources.getColor(android.R.color.holo_green_light, null))
+                        gradeStatusTextView.text = "${submission.grade}/10"
+                        gradeStatusTextView.setTextColor(0xFF10B981.toInt())
+                        gradeStatusTextView.visibility = View.VISIBLE
+                        badgeChip?.text = "Completada"
+                        badgeChip?.setTextColor(0xFF10B981.toInt())
+                        badgeChip?.setBackgroundResource(R.drawable.bg_status_completed)
                     } else {
-                        gradeStatusTextView.text = "Entregada - Pendiente de calificación"
-                        gradeStatusTextView.setTextColor(resources.getColor(android.R.color.holo_blue_light, null))
+                        gradeStatusTextView.text = "Entregada"
+                        gradeStatusTextView.setTextColor(0xFF5B8DEF.toInt())
+                        gradeStatusTextView.visibility = View.VISIBLE
+                        badgeChip?.text = "En proceso"
+                        badgeChip?.setTextColor(0xFF5B8DEF.toInt())
+                        badgeChip?.setBackgroundResource(R.drawable.bg_status_in_progress)
                     }
-                    gradeStatusTextView.visibility = View.VISIBLE
                 } else {
                     gradeStatusTextView.visibility = View.GONE
+                    badgeChip?.text = "Pendiente"
+                    badgeChip?.setTextColor(0xFFF59E0B.toInt())
+                    badgeChip?.setBackgroundResource(R.drawable.bg_status_pending)
                 }
             } catch (e: Exception) {
                 Log.e("CourseDetailFragment", "Error checking submission", e)
@@ -2212,7 +2413,7 @@ class CourseDetailFragment : Fragment() {
             when (item.contentType.lowercase()) {
                 "video" -> {
                     // For videos, try to load video thumbnail
-                    Glide.with(this)
+                    Glide.with(this@CourseDetailFragment)
                         .load(uri)
                         .centerCrop()
                         .placeholder(R.drawable.content_thumbnail_placeholder)
@@ -2221,7 +2422,7 @@ class CourseDetailFragment : Fragment() {
                 }
                 "image" -> {
                     // For images, load the image directly
-                    Glide.with(this)
+                    Glide.with(this@CourseDetailFragment)
                         .load(uri)
                         .centerCrop()
                         .placeholder(R.drawable.content_thumbnail_placeholder)

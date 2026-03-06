@@ -146,9 +146,14 @@ class ExploreFragment : Fragment() {
             if (holder != null) {
                 val course = coursesAdapter.getItem(centerPosition)
                 if (course != null) {
-                    val videoUri = course.localFilePath ?: course.videoUri
+                    var videoUri = course.localFilePath ?: course.videoUri
                     if (!videoUri.isNullOrEmpty()) {
-                        holder.playPreview(videoUri)
+                        if (!videoUri!!.startsWith("http") && !videoUri!!.startsWith("content://") && !videoUri!!.startsWith("file://")) {
+                            // Trim leading slash if present then build proxy URL
+                            val key = if (videoUri!!.startsWith("/")) videoUri!!.substring(1) else videoUri!!
+                            videoUri = com.example.tareamov.service.BackendApiService.buildProxyFileUrl(key)
+                        }
+                        holder.playPreview(videoUri!!)
                         currentPreviewPosition = centerPosition
                     }
                 }
@@ -295,8 +300,93 @@ class ExploreFragment : Fragment() {
         // Mostrar estadísticas inmediatamente (agregados server-side con fallback offline)
         fetchAndDisplayCourseStats()
 
-    // Cargar los cursos (forzar fetch remoto al entrar en el fragment)
+        // Cargar los cursos (forzar fetch remoto al entrar en el fragment)
     loadCourses(forceRemote = true)
+
+    // Setup listeners so ExploreFragment refreshes when a course or video is updated
+    try {
+        val navController = findNavController()
+        val currentBackStackEntry = navController.currentBackStackEntry
+
+        // Listen via SavedStateHandle (preferred)
+        currentBackStackEntry?.savedStateHandle?.getLiveData<Boolean>("courseUpdated")?.observe(viewLifecycleOwner) { updated ->
+            if (updated == true) {
+                Log.d("ExploreFragment", "Course update detected via SavedStateHandle, reloading courses")
+                loadCourses(forceRemote = true)
+                currentBackStackEntry.savedStateHandle.remove<Boolean>("courseUpdated")
+            }
+        }
+
+        currentBackStackEntry?.savedStateHandle?.getLiveData<Boolean>("videoUpdated")?.observe(viewLifecycleOwner) { updated ->
+            if (updated == true) {
+                val saved = currentBackStackEntry.savedStateHandle
+                val updatedId = saved.get<Long>("updatedCourseId") ?: saved.get<Long>("updatedVideoId") ?: 0L
+                Log.d("ExploreFragment", "Video update detected via SavedStateHandle, id=$updatedId")
+                if (updatedId > 0) {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        try {
+                            val res = withContext(Dispatchers.IO) { BackendApiService.getCourseById(updatedId) }
+                            if (res is ApiResult.Success) {
+                                val updatedCourse = res.data
+                                val idx = allCoursesList.indexOfFirst { it.id == updatedCourse.id }
+                                if (idx >= 0) {
+                                    allCoursesList[idx] = updatedCourse
+                                    displayCourses(allCoursesList)
+                                } else {
+                                    loadCourses(forceRemote = true)
+                                }
+                            } else {
+                                loadCourses(forceRemote = true)
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ExploreFragment", "Error fetching updated course", e)
+                            loadCourses(forceRemote = true)
+                        }
+                    }
+                } else {
+                    loadCourses(forceRemote = true)
+                }
+                currentBackStackEntry.savedStateHandle.remove<Boolean>("videoUpdated")
+            }
+        }
+
+        // FragmentManager fallback listeners
+        requireActivity().supportFragmentManager.setFragmentResultListener("courseUpdated", viewLifecycleOwner) { _, _ ->
+            Log.d("ExploreFragment", "FragmentManager courseUpdated received, reloading courses")
+            loadCourses(forceRemote = true)
+        }
+
+        requireActivity().supportFragmentManager.setFragmentResultListener("videoUpdated", viewLifecycleOwner) { _, bundle ->
+            val updatedId = bundle.getLong("updatedVideoId", 0L)
+            Log.d("ExploreFragment", "FragmentManager videoUpdated received, id=$updatedId")
+            if (updatedId > 0) {
+                viewLifecycleOwner.lifecycleScope.launch {
+                    try {
+                        val res = withContext(Dispatchers.IO) { BackendApiService.getCourseById(updatedId) }
+                        if (res is ApiResult.Success) {
+                            val updatedCourse = res.data
+                            val idx = allCoursesList.indexOfFirst { it.id == updatedCourse.id }
+                            if (idx >= 0) {
+                                allCoursesList[idx] = updatedCourse
+                                displayCourses(allCoursesList)
+                            } else {
+                                loadCourses(forceRemote = true)
+                            }
+                        } else {
+                            loadCourses(forceRemote = true)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("ExploreFragment", "Error updating course from fragment result", e)
+                        loadCourses(forceRemote = true)
+                    }
+                }
+            } else {
+                loadCourses(forceRemote = true)
+            }
+        }
+    } catch (e: Exception) {
+        Log.e("ExploreFragment", "Error setting up update listeners", e)
+    }
 
         // Panel de navegación inferior usando ComponentBottomNavigationBinding
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
@@ -1970,6 +2060,10 @@ class ExploreFragment : Fragment() {
         // Update adapter
         if (::coursesAdapter.isInitialized) {
             coursesAdapter.updateCourses(sortedCourses)
+            // Trigger video preview for the center item after updating the adapter
+            previewHandler.removeCallbacks(previewRunnable)
+            previewHandler.postDelayed(previewRunnable, 1000)
+
             // Only log adapter updates when NOT showing a filter/search to avoid noisy logs
             if (!isFilterActive) {
                 Log.d("ExploreFragment", "displayCourses: Updated adapter with ${sortedCourses.size} courses")

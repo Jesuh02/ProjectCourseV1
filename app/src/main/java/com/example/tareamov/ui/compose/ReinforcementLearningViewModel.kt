@@ -175,7 +175,9 @@ class ReinforcementLearningViewModel(
         topicId: Long = -1L,
         taskId: Long = -1L,
         retryAttempt: Int = 0,
-        previouslyExcluded: List<String> = emptyList()
+        previouslyExcluded: List<String> = emptyList(),
+        accumulatedQuestions: List<QuizQuestion> = emptyList(),
+        targetCount: Int = 10
     ) {
         if (courseId == -1L) {
             _uiState.value = ReinforcementState.Error("ID de curso inválido.")
@@ -489,10 +491,14 @@ class ReinforcementLearningViewModel(
                 // question style to force the LLM to generate fundamentally
                 // different questions instead of paraphrasing the same ones.
                 // ═══════════════════════════════════════════════════════════
+                val shortfallNote = if (targetCount < 10)
+                    "\n⚠️ ATENCIÓN: Solo necesitas generar $targetCount ${if (targetCount == 1) "pregunta nueva" else "preguntas nuevas"} (las demás ya fueron guardadas)."
+                else ""
+
                 val retryDifferentiationInstruction = when (retryAttempt) {
-                    0 -> ""
+                    0 -> shortfallNote
                     1 -> """
-                        
+                        $shortfallNote
                         ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: Las preguntas anteriores fueron RECHAZADAS por ser duplicadas.
                         NOTA: El material de referencia ha sido ACTUALIZADO con una NUEVA SECCIÓN del documento (sección ${ragPage + 1}/$ragTotalPages).
                         ESTRATEGIA OBLIGATORIA: Genera preguntas sobre DETALLES NUMÉRICOS, EJEMPLOS CONCRETOS y DATOS ESPECÍFICOS de ESTA NUEVA sección.
@@ -500,7 +506,7 @@ class ReinforcementLearningViewModel(
                         NO preguntes sobre definiciones generales — esas YA EXISTEN.
                     """.trimIndent()
                     2 -> """
-                        
+                        $shortfallNote
                         ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: TODAS las preguntas previas fueron duplicadas.
                         NOTA: Estás viendo la SECCIÓN ${ragPage + 1}/$ragTotalPages del documento — contenido NUEVO respecto al intento anterior.
                         ESTRATEGIA OBLIGATORIA: Genera preguntas de APLICACIÓN y ESCENARIOS PRÁCTICOS.
@@ -509,7 +515,7 @@ class ReinforcementLearningViewModel(
                         NO repitas el estilo de preguntas de conocimiento directo.
                     """.trimIndent()
                     3 -> """
-                        
+                        $shortfallNote
                         ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: AÚN se detectaron duplicados.
                         ESTRATEGIA OBLIGATORIA: Genera preguntas de COMPARACIÓN y CONTRASTE entre conceptos del material.
                         Cada pregunta debe comparar DOS o más elementos del texto.
@@ -517,7 +523,7 @@ class ReinforcementLearningViewModel(
                         PROHIBIDO preguntar sobre un solo concepto aislado.
                     """.trimIndent()
                     4 -> """
-                        
+                        $shortfallNote
                         ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: ÚLTIMO INTENTO.
                         ESTRATEGIA OBLIGATORIA: Genera preguntas de VERDADERO/FALSO reformuladas como opción múltiple.
                         Cada pregunta debe presentar una AFIRMACIÓN y preguntar si es correcta o incorrecta según el material.
@@ -525,7 +531,7 @@ class ReinforcementLearningViewModel(
                         Usa afirmaciones que mezclen datos reales del material con datos inventados sutilmente incorrectos.
                     """.trimIndent()
                     else -> """
-                        
+                        $shortfallNote
                         ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: Genera preguntas COMPLETAMENTE DIFERENTES a todo lo anterior.
                         Usa un enfoque creativo: preguntas de secuencia, de causa-efecto, o de clasificación.
                     """.trimIndent()
@@ -564,8 +570,8 @@ class ReinforcementLearningViewModel(
 
                 val prompt = """
                     Eres un profesor experto generando preguntas de nivel MÁXIMO (10/10).
-                    
-                    OBJETIVO: Generar EXACTAMENTE 10 preguntas de opción múltiple basadas EXCLUSIVAMENTE en el TEMA y la TAREA.
+
+                    OBJETIVO: Generar EXACTAMENTE $targetCount ${if (targetCount == 1) "pregunta" else "preguntas"} de opción múltiple basadas EXCLUSIVAMENTE en el TEMA y la TAREA.
                     
                     ⚠️ REGLA FUNDAMENTAL — FOCO EN TEMA Y TAREA (NO en el curso):
                     Las preguntas deben estar 100% basadas en el TÍTULO y DESCRIPCIÓN del TEMA y la TAREA.
@@ -626,10 +632,8 @@ class ReinforcementLearningViewModel(
                     - PROHIBIDO opciones descartables por absurdas o fuera de tema.
                     - La explicación DEBE decir por qué CADA distractor es incorrecto, no solo la correcta.
                     
-                    DISTRIBUCIÓN OBLIGATORIA (10 preguntas):
-                    - 4 de APLICACIÓN+CONSECUENCIA: "Si haces X, ¿qué efecto produce?" / "¿Qué implica elegir Y?"
-                    - 3 de ANÁLISIS+COMPARACIÓN: "Comparando X e Y, ¿cuál demuestra mayor Z y por qué?"
-                    - 3 de EVALUACIÓN+DECISIÓN: "Te encuentras en el caso de decidir entre A y B considerando C. ¿Cuál es mejor?"
+                    DISTRIBUCIÓN OBLIGATORIA ($targetCount ${if (targetCount == 1) "pregunta" else "preguntas"}):
+                    ${if (targetCount >= 10) "- 4 de APLICACIÓN+CONSECUENCIA: \"Si haces X, ¿qué efecto produce?\" / \"¿Qué implica elegir Y?\"\n                    - 3 de ANÁLISIS+COMPARACIÓN: \"Comparando X e Y, ¿cuál demuestra mayor Z y por qué?\"\n                    - 3 de EVALUACIÓN+DECISIÓN: \"Te encuentras en el caso de decidir entre A y B considerando C. ¿Cuál es mejor?\"" else "- Cada pregunta debe ser de tipo ANÁLISIS, APLICACIÓN o EVALUACIÓN (elige el tipo más adecuado al contenido disponible)."}
                     
                     ══════════════════════════════════════════════════
                     RESUMEN: NIVEL MEDIO (PROHIBIDO) vs NIVEL 10/10 (OBLIGATORIO)
@@ -642,7 +646,7 @@ class ReinforcementLearningViewModel(
                     ══════════════════════════════════════════════════
                     
                     RESTRICCIONES:
-                    1. Genera EXACTAMENTE 10 preguntas. Ni una menos.
+                    1. Genera EXACTAMENTE $targetCount ${if (targetCount == 1) "pregunta" else "preguntas"}. Ni una más ni una menos.
                     2. PROHIBIDO calificar, evaluar o dar feedback. Solo genera preguntas.
                     3. Tu ÚNICA salida debe ser el array JSON.
                     4. Cada pregunta debe ser semánticamente DISTINTA a las existentes (${existingQuestionsForPrompt.size} previas).
@@ -661,7 +665,7 @@ class ReinforcementLearningViewModel(
                     - Cada objeto COMPLETO antes de iniciar el siguiente
                     - Campos en ESTE ORDEN: question, options, correctIndex, explanation
                     - Varía correctIndex (0, 1, 2 o 3)
-                    - Genera exactamente 10 objetos
+                    - Genera exactamente $targetCount ${if (targetCount == 1) "objeto" else "objetos"}
                     
                     Contexto:
                     $contextBuilder
@@ -808,8 +812,8 @@ class ReinforcementLearningViewModel(
 
                     val effectiveSeeds = if (seeds.isNotEmpty()) seeds else listOf("Conceptos Generales", "Fundamentos", "Práctica", "Teoría", "Análisis")
 
-                    // Generate exactly 10 fallback questions if possible
-                    for (i in 1..10) {
+                    // Generate exactly targetCount fallback questions if possible
+                    for (i in 1..targetCount) {
                         val seedIndex = (i - 1) % effectiveSeeds.size
                         val rawSeed = effectiveSeeds[seedIndex].trim()
                         val seedLabel = if (rawSeed.isEmpty()) "este tema" else rawSeed
@@ -860,12 +864,12 @@ class ReinforcementLearningViewModel(
                     val uniqueQuestions = filterDuplicateQuestions(sanitizedGenerated, existingQuestionTexts)
                     Log.d("ReinforcementVM", "🔍 Local dedup: ${sanitizedGenerated.size} generated → ${uniqueQuestions.size} unique (${sanitizedGenerated.size - uniqueQuestions.size} local dupes removed)")
 
-                    // Retry if we still don't have a full set of 10 unique questions.
+                    // Retry if we still don't have enough unique questions for the current targetCount.
                     // Uses escalating prompt strategies on each retry to force different question styles.
-                    if (uniqueQuestions.size < 10 && retryAttempt < MAX_RETRY_ATTEMPTS) {
-                        Log.w("ReinforcementVM", "⚠️ Only ${uniqueQuestions.size}/10 unique questions after local dedup. Retrying with escalated strategy (attempt ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)...")
+                    if (uniqueQuestions.size < targetCount && retryAttempt < MAX_RETRY_ATTEMPTS) {
+                        Log.w("ReinforcementVM", "⚠️ Only ${uniqueQuestions.size}/$targetCount unique questions after local dedup. Retrying with escalated strategy (attempt ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)...")
                         val allExcluded = (existingQuestionTexts + sanitizedGenerated.map { it.question }).distinct()
-                        loadQuestionsInternal(courseId, courseName, topicId, taskId, retryAttempt + 1, allExcluded)
+                        loadQuestionsInternal(courseId, courseName, topicId, taskId, retryAttempt + 1, allExcluded, accumulatedQuestions, targetCount)
                         return@launch
                     }
 
@@ -879,17 +883,17 @@ class ReinforcementLearningViewModel(
                         listOf("Conceptos Generales", "Fundamentos", "Práctica", "Teoría", "Análisis")
                     }
 
-                    var finalQuestions = uniqueQuestions.take(10)
+                    var finalQuestions = uniqueQuestions.take(targetCount)
 
-                    if (finalQuestions.size < 10) {
+                    if (finalQuestions.size < targetCount) {
                         val fallbackCandidates = sanitizeQuestionsForUniqueness(generateFallbackQuestionsFromSeeds(fallbackSeeds))
                         val combinedExisting = (existingQuestionTexts + finalQuestions.map { it.question }).distinct()
                         val fallbackUnique = filterDuplicateQuestions(fallbackCandidates, combinedExisting)
                         finalQuestions = (finalQuestions + fallbackUnique)
                             .distinctBy { normalizeForComparison(it.question) }
-                            .take(10)
+                            .take(targetCount)
 
-                        if (finalQuestions.size < 10) {
+                        if (finalQuestions.size < targetCount) {
                             val relaxedPool = (sanitizedGenerated + fallbackCandidates)
                                 .distinctBy { normalizeForComparison(it.question) }
                                 .filterNot { candidate ->
@@ -900,13 +904,13 @@ class ReinforcementLearningViewModel(
 
                             finalQuestions = (finalQuestions + relaxedPool)
                                 .distinctBy { normalizeForComparison(it.question) }
-                                .take(10)
+                                .take(targetCount)
                         }
                     }
 
-                    if (finalQuestions.size < 10) {
+                    if (finalQuestions.size < targetCount) {
                         val attemptsUsed = retryAttempt + 1
-                        Log.w("ReinforcementVM", "⚠️ Could not build 10 unique-after-history questions after $attemptsUsed attempts; continuing with ${finalQuestions.size} available " +
+                        Log.w("ReinforcementVM", "⚠️ Could not build $targetCount unique-after-history questions after $attemptsUsed attempts; continuing with ${finalQuestions.size} available " +
                             "(ragPage=${ragPage + 1}/$ragTotalPages, totalChunks=$ragTotalChunks, existing=${existingQuestionTexts.size})")
                     }
 
@@ -921,6 +925,8 @@ class ReinforcementLearningViewModel(
                     // ── Save to backend BEFORE showing to user (to catch server-side duplicates) ──
                     var shouldRetry = false
                     var retryExcluded = emptyList<String>()
+                    var retryShortfall = targetCount
+                    var retryAccumulated = accumulatedQuestions
                     
                     if (userId > 0) {
                         try {
@@ -948,16 +954,25 @@ class ReinforcementLearningViewModel(
                                     val savedCount = data?.get("savedCount")?.asInt ?: 0
                                     val allDuplicates = data?.get("allDuplicates")?.asBoolean ?: false
                                     val requiredCount = data?.get("requiredCount")?.asInt ?: 10
-                                    val isShortBatch = savedCount < requiredCount
+                                    // shortfall = how many more unique questions are needed to complete the batch
+                                    val shortfall = data?.get("shortfall")?.asInt
+                                        ?: if (savedCount < requiredCount) (requiredCount - savedCount) else 0
+                                    val isShortBatch = shortfall > 0
 
                                     if ((allDuplicates || isShortBatch) && retryAttempt < MAX_RETRY_ATTEMPTS) {
-                                        Log.w("ReinforcementVM", "⚠️ Backend accepted only $savedCount/$requiredCount unique questions. Retrying with escalated strategy (attempt ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)...")
+                                        Log.w("ReinforcementVM", "⚠️ Backend accepted only $savedCount/$requiredCount unique questions. " +
+                                            "Shortfall=$shortfall — generating only missing questions (attempt ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)...")
                                         val backendExisting = try {
                                             data?.getAsJsonArray("existingQuestions")?.mapNotNull { elem ->
                                                 elem.asJsonObject?.get("question")?.asString
                                             } ?: emptyList()
                                         } catch (_: Exception) { emptyList() }
                                         retryExcluded = (existingQuestionTexts + finalQuestions.map { it.question } + backendExisting).distinct()
+                                        // Accumulate the questions already saved so they are shown to the user at the end
+                                        val newAccumulated = (accumulatedQuestions + finalQuestions)
+                                            .distinctBy { normalizeForComparison(it.question) }
+                                        retryShortfall = shortfall
+                                        retryAccumulated = newAccumulated
                                         shouldRetry = true
                                     } else {
                                         Log.d("ReinforcementVM", "✅ Saved $savedCount/$requiredCount questions via /save-questions")
@@ -972,14 +987,22 @@ class ReinforcementLearningViewModel(
                         }
                     }
 
-                    // If backend flagged duplicates, retry BEFORE showing questions to user
+                    // If backend flagged duplicates, retry generating ONLY the shortfall (not all 10)
                     if (shouldRetry) {
-                        loadQuestionsInternal(courseId, courseName, topicId, taskId, retryAttempt + 1, retryExcluded)
+                        loadQuestionsInternal(
+                            courseId, courseName, topicId, taskId,
+                            retryAttempt + 1, retryExcluded,
+                            retryAccumulated, retryShortfall
+                        )
                         return@launch
                     }
 
                     // All checks passed — show unique questions to the user
-                    _uiState.value = ReinforcementState.Success(finalQuestions)
+                    // Combine accumulated questions (from previous rounds) with the new batch
+                    val questionsToShow = (accumulatedQuestions + finalQuestions)
+                        .distinctBy { normalizeForComparison(it.question) }
+                        .take(10)
+                    _uiState.value = ReinforcementState.Success(questionsToShow)
                 }
                 
                 // Clear pending data - task completed successfully

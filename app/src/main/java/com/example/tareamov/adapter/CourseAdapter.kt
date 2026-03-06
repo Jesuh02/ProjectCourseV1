@@ -766,11 +766,9 @@ class CourseAdapter(
 
         // Robust URL handling
         if (!thumbnailUri.isNullOrEmpty()) {
-            if (thumbnailUri!!.startsWith("/")) {
-                thumbnailUri = "${com.example.tareamov.service.BackendApiService.baseUrl}$thumbnailUri"
-            } else if (!thumbnailUri!!.startsWith("http") && !thumbnailUri!!.startsWith("content://") && !thumbnailUri!!.startsWith("file://")) {
-                // Assume relative path missing leading slash
-                thumbnailUri = "${com.example.tareamov.service.BackendApiService.baseUrl}/$thumbnailUri"
+            if (!thumbnailUri!!.startsWith("http") && !thumbnailUri!!.startsWith("content://") && !thumbnailUri!!.startsWith("file://")) {
+                val key = if (thumbnailUri!!.startsWith("/")) thumbnailUri!!.substring(1) else thumbnailUri!!
+                thumbnailUri = com.example.tareamov.service.BackendApiService.buildProxyFileUrl(key)
             }
         }
         

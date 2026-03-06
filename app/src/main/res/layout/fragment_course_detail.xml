@@ -4,486 +4,474 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/bg_app_gradient"
+    android:background="#080C1A"
     tools:context=".ui.CourseDetailFragment">
 
+    <!-- ═══════════════════════════════════════════════════════════
+         FLOATING NAV BAR (transparent, overlaid on hero image)
+         ═══════════════════════════════════════════════════════════ -->
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/toolbar"
-        android:layout_width="407dp"
-        android:layout_height="77dp"
-        android:layout_marginStart="0dp"
-        android:layout_marginTop="1dp"
-        android:layout_marginEnd="1dp"
-        android:animateLayoutChanges="true"
-        android:background="@drawable/bg_toolbar_gradient"
-        android:clipToPadding="false"
+        android:layout_width="0dp"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@android:color/transparent"
         android:contentInsetLeft="0dp"
         android:contentInsetRight="0dp"
         android:contentInsetStartWithNavigation="0dp"
-        android:elevation="0dp"
-        android:paddingTop="14dp"
-        android:paddingBottom="14dp"
+        android:elevation="6dp"
         android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:popupTheme="@style/ThemeOverlay.AppCompat.Light">
+        app:layout_constraintTop_toTopOf="parent">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:animateLayoutChanges="true"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingStart="16dp"
-            android:paddingEnd="20dp">
+            android:paddingEnd="16dp">
 
+            <!-- Back Button -->
             <ImageButton
                 android:id="@+id/backButton"
-                android:layout_width="46dp"
-                android:layout_height="46dp"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
                 android:background="@drawable/bg_nav_button"
                 android:contentDescription="@string/back_button_desc"
-                android:padding="12dp"
+                android:padding="10dp"
                 android:scaleType="centerInside"
                 android:src="@drawable/ic_arrow_back"
-                android:tint="@android:color/white" />
+                android:tint="#FFFFFF" />
 
-            <LinearLayout
+            <!-- Hidden IDs: Kotlin compatibility (these are set programmatically) -->
+            <ImageView
+                android:id="@+id/courseHeroIcon"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="18dp"
-                android:layout_weight="1"
-                android:gravity="center_vertical"
-                android:orientation="vertical">
+                android:layout_height="0dp"
+                android:visibility="gone" />
 
-                <TextView
-                    android:id="@+id/toolbarSubtitle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:alpha="0.85"
-                    android:fontFamily="@font/sf_pro_display_regular"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="0.12"
-                    android:text="Panel maestro"
-                    android:textColor="#C7D5FF"
-                    android:textSize="11sp" />
+            <TextView
+                android:id="@+id/courseMetaLabel"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
 
-                <TextView
-                    android:id="@+id/toolbarTitle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="@font/sf_pro_display_semibold"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="-0.02"
-                    android:text="Control del curso"
-                    android:textColor="@android:color/white"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:translationY="2dp" />
-            </LinearLayout>
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
 
-            <View
-                android:layout_width="46dp"
-                android:layout_height="46dp"
-                android:alpha="0.0"
+            <TextView
+                android:id="@+id/toolbarSubtitle"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/toolbarTitle"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
+
+            <!-- Edit button (creator only) -->
+            <ImageButton
+                android:id="@+id/editCourseButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
                 android:background="@drawable/bg_nav_button"
-                android:visibility="invisible" />
+                android:contentDescription="Editar curso"
+                android:padding="10dp"
+                android:scaleType="centerInside"
+                android:src="@android:drawable/ic_menu_edit"
+                android:tint="#FFFFFF"
+                android:visibility="gone" />
+
         </LinearLayout>
     </androidx.appcompat.widget.Toolbar>
 
-    <!-- Main Scrollable Content -->
+    <!-- ═══════════════════════════════════════════════════════════
+         MAIN SCROLL (starts from top, hero image sits behind navbar)
+         ═══════════════════════════════════════════════════════════ -->
     <androidx.core.widget.NestedScrollView
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="0dp"
-        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        android:fillViewport="true"
         app:layout_constraintBottom_toTopOf="@id/courseActionBar"
-        android:fillViewport="true">
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="0dp">
+            android:orientation="vertical">
 
-             <!-- Course Title & Hero Section -->
-            <androidx.constraintlayout.widget.ConstraintLayout
-                android:id="@+id/courseTitleContainer"
-                android:layout_width="wrap_content"
-                android:layout_height="284dp"
-                android:layout_marginStart="24dp"
-                android:layout_marginTop="20dp"
-                android:layout_marginEnd="24dp"
-                android:layout_marginBottom="20dp"
-                android:alpha="0"
-                android:animateLayoutChanges="true"
-                android:background="@drawable/bg_course_title_pill"
-                android:clipToPadding="false"
-                android:elevation="12dp"
-                android:minHeight="280dp"
-                android:paddingStart="26dp"
-                android:paddingTop="24dp"
-                android:paddingEnd="26dp"
-                android:paddingBottom="24dp"
-                android:stateListAnimator="@animator/glass_card_state_list"
-                android:transitionName="hero_course_header"
-                android:translationY="-20dp">
+            <!-- ─────────────────────────────────────────────────
+                 HERO IMAGE AREA  (280dp, full width)
+                 ───────────────────────────────────────────────── -->
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="260dp">
 
+                <!-- Hero thumbnail (loaded by Glide from course.thumbnailUri) -->
+                <ImageView
+                    android:id="@+id/courseHeroImageView"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="@null"
+                    android:scaleType="centerCrop"
+                    android:background="#0F1535" />
+
+                <!-- Hero VideoView (hidden initially, auto-plays after 3s if videoUri available) -->
+                <VideoView
+                    android:id="@+id/heroVideoView"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:visibility="gone" />
+
+                <!-- Gradient overlay: transparent top → dark bottom -->
                 <View
                     android:id="@+id/heroAmbientGlow"
-                    android:layout_width="310dp"
-                    android:layout_height="248dp"
-                    android:alpha="0.30"
-                    android:background="@drawable/bg_course_header_glow"
-                    app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toTopOf="parent" />
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:alpha="0.85"
+                    android:background="@drawable/bg_hero_gradient_overlay" />
 
+            </FrameLayout>
+
+            <!-- ─────────────────────────────────────────────────
+                 CYAN → PURPLE ACCENT LINE  (2dp)
+                 ───────────────────────────────────────────────── -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="2dp"
+                android:background="@drawable/bg_accent_line_gradient" />
+
+            <!-- ─────────────────────────────────────────────────
+                 TITLE + DESCRIPTION + TAGS AREA
+                 (wrapped for animation compatibility)
+                 ───────────────────────────────────────────────── -->
+            <LinearLayout
+                android:id="@+id/courseTitleContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:alpha="0"
+                android:animateLayoutChanges="true"
+                android:orientation="vertical"
+                android:transitionName="hero_course_header"
+                android:translationY="20dp">
+
+                <!-- Hidden layout anchor (animation compat) -->
                 <View
-                    android:id="@+id/heroLightSweep"
-                    android:layout_width="200dp"
-                    android:layout_height="200dp"
-                    android:layout_marginTop="-72dp"
-                    android:layout_marginEnd="-52dp"
-                    android:alpha="0.55"
-                    android:animation="@anim/hero_light_sweep_motion"
-                    android:background="@drawable/bg_hero_light_sweep"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintTop_toTopOf="parent" />
-
-                <!-- Header Row with Icon, Meta Label and Edit Button -->
-                <LinearLayout
                     android:id="@+id/heroHeaderRow"
                     android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:animateLayoutChanges="true"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toTopOf="parent">
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
 
-                    <ImageView
-                        android:id="@+id/courseHeroIcon"
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
-                        android:alpha="0.86"
-                        android:background="@drawable/bg_stat_icon_circle"
-                        android:contentDescription="Sello del curso"
-                        android:padding="8dp"
-                        android:src="@drawable/ic_sparkle"
-                        android:tint="#FFFFFF" />
-
-                    <TextView
-                        android:id="@+id/courseMetaLabel"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="10dp"
-                        android:alpha="0"
-                        android:fontFamily="@font/sf_pro_display_semibold"
-                        android:includeFontPadding="false"
-                        android:letterSpacing="0.18"
-                        android:text="Instantánea"
-                        android:textAllCaps="false"
-                        android:textColor="#D7E2FF"
-                        android:textSize="12sp"
-                        android:translationY="-6dp" />
-
-                    <Space
-                        android:layout_width="0dp"
-                        android:layout_height="0dp"
-                        android:layout_weight="1" />
-
-                    <ImageButton
-                        android:id="@+id/editCourseButton"
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
-                        android:layout_marginEnd="8dp"
-                        android:alpha="0.9"
-                        android:background="@drawable/bg_nav_button"
-                        android:contentDescription="Editar curso"
-                        android:padding="12dp"
-                        android:scaleType="centerInside"
-                        android:src="@android:drawable/ic_menu_edit"
-                        android:tint="#F0E7FF"
-                        android:visibility="gone" />
-                </LinearLayout>
-
-                <View
-                    android:id="@+id/courseMetaDivider"
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_marginTop="12dp"
-                    android:alpha="0.4"
-                    android:background="@drawable/course_title_accent"
-                    app:layout_constraintEnd_toEndOf="@id/heroHeaderRow"
-                    app:layout_constraintStart_toStartOf="@id/heroHeaderRow"
-                    app:layout_constraintTop_toBottomOf="@id/heroHeaderRow" />
-
-                <!-- Course Title -->
-                <TextView
-                    android:id="@+id/courseTitleTextView"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:alpha="0"
-                    android:ellipsize="end"
-                    android:fontFamily="@font/sf_pro_display_semibold"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="-0.024"
-                    android:lineSpacingMultiplier="1.18"
-                    android:maxLines="2"
-                    android:shadowColor="#66151930"
-                    android:shadowDx="0"
-                    android:shadowDy="6"
-                    android:shadowRadius="12"
-                    android:textColor="#FFFFFF"
-                    android:textSize="28sp"
-                    android:textStyle="bold"
-                    android:translationY="10dp"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@id/courseMetaDivider"
-                    tools:text="¿Quién nació primero?" />
-
-                <!-- Course Description -->
-                <TextView
-                    android:id="@+id/courseDescriptionTextView"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:alpha="0"
-                    android:ellipsize="end"
-                    android:fontFamily="@font/sf_pro_display_regular"
-                    android:includeFontPadding="false"
-                    android:letterSpacing="0.01"
-                    android:lineSpacingMultiplier="1.35"
-                    android:maxLines="3"
-                    android:textColor="#E8DDFF"
-                    android:textSize="14sp"
-                    android:translationY="16dp"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@id/courseTitleTextView"
-                    tools:text="Explora contenido premium curado para tus estudiantes." />
-
-                <!-- Temática / Category Badge -->
+                <!-- Featured Badge Row  ☆ Destacado -->
                 <LinearLayout
-                    android:id="@+id/courseThematicContainer"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@id/courseDescriptionTextView">
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:paddingTop="20dp">
 
                     <ImageView
-                        android:layout_width="16dp"
-                        android:layout_height="16dp"
-                        android:alpha="0.8"
-                        android:contentDescription="Categoría"
-                        android:src="@drawable/ic_sparkle"
-                        android:tint="#9B7EFF" />
+                        android:layout_width="15dp"
+                        android:layout_height="15dp"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_star"
+                        android:tint="#00D4FF" />
 
                     <TextView
-                        android:id="@+id/courseThematicTextView"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="6dp"
                         android:fontFamily="@font/sf_pro_display_semibold"
                         android:includeFontPadding="false"
-                        android:letterSpacing="0.05"
-                        android:text="Temática: Educación"
-                        android:textColor="#C9B8FF"
-                        android:textSize="13sp"
-                        tools:text="Temática: Programación" />
+                        android:letterSpacing="0.04"
+                        android:text="Destacado"
+                        android:textColor="#00D4FF"
+                        android:textSize="13sp" />
+
                 </LinearLayout>
 
-                <!-- Pricing Section -->
-                <LinearLayout
-                    android:id="@+id/coursePricingContainer"
-                    android:layout_width="0dp"
+                <!-- Course Title (large, bold, white) -->
+                <TextView
+                    android:id="@+id/courseTitleTextView"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:background="@drawable/bg_surface_glass"
+                    android:alpha="0"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/sf_pro_display_semibold"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="-0.024"
+                    android:lineSpacingMultiplier="1.15"
+                    android:maxLines="2"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:paddingTop="10dp"
+                    android:textColor="#E8EAF6"
+                    android:textSize="28sp"
+                    android:textStyle="bold"
+                    android:translationY="10dp"
+                    tools:text="Nested Learning" />
+
+                <!-- Hidden meta divider (animation compat) -->
+                <View
+                    android:id="@+id/courseMetaDivider"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:alpha="0"
+                    android:visibility="gone" />
+
+                <!-- Course Description (gray, multiline) -->
+                <TextView
+                    android:id="@+id/courseDescriptionTextView"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:alpha="0"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/sf_pro_display_regular"
+                    android:includeFontPadding="false"
+                    android:lineSpacingMultiplier="1.4"
+                    android:maxLines="3"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:paddingTop="8dp"
+                    android:textColor="#8B8FA8"
+                    android:textSize="14sp"
+                    android:translationY="16dp"
+                    tools:text="Más allá de las arquitecturas profundas tradicionales" />
+
+                <!-- Tags Row: Category pill + Price pill (with configure button for creators) -->
+                <LinearLayout
+                    android:id="@+id/courseThematicContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:padding="12dp"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@id/courseThematicContainer">
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:paddingTop="14dp"
+                    android:paddingBottom="4dp">
 
-                    <!-- Price Type Icon -->
-                    <ImageView
-                        android:id="@+id/coursePriceIcon"
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:contentDescription="Tipo de curso"
-                        android:src="@android:drawable/ic_menu_info_details"
-                        android:tint="#4CAF50"
-                        tools:tint="#FFB300" />
-
-                    <!-- Price Text -->
+                    <!-- Category tag (purple pill) -->
                     <TextView
-                        android:id="@+id/coursePriceTextView"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="10dp"
-                        android:layout_weight="1"
-                        android:fontFamily="@font/sf_pro_display_semibold"
-                        android:includeFontPadding="false"
-                        android:text="Curso Gratuito"
-                        android:textColor="#FFFFFF"
-                        android:textSize="15sp"
-                        tools:text="$49.99 USD" />
-
-                    <!-- Toggle Price Button (for creators) -->
-                    <Button
-                        android:id="@+id/togglePriceButton"
+                        android:id="@+id/courseThematicTextView"
                         android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:layout_marginStart="8dp"
-                        android:background="@drawable/button_premium"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_tag_purple_pill"
                         android:fontFamily="@font/sf_pro_display_semibold"
                         android:includeFontPadding="false"
-                        android:paddingStart="16dp"
-                        android:paddingEnd="16dp"
-                        android:text="Configurar"
-                        android:textAllCaps="false"
-                        android:textColor="#FFFFFF"
-                        android:textSize="13sp"
-                        android:visibility="gone"
-                        tools:visibility="visible" />
+                        android:paddingStart="14dp"
+                        android:paddingEnd="14dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp"
+                        android:textColor="#9B6BFF"
+                        android:textSize="12sp"
+                        tools:text="Inteligencia Artificial" />
+
+                    <!-- Price pill container (outlined, always visible, shows price + configure for creators) -->
+                    <LinearLayout
+                        android:id="@+id/coursePricingContainer"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_tag_outlined_pill"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp">
+
+                        <!-- Price icon (hidden, Kotlin compatibility) -->
+                        <ImageView
+                            android:id="@+id/coursePriceIcon"
+                            android:layout_width="0dp"
+                            android:layout_height="0dp"
+                            android:contentDescription="@null"
+                            android:src="@android:drawable/ic_menu_info_details"
+                            android:tint="#10B981"
+                            android:visibility="gone" />
+
+                        <!-- Price text (e.g. "Curso Gratuito" or "$49.99 USD") -->
+                        <TextView
+                            android:id="@+id/coursePriceTextView"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/sf_pro_display_semibold"
+                            android:includeFontPadding="false"
+                            android:textColor="#8B8FA8"
+                            android:textSize="12sp"
+                            tools:text="Curso Gratuito" />
+
+                        <!-- Configure button (creator only, shown by Kotlin) -->
+                        <Button
+                            android:id="@+id/togglePriceButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="28dp"
+                            android:layout_marginStart="6dp"
+                            android:background="@drawable/bg_tag_purple_pill"
+                            android:fontFamily="@font/sf_pro_display_semibold"
+                            android:includeFontPadding="false"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp"
+                            android:text="Configurar"
+                            android:textAllCaps="false"
+                            android:textColor="#9B6BFF"
+                            android:textSize="11sp"
+                            android:visibility="gone" />
+
+                    </LinearLayout>
+
                 </LinearLayout>
 
-                <!-- Accent Divider -->
+                <!-- Hidden accent divider (animation compat) -->
                 <View
                     android:id="@+id/courseAccentDivider"
-                    android:layout_width="88dp"
-                    android:layout_height="4dp"
-                    android:layout_marginTop="16dp"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
                     android:alpha="0"
-                    android:background="@drawable/course_title_accent"
-                    android:scaleX="0.64"
-                    android:translationY="10dp"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@id/coursePricingContainer" />
-            </androidx.constraintlayout.widget.ConstraintLayout>
+                    android:visibility="gone" />
 
+            </LinearLayout>
 
-
-            <!-- Add this after the creator info container and before the tabs -->
+            <!-- ─────────────────────────────────────────────────
+                 PROGRESS CARD  (dark card with cyan accent)
+                 ───────────────────────────────────────────────── -->
             <LinearLayout
                 android:id="@+id/courseProgressContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="22dp"
-                android:background="@drawable/bg_surface_glass"
-                android:layout_marginStart="24dp"
-                android:layout_marginEnd="24dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
                 android:layout_marginTop="4dp"
                 android:layout_marginBottom="16dp"
-                android:elevation="6dp"
-                android:visibility="gone"
                 android:alpha="0"
-                android:translationY="28dp">
+                android:animateLayoutChanges="true"
+                android:background="@drawable/bg_dark_card"
+                android:elevation="6dp"
+                android:orientation="vertical"
+                android:padding="20dp"
+                android:translationY="28dp"
+                android:visibility="gone">
 
-                <TextView
-                    android:id="@+id/progressTitleTextView"
+                <!-- Header row: title (left) + percentage (right, cyan) -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Tu Progreso en el Curso"
-                    android:textColor="#FFFFFF"
-                    android:textSize="18sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="12dp"
-                    android:letterSpacing="0.01"
-                    android:fontFamily="@font/sf_pro_display_semibold" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
+                    <TextView
+                        android:id="@+id/progressTitleTextView"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
+                        android:text="Tu Progreso en el Curso"
+                        android:textColor="#E8EAF6"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/progressPercentTextView"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
+                        android:text="0%"
+                        android:textColor="#00D4FF"
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+                <!-- Progress bar (gradient cyan → purple) -->
                 <ProgressBar
                     android:id="@+id/courseProgressBar"
                     style="?android:attr/progressBarStyleHorizontal"
                     android:layout_width="match_parent"
-                    android:layout_height="14dp"
-                    android:progressDrawable="@drawable/progress_bar_drawable"
+                    android:layout_height="8dp"
+                    android:layout_marginTop="14dp"
+                    android:indeterminateOnly="false"
                     android:max="100"
                     android:progress="0"
-                    android:indeterminateOnly="false" />
+                    android:progressDrawable="@drawable/progress_bar_drawable" />
 
+                <!-- Stats row -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
                     android:layout_marginTop="14dp"
-                    android:gravity="center_vertical">
-
-                    <TextView
-                        android:id="@+id/progressPercentTextView"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="0% completado"
-                        android:textColor="#D7CCFF"
-                        android:textSize="14sp"
-                        android:fontFamily="@font/sf_pro_display_semibold"
-                        android:textAllCaps="false" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
                     <TextView
                         android:id="@+id/progressStatusTextView"
-                        android:layout_width="wrap_content"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:text="Calificación: 0/10"
-                        android:textColor="#D7CCFF"
-                        android:textSize="14sp"
+                        android:layout_weight="1"
                         android:fontFamily="@font/sf_pro_display_semibold"
-                        android:textAllCaps="false" />
+                        android:text="Calificación: 0/10"
+                        android:textAllCaps="false"
+                        android:textColor="#8B8FA8"
+                        android:textSize="13sp" />
+
                 </LinearLayout>
 
-                <!-- Certificate Button Container with Animation -->
+                <!-- Certificate button (shown on completion) -->
                 <FrameLayout
                     android:id="@+id/certificateButtonContainer"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="18dp"
-                    android:visibility="gone"
                     android:alpha="0"
-                    android:translationY="16dp">
+                    android:translationY="16dp"
+                    android:visibility="gone">
 
                     <Button
                         android:id="@+id/certificateButton"
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
-                        android:text="Descargar Certificado"
-                        android:textColor="#FFFFFF"
-                        android:textStyle="bold"
-                        android:drawableStart="@drawable/ic_certificate"
+                        android:background="@drawable/certificate_button_background"
                         android:drawablePadding="8dp"
+                        android:drawableStart="@drawable/ic_certificate"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:gravity="center"
                         android:paddingStart="16dp"
                         android:paddingEnd="16dp"
-                        android:background="@drawable/certificate_button_background"
-                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:text="Descargar Certificado"
                         android:textAllCaps="false"
-                        android:gravity="center" />
+                        android:textColor="#FFFFFF"
+                        android:textStyle="bold" />
+
                 </FrameLayout>
+
             </LinearLayout>
 
-            <!-- Payment upsell card for non-creators -->
+            <!-- ─────────────────────────────────────────────────
+                 PAYMENT UPSELL CARD (non-creators, paid courses)
+                 ───────────────────────────────────────────────── -->
             <FrameLayout
                 android:id="@+id/paymentButtonContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="24dp"
-                android:layout_marginEnd="24dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
                 android:layout_marginBottom="16dp"
-                android:background="@drawable/bg_surface_glass"
-                android:padding="22dp"
-                android:visibility="gone"
-                android:elevation="6dp"
                 android:alpha="0"
-                android:translationY="24dp">
+                android:background="@drawable/bg_dark_card"
+                android:elevation="6dp"
+                android:padding="20dp"
+                android:translationY="24dp"
+                android:visibility="gone">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -494,36 +482,37 @@
                         android:id="@+id/paymentTitleTextView"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Curso de Pago"
-                        android:textColor="#FFFFFF"
-                        android:textSize="18sp"
-                        android:textStyle="bold"
+                        android:layout_marginBottom="6dp"
                         android:fontFamily="@font/sf_pro_display_semibold"
-                        android:layout_marginBottom="6dp" />
+                        android:text="Curso de Pago"
+                        android:textColor="#E8EAF6"
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
 
                     <TextView
                         android:id="@+id/paymentDescriptionTextView"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Para acceder al contenido completo de este curso, es necesario realizar un pago."
-                        android:textColor="#D7CCFF"
-                        android:textSize="14sp"
+                        android:layout_marginBottom="16dp"
                         android:fontFamily="@font/sf_pro_display_regular"
-                        android:layout_marginBottom="16dp" />
+                        android:lineSpacingMultiplier="1.4"
+                        android:text="Para acceder al contenido completo de este curso, es necesario realizar un pago."
+                        android:textColor="#8B8FA8"
+                        android:textSize="14sp" />
 
                     <Button
                         android:id="@+id/paymentButton"
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
-                        android:text="Pagar Ahora"
                         android:background="@drawable/bg_action_button_cupertino"
-                        android:drawableStart="@drawable/ic_plus_round"
                         android:drawablePadding="10dp"
+                        android:drawableStart="@drawable/ic_plus_round"
                         android:drawableTint="#FFFFFFFF"
                         android:fontFamily="@font/sf_pro_display_semibold"
                         android:gravity="center"
                         android:paddingStart="16dp"
                         android:paddingEnd="16dp"
+                        android:text="Pagar Ahora"
                         android:textAllCaps="false"
                         android:textColor="#FFFFFF"
                         android:textStyle="bold" />
@@ -532,265 +521,380 @@
                         android:id="@+id/paymentPSEButton"
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
-                        android:text="Pagar con PSE"
+                        android:layout_marginTop="8dp"
                         android:background="@drawable/bg_action_button_pill_outline"
                         android:fontFamily="@font/sf_pro_display_semibold"
                         android:gravity="center"
                         android:paddingStart="16dp"
                         android:paddingEnd="16dp"
+                        android:text="Pagar con PSE"
                         android:textAllCaps="false"
                         android:textColor="#FFFFFF"
-                        android:textStyle="bold"
-                        android:layout_marginTop="8dp" />
+                        android:textStyle="bold" />
+
                 </LinearLayout>
+
             </FrameLayout>
 
-            <!-- Tabs for Contenido / Tareas -->
+            <!-- ─────────────────────────────────────────────────
+                 TAB BAR  (Tema | Tareas) — pill style
+                 ───────────────────────────────────────────────── -->
             <LinearLayout
                 android:id="@+id/courseTabStrip"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:background="@drawable/bg_tab_container_glass"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:paddingStart="6dp"
-                android:paddingEnd="6dp"
-                android:layout_marginStart="24dp"
-                android:layout_marginEnd="24dp"
-                android:layout_marginBottom="18dp"
-                android:elevation="4dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
+                android:layout_marginBottom="20dp"
                 android:alpha="0"
+                android:background="@drawable/bg_tab_container_dark"
+                android:elevation="4dp"
+                android:orientation="horizontal"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
                 android:translationY="20dp">
 
-                <TextView
+                <!-- Tema tab — bg_tab_pill_selector responds to isSelected set in Kotlin -->
+                <LinearLayout
                     android:id="@+id/tabDocumentos"
                     android:layout_width="0dp"
-                    android:layout_height="wrap_content"
+                    android:layout_height="46dp"
                     android:layout_weight="1"
-                    android:text="Contenido"
-                    android:textStyle="bold"
-                    android:gravity="center"
-                    android:padding="12dp"
-                    android:textColor="@color/premium_tab_text_selector"
-                    android:background="@drawable/tab_selector_left"
-                    android:foreground="?attr/selectableItemBackgroundBorderless"
+                    android:background="@drawable/bg_tab_pill_selector"
                     android:clickable="true"
                     android:focusable="true"
-                    android:includeFontPadding="false"
-                    android:fontFamily="@font/sf_pro_display_semibold"
-                    android:textAllCaps="false" />
+                    android:gravity="center"
+                    android:orientation="horizontal"
+                    android:padding="10dp">
 
-                <TextView
+                    <TextView
+                        android:id="@+id/tabDocumentosLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
+                        android:text="Temas"
+                        android:textAllCaps="false"
+                        android:textColor="#E8EAF6"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tabDocumentosCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="7dp"
+                        android:background="@drawable/bg_tab_count_cyan"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
+                        android:minWidth="20dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:gravity="center"
+                        android:text=""
+                        android:textColor="#080C1A"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
+                </LinearLayout>
+
+                <!-- Tareas tab — same selector, inactive by default -->
+                <LinearLayout
                     android:id="@+id/tabTareas"
                     android:layout_width="0dp"
-                    android:layout_height="wrap_content"
+                    android:layout_height="46dp"
                     android:layout_weight="1"
-                    android:text="Tareas"
-                    android:textStyle="bold"
-                    android:gravity="center"
-                    android:padding="12dp"
-                    android:textColor="@color/premium_tab_text_selector"
-                    android:background="@drawable/tab_selector_right"
-                    android:foreground="?attr/selectableItemBackgroundBorderless"
+                    android:background="@drawable/bg_tab_pill_selector"
                     android:clickable="true"
                     android:focusable="true"
-                    android:includeFontPadding="false"
-                    android:fontFamily="@font/sf_pro_display_semibold"
-                    android:textAllCaps="false" />
+                    android:gravity="center"
+                    android:orientation="horizontal"
+                    android:padding="10dp">
+
+                    <TextView
+                        android:id="@+id/tabTareasLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
+                        android:text="Tareas"
+                        android:textAllCaps="false"
+                        android:textColor="#8B8FA8"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tabTareasCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="7dp"
+                        android:background="@drawable/bg_tab_count_purple"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
+                        android:minWidth="20dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:gravity="center"
+                        android:text=""
+                        android:textColor="#FFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
+                </LinearLayout>
+
             </LinearLayout>
 
-            <!-- Section Title -->
+            <!-- ─────────────────────────────────────────────────
+                 SECTION HEADING ROW
+                 ───────────────────────────────────────────────── -->
             <LinearLayout
                 android:id="@+id/sectionHeadingRow"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginStart="24dp"
-                android:layout_marginEnd="24dp"
-                android:layout_marginTop="10dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
                 android:layout_marginBottom="10dp"
                 android:alpha="0"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:translationY="18dp">
 
                 <TextView
+                    android:id="@+id/sectionHeadingTitle"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Contenido del curso"
-                    android:textSize="18sp"
-                    android:textStyle="bold"
-                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/sf_pro_display_semibold"
                     android:includeFontPadding="false"
-                    android:fontFamily="@font/sf_pro_display_semibold" />
+                    android:text="Contenido del Tema"
+                    android:textColor="#E8EAF6"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
 
-                <View
-                    android:layout_width="40dp"
-                    android:layout_height="2dp"
-                    android:background="#6E4CFF"
-                    android:alpha="0.7" />
+                <TextView
+                    android:id="@+id/sectionHeadingSubtitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/sf_pro_display_regular"
+                    android:includeFontPadding="false"
+                    android:textColor="#8B8FA8"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
             </LinearLayout>
 
-            <!-- KEEP ONLY THIS SET -->
+            <!-- ─────────────────────────────────────────────────
+                 TOPICS CONTAINER (dynamically populated)
+                 ───────────────────────────────────────────────── -->
             <LinearLayout
                 android:id="@+id/topicsContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingStart="4dp"
-                android:paddingEnd="4dp"
-                android:paddingBottom="16dp"
-                android:layout_marginStart="12dp"
-                android:layout_marginEnd="12dp"
-                android:layout_marginBottom="16dp"
-                android:background="@android:color/transparent"
+                android:alpha="0"
                 android:animateLayoutChanges="true"
                 android:layoutAnimation="@anim/layout_fall_down"
-                android:alpha="0"
-                android:translationY="24dp">
-                <!-- Dynamically added: item_course_topic_detail.xml, item_course_task_detail.xml, etc. -->
-            </LinearLayout>
+                android:layout_marginBottom="16dp"
+                android:orientation="vertical"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingBottom="16dp"
+                android:translationY="24dp" />
 
+            <!-- ─────────────────────────────────────────────────
+                 EMPTY STATES
+                 ───────────────────────────────────────────────── -->
             <TextView
                 android:id="@+id/noTopicsTextView"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Este curso aún no tiene temas."
-                android:textColor="#C2B8FF"
-                android:gravity="center"
-                android:visibility="gone"
-                android:paddingStart="24dp"
-                android:paddingEnd="24dp"
-                android:paddingTop="20dp"
-                android:paddingBottom="20dp"
-                android:layout_marginStart="24dp"
-                android:layout_marginEnd="24dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
                 android:layout_marginBottom="16dp"
-                android:background="@drawable/bg_surface_glass"
-                android:elevation="4dp"
                 android:alpha="0"
-                android:translationY="18dp"
+                android:background="@drawable/bg_dark_card"
+                android:elevation="4dp"
                 android:fontFamily="@font/sf_pro_display_regular"
-                tools:visibility="visible"/>
+                android:gravity="center"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="24dp"
+                android:paddingBottom="24dp"
+                android:text="Este curso aún no tiene temas."
+                android:textColor="#8B8FA8"
+                android:translationY="18dp"
+                android:visibility="gone"
+                tools:visibility="visible" />
 
             <TextView
                 android:id="@+id/noTasksTextView"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="No hay tareas en este curso."
-                android:textColor="#C2B8FF"
-                android:gravity="center"
-                android:visibility="gone"
-                android:paddingStart="24dp"
-                android:paddingEnd="24dp"
-                android:paddingTop="20dp"
-                android:paddingBottom="20dp"
-                android:layout_marginStart="24dp"
-                android:layout_marginEnd="24dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
                 android:layout_marginBottom="40dp"
-                android:background="@drawable/bg_surface_glass"
-                android:elevation="4dp"
                 android:alpha="0"
-                android:translationY="18dp"
+                android:background="@drawable/bg_dark_card"
+                android:elevation="4dp"
                 android:fontFamily="@font/sf_pro_display_regular"
-                tools:visibility="visible"/>
+                android:gravity="center"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="24dp"
+                android:paddingBottom="24dp"
+                android:text="No hay tareas en este curso."
+                android:textColor="#8B8FA8"
+                android:translationY="18dp"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 
-    <!-- Skeleton Loading Container -->
+    <!-- ═══════════════════════════════════════════════════════════
+         SKELETON LOADING OVERLAY
+         ═══════════════════════════════════════════════════════════ -->
     <FrameLayout
         android:id="@+id/skeletonLayout"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:background="@drawable/bg_app_gradient"
-        android:visibility="gone"
+        android:background="#080C1A"
         android:stateListAnimator="@animator/skeleton_shimmer"
-        app:layout_constraintTop_toBottomOf="@id/toolbar"
-        app:layout_constraintBottom_toTopOf="@id/bottomNavigation">
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
+        app:layout_constraintTop_toTopOf="parent">
 
         <include layout="@layout/layout_course_detail_skeleton" />
+
     </FrameLayout>
 
-    <!-- Course Action Buttons (above bottom navigation) -->
+    <!-- ═══════════════════════════════════════════════════════════
+         COURSE ACTION BAR (creator buttons: + Tema / + Tarea)
+         ═══════════════════════════════════════════════════════════ -->
     <LinearLayout
         android:id="@+id/courseActionBar"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:background="@drawable/bg_surface_glass"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="12dp"
-        android:elevation="10dp"
         android:alpha="0"
+        android:background="@drawable/bg_surface_glass"
+        android:elevation="12dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="10dp"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
         android:translationY="28dp"
         app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
 
-        <Button
+        <!-- + Tema button (gradient pill) -->
+        <LinearLayout
             android:id="@+id/addTopicButton"
             android:layout_width="0dp"
-            android:layout_height="36dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_action_button_cupertino"
-            android:drawableStart="@drawable/ic_plus_round"
-            android:drawablePadding="10dp"
-            android:drawableTint="#FFFFFFFF"
-            android:fontFamily="@font/sf_pro_display_semibold"
-            android:includeFontPadding="false"
-            android:letterSpacing="0.02"
-            android:text="+ Tema"
-            android:textAllCaps="false"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp"
+            android:layout_height="48dp"
             android:layout_marginEnd="6dp"
-            android:stateListAnimator="@null" />
+            android:layout_weight="1"
+            android:background="@drawable/bg_creator_action_button"
+            android:clickable="true"
+            android:elevation="2dp"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:stateListAnimator="@null">
 
-        <Button
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_marginEnd="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_plus_round"
+                android:tint="#FFFFFF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/sf_pro_display_semibold"
+                android:includeFontPadding="false"
+                android:letterSpacing="0.02"
+                android:text="Nuevo Tema"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp" />
+
+        </LinearLayout>
+
+        <!-- + Tarea button (gradient pill, slightly different shade) -->
+        <LinearLayout
             android:id="@+id/addTaskButton"
             android:layout_width="0dp"
-            android:layout_height="36dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_action_button_cupertino"
-            android:drawableStart="@drawable/ic_plus_round"
-            android:drawablePadding="10dp"
-            android:drawableTint="#FFFFFFFF"
-            android:fontFamily="@font/sf_pro_display_semibold"
-            android:includeFontPadding="false"
-            android:letterSpacing="0.02"
-            android:text="+ Tarea"
-            android:textAllCaps="false"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp"
+            android:layout_height="48dp"
             android:layout_marginStart="6dp"
-            android:stateListAnimator="@null" />
+            android:layout_weight="1"
+            android:background="@drawable/bg_entregar_button"
+            android:clickable="true"
+            android:elevation="2dp"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:stateListAnimator="@null">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_marginEnd="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_plus_round"
+                android:tint="#00D4FF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/sf_pro_display_semibold"
+                android:includeFontPadding="false"
+                android:letterSpacing="0.02"
+                android:text="Nueva Tarea"
+                android:textAllCaps="false"
+                android:textColor="#00D4FF"
+                android:textSize="13sp" />
+
+        </LinearLayout>
+
     </LinearLayout>
 
-    <!-- Bottom Navigation using the component -->
+    <!-- ═══════════════════════════════════════════════════════════
+         BOTTOM NAVIGATION
+         ═══════════════════════════════════════════════════════════ -->
     <include
         android:id="@+id/bottomNavigation"
         layout="@layout/component_bottom_navigation"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
 
-    <!-- Move this FrameLayout INSIDE the ConstraintLayout, not after it -->
+    <!-- ═══════════════════════════════════════════════════════════
+         STUDENT PROGRESS FRAGMENT CONTAINER
+         ═══════════════════════════════════════════════════════════ -->
     <FrameLayout
         android:id="@+id/studentProgressFragmentContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
         android:layout_marginBottom="8dp"
-        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"/>
+        app:layout_constraintTop_toBottomOf="@id/toolbar" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

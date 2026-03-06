@@ -16,11 +16,11 @@ data class Course(
     @ColumnInfo(name = "creator_user_id")
     val creatorUserId: Long, // Foreign key to usuarios.id
 
-    @SerializedName("thumbnail_uri")
+    @SerializedName(value = "thumbnailUri", alternate = ["thumbnail_uri", "thumbnail_url"])
     @ColumnInfo(name = "thumbnail_uri")
     val thumbnailUri: String? = null,
 
-    @SerializedName("video_uri")
+    @SerializedName(value = "video_uri", alternate = ["videoUri", "video_uri_string"])
     @ColumnInfo(name = "video_uri")
     val videoUri: String? = null, // Maps to VideoData.videoUriString
 

@@ -684,7 +684,37 @@ class VideoDetailsFragment : Fragment() {
                 folder = "thumbnails/courses"
             )
             if (result is ApiResult.Success) {
-                result.data?.get("publicUrl")?.asString
+                // Backend may return different keys depending on implementation: try common variants
+                val json = result.data
+                val candidates = listOf("publicUrl", "url", "fileUrl", "path")
+                var found: String? = null
+                for (k in candidates) {
+                    try {
+                        val v = json?.get(k)
+                        if (v != null && !v.isJsonNull && v.asString.isNotBlank()) {
+                            found = v.asString
+                            break
+                        }
+                    } catch (e: Exception) {
+                        // ignore and try next
+                    }
+                }
+                if (found == null) {
+                    // fallback: try common nested key 'data.url' or 'data.publicUrl'
+                    try {
+                        val nested = json?.getAsJsonObject("data")
+                        for (k in candidates) {
+                            try {
+                                val v = nested?.get(k)
+                                if (v != null && !v.isJsonNull && v.asString.isNotBlank()) {
+                                    found = v.asString
+                                    break
+                                }
+                            } catch (e: Exception) { }
+                        }
+                    } catch (e: Exception) { }
+                }
+                found
             } else null
         } catch (e: Exception) {
             Log.e("VideoDetailsFragment", "Error uploading thumbnail via backend", e)
