@@ -907,6 +907,9 @@ object BackendApiService {
     suspend fun getCourses(page: Int = 1, limit: Int = 50): ApiResult<List<Course>> =
         executeList(get("/courses?page=$page&pageSize=$limit"))
 
+    suspend fun getPopularCourses(page: Int = 1, limit: Int = 5): ApiResult<List<Course>> =
+        executeList(get("/courses/popular?page=$page&pageSize=$limit"))
+
     /**
      * Get courses with full metadata (total, pagination) as raw JsonObject.
      * Useful for getting total count without fetching all items.
