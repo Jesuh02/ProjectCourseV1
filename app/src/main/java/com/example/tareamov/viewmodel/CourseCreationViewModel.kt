@@ -128,6 +128,8 @@ class CourseCreationViewModel : ViewModel() {
         var name: String = ""
         var description: String = ""
         var orderIndex: Int = 0
+        var dueDate: String? = null
+        var timeLimitMinutes: Int? = null
         val contentItems = mutableListOf<TemporaryContentItem>()
 
         // Convert to Task entity
@@ -137,7 +139,9 @@ class CourseCreationViewModel : ViewModel() {
                 topicId = topicId,
                 name = name,
                 description = if (description.isBlank()) null else description,
-                orderIndex = orderIndex
+                orderIndex = orderIndex,
+                dueDate = dueDate,
+                timeLimitMinutes = timeLimitMinutes
             )
         }
     }

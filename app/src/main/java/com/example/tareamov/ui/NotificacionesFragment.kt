@@ -57,6 +57,11 @@ class NotificacionesFragment : Fragment() {
         bottomNavBinding.activityIconImageView.setColorFilter(whiteColor)
         bottomNavBinding.profileIconImageView.setColorFilter(whiteColor)
 
+        val canUploadContent = sessionManager.hasRole(1) && sessionManager.hasRole(2)
+        val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
+        bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+
         setupRecyclerView()
         setupAdminButton()
         setupNavigation()
@@ -516,14 +521,18 @@ class NotificacionesFragment : Fragment() {
             }
         }
 
-        bottomNavBinding.goToHomeButton.setOnClickListener {
-            try {
-                if (findNavController().currentDestination?.id == R.id.notificacionesFragment) {
-                    findNavController().navigate(R.id.action_notificacionesFragment_to_contentUploadFragment)
+        if (sessionManager.hasRole(1) && sessionManager.hasRole(2)) {
+            bottomNavBinding.goToHomeButton.setOnClickListener {
+                try {
+                    if (findNavController().currentDestination?.id == R.id.notificacionesFragment) {
+                        findNavController().navigate(R.id.action_notificacionesFragment_to_contentUploadFragment)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("NotificacionesFragment", "Navigation error:", e)
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("NotificacionesFragment", "Navigation error:", e)
             }
+        } else {
+            bottomNavBinding.goToHomeButton.setOnClickListener(null)
         }
 
         bottomNavBinding.activityButton.setOnClickListener {

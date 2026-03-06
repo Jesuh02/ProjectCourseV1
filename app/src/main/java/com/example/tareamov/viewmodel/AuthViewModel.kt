@@ -66,9 +66,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                             // Add legacy role ID from user object
                             val roleId = user.get("rol_id")?.asInt ?: 1
-                            sessionManager.addRole(roleId)
-
-                            // Ensure admin role (3) is set if the role name is 'admin'
+                            // Do NOT add the legacy rol_id from the usuarios table to the role set.
+                            // Roles are populated exclusively from the usuarios_roles table via getUserRoles().
+                            // Only set the admin shortcut here when the rolNombre field indicates admin.
                             if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
                                 sessionManager.addRole(3)
                             }

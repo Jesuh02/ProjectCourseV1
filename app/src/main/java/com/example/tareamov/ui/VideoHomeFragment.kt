@@ -607,16 +607,25 @@ class VideoHomeFragment : Fragment() {
             navigateToProfileSafely()
         }
 
-        // Set up button to navigate to the content upload screen
-        view.findViewById<ImageButton>(R.id.goToHomeButton)?.setOnClickListener {
-            // Navigate to ContentUploadFragment first to select a video
-            try {
-                if (findNavController().currentDestination?.id == R.id.videoHomeFragment) {
-                    findNavController().navigate(R.id.action_videoHomeFragment_to_contentUploadFragment)
+        // Set up button to navigate to the content upload screen (requires roles 1 AND 2)
+        val goToHomeButton = view.findViewById<ImageButton>(R.id.goToHomeButton)
+        val goToHomeContainer = goToHomeButton?.parent as? View
+        val canUploadContent = sessionManager.hasRole(1) && sessionManager.hasRole(2)
+        goToHomeButton?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        if (canUploadContent) {
+            goToHomeButton?.setOnClickListener {
+                // Navigate to ContentUploadFragment first to select a video
+                try {
+                    if (findNavController().currentDestination?.id == R.id.videoHomeFragment) {
+                        findNavController().navigate(R.id.action_videoHomeFragment_to_contentUploadFragment)
+                    }
+                } catch (e: Exception) {
+                    Log.e("VideoHomeFragment", "Navigation error (upload): ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.e("VideoHomeFragment", "Navigation error (upload): ${e.message}")
             }
+        } else {
+            goToHomeButton?.setOnClickListener(null)
         }
 
         // Set up Explorar button to navigate to ExploreFragment

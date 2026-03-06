@@ -381,6 +381,23 @@ class ChatBotFragment : Fragment() {
 
     private val sessionId = UUID.randomUUID().toString()
     private var currentFileContext: FileContext? = null
+    private var fallbackArgumentFileName: String? = null
+
+    private fun isInvalidFileName(value: String?): Boolean {
+        return value.isNullOrBlank() ||
+            value.equals("null", ignoreCase = true) ||
+            value.equals("undefined", ignoreCase = true)
+    }
+
+    private fun resolveDisplayFileName(primary: String?, fallback: String? = fallbackArgumentFileName): String {
+        val safePrimary = primary?.trim()?.takeIf { !isInvalidFileName(it) }
+        if (safePrimary != null) return safePrimary
+
+        val safeFallback = fallback?.trim()?.takeIf { !isInvalidFileName(it) }
+        if (safeFallback != null) return safeFallback
+
+        return "archivo sin nombre"
+    }
 
     // Variables para monitorear el cursor y mostrar la lista de tareas
     private var lastCursorPosition = -1
@@ -732,6 +749,7 @@ class ChatBotFragment : Fragment() {
             val submissionId = args.getLong("submissionId", -1L)
             val errorMessage = args.getString("errorMessage")
             val fileName = args.getString("fileName")
+            fallbackArgumentFileName = fileName?.trim()?.takeIf { !isInvalidFileName(it) }
 
             // LOGGING DETALLADO PARA DEBUGGING
             Log.d("ChatBotFragment", "==============================================")
@@ -776,9 +794,10 @@ class ChatBotFragment : Fragment() {
             if (errorMessage != null) {
                 // Mostrar mensaje de error del archivo
                 lifecycleScope.launch {
+                    val safeFileName = resolveDisplayFileName(fileName)
                     val errorChatMessage = ChatMessage(
                         message = "⚠️ **Error con el archivo**\n\n" +
-                                "📁 Archivo: ${fileName ?: "desconocido"}\n" +
+                                "📁 Archivo: $safeFileName\n" +
                                 "❌ Error: $errorMessage\n\n" +
                                 "💬 Puedes seguir usando el chat, pero sin el contexto completo del archivo.\n" +
                                 "Para obtener mejor ayuda, intenta subir el archivo localmente.",
@@ -848,10 +867,13 @@ class ChatBotFragment : Fragment() {
             // Logging mínimo
             Log.d("ChatBotFragment", "🔍 FileContext cargado - submissionId: $submissionId, presente: ${currentFileContext != null}")
             if (currentFileContext != null) {
-                Log.d("ChatBotFragment", "   - fileName: '${currentFileContext!!.fileName}', fileType: '${currentFileContext!!.fileType}'")
+                val safeFileName = resolveDisplayFileName(currentFileContext!!.fileName)
+                currentFileContext = currentFileContext!!.copy(fileName = safeFileName)
+                Log.d("ChatBotFragment", "   - fileName: '$safeFileName', fileType: '${currentFileContext!!.fileType}'")
             }
 
             if (currentFileContext != null) {
+                val displayFileName = resolveDisplayFileName(currentFileContext!!.fileName)
                 // Verificar si es un error específico de Google Drive
                 val isGoogleDriveError = currentFileContext!!.fileType == "google_drive_error"
 
@@ -859,7 +881,7 @@ class ChatBotFragment : Fragment() {
                 val contextMessage = if (isGoogleDriveError) {
                     ChatMessage(
                         message = "📱 **Archivo de Google Drive detectado**\n\n" +
-                                "📄 Nombre: ${currentFileContext!!.fileName}\n" +
+                                "📄 Nombre: $displayFileName\n" +
                                 "⚠️ **No se puede acceder directamente a este archivo**\n\n" +
                                 "Para poder analizar este archivo, necesitas:\n" +
                                 "1. Abrir Google Drive\n" +
@@ -874,7 +896,7 @@ class ChatBotFragment : Fragment() {
                 } else if (hasError) {
                     ChatMessage(
                         message = "📄 **Archivo parcialmente accesible**\n\n" +
-                                "📁 Nombre: ${currentFileContext!!.fileName}\n" +
+                                "📁 Nombre: $displayFileName\n" +
                                 "🔧 Tipo: ${currentFileContext!!.fileType}\n" +
                                 "⚠️ El archivo tiene problemas de acceso, pero intentaré ayudarte con la información disponible.\n\n" +
                                 "Puedes hacerme preguntas y haré lo mejor posible con los datos limitados.",
@@ -886,7 +908,7 @@ class ChatBotFragment : Fragment() {
                 } else {
                     // Mostrar solo el nombre del archivo sin el contenido
                     ChatMessage(
-                        message = "📁 **Archivo cargado:** ${currentFileContext!!.fileName}\n\n" +
+                        message = "📁 **Archivo cargado:** $displayFileName\n\n" +
                                 "✅ Puedes hacerme preguntas sobre este archivo.",
                         isFromUser = false,
                         sessionId = sessionId,

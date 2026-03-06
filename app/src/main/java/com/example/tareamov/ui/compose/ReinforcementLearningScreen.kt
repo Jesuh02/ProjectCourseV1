@@ -21,6 +21,7 @@ import android.content.Context
 import com.bumptech.glide.Glide
 import de.hdodenhof.circleimageview.CircleImageView
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -57,6 +58,7 @@ fun ReinforcementLearningScreen(
     taskId: Long? = null,
     topicId: Long? = null,
     contentItemId: Long? = null,
+    difficulty: String = "HARD",
     onBackClick: () -> Unit,
     onStartClick: () -> Unit,
     viewModel: ReinforcementLearningViewModel? = null // Optional for now to keep compatibility
@@ -153,6 +155,24 @@ fun ReinforcementLearningScreen(
                     fontWeight = FontWeight.Bold,
                     maxLines = 1
                 )
+                // Difficulty badge
+                val (diffEmoji, diffLabel, diffColor) = when (difficulty) {
+                    "EASY"         -> Triple("🌱", "Fácil",      androidx.compose.ui.graphics.Color(0xFF2ECC71))
+                    "INTERMEDIATE" -> Triple("⚡", "Intermedio", androidx.compose.ui.graphics.Color(0xFFF39C12))
+                    else           -> Triple("🔥", "Difícil",    androidx.compose.ui.graphics.Color(0xFFE74C3C))
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(diffColor.copy(alpha = 0.18f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(text = diffEmoji, fontSize = 11.sp)
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(text = diffLabel, color = diffColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
 
                 // Creator row: avatar + username (falls back to instructorName)
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {

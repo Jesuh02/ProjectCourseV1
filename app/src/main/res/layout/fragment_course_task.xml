@@ -155,6 +155,98 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginTop="24dp"
+                    android:text="Entrega"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/sf_pro_display_semibold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/bg_input_glass"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Fecha"
+                            android:textColor="#B8C0FF"
+                            android:textSize="14sp"
+                            android:fontFamily="@font/sf_pro_display_regular" />
+
+                        <TextView
+                            android:id="@+id/dueDateValueTextView"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Sin fecha"
+                            android:textColor="#FFFFFF"
+                            android:textSize="14sp"
+                            android:fontFamily="@font/sf_pro_display_semibold" />
+
+                        <ImageButton
+                            android:id="@+id/pickDueDateButton"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_marginStart="8dp"
+                            android:background="@drawable/bg_nav_button"
+                            android:contentDescription="Seleccionar fecha límite"
+                            android:padding="9dp"
+                            android:src="@drawable/ic_calendar"
+                            android:tint="#FFFFFF" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Hora"
+                            android:textColor="#B8C0FF"
+                            android:textSize="14sp"
+                            android:fontFamily="@font/sf_pro_display_regular" />
+
+                        <TextView
+                            android:id="@+id/dueTimeValueTextView"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="00:00"
+                            android:textColor="#FFFFFF"
+                            android:textSize="14sp"
+                            android:fontFamily="@font/sf_pro_display_semibold" />
+
+                        <ImageButton
+                            android:id="@+id/pickDueTimeButton"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_marginStart="8dp"
+                            android:background="@drawable/bg_nav_button"
+                            android:contentDescription="Seleccionar hora límite"
+                            android:padding="9dp"
+                            android:src="@drawable/ic_clock"
+                            android:tint="#FFFFFF" />
+                    </LinearLayout>
+
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="28dp"
                     android:text="Contenido de la Tarea"
                     android:textColor="#FFFFFF"

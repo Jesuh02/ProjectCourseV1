@@ -72,7 +72,7 @@ import kotlinx.coroutines.launch
         Like::class,  // Polymorphic likes table (replaces VideoLike and UserVideoLike)
         Notification::class  // Add Notification entity
     ],
-    version = 39, // Incremented version: subscriptionDate changed from Long to String?
+    version = 40, // Incremented version: schema change (identity hash mismatch fix)
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

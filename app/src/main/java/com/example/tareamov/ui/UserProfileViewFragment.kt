@@ -195,9 +195,17 @@ class UserProfileViewFragment : Fragment() {
             findNavController().navigate(R.id.action_userProfileViewFragment_to_exploreFragment)
         }
         
-        // Add/Upload Button (ic_add)
-        bottomNavBinding.goToHomeButton.setOnClickListener {
-            findNavController().navigate(R.id.action_userProfileViewFragment_to_contentUploadFragment)
+        // Add/Upload Button (ic_add) only for users with both roles 1 and 2
+        val canUploadContent = sessionManager.hasRole(1) && sessionManager.hasRole(2)
+        val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
+        bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        if (canUploadContent) {
+            bottomNavBinding.goToHomeButton.setOnClickListener {
+                findNavController().navigate(R.id.action_userProfileViewFragment_to_contentUploadFragment)
+            }
+        } else {
+            bottomNavBinding.goToHomeButton.setOnClickListener(null)
         }
         
         // Activity Button (ic_activity)

@@ -579,9 +579,38 @@
         <action
             android:id="@+id/action_selectTaskFragment_to_courseTaskFragment"
             app:destination="@id/courseTaskFragment" />
-        <!-- New action: select task -> reinforcement learning -->
+        <!-- Select task -> difficulty selection (new flow) -->
         <action
             android:id="@+id/action_selectTaskFragment_to_reinforcementLearningFragment"
+            app:destination="@id/selectDifficultyFragment" />
+    </fragment>
+
+    <!-- Difficulty Selection Fragment -->
+    <fragment
+        android:id="@+id/selectDifficultyFragment"
+        android:name="com.example.tareamov.ui.DifficultySelectionFragment"
+        android:label="Seleccionar Dificultad">
+        <argument
+            android:name="courseId"
+            app:argType="long" />
+        <argument
+            android:name="courseName"
+            app:argType="string" />
+        <argument
+            android:name="topicId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="taskId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="taskName"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
+        <action
+            android:id="@+id/action_selectDifficultyFragment_to_reinforcementLearningFragment"
             app:destination="@id/reinforcementLearningFragment" />
     </fragment>
 
@@ -759,6 +788,18 @@
         <argument
             android:name="instructorName"
             app:argType="string" />
+        <argument
+            android:name="difficulty"
+            app:argType="string"
+            android:defaultValue="HARD" />
+        <argument
+            android:name="topicId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="taskId"
+            app:argType="long"
+            android:defaultValue="-1L" />
     </fragment>
 
     <!-- Admin Dashboard Fragment -->

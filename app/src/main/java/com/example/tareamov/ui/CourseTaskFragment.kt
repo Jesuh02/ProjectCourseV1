@@ -1,6 +1,8 @@
 package com.example.tareamov.ui
 
 import android.app.Activity
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -33,6 +35,10 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.io.File
 import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 import android.widget.ImageView
 
 class CourseTaskFragment : Fragment() {
@@ -46,8 +52,11 @@ class CourseTaskFragment : Fragment() {
 
     private lateinit var taskNameEditText: EditText
     private lateinit var taskDescriptionEditText: EditText
+    private lateinit var dueDateValueTextView: TextView
+    private lateinit var dueTimeValueTextView: TextView
     private lateinit var contentContainer: LinearLayout
     private lateinit var videoManager: VideoManager
+    private var dueDateCalendar: Calendar? = null
 
     // Use the shared ViewModel
     private val viewModel: CourseCreationViewModel by activityViewModels()
@@ -165,18 +174,25 @@ class CourseTaskFragment : Fragment() {
 
         taskNameEditText = view.findViewById(R.id.taskNameEditText)
         taskDescriptionEditText = view.findViewById(R.id.taskDescriptionEditText)
+        dueDateValueTextView = view.findViewById(R.id.dueDateValueTextView)
+        dueTimeValueTextView = view.findViewById(R.id.dueTimeValueTextView)
         contentContainer = view.findViewById(R.id.contentContainer)
         val taskTitleTextView = view.findViewById<TextView>(R.id.taskTitleTextView)
         val backButton = view.findViewById<ImageButton>(R.id.backButton)
         val saveTaskButton = view.findViewById<Button>(R.id.saveTaskButton)
         val addVideoButton = view.findViewById<LinearLayout>(R.id.addVideoButton)
         val addDocumentButton = view.findViewById<LinearLayout>(R.id.addDocumentButton)
+        val pickDueDateButton = view.findViewById<ImageButton>(R.id.pickDueDateButton)
+        val pickDueTimeButton = view.findViewById<ImageButton>(R.id.pickDueTimeButton)
 
         backButton.setOnClickListener { findNavController().navigateUp() }
         saveTaskButton.setOnClickListener { saveTask() }
 
         addVideoButton.setOnClickListener { openGalleryForVideo() }
         addDocumentButton.setOnClickListener { openDocumentPicker() }
+        pickDueDateButton.setOnClickListener { openDueDatePicker() }
+        pickDueTimeButton.setOnClickListener { openDueTimePicker() }
+        updateDueDateUI()
         // addVideoButton.setOnClickListener { openGalleryForVideo() }
         // addDocumentButton.setOnClickListener { openDocumentPicker() }
 
@@ -224,6 +240,8 @@ class CourseTaskFragment : Fragment() {
         val currentTask = viewModel.getCurrentTask() ?: viewModel.createNewTask()
         currentTask.name = taskName
         currentTask.description = taskDescription
+        currentTask.dueDate = buildDueDateIsoUtc()
+        currentTask.timeLimitMinutes = null
 
         // Save content items
         currentTask.contentItems.clear()
@@ -246,6 +264,7 @@ class CourseTaskFragment : Fragment() {
         if (currentTask != null) {
             taskNameEditText.setText(currentTask.name)
             taskDescriptionEditText.setText(currentTask.description)
+            setDueDateFromApi(currentTask.dueDate)
 
             // Load content items
             contentContainer.removeAllViews()
@@ -274,6 +293,7 @@ class CourseTaskFragment : Fragment() {
                 val task = existingTask!!
                 taskNameEditText.setText(task.name)
                 taskDescriptionEditText.setText(task.description ?: "")
+                setDueDateFromApi(task.dueDate)
                 topicId = task.topicId // Ensure topicId is set from the loaded task
 
                 // Load content items for the task from API
@@ -414,10 +434,105 @@ class CourseTaskFragment : Fragment() {
         }
     }
 
+    private fun openDueDatePicker() {
+        val calendar = (dueDateCalendar ?: Calendar.getInstance()).clone() as Calendar
+        DatePickerDialog(
+            requireContext(),
+            { _, year, month, dayOfMonth ->
+                val updated = (dueDateCalendar ?: Calendar.getInstance()).clone() as Calendar
+                updated.set(Calendar.YEAR, year)
+                updated.set(Calendar.MONTH, month)
+                updated.set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                dueDateCalendar = updated
+                updateDueDateUI()
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
+    private fun openDueTimePicker() {
+        val calendar = (dueDateCalendar ?: Calendar.getInstance()).clone() as Calendar
+        TimePickerDialog(
+            requireContext(),
+            { _, hourOfDay, minute ->
+                val updated = (dueDateCalendar ?: Calendar.getInstance()).clone() as Calendar
+                updated.set(Calendar.HOUR_OF_DAY, hourOfDay)
+                updated.set(Calendar.MINUTE, minute)
+                updated.set(Calendar.SECOND, 0)
+                updated.set(Calendar.MILLISECOND, 0)
+                dueDateCalendar = updated
+                updateDueDateUI()
+            },
+            calendar.get(Calendar.HOUR_OF_DAY),
+            calendar.get(Calendar.MINUTE),
+            true
+        ).show()
+    }
+
+    private fun updateDueDateUI() {
+        val calendar = dueDateCalendar
+        if (calendar == null) {
+            dueDateValueTextView.text = "Sin fecha"
+            dueTimeValueTextView.text = "00:00"
+            return
+        }
+
+        val dateFmt = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+        val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+        dueDateValueTextView.text = dateFmt.format(calendar.time)
+        dueTimeValueTextView.text = timeFmt.format(calendar.time)
+    }
+
+    private fun setDueDateFromApi(rawDueDate: String?) {
+        if (rawDueDate.isNullOrBlank()) {
+            dueDateCalendar = null
+            updateDueDateUI()
+            return
+        }
+
+        val formats = listOf(
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") },
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") },
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US),
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US),
+            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        )
+
+        var parsedDate: java.util.Date? = null
+        for (fmt in formats) {
+            try {
+                parsedDate = fmt.parse(rawDueDate)
+                if (parsedDate != null) break
+            } catch (_: Exception) {
+                // Try next format.
+            }
+        }
+
+        if (parsedDate == null) {
+            Log.w("CourseTaskFragment", "Could not parse due date: $rawDueDate")
+            dueDateCalendar = null
+            updateDueDateUI()
+            return
+        }
+
+        dueDateCalendar = Calendar.getInstance().apply { time = parsedDate }
+        updateDueDateUI()
+    }
+
+    private fun buildDueDateIsoUtc(): String? {
+        val calendar = dueDateCalendar ?: return null
+        val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+        fmt.timeZone = TimeZone.getTimeZone("UTC")
+        return fmt.format(calendar.time)
+    }
+
     // In the saveTask method, update the navigation after saving
     private fun saveTask() {
         val taskName = taskNameEditText.text.toString().trim()
         val taskDescription = taskDescriptionEditText.text.toString().trim()
+        val dueDateIso = buildDueDateIsoUtc()
         var courseId = arguments?.getLong("courseId", -1L) ?: -1L
         val courseName = arguments?.getString("courseName") ?: "Curso sin nombre"
         val topicNumber = arguments?.getInt("topicNumber", 0) ?: 0
@@ -502,7 +617,9 @@ class CourseTaskFragment : Fragment() {
                     topicId = topicId,
                     name = taskName,
                     description = taskDescription.ifBlank { null },
-                    orderIndex = 0
+                    orderIndex = 0,
+                    dueDate = dueDateIso,
+                    timeLimitMinutes = null
                 )
 
                 Log.d("CourseTaskFragment", "Attempting to save task: id=${remoteTask.id}, name=${remoteTask.name}, topicId=${remoteTask.topicId}, isUpdate=${taskId > 0}")
@@ -514,7 +631,9 @@ class CourseTaskFragment : Fragment() {
                             Log.d("CourseTaskFragment", "Updating existing task $taskId")
                             val updateResult = BackendApiService.updateTask(taskId, mapOf(
                                 "title" to remoteTask.name,
-                                "description" to remoteTask.description
+                                "description" to remoteTask.description,
+                                "dueDate" to remoteTask.dueDate,
+                                "timeLimitMinutes" to null
                             ))
                             if (updateResult is ApiResult.Success) {
                                 Log.d("CourseTaskFragment", "Task updated successfully")
@@ -529,7 +648,9 @@ class CourseTaskFragment : Fragment() {
                                 topicId = remoteTask.topicId,
                                 name = remoteTask.name,
                                 description = remoteTask.description,
-                                orderIndex = remoteTask.orderIndex
+                                orderIndex = remoteTask.orderIndex,
+                                dueDate = remoteTask.dueDate,
+                                timeLimitMinutes = null
                             ))
                             if (createResult is ApiResult.Success && createResult.data != null) {
                                 Log.d("CourseTaskFragment", "Task inserted with id=${createResult.data.id}")

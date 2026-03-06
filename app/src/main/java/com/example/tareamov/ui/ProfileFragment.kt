@@ -139,9 +139,19 @@ class ProfileFragment : Fragment() {
             updateBottomNavSelection(bottomNavBinding, "explore")
             findNavController().navigate(R.id.action_profileFragment_to_exploreFragment)
         }
-        bottomNavBinding.goToHomeButton.setOnClickListener {
-            findNavController().navigate(R.id.action_profileFragment_to_contentUploadFragment)
+
+        val canUploadContent = sessionManager.hasRole(1) && sessionManager.hasRole(2)
+        val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
+        bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        if (canUploadContent) {
+            bottomNavBinding.goToHomeButton.setOnClickListener {
+                findNavController().navigate(R.id.action_profileFragment_to_contentUploadFragment)
+            }
+        } else {
+            bottomNavBinding.goToHomeButton.setOnClickListener(null)
         }
+
         bottomNavBinding.activityButton.setOnClickListener {
             updateBottomNavSelection(bottomNavBinding, "activity")
             findNavController().navigate(R.id.action_profileFragment_to_notificacionesFragment)
@@ -343,10 +353,13 @@ class ProfileFragment : Fragment() {
         menuItems.forEach { (id, message) ->
             val itemView = view.findViewById<LinearLayout>(id) ?: return@forEach
             
-            // Ocultar "Panel de control del creador" si el usuario no tiene rol 2
-            if (id == R.id.creatorDashboardItem && !sessionManager.hasRole(2)) {
-                itemView.visibility = View.GONE
-                return@forEach
+            // Mostrar "Panel de control del creador" solo para usuarios con rol 2
+            if (id == R.id.creatorDashboardItem) {
+                val hasCreatorRole = sessionManager.hasRole(2)
+                itemView.visibility = if (hasCreatorRole) View.VISIBLE else View.GONE
+                if (!hasCreatorRole) {
+                    return@forEach
+                }
             }
             
             if (id == R.id.myChannelItem) {
@@ -413,6 +426,14 @@ class ProfileFragment : Fragment() {
             animateButtonPress(clickedView)
 
             viewLifecycleOwner.lifecycleScope.launch {
+                val currentText = whatsappStatusText!!.text.toString()
+
+                // Unlink must always work regardless of channel availability
+                if (currentText.contains("Desvincular")) {
+                    showUnlinkWhatsAppDialog(whatsappStatusText!!, whatsappStatusBadge!!)
+                    return@launch
+                }
+
                 // Si el canal está marcado como no disponible, reintentar comprobación
                 if (!isWhatsAppChannelAvailable) {
                     val available = fetchAndUpdateWhatsAppStatus(whatsappStatusText!!, whatsappStatusBadge!!)
@@ -430,10 +451,10 @@ class ProfileFragment : Fragment() {
                     }
                 }
 
-                val currentText = whatsappStatusText!!.text.toString()
-                if (currentText.contains("Desvincular")) {
+                val updatedText = whatsappStatusText!!.text.toString()
+                if (updatedText.contains("Desvincular")) {
                     showUnlinkWhatsAppDialog(whatsappStatusText!!, whatsappStatusBadge!!)
-                } else if (currentText.contains("Verificar")) {
+                } else if (updatedText.contains("Verificar")) {
                     showLinkWhatsAppDialog()
                 } else {
                     showLinkWhatsAppDialog()
@@ -511,7 +532,19 @@ class ProfileFragment : Fragment() {
 
                     isWhatsAppChannelAvailable = channelAvailable
 
-                    if (!channelAvailable) {
+                    if (isLinked) {
+                        // Always show unlink option regardless of channel availability
+                        textView.text = "Desvincular WhatsApp"
+                        val linkedPhone = if (phone.isNotEmpty()) phone else providerPhone
+                        val viaInfo = if (providerName.isNotEmpty()) " · via $providerName" else ""
+                        val channelNote = if (!channelAvailable) " · servicio no disponible" else ""
+                        whatsappSubtitleText?.text = if (linkedPhone.isNotEmpty()) "$linkedPhone$viaInfo$channelNote" else "Cuenta vinculada$viaInfo$channelNote"
+                        badge.text = "VINCULADO"
+                        badge.setTextColor(android.graphics.Color.parseColor("#25D366"))
+                        badge.visibility = View.VISIBLE
+                        whatsappIconView?.backgroundTintList =
+                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#FF3B30"))
+                    } else if (!channelAvailable) {
                         textView.text = "WhatsApp no disponible"
                         whatsappSubtitleText?.text = "El servicio no está disponible ahora"
                         badge.text = "NO DISPONIBLE"
@@ -520,18 +553,6 @@ class ProfileFragment : Fragment() {
                         whatsappIconView?.backgroundTintList =
                             android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#555555"))
                         return channelAvailable
-                    }
-
-                    if (isLinked) {
-                        textView.text = "Desvincular WhatsApp"
-                        val linkedPhone = if (phone.isNotEmpty()) phone else providerPhone
-                        val viaInfo = if (providerName.isNotEmpty()) " · via $providerName" else ""
-                        whatsappSubtitleText?.text = if (linkedPhone.isNotEmpty()) "$linkedPhone$viaInfo" else "Cuenta vinculada$viaInfo"
-                        badge.text = "VINCULADO"
-                        badge.setTextColor(android.graphics.Color.parseColor("#25D366"))
-                        badge.visibility = View.VISIBLE
-                        whatsappIconView?.backgroundTintList =
-                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#FF3B30"))
                     } else if (otpPending && phone.isNotEmpty()) {
                         textView.text = "Verificar WhatsApp"
                         whatsappSubtitleText?.text = "Código enviado a $phone — toca para verificar"
@@ -772,7 +793,16 @@ class ProfileFragment : Fragment() {
                 when (result) {
                     is ApiResult.Success -> {
                         Toast.makeText(requireContext(), "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
-                        // Refrescar estado desde el backend para confirmar el cambio
+                        // Update UI immediately (don't rely solely on backend status refresh which may return stale data)
+                        textView.text = "Vincular WhatsApp"
+                        badge.text = "NO VINCULADO"
+                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                        badge.visibility = View.VISIBLE
+                        whatsappSubtitleText?.text = "Conecta tu cuenta para recibir notificaciones"
+                        whatsappIconView?.backgroundTintList =
+                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#25D366"))
+                        isWhatsAppChannelAvailable = true
+                        // Also confirm with backend
                         fetchAndUpdateWhatsAppStatus(textView, badge)
                     }
                     is ApiResult.Error -> {

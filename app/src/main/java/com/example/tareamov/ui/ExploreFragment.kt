@@ -486,9 +486,21 @@ class ExploreFragment : Fragment() {
         bottomNavBinding.exploreButton.setOnClickListener {
             // Ya estás en Explorar, puedes dejarlo vacío o recargar
         }
-        bottomNavBinding.goToHomeButton.setOnClickListener {
-            findNavController().navigate(R.id.action_exploreFragment_to_contentUploadFragment)
+
+        val canUploadContent = com.example.tareamov.util.SessionManager
+            .getInstance(requireContext())
+            .run { hasRole(1) && hasRole(2) }
+        val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
+        bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        if (canUploadContent) {
+            bottomNavBinding.goToHomeButton.setOnClickListener {
+                findNavController().navigate(R.id.action_exploreFragment_to_contentUploadFragment)
+            }
+        } else {
+            bottomNavBinding.goToHomeButton.setOnClickListener(null)
         }
+
         bottomNavBinding.activityButton.setOnClickListener {
             updateBottomNavSelection(bottomNavBinding, "activity")
             findNavController().navigate(R.id.action_exploreFragment_to_notificacionesFragment)

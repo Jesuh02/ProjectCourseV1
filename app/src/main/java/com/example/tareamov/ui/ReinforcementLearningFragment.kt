@@ -72,7 +72,11 @@ class ReinforcementLearningFragment : Fragment() {
         fragmentCourseId = courseId
         val topicId = arguments?.getLong("topicId") ?: -1L
         val taskId = arguments?.getLong("taskId") ?: -1L
-        
+        val difficulty = arguments?.getString("difficulty") ?: "HARD"
+
+        // Apply difficulty before any load so the ViewModel uses it from the start
+        viewModel.setDifficulty(difficulty)
+
         // Load context information immediately when fragment is created
         if (courseId != -1L) {
             viewModel.loadContextInfo(courseId, topicId, taskId)
@@ -93,6 +97,7 @@ class ReinforcementLearningFragment : Fragment() {
                 val topicId = arguments?.getLong("topicId") ?: -1L
                 val taskId = arguments?.getLong("taskId") ?: -1L
                 val instructorArg = arguments?.getString("instructorName")
+                val difficulty = arguments?.getString("difficulty") ?: "HARD"
 
                 // Fetch creator username and avatar asynchronously and expose to Compose
                 val creatorInfo = produceState<Pair<String?, String?>>(initialValue = Pair(instructorArg, null)) {
@@ -137,6 +142,7 @@ class ReinforcementLearningFragment : Fragment() {
                     instructorName = instructorArg ?: "Docente no especificado",
                     creatorUsername = creatorInfo.value.first,
                     creatorAvatarUrl = creatorInfo.value.second,
+                    difficulty = difficulty,
                     onBackClick = {
                         findNavController().popBackStack()
                     },
@@ -169,7 +175,7 @@ class ReinforcementLearningFragment : Fragment() {
 
                             // Always invoke the ViewModel; it will use the forced base URL set above
                             // and will do a very fast local attempt or immediate cloud call accordingly.
-                            viewModel.forceRegenerateQuestions(courseId, courseName, topicId, taskId)
+                            viewModel.forceRegenerateQuestions(courseId, courseName, topicId, taskId, difficulty)
                             android.util.Log.d("ReinforceFrag", "═══════════════════════════════════════════════════")
                         }
                     },

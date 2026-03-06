@@ -22,8 +22,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import kotlin.random.Random
 import okhttp3.OkHttpClient
 
 data class QuizQuestion(
@@ -92,14 +94,19 @@ class ReinforcementLearningViewModel(
     // Configuration: STRICTLY use BuildConfig.BACKEND_URL per build variant (QA → QA server, Production → Production server)
     // No local network scanning — each build variant MUST only communicate with its own server.
     private val API_KEY = "tareamov-mcp-api-key-2025-secure"
+    private val QA_LOCKED_BACKEND_URL = "https://mcp-backenddeploy-production-4ed0.up.railway.app/"
+    private val isQaBuild: Boolean by lazy {
+        com.example.tareamov.BuildConfig.FLAVOR.equals("qa", ignoreCase = true) ||
+            com.example.tareamov.BuildConfig.APPLICATION_ID.endsWith(".qa")
+    }
     private val BASE_URL: String by lazy {
-        val railwayUrl = com.example.tareamov.BuildConfig.BACKEND_URL.ifBlank { "https://mcp-backenddeploy-production.up.railway.app" }
-        if (railwayUrl.endsWith("/")) railwayUrl else "$railwayUrl/"
+        val configured = com.example.tareamov.BuildConfig.BACKEND_URL.ifBlank {
+            if (isQaBuild) QA_LOCKED_BACKEND_URL else "https://mcp-backenddeploy-production.up.railway.app"
+        }
+        val normalized = normalizeBaseUrl(configured)
+        if (isQaBuild) enforceQaBackendUrl(normalized) else normalized
     }
     private val OLLAMA_URL = BASE_URL.trimEnd('/')
-    private val FALLBACK_BACKEND_URLS = listOf(
-        "https://mcp-backenddeploy-production.up.railway.app/"
-    )
 
     init {
         // Initialize BackendApiService and ServerEndpointResolver
@@ -112,18 +119,33 @@ class ReinforcementLearningViewModel(
 
     private fun normalizeBaseUrl(url: String): String {
         val trimmed = url.trim()
-        if (trimmed.isBlank()) return BASE_URL
+        if (trimmed.isBlank()) return ""
         return if (trimmed.endsWith("/")) trimmed else "$trimmed/"
     }
 
-    private fun createApi(baseUrl: String = BASE_URL): MicroservicioApi {
+    private fun enforceQaBackendUrl(url: String): String {
+        val locked = normalizeBaseUrl(QA_LOCKED_BACKEND_URL)
+        val candidate = normalizeBaseUrl(url)
+        return if (candidate == locked) {
+            locked
+        } else {
+            Log.w("ReinforcementVM", "QA backend override blocked: $candidate -> $locked")
+            locked
+        }
+    }
+
+    private fun createApi(baseUrl: String = BASE_URL, extendedTimeout: Boolean = false): MicroservicioApi {
         val effectiveBase = normalizeBaseUrl(baseUrl)
+
+        // LLM generation can take 2-4 min; use extended timeout on retry after SocketTimeoutException
+        val readTimeoutSec = if (extendedTimeout) 300L else 180L
+        val writeTimeoutSec = if (extendedTimeout) 300L else 180L
 
         val okHttpClient = OkHttpClient.Builder()
             .dns(FallbackDnsResolver)
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(90, TimeUnit.SECONDS)
-            .writeTimeout(90, TimeUnit.SECONDS)
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(readTimeoutSec, TimeUnit.SECONDS)
+            .writeTimeout(writeTimeoutSec, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val originalRequest = chain.request()
                 val builder = originalRequest.newBuilder()
@@ -150,13 +172,20 @@ class ReinforcementLearningViewModel(
         return retrofit.create(MicroservicioApi::class.java)
     }
 
+    /** Current difficulty level name: "EASY", "INTERMEDIATE", or "HARD" (default). */
+    private var currentDifficulty: String = "HARD"
+
+    fun setDifficulty(difficulty: String) {
+        currentDifficulty = difficulty
+    }
+
     fun loadQuestions(courseId: Long, courseName: String, topicId: Long = -1L, taskId: Long = -1L) {
         loadQuestionsInternal(courseId, courseName, topicId, taskId, retryAttempt = 0, previouslyExcluded = emptyList())
     }
 
     companion object {
         /** Maximum number of retry attempts when all generated questions are duplicates. */
-        private const val MAX_RETRY_ATTEMPTS = 5
+        private const val MAX_RETRY_ATTEMPTS = 3
         private const val DUPLICATE_SIMILARITY_THRESHOLD = 0.85
     }
 
@@ -177,7 +206,8 @@ class ReinforcementLearningViewModel(
         retryAttempt: Int = 0,
         previouslyExcluded: List<String> = emptyList(),
         accumulatedQuestions: List<QuizQuestion> = emptyList(),
-        targetCount: Int = 10
+        targetCount: Int = 10,
+        cachedContextData: com.google.gson.JsonObject? = null
     ) {
         if (courseId == -1L) {
             _uiState.value = ReinforcementState.Error("ID de curso inválido.")
@@ -207,97 +237,121 @@ class ReinforcementLearningViewModel(
                 val userId = sessionManager.getUserId()
 
                 // 2. Fetch unified Learning Context from backend (single API call)
-                // Hybrid Retrieval: on retries, pass an explicit sessionIndex to
-                // force the backend to return a DIFFERENT section of the document.
-                // Also pass a query derived from topic/task for semantic search.
-                // On the first attempt (retryAttempt=0), let the backend auto-calculate
-                // the page based on how many questions already exist in history.
+                // On retries, reuse cached context to avoid redundant network round-trips.
+                // Only the LLM prompt changes on retries (escalating strategy).
                 val sessionIndex = if (retryAttempt > 0) retryAttempt else null
                 
-                // Build semantic search query from course/topic/task context
                 val semanticQuery = buildSemanticQuery(courseName, topicId, taskId)
-                // Hybrid retrieval v2: semantic + window expansion ONLY.
-                // Progressive is used ONLY as fallback when semantic returns 0 results.
-                // sessionIndex is passed for progressive fallback page calculation.
                 val retrievalMode = "hybrid"
                 
-                val learningContext = withContext(Dispatchers.IO) {
-                    BackendApiService.getLearningContext(
-                        courseId = courseId,
-                        topicId = if (topicId > 0) topicId else null,
-                        taskId = if (taskId > 0) taskId else null,
-                        sessionIndex = sessionIndex,
-                        query = semanticQuery,
+                val contextData: com.google.gson.JsonObject? = if (cachedContextData != null && retryAttempt > 0) {
+                    // Reuse cached context from previous attempt — skip network call
+                    Log.d("ReinforcementVM", "♻️ Reusing cached learning context for retry #$retryAttempt")
+                    cachedContextData
+                } else {
+                    val learningContext = withContext(Dispatchers.IO) {
+                        BackendApiService.getLearningContext(
+                            courseId = courseId,
+                            topicId = if (topicId > 0) topicId else null,
+                            taskId = if (taskId > 0) taskId else null,
+                            sessionIndex = sessionIndex,
+                            query = semanticQuery,
                         retrievalMode = retrievalMode
                     )
                 }
-
-                // Parse the unified context response
-                val contextData = when (learningContext) {
-                    is ApiResult.Success -> learningContext.data
-                    is ApiResult.Error -> {
-                        Log.e("ReinforcementVM", "Failed to fetch learning context: ${learningContext.message}")
-                        null
+                    when (learningContext) {
+                        is ApiResult.Success -> learningContext.data
+                        is ApiResult.Error -> {
+                            Log.e("ReinforcementVM", "Failed to fetch learning context: ${learningContext.message}")
+                            null
+                        }
                     }
                 }
 
-                if (contextData == null) {
-                    _uiState.value = ReinforcementState.Error("No se pudo obtener el contexto de aprendizaje del servidor.")
-                    return@launch
+                // Fallback: if backend is unreachable, build minimal context from local info
+                val effectiveContextData: com.google.gson.JsonObject = if (contextData != null) {
+                    contextData
+                } else {
+                    Log.w("ReinforcementVM", "⚠️ Learning context unavailable — building minimal local context for fallback generation")
+                    com.google.gson.JsonObject().apply {
+                        add("topic", com.google.gson.JsonObject().apply {
+                            addProperty("name", _selectedTopicName.value ?: "")
+                            addProperty("description", "")
+                        })
+                        add("task", com.google.gson.JsonObject().apply {
+                            addProperty("title", _selectedTaskName.value ?: "")
+                            addProperty("description", "")
+                        })
+                        addProperty("ragContent", "")
+                        addProperty("ragChunks", 0)
+                        addProperty("ragPage", 0)
+                        addProperty("ragTotalPages", 1)
+                        addProperty("ragTotalChunks", 0)
+                        add("ragFiles", com.google.gson.JsonArray())
+                        add("contentItems", com.google.gson.JsonArray())
+                        add("topicContentItems", com.google.gson.JsonArray())
+                        add("taskContentItems", com.google.gson.JsonArray())
+                        add("existingQuestions", com.google.gson.JsonArray())
+                    }
                 }
 
                 // Extract topic details
-                val topicObj = contextData.getAsJsonObject("topic")
+                val topicObj = effectiveContextData.getAsJsonObject("topic")
                 val topicName = topicObj?.get("name")?.asString ?: ""
                 val topicDescription = topicObj?.get("description")?.asString ?: ""
 
                 // Extract task details
-                val taskObj = contextData.getAsJsonObject("task")
+                val taskObj = effectiveContextData.getAsJsonObject("task")
                 val taskName = taskObj?.get("title")?.asString ?: ""
                 val taskDescription = taskObj?.get("description")?.asString ?: ""
 
                 // Extract RAG content (already ingested by the backend)
-                val ragDocumentContent = contextData.get("ragContent")?.asString ?: ""
-                val ragChunks = contextData.get("ragChunks")?.asInt ?: 0
-                val ragPage = contextData.get("ragPage")?.asInt ?: 0
-                val ragTotalPages = contextData.get("ragTotalPages")?.asInt ?: 1
-                val ragTotalChunks = contextData.get("ragTotalChunks")?.asInt ?: ragChunks
+                val ragDocumentContent = effectiveContextData.get("ragContent")?.asString ?: ""
+                val ragChunks = effectiveContextData.get("ragChunks")?.asInt ?: 0
+                val ragPage = effectiveContextData.get("ragPage")?.asInt ?: 0
+                val ragTotalPages = effectiveContextData.get("ragTotalPages")?.asInt ?: 1
+                val ragTotalChunks = effectiveContextData.get("ragTotalChunks")?.asInt ?: ragChunks
                 val ragFileNames = try {
-                    contextData.getAsJsonArray("ragFiles")?.map { it.asString } ?: emptyList()
+                    effectiveContextData.getAsJsonArray("ragFiles")?.map { it.asString } ?: emptyList()
                 } catch (_: Exception) { emptyList() }
                 
                 // Hybrid Retrieval metadata
-                val activeRetrievalMode = contextData.get("retrievalMode")?.asString ?: "progressive"
-                val semanticHits = contextData.get("semanticHits")?.asInt ?: 0
-                val expandedChunks = contextData.get("expandedChunks")?.asInt ?: 0
-                val usedProgressiveFallback = contextData.get("usedProgressiveFallback")?.asBoolean ?: false
-                val wasReranked = contextData.get("reranked")?.asBoolean ?: false
-                val rerankMethod = contextData.get("rerankMethod")?.asString ?: "none"
+                val activeRetrievalMode = effectiveContextData.get("retrievalMode")?.asString ?: "progressive"
+                val semanticHits = effectiveContextData.get("semanticHits")?.asInt ?: 0
+                val expandedChunks = effectiveContextData.get("expandedChunks")?.asInt ?: 0
+                val usedProgressiveFallback = effectiveContextData.get("usedProgressiveFallback")?.asBoolean ?: false
+                val wasReranked = effectiveContextData.get("reranked")?.asBoolean ?: false
+                val rerankMethod = effectiveContextData.get("rerankMethod")?.asString ?: "none"
 
                 // Extract content items metadata (combined — backward compatible)
                 val contentItemsArray = try {
-                    contextData.getAsJsonArray("contentItems") ?: com.google.gson.JsonArray()
+                    effectiveContextData.getAsJsonArray("contentItems") ?: com.google.gson.JsonArray()
                 } catch (_: Exception) { com.google.gson.JsonArray() }
 
                 // Extract content items separated by origin: topic vs task
                 val topicContentItemsArray = try {
-                    contextData.getAsJsonArray("topicContentItems") ?: com.google.gson.JsonArray()
+                    effectiveContextData.getAsJsonArray("topicContentItems") ?: com.google.gson.JsonArray()
                 } catch (_: Exception) { com.google.gson.JsonArray() }
                 val taskContentItemsArray = try {
-                    contextData.getAsJsonArray("taskContentItems") ?: com.google.gson.JsonArray()
+                    effectiveContextData.getAsJsonArray("taskContentItems") ?: com.google.gson.JsonArray()
                 } catch (_: Exception) { com.google.gson.JsonArray() }
 
-                // Extract existing questions for deduplication
+                // Extract existing questions for deduplication.
+                // EASY level: allow some repetition (skip dedup entirely).
+                // INTERMEDIATE and HARD: enforce strict deduplication.
                 val existingQuestionsArray = try {
-                    contextData.getAsJsonArray("existingQuestions") ?: com.google.gson.JsonArray()
+                    effectiveContextData.getAsJsonArray("existingQuestions") ?: com.google.gson.JsonArray()
                 } catch (_: Exception) { com.google.gson.JsonArray() }
 
                 val existingQuestions = existingQuestionsArray.mapNotNull { elem ->
                     elem.asJsonObject?.get("question")?.asString
                 }
-                val existingQuestionTexts = (existingQuestions + previouslyExcluded)
-                    .distinct()
-                    .takeLast(80)
+                val existingQuestionTexts = if (currentDifficulty == "EASY") {
+                    // Easy: keep a small window so questions don't repeat too much in the same session
+                    (existingQuestions + previouslyExcluded).distinct().takeLast(10)
+                } else {
+                    (existingQuestions + previouslyExcluded).distinct().takeLast(80)
+                }
                 val existingQuestionsForPrompt = existingQuestionTexts
 
                 Log.d("ReinforcementVM", "📚 Learning context received: topic='$topicName', task='$taskName', " +
@@ -328,8 +382,8 @@ class ReinforcementLearningViewModel(
                 }
                 _analyzedFiles.value = (topicFileNames + taskFileNames + ragAnalyzedFiles).distinctBy { it.name }
 
-                // Validate sufficient content
-                if (topicName.isBlank() && taskName.isBlank() && ragDocumentContent.isBlank()) {
+                // Validate sufficient content — when backend was unreachable, use courseName as minimum seed
+                if (topicName.isBlank() && taskName.isBlank() && ragDocumentContent.isBlank() && courseName.isBlank()) {
                     _uiState.value = ReinforcementState.Error(
                         "Este curso no tiene contenido suficiente (temas, tareas o materiales) para generar preguntas."
                     )
@@ -568,7 +622,88 @@ class ReinforcementLearningViewModel(
                     """.trimIndent()
                 }
 
-                val prompt = """
+                val prompt = when (currentDifficulty) {
+
+                    // ══════════════════════════════════════════════════════
+                    // 🌱 EASY — Reconocimiento y memoria básica
+                    // Respuesta directa, sin análisis, basada en recuerdo.
+                    // ══════════════════════════════════════════════════════
+                    "EASY" -> """
+                        Eres un profesor generando preguntas de NIVEL FÁCIL (reconocimiento y memoria).
+
+                        OBJETIVO: Generar EXACTAMENTE $targetCount preguntas de opción múltiple sencillas.
+
+                        TEMA: "${topicName.ifBlank { "General" }}"
+                        TAREA: "${taskName.ifBlank { "General" }}"
+
+                        $groundingInstruction
+
+                        REGLAS DEL NIVEL FÁCIL:
+                        - Las preguntas deben evaluar RECUERDO y RECONOCIMIENTO directo.
+                        - El estudiante solo necesita RECORDAR o IDENTIFICAR información básica.
+                        - Preguntas del tipo: "¿Qué es X?", "¿Cuál es el nombre de...?", "¿Cuál de estas opciones es un ejemplo de...?"
+                        - Una sola respuesta evidente. Sin trampas, sin análisis.
+                        - Las opciones incorrectas deben ser claramente distintas de la correcta.
+                        - Las preguntas deben ser breves y directas.
+                        ${if (existingQuestionsForPrompt.isNotEmpty()) "\nEvita repetir estas preguntas recientes:\n${existingQuestionsForPrompt.takeLast(10).joinToString("\n") { "- $it" }}" else ""}
+
+                        RESTRICCIONES:
+                        1. Genera EXACTAMENTE $targetCount preguntas. Ni una más ni una menos.
+                        2. Tu ÚNICA salida debe ser el array JSON.
+                        3. Varía el correctIndex entre 0, 1, 2 y 3.
+
+                        FORMATO JSON:
+                        [
+                          {"question": "¿Qué es...?", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "La respuesta correcta es A porque..."}
+                        ]
+
+                        Contexto:
+                        $contextBuilder
+                    """.trimIndent()
+
+                    // ══════════════════════════════════════════════════════
+                    // ⚡ INTERMEDIATE — Comprensión y aplicación
+                    // El estudiante interpreta e identifica la mejor opción.
+                    // ══════════════════════════════════════════════════════
+                    "INTERMEDIATE" -> """
+                        Eres un profesor generando preguntas de NIVEL INTERMEDIO (comprensión y aplicación).
+
+                        OBJETIVO: Generar EXACTAMENTE $targetCount preguntas de opción múltiple.
+
+                        TEMA: "${topicName.ifBlank { "General" }}"
+                        TAREA: "${taskName.ifBlank { "General" }}"
+
+                        $groundingInstruction
+                        $retryDifferentiationInstruction
+
+                        REGLAS DEL NIVEL INTERMEDIO:
+                        - El estudiante debe COMPRENDER el concepto y saber CUÁNDO/CÓMO aplicarlo.
+                        - Incluye pequeños escenarios o ejemplos prácticos.
+                        - Las opciones deben requerir interpretación, no simple memorización.
+                        - Usa situaciones concretas: "Si necesitas implementar X, ¿qué usarías?"
+                        - Las 4 opciones deben ser plausibles a primera vista.
+                        ${if (existingQuestionsForPrompt.isNotEmpty()) "\nPREGUNTAS YA RESPONDIDAS — NO REPETIR:\n${existingQuestionsForPrompt.takeLast(40).mapIndexed { i, q -> "${i + 1}. $q" }.joinToString("\n")}" else ""}
+
+                        RESTRICCIONES:
+                        1. Genera EXACTAMENTE $targetCount preguntas. Ni una más ni una menos.
+                        2. Tu ÚNICA salida debe ser el array JSON.
+                        3. Varía el correctIndex entre 0, 1, 2 y 3.
+                        4. NO repitas preguntas ya existentes — cambia el enfoque.
+
+                        FORMATO JSON:
+                        [
+                          {"question": "Escenario o situación breve. ¿Cuál es la mejor opción?", "options": ["A", "B", "C", "D"], "correctIndex": 1, "explanation": "B es correcto porque... A es incorrecto porque... C falla porque... D no aplica porque..."}
+                        ]
+
+                        Contexto:
+                        $contextBuilder
+                    """.trimIndent()
+
+                    // ══════════════════════════════════════════════════════
+                    // 🔥 HARD — Análisis, evaluación y no repetición
+                    // Comportamiento original (nivel máximo).
+                    // ══════════════════════════════════════════════════════
+                    else -> """
                     Eres un profesor experto generando preguntas de nivel MÁXIMO (10/10).
 
                     OBJETIVO: Generar EXACTAMENTE $targetCount ${if (targetCount == 1) "pregunta" else "preguntas"} de opción múltiple basadas EXCLUSIVAMENTE en el TEMA y la TAREA.
@@ -670,6 +805,7 @@ class ReinforcementLearningViewModel(
                     Contexto:
                     $contextBuilder
                 """.trimIndent()
+                }
 
                 // 4. Call LLM via Backend
                 Log.d("ReinforcementVM", "Invocando MicroservicioPromptRequest con userId=$userId, courseId=$courseId, topicId=$topicId, taskId=$taskId")
@@ -679,11 +815,13 @@ class ReinforcementLearningViewModel(
                 var jsonText: String? = null
                 var lastError: String? = null
 
-                val candidateBaseUrls = linkedSetOf(
-                    normalizeBaseUrl(BASE_URL),
-                    normalizeBaseUrl(BackendApiService.baseUrl)
-                ).apply {
-                    FALLBACK_BACKEND_URLS.mapTo(this) { normalizeBaseUrl(it) }
+                val candidateBaseUrls = linkedSetOf<String>().apply {
+                    add(if (isQaBuild) enforceQaBackendUrl(BASE_URL) else normalizeBaseUrl(BASE_URL))
+
+                    val backendApiBase = normalizeBaseUrl(BackendApiService.baseUrl)
+                    if (backendApiBase.isNotBlank()) {
+                        add(if (isQaBuild) enforceQaBackendUrl(backendApiBase) else backendApiBase)
+                    }
                 }.toList()
 
                 Log.d("ReinforcementVM", "🔒 Strict routing with safe fallback hosts: $candidateBaseUrls")
@@ -691,10 +829,19 @@ class ReinforcementLearningViewModel(
                 for (candidateBaseUrl in candidateBaseUrls) {
                     if (!jsonText.isNullOrBlank()) break
 
-                    try {
-                        Log.d("ReinforcementVM", "➡️ Attempting /procesar-prompt on $candidateBaseUrl")
+                    // Retry up to 2 attempts per URL: normal timeout, then extended on SocketTimeout
+                    for (timeoutAttempt in 0..1) {
+                        if (!jsonText.isNullOrBlank()) break
 
-                        val api = createApi(candidateBaseUrl)
+                    try {
+                        val useExtended = timeoutAttempt > 0
+                        if (useExtended) {
+                            Log.w("ReinforcementVM", "⏱️ Retrying with extended timeout (300s) on $candidateBaseUrl")
+                        } else {
+                            Log.d("ReinforcementVM", "➡️ Attempting /procesar-prompt on $candidateBaseUrl")
+                        }
+
+                        val api = createApi(candidateBaseUrl, extendedTimeout = useExtended)
                         val requestBody = MicroservicioPromptRequest(
                             prompt = prompt,
                             jsonContent = jsonContentString,
@@ -723,30 +870,40 @@ class ReinforcementLearningViewModel(
                         val isDnsError = e is UnknownHostException ||
                             e.cause is UnknownHostException ||
                             (e.message?.contains("Unable to resolve host", ignoreCase = true) == true)
+                        val isTimeout = e is SocketTimeoutException ||
+                            e.cause is SocketTimeoutException ||
+                            (e.message?.contains("timeout", ignoreCase = true) == true)
 
                         if (isDnsError) {
                             Log.w("ReinforcementVM", "⚠️ DNS failure on $candidateBaseUrl, trying fallback host. Error=${e.message}")
+                            break // DNS error won't be fixed by retrying same URL
+                        } else if (isTimeout && timeoutAttempt == 0) {
+                            Log.w("ReinforcementVM", "⏱️ Timeout on $candidateBaseUrl (attempt ${timeoutAttempt + 1}), will retry with extended timeout")
+                            // Continue inner loop to retry with extended timeout
                         } else {
                             Log.e("ReinforcementVM", "❌ API call failed on $candidateBaseUrl: ${e.message}")
+                            break // Non-retryable or already retried
                         }
                     }
+                    } // end timeoutAttempt loop
                 }
 
                 if (jsonText.isNullOrBlank()) {
-                    Log.e("ReinforcementVM", "Respuesta del servidor vacía o nula. Error: ${lastError}")
-                    throw Exception("El servidor devolvió una respuesta vacía: ${lastError}")
+                    Log.w("ReinforcementVM", "⚠️ Respuesta del servidor vacía o nula. Error: ${lastError} — se usarán preguntas de respaldo")
+                    // Don't throw — let the fallback question generator below handle it
                 }
 
                 Log.d("ReinforcementVM", "Raw LLM response: $jsonText")
 
                 // Robust JSON extraction
-                val startIndex = jsonText.indexOf('[')
-                val endIndex = jsonText.lastIndexOf(']')
+                val jsonPayload = jsonText.orEmpty()
+                val startIndex = jsonPayload.indexOf('[')
+                val endIndex = jsonPayload.lastIndexOf(']')
 
                 var questions: List<QuizQuestion> = emptyList()
 
                 if (startIndex != -1 && endIndex != -1 && startIndex < endIndex) {
-                    var cleanJson = jsonText.substring(startIndex, endIndex + 1)
+                    var cleanJson = jsonPayload.substring(startIndex, endIndex + 1)
                     
                     // First attempt: parse as-is
                     try {
@@ -869,7 +1026,7 @@ class ReinforcementLearningViewModel(
                     if (uniqueQuestions.size < targetCount && retryAttempt < MAX_RETRY_ATTEMPTS) {
                         Log.w("ReinforcementVM", "⚠️ Only ${uniqueQuestions.size}/$targetCount unique questions after local dedup. Retrying with escalated strategy (attempt ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)...")
                         val allExcluded = (existingQuestionTexts + sanitizedGenerated.map { it.question }).distinct()
-                        loadQuestionsInternal(courseId, courseName, topicId, taskId, retryAttempt + 1, allExcluded, accumulatedQuestions, targetCount)
+                        loadQuestionsInternal(courseId, courseName, topicId, taskId, retryAttempt + 1, allExcluded, accumulatedQuestions, targetCount, cachedContextData = effectiveContextData)
                         return@launch
                     }
 
@@ -915,12 +1072,28 @@ class ReinforcementLearningViewModel(
                     }
 
                     if (finalQuestions.isEmpty()) {
-                        _uiState.value = ReinforcementState.Error(
-                            "No fue posible construir preguntas válidas para este material. Intenta con otro tópico o tarea."
+                        // Last resort: generate fallback questions instead of showing error
+                        Log.w("ReinforcementVM", "⚠️ No unique questions after all attempts — generating fallback")
+                        val lastResortSeeds = buildList {
+                            if (topicName.isNotBlank()) add(topicName)
+                            if (taskName.isNotBlank()) add(taskName)
+                            if (topicName.isNotBlank() && taskName.isNotBlank()) add("$topicName en $taskName")
+                        }.ifEmpty { listOf(courseName.ifBlank { "Conceptos Generales" }) }
+                        val lastResortQuestions = redistributeCorrectOptionPositions(
+                            sanitizeQuestionsForUniqueness(generateFallbackQuestionsFromSeeds(lastResortSeeds))
                         )
+                        if (lastResortQuestions.isNotEmpty()) {
+                            _uiState.value = ReinforcementState.Success(lastResortQuestions)
+                        } else {
+                            _uiState.value = ReinforcementState.Error(
+                                "No fue posible construir preguntas válidas para este material. Intenta con otro tópico o tarea."
+                            )
+                        }
                         clearPendingTaskData()
                         return@launch
                     }
+
+                    finalQuestions = redistributeCorrectOptionPositions(finalQuestions)
 
                     // ── Save to backend BEFORE showing to user (to catch server-side duplicates) ──
                     var shouldRetry = false
@@ -952,15 +1125,16 @@ class ReinforcementLearningViewModel(
                                 is ApiResult.Success -> {
                                     val data = saveResult.data
                                     val savedCount = data?.get("savedCount")?.asInt ?: 0
+                                    val cumulativeCount = data?.get("cumulativeCount")?.asInt ?: savedCount
                                     val allDuplicates = data?.get("allDuplicates")?.asBoolean ?: false
                                     val requiredCount = data?.get("requiredCount")?.asInt ?: 10
-                                    // shortfall = how many more unique questions are needed to complete the batch
+                                    // shortfall based on cumulative count across all cycles
                                     val shortfall = data?.get("shortfall")?.asInt
-                                        ?: if (savedCount < requiredCount) (requiredCount - savedCount) else 0
+                                        ?: if (cumulativeCount < requiredCount) (requiredCount - cumulativeCount) else 0
                                     val isShortBatch = shortfall > 0
 
                                     if ((allDuplicates || isShortBatch) && retryAttempt < MAX_RETRY_ATTEMPTS) {
-                                        Log.w("ReinforcementVM", "⚠️ Backend accepted only $savedCount/$requiredCount unique questions. " +
+                                        Log.w("ReinforcementVM", "⚠️ Backend: $savedCount saved this cycle, $cumulativeCount/$requiredCount cumulative. " +
                                             "Shortfall=$shortfall — generating only missing questions (attempt ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)...")
                                         val backendExisting = try {
                                             data?.getAsJsonArray("existingQuestions")?.mapNotNull { elem ->
@@ -975,7 +1149,7 @@ class ReinforcementLearningViewModel(
                                         retryAccumulated = newAccumulated
                                         shouldRetry = true
                                     } else {
-                                        Log.d("ReinforcementVM", "✅ Saved $savedCount/$requiredCount questions via /save-questions")
+                                        Log.d("ReinforcementVM", "✅ Cumulative $cumulativeCount/$requiredCount questions saved via /save-questions")
                                     }
                                 }
                                 is ApiResult.Error -> {
@@ -992,7 +1166,8 @@ class ReinforcementLearningViewModel(
                         loadQuestionsInternal(
                             courseId, courseName, topicId, taskId,
                             retryAttempt + 1, retryExcluded,
-                            retryAccumulated, retryShortfall
+                            retryAccumulated, retryShortfall,
+                            cachedContextData = effectiveContextData
                         )
                         return@launch
                     }
@@ -1014,8 +1189,27 @@ class ReinforcementLearningViewModel(
                 clearPendingTaskData()
                 throw e // Re-throw to respect structured concurrency
             } catch (e: Exception) {
-                Log.e("ReinforcementVM", "Error loading questions", e)
-                _uiState.value = ReinforcementState.Error("Error: ${e.message}")
+                Log.e("ReinforcementVM", "Error loading questions — generating fallback", e)
+                // Instead of showing error to user, generate fallback questions
+                val fallbackTopicName = _selectedTopicName.value ?: ""
+                val fallbackTaskName = _selectedTaskName.value ?: ""
+                val seeds = buildList {
+                    if (fallbackTopicName.isNotBlank() && fallbackTopicName != "General") add(fallbackTopicName)
+                    if (fallbackTaskName.isNotBlank() && fallbackTaskName != "General") add(fallbackTaskName)
+                    if (fallbackTopicName.isNotBlank() && fallbackTaskName.isNotBlank()
+                        && fallbackTopicName != "General" && fallbackTaskName != "General") {
+                        add("$fallbackTopicName aplicado en $fallbackTaskName")
+                    }
+                }.ifEmpty { listOf(courseName.ifBlank { "Conceptos Generales" }) }
+                val fallbackQuestions = redistributeCorrectOptionPositions(
+                    sanitizeQuestionsForUniqueness(generateFallbackQuestionsFromSeeds(seeds))
+                )
+                if (fallbackQuestions.isNotEmpty()) {
+                    Log.w("ReinforcementVM", "✅ Fallback: showing ${fallbackQuestions.size} locally-generated questions")
+                    _uiState.value = ReinforcementState.Success(fallbackQuestions)
+                } else {
+                    _uiState.value = ReinforcementState.Error("No fue posible generar preguntas. Verifica tu conexión e intenta de nuevo.")
+                }
                 clearPendingTaskData()
             }
         }
@@ -1114,7 +1308,7 @@ class ReinforcementLearningViewModel(
                 if (questions.size < 10) {
                     _uiState.value = ReinforcementState.Error("No fue posible reconstruir 10 preguntas únicas desde datos pre-cargados.")
                 } else {
-                    _uiState.value = ReinforcementState.Success(questions)
+                    _uiState.value = ReinforcementState.Success(redistributeCorrectOptionPositions(questions))
                 }
             } catch (e: Exception) {
                 Log.e("ReinforcementVM", "Error parsing preloaded questions", e)
@@ -1205,6 +1399,44 @@ class ReinforcementLearningViewModel(
         }
 
         return sanitized
+    }
+
+    /**
+     * Redistributes the correct option position across A/B/C/D so it doesn't stay fixed on A.
+     * Keeps the same correct answer text and recalculates correctIndex.
+     */
+    private fun redistributeCorrectOptionPositions(questions: List<QuizQuestion>): List<QuizQuestion> {
+        if (questions.isEmpty()) return emptyList()
+
+        val startIndex = Random.nextInt(4)
+
+        return questions.mapIndexed { questionIndex, question ->
+            val normalizedOptions = question.options
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .distinctBy { normalizeForComparison(it) }
+                .take(4)
+
+            if (normalizedOptions.size < 4) return@mapIndexed question
+
+            val sourceCorrectIndex = question.correctIndex.coerceIn(0, normalizedOptions.lastIndex)
+            val correctOption = normalizedOptions[sourceCorrectIndex]
+            val distractors = normalizedOptions
+                .filterIndexed { idx, _ -> idx != sourceCorrectIndex }
+                .shuffled()
+
+            val targetCorrectIndex = (startIndex + questionIndex) % 4
+            val redistributed = MutableList(4) { "" }
+            redistributed[targetCorrectIndex] = correctOption
+
+            var distractorCursor = 0
+            for (i in redistributed.indices) {
+                if (i == targetCorrectIndex) continue
+                redistributed[i] = distractors[distractorCursor++]
+            }
+
+            question.copy(options = redistributed, correctIndex = targetCorrectIndex)
+        }
     }
 
     /**
@@ -1411,14 +1643,17 @@ class ReinforcementLearningViewModel(
      * Force regeneration of questions - clears previous state and generates new questions
      * This is called when user finishes a quiz and wants to generate new questions
      */
-    fun forceRegenerateQuestions(courseId: Long, courseName: String, topicId: Long = -1L, taskId: Long = -1L) {
+    fun forceRegenerateQuestions(courseId: Long, courseName: String, topicId: Long = -1L, taskId: Long = -1L, difficulty: String = currentDifficulty) {
         Log.d("ReinforcementVM", "═══════════════════════════════════════════════════")
         Log.d("ReinforcementVM", "🔄 forceRegenerateQuestions() CALLED!")
         Log.d("ReinforcementVM", "   📚 courseId: $courseId")
         Log.d("ReinforcementVM", "   📖 courseName: $courseName")
         Log.d("ReinforcementVM", "   📑 topicId: $topicId")
         Log.d("ReinforcementVM", "   📝 taskId: $taskId")
+        Log.d("ReinforcementVM", "   🎯 difficulty: $difficulty")
         Log.d("ReinforcementVM", "═══════════════════════════════════════════════════")
+
+        currentDifficulty = difficulty
         
         // 1. Reset state to Initial to clear previous questions
         _uiState.value = ReinforcementState.Initial

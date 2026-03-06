@@ -164,11 +164,13 @@ class SelectTaskFragment : Fragment() {
             Log.d("SelectTaskFragment", "Task selected: ID=${selectedTask.id}, Name=${selectedTask.name}")
             val bundle = Bundle().apply {
                 putLong("courseId", courseId)
-                putString("courseName", courseName)
+                putString("courseName", courseName ?: "")
                 putLong("topicId", selectedTask.topicId)
                 putLong("taskId", selectedTask.id)
+                putString("taskName", selectedTask.name)
             }
             try {
+                // Navigate to difficulty selection first (action ID reused, now points to selectDifficultyFragment)
                 findNavController().navigate(R.id.action_selectTaskFragment_to_reinforcementLearningFragment, bundle)
             } catch (ex: Exception) {
                 Log.w("SelectTaskFragment", "Navigation failed", ex)

@@ -42,7 +42,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import com.example.tareamov.ui.showPaymentOptions // Import the showPaymentOptions extension
 import com.example.tareamov.ui.VideoPlayerActivity // Import VideoPlayerActivity
 import android.widget.EditText
@@ -565,9 +568,17 @@ class CourseDetailFragment : Fragment() {
             findNavController().navigate(R.id.action_courseDetailFragment_to_exploreFragment)
         }
         
-        // Add/Upload Button (ic_add)
-        bottomNavBinding.goToHomeButton.setOnClickListener {
-            findNavController().navigate(R.id.action_courseDetailFragment_to_contentUploadFragment)
+        // Add/Upload Button (ic_add) only for users with both roles 1 and 2
+        val canUploadContent = sessionManager.hasRole(1) && sessionManager.hasRole(2)
+        val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
+        bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        if (canUploadContent) {
+            bottomNavBinding.goToHomeButton.setOnClickListener {
+                findNavController().navigate(R.id.action_courseDetailFragment_to_contentUploadFragment)
+            }
+        } else {
+            bottomNavBinding.goToHomeButton.setOnClickListener(null)
         }
         
         // Activity Button (ic_activity)
@@ -1738,8 +1749,9 @@ class CourseDetailFragment : Fragment() {
 
     // Fast task view creation (simplified)
     private fun addTaskViewFast(task: Task, container: LinearLayout) {
+        val dueSuffix = formatTaskDueDateForChip(task.dueDate)?.let { "  |  Limite: $it" } ?: ""
         val taskView = TextView(context).apply {
-            text = "📋 ${task.name ?: "Tarea sin título"}"
+            text = "📋 ${task.name ?: "Tarea sin titulo"}$dueSuffix"
             textSize = 14f
             setPadding(16, 12, 16, 12)
             setTextColor(resources.getColor(android.R.color.white, null))
@@ -1979,8 +1991,9 @@ class CourseDetailFragment : Fragment() {
 
         // Set due date chip
         val taskDueChip = taskView.findViewById<TextView>(R.id.taskDueChip)
-        if (!task.dueDate.isNullOrBlank()) {
-            taskDueChip?.text = task.dueDate.take(10) // show YYYY-MM-DD
+        val formattedDue = formatTaskDueDateForChip(task.dueDate)
+        if (!formattedDue.isNullOrBlank()) {
+            taskDueChip?.text = formattedDue
             taskDueChip?.visibility = View.VISIBLE
         } else {
             taskDueChip?.visibility = View.GONE
@@ -2172,6 +2185,35 @@ class CourseDetailFragment : Fragment() {
         }
 
         container.addView(taskView)
+    }
+
+    private fun formatTaskDueDateForChip(rawDueDate: String?): String? {
+        if (rawDueDate.isNullOrBlank()) return null
+
+        val formats = listOf(
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") },
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") },
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US),
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US),
+            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US),
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+        )
+
+        var parsedDate: Date? = null
+        for (fmt in formats) {
+            try {
+                parsedDate = fmt.parse(rawDueDate)
+                if (parsedDate != null) break
+            } catch (_: Exception) {
+                // Keep trying supported formats.
+            }
+        }
+
+        if (parsedDate == null) {
+            return rawDueDate.take(16)
+        }
+
+        return SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(parsedDate)
     }
 
     // Refresh topics and re-render UI from backend for the current course
