@@ -1061,11 +1061,17 @@ class TaskSubmissionsFragment : Fragment() {
                         }
 
                         if (uploadResult is ApiResult.Success) {
-                            // Read the R2 object key (relative path) — never the public URL
+                            // Prefer full public URL so backend LLM pipelines can fetch content directly.
+                            val uploadedUrl = uploadResult.data?.get("url")?.asString
                             val key = uploadResult.data?.get("key")?.asString
-                            if (!key.isNullOrBlank()) {
-                                cloudFileUri = key
-                                Log.d("TaskSubmissionsFragment", "✅ Archivo subido via backend, key: $cloudFileUri")
+                            cloudFileUri = when {
+                                !uploadedUrl.isNullOrBlank() && uploadedUrl.startsWith("http") -> uploadedUrl
+                                !key.isNullOrBlank() -> "$R2_PUBLIC_BASE_URL/$key"
+                                !uploadedUrl.isNullOrBlank() -> "$R2_PUBLIC_BASE_URL/$uploadedUrl"
+                                else -> null
+                            }
+                            if (cloudFileUri != null) {
+                                Log.d("TaskSubmissionsFragment", "✅ Archivo subido via backend, url: $cloudFileUri")
                                 findViewByName<TextView>("progressTextView")?.text = "Archivo subido, procesando..."
                             }
                         } else {

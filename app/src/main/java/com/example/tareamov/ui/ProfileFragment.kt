@@ -792,22 +792,22 @@ class ProfileFragment : Fragment() {
 
                 when (result) {
                     is ApiResult.Success -> {
-                        // Confirm the unlink with a fresh status fetch before updating UI.
-                        // This prevents a false-success display when the backend operation
-                        // returned HTTP 200 but the session was not actually removed from the DB.
+                        Toast.makeText(requireContext(), "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
+                        // Update UI immediately
+                        textView.text = "Vincular WhatsApp"
+                        badge.text = "NO VINCULADO"
+                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                        badge.visibility = View.VISIBLE
+                        whatsappSubtitleText?.text = "Conecta tu cuenta para recibir notificaciones"
+                        whatsappIconView?.backgroundTintList =
+                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#25D366"))
+                        isWhatsAppChannelAvailable = true
+                        // Delay status refresh to let the backend commit the deletion
+                        kotlinx.coroutines.delay(1500)
                         fetchAndUpdateWhatsAppStatus(textView, badge)
-                        val stillLinked = whatsappStatusText?.text?.toString()?.contains("Desvincular") == true
-                        if (stillLinked) {
-                            Toast.makeText(
-                                requireContext(),
-                                "❌ No se pudo desvincular WhatsApp. Intenta de nuevo.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        } else {
-                            Toast.makeText(requireContext(), "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
-                        }
                     }
                     is ApiResult.Error -> {
+                        Log.e("ProfileFragment", "Unlink WhatsApp error: ${result.message} (code=${result.code})")
                         Toast.makeText(requireContext(), "❌ ${result.message}", Toast.LENGTH_LONG).show()
                     }
                 }

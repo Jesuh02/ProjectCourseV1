@@ -255,9 +255,9 @@ class ExploreFragment : Fragment() {
                 onPopularCoursesClicked = {
                     viewLifecycleOwner.lifecycleScope.launch {
                         val topPopular = withContext(Dispatchers.IO) {
-                            val result = BackendApiService.getCourses(1, 100)
+                            val result = BackendApiService.getPopularCourses(1, 5)
                             if (result is ApiResult.Success) {
-                                result.data.sortedByDescending { it.enrollmentCount }.take(5)
+                                result.data
                             } else {
                                 emptyList<com.example.tareamov.data.entity.Course>()
                             }
