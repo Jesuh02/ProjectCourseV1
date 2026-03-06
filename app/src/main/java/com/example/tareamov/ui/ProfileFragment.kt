@@ -792,18 +792,20 @@ class ProfileFragment : Fragment() {
 
                 when (result) {
                     is ApiResult.Success -> {
-                        Toast.makeText(requireContext(), "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
-                        // Update UI immediately (don't rely solely on backend status refresh which may return stale data)
-                        textView.text = "Vincular WhatsApp"
-                        badge.text = "NO VINCULADO"
-                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
-                        badge.visibility = View.VISIBLE
-                        whatsappSubtitleText?.text = "Conecta tu cuenta para recibir notificaciones"
-                        whatsappIconView?.backgroundTintList =
-                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#25D366"))
-                        isWhatsAppChannelAvailable = true
-                        // Also confirm with backend
+                        // Confirm the unlink with a fresh status fetch before updating UI.
+                        // This prevents a false-success display when the backend operation
+                        // returned HTTP 200 but the session was not actually removed from the DB.
                         fetchAndUpdateWhatsAppStatus(textView, badge)
+                        val stillLinked = whatsappStatusText?.text?.toString()?.contains("Desvincular") == true
+                        if (stillLinked) {
+                            Toast.makeText(
+                                requireContext(),
+                                "❌ No se pudo desvincular WhatsApp. Intenta de nuevo.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            Toast.makeText(requireContext(), "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
+                        }
                     }
                     is ApiResult.Error -> {
                         Toast.makeText(requireContext(), "❌ ${result.message}", Toast.LENGTH_LONG).show()

@@ -399,6 +399,27 @@ class ChatBotFragment : Fragment() {
         return "archivo sin nombre"
     }
 
+    private fun sanitizeFileContext(fileContext: FileContext): FileContext {
+        val safeFileName = resolveDisplayFileName((fileContext.fileName as String?)?.trim())
+        val safeFileType = (fileContext.fileType as String?)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: "unknown"
+
+        return FileContext(
+            id = fileContext.id,
+            submissionId = fileContext.submissionId,
+            fileName = safeFileName,
+            fileType = safeFileType,
+            fileContent = fileContext.fileContent,
+            extractedText = fileContext.extractedText,
+            metadata = fileContext.metadata,
+            timestamp = fileContext.timestamp,
+            jsonContent = fileContext.jsonContent,
+            contentSummary = fileContext.contentSummary
+        )
+    }
+
     // Variables para monitorear el cursor y mostrar la lista de tareas
     private var lastCursorPosition = -1
     private val cursorCheckHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -836,7 +857,7 @@ class ChatBotFragment : Fragment() {
             currentFileContext = withContext(Dispatchers.IO) {
                 try {
                     val fcs = BackendApiService.getFileContextsBySubmission(submissionId).getOrNull() ?: emptyList()
-                    fcs.firstOrNull()
+                    fcs.firstOrNull()?.let(::sanitizeFileContext)
                 } catch (e: Exception) {
                     Log.w("ChatBotFragment", "Exception fetching FileContext for submissionId=$submissionId: ${e.message}")
                     null
@@ -867,9 +888,7 @@ class ChatBotFragment : Fragment() {
             // Logging mínimo
             Log.d("ChatBotFragment", "🔍 FileContext cargado - submissionId: $submissionId, presente: ${currentFileContext != null}")
             if (currentFileContext != null) {
-                val safeFileName = resolveDisplayFileName(currentFileContext!!.fileName)
-                currentFileContext = currentFileContext!!.copy(fileName = safeFileName)
-                Log.d("ChatBotFragment", "   - fileName: '$safeFileName', fileType: '${currentFileContext!!.fileType}'")
+                Log.d("ChatBotFragment", "   - fileName: '${currentFileContext!!.fileName}', fileType: '${currentFileContext!!.fileType}'")
             }
 
             if (currentFileContext != null) {
@@ -1563,7 +1582,7 @@ class ChatBotFragment : Fragment() {
                                     if (submission != null) {
                                         // 3. Buscar FileContext via API
                                         val fcs = api.getFileContextsBySubmission(submission.id).getOrNull() ?: emptyList()
-                                        val fc = fcs.firstOrNull()
+                                        val fc = fcs.firstOrNull()?.let(::sanitizeFileContext)
 
                                         if (fc != null) {
                                             effectiveFileContent = fc.fileContent ?: ""
@@ -1682,7 +1701,7 @@ class ChatBotFragment : Fragment() {
 
                                         // Buscar FileContext via API
                                         val fcs = api.getFileContextsBySubmission(currentSubmission.id).getOrNull() ?: emptyList()
-                                        val fc: FileContext? = fcs.firstOrNull()
+                                        val fc: FileContext? = fcs.firstOrNull()?.let(::sanitizeFileContext)
                                         Log.d("ChatBotFragment", "📄 FileContext: ${fc?.fileName}")
 
                                         fc?.let { currentFc ->
@@ -1804,7 +1823,7 @@ class ChatBotFragment : Fragment() {
                                     val currentSubmission = submission
                                     // Buscar FileContext via API
                                     val fcs = api.getFileContextsBySubmission(currentSubmission.id).getOrNull() ?: emptyList()
-                                    var fc: FileContext? = fcs.firstOrNull()
+                                    var fc: FileContext? = fcs.firstOrNull()?.let(::sanitizeFileContext)
                                     Log.d("ChatBotFragment", "📄 FileContext: ${fc?.fileName}")
 
                                     fc?.let { currentFc ->
@@ -3539,7 +3558,11 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                         // Buscar FileContext via BackendApiService
                         try {
-                            fileContext = BackendApiService.getFileContextsBySubmission(submission!!.id).getOrNull()?.firstOrNull()
+                            fileContext = BackendApiService
+                                .getFileContextsBySubmission(submission!!.id)
+                                .getOrNull()
+                                ?.firstOrNull()
+                                ?.let(::sanitizeFileContext)
                             if (fileContext != null) {
                                 Log.d("ChatBotFragment", "📄 FileContext: ENCONTRADO")
                                 Log.d("ChatBotFragment", "   - fileName: ${fileContext!!.fileName}")
@@ -4214,7 +4237,11 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     // Cargar el FileContext de esta submission
                     val submissionId = taskNumber.toLong()
                     val fileContext = withContext(Dispatchers.IO) {
-                        BackendApiService.getFileContextsBySubmission(submissionId).getOrNull()?.firstOrNull()
+                        BackendApiService
+                            .getFileContextsBySubmission(submissionId)
+                            .getOrNull()
+                            ?.firstOrNull()
+                            ?.let(::sanitizeFileContext)
                     }
 
                     if (fileContext != null) {
