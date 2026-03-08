@@ -172,11 +172,15 @@ class ReinforcementLearningViewModel(
         return retrofit.create(MicroservicioApi::class.java)
     }
 
-    /** Current difficulty level name: "EASY", "INTERMEDIATE", or "HARD" (default). */
     private var currentDifficulty: String = "HARD"
+    private var isFreeLearning: Boolean = false
 
     fun setDifficulty(difficulty: String) {
         currentDifficulty = difficulty
+    }
+
+    fun setFreeLearning(enabled: Boolean) {
+        isFreeLearning = enabled
     }
 
     fun loadQuestions(courseId: Long, courseName: String, topicId: Long = -1L, taskId: Long = -1L) {
@@ -213,6 +217,8 @@ class ReinforcementLearningViewModel(
             _uiState.value = ReinforcementState.Error("ID de curso inválido.")
             return
         }
+
+        Log.d("ReinforcementVM", "🔄 CICLO ACUMULATIVO: attempt=$retryAttempt, targetCount=$targetCount, accumulated=${accumulatedQuestions.size}, excluded=${previouslyExcluded.size}")
 
         // REQUIRE Topic or Task selection. Disable "Course-only" generation.
         if (topicId == -1L && taskId == -1L) {
@@ -346,12 +352,7 @@ class ReinforcementLearningViewModel(
                 val existingQuestions = existingQuestionsArray.mapNotNull { elem ->
                     elem.asJsonObject?.get("question")?.asString
                 }
-                val existingQuestionTexts = if (currentDifficulty == "EASY") {
-                    // Easy: keep a small window so questions don't repeat too much in the same session
-                    (existingQuestions + previouslyExcluded).distinct().takeLast(10)
-                } else {
-                    (existingQuestions + previouslyExcluded).distinct().takeLast(80)
-                }
+                val existingQuestionTexts = (existingQuestions + previouslyExcluded).distinct().takeLast(80)
                 val existingQuestionsForPrompt = existingQuestionTexts
 
                 Log.d("ReinforcementVM", "📚 Learning context received: topic='$topicName', task='$taskName', " +
@@ -529,8 +530,10 @@ class ReinforcementLearningViewModel(
                     - NO inventes, infieras ni añadas información que NO aparezca EXPLÍCITAMENTE en el material.
                     - Si un concepto NO está en el material, NO generes preguntas sobre él.
                     - Las explicaciones DEBEN citar o parafrasear directamente frases del material de referencia.
-                    - Genera preguntas variadas que cubran DIFERENTES conceptos, párrafos y datos del material proporcionado.
-                    - Cada pregunta debe extraer información de un PÁRRAFO o SECCIÓN DISTINTA del texto.
+                    - Genera preguntas variadas que cubran DIFERENTES conceptos, relaciones y mecanismos del material proporcionado.
+                    - Cada pregunta debe abordar un CONCEPTO o RELACIÓN DISTINTA del texto, nunca un evento o dato aislado.
+                    - PROHIBIDO ABSOLUTO preguntas de memorización de eventos: NO preguntar "¿Qué ocurrió?", "¿Quién hizo X?", "¿Cuándo sucedió?", "¿Dónde se realizó?". El estudiante NUNCA debe responder recordando un hecho, fecha, nombre o evento del documento.
+                    - TODAS las preguntas deben premiar COMPRENSIÓN y PENSAMIENTO CRÍTICO: el estudiante demuestra que ENTIENDE relaciones, mecanismos, consecuencias e implicaciones.
                     """.trimIndent()
                 } else {
                     """
@@ -555,8 +558,9 @@ class ReinforcementLearningViewModel(
                         $shortfallNote
                         ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: Las preguntas anteriores fueron RECHAZADAS por ser duplicadas.
                         NOTA: El material de referencia ha sido ACTUALIZADO con una NUEVA SECCIÓN del documento (sección ${ragPage + 1}/$ragTotalPages).
-                        ESTRATEGIA OBLIGATORIA: Genera preguntas sobre DETALLES NUMÉRICOS, EJEMPLOS CONCRETOS y DATOS ESPECÍFICOS de ESTA NUEVA sección.
-                        Enfócate en cifras, nombres propios, fechas, cantidades, unidades y valores exactos mencionados en el texto.
+                        ESTRATEGIA OBLIGATORIA: Genera preguntas de CAUSA-EFECTO y CONSECUENCIAS basadas en ESTA NUEVA sección.
+                        Enfócate en relaciones entre conceptos, implicaciones prácticas y efectos de decisiones.
+                        PROHIBIDO preguntas de recuerdo de datos, cifras o nombres. El estudiante debe RAZONAR, no memorizar.
                         NO preguntes sobre definiciones generales — esas YA EXISTEN.
                     """.trimIndent()
                     2 -> """
@@ -565,24 +569,24 @@ class ReinforcementLearningViewModel(
                         NOTA: Estás viendo la SECCIÓN ${ragPage + 1}/$ragTotalPages del documento — contenido NUEVO respecto al intento anterior.
                         ESTRATEGIA OBLIGATORIA: Genera preguntas de APLICACIÓN y ESCENARIOS PRÁCTICOS.
                         Cada pregunta debe plantear una SITUACIÓN HIPOTÉTICA donde el estudiante aplique los conceptos.
-                        Formato sugerido: "Si un estudiante necesita...", "En una situación donde...", "¿Qué pasaría si...?"
-                        NO repitas el estilo de preguntas de conocimiento directo.
+                        Formato sugerido: "Te encuentras ante la decisión de...", "En una situación donde...", "¿Qué consecuencia tendría...?"
+                        PROHIBIDO preguntas de recuerdo. El estudiante debe PENSAR CRÍTICAMENTE para responder.
                     """.trimIndent()
                     3 -> """
                         $shortfallNote
                         ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: AÚN se detectaron duplicados.
-                        ESTRATEGIA OBLIGATORIA: Genera preguntas de COMPARACIÓN y CONTRASTE entre conceptos del material.
-                        Cada pregunta debe comparar DOS o más elementos del texto.
-                        Formato sugerido: "¿Cuál es la diferencia entre X e Y?", "¿En qué se parecen X e Y?", "Comparando X con Y..."
-                        PROHIBIDO preguntar sobre un solo concepto aislado.
+                        ESTRATEGIA OBLIGATORIA: Genera preguntas de EVALUACIÓN y JUICIO CRÍTICO entre enfoques del material.
+                        Cada pregunta debe pedir al estudiante EVALUAR ventajas/desventajas o JUSTIFICAR una elección.
+                        Formato sugerido: "¿Por qué es preferible X sobre Y cuando...?", "¿Qué limitación tendría aplicar X en este caso?"
+                        PROHIBIDO preguntar sobre datos aislados o definiciones.
                     """.trimIndent()
                     4 -> """
                         $shortfallNote
                         ⚠️ INTENTO DE REGENERACIÓN #$retryAttempt: ÚLTIMO INTENTO.
-                        ESTRATEGIA OBLIGATORIA: Genera preguntas de VERDADERO/FALSO reformuladas como opción múltiple.
-                        Cada pregunta debe presentar una AFIRMACIÓN y preguntar si es correcta o incorrecta según el material.
-                        Formato: "¿Cuál de las siguientes afirmaciones sobre [concepto] es CORRECTA/INCORRECTA?"
-                        Usa afirmaciones que mezclen datos reales del material con datos inventados sutilmente incorrectos.
+                        ESTRATEGIA OBLIGATORIA: Genera preguntas que presenten AFIRMACIONES RAZONADAS y pidan evaluar su validez.
+                        Cada pregunta debe presentar un ARGUMENTO o CONCLUSIÓN y preguntar si es válido según el material.
+                        Formato: "Un colega argumenta que [afirmación]. Según lo estudiado, ¿es correcto este razonamiento y por qué?"
+                        Las opciones deben requerir comprensión profunda para distinguir argumentos válidos de falacias sutiles.
                     """.trimIndent()
                     else -> """
                         $shortfallNote
@@ -596,10 +600,10 @@ class ReinforcementLearningViewModel(
                     """
                     DISTRIBUCIÓN TEMÁTICA OBLIGATORIA (MEZCLA TEMA + TAREA):
                     Las preguntas DEBEN distribuirse así:
-                    - 3 preguntas sobre conceptos del TEMA "$topicName" (definiciones, teoría, fundamentos)
-                    - 3 preguntas sobre la TAREA "$taskName" (requisitos, procedimientos, aplicación práctica)
-                    - 4 preguntas que INTEGREN AMBOS: apliquen conceptos del tema a la tarea o relacionen
-                      la práctica de la tarea con la teoría del tema
+                    - 3 preguntas sobre comprensión de PRINCIPIOS del TEMA "$topicName" (relaciones causa-efecto, propósito, implicaciones)
+                    - 3 preguntas sobre APLICACIÓN RAZONADA de la TAREA "$taskName" (decisiones, consecuencias, justificaciones)
+                    - 4 preguntas que INTEGREN AMBOS: escenarios donde el estudiante aplique principios del tema
+                      para resolver situaciones de la tarea o evalúe consecuencias cruzadas
                     
                     IMPORTANTE: Las preguntas integradoras deben mencionar elementos de AMBAS fuentes.
                     Ejemplo de pregunta integradora: "Según el tema '$topicName', ¿cómo se aplica [concepto] en la tarea '$taskName'?"
@@ -611,50 +615,73 @@ class ReinforcementLearningViewModel(
                 } else if (topicName.isNotBlank()) {
                     """
                     ENFOQUE: Genera preguntas centradas en el TEMA "$topicName".
-                    Cubre conceptos, definiciones, procesos y aplicaciones del tema.
+                    Cubre comprensión de principios, relaciones causa-efecto, implicaciones y aplicaciones del tema. PROHIBIDO preguntas de definición o recuerdo de eventos.
                     ${if (topicContentItemsArray.size() > 0) "Archivos del Tema: ${(0 until topicContentItemsArray.size()).map { topicContentItemsArray[it].asJsonObject?.get("title")?.asString ?: "?" }.joinToString(", ")}" else ""}
                     """.trimIndent()
                 } else {
                     """
                     ENFOQUE: Genera preguntas centradas en la TAREA "$taskName".
-                    Cubre requisitos, procedimientos y aplicación práctica de la tarea.
+                    Cubre decisiones de aplicación, consecuencias de enfoques y razonamiento sobre la tarea. PROHIBIDO preguntas de recuerdo de pasos o eventos.
                     ${if (taskContentItemsArray.size() > 0) "Archivos de la Tarea: ${(0 until taskContentItemsArray.size()).map { taskContentItemsArray[it].asJsonObject?.get("title")?.asString ?: "?" }.joinToString(", ")}" else ""}
                     """.trimIndent()
                 }
 
+                val freeLearningInstruction = if (isFreeLearning) """
+                    ═══════════════════════════════════════════════════
+                    MODO APRENDIZAJE LIBRE — EXPLORACIÓN COMPLETA:
+                    ═══════════════════════════════════════════════════
+                    - Las preguntas DEBEN cubrir CUALQUIER parte del contenido del documento adjunto.
+                    - NO te limites al título ni a la descripción del tema/tarea.
+                    - Explora secciones, detalles, ejemplos, datos y conceptos de TODO el material.
+                    - Cada pregunta debe abordar un aspecto DIFERENTE del documento.
+                    ═══════════════════════════════════════════════════
+                """.trimIndent() else ""
+
                 val prompt = when (currentDifficulty) {
 
                     // ══════════════════════════════════════════════════════
-                    // 🌱 EASY — Reconocimiento y memoria básica
-                    // Respuesta directa, sin análisis, basada en recuerdo.
+                    // 🌱 EASY — Comprensión básica y razonamiento guiado
+                    // El estudiante demuestra que ENTIENDE, no que memoriza.
                     // ══════════════════════════════════════════════════════
                     "EASY" -> """
-                        Eres un profesor generando preguntas de NIVEL FÁCIL (reconocimiento y memoria).
+                        Eres un profesor generando preguntas de NIVEL INTRODUCTORIO (comprensión básica).
 
-                        OBJETIVO: Generar EXACTAMENTE $targetCount preguntas de opción múltiple sencillas.
+                        OBJETIVO: Generar EXACTAMENTE $targetCount preguntas de opción múltiple que evalúen COMPRENSIÓN, no memorización.
 
                         TEMA: "${topicName.ifBlank { "General" }}"
                         TAREA: "${taskName.ifBlank { "General" }}"
 
                         $groundingInstruction
+                        $freeLearningInstruction
 
-                        REGLAS DEL NIVEL FÁCIL:
-                        - Las preguntas deben evaluar RECUERDO y RECONOCIMIENTO directo.
-                        - El estudiante solo necesita RECORDAR o IDENTIFICAR información básica.
-                        - Preguntas del tipo: "¿Qué es X?", "¿Cuál es el nombre de...?", "¿Cuál de estas opciones es un ejemplo de...?"
-                        - Una sola respuesta evidente. Sin trampas, sin análisis.
-                        - Las opciones incorrectas deben ser claramente distintas de la correcta.
-                        - Las preguntas deben ser breves y directas.
-                        ${if (existingQuestionsForPrompt.isNotEmpty()) "\nEvita repetir estas preguntas recientes:\n${existingQuestionsForPrompt.takeLast(10).joinToString("\n") { "- $it" }}" else ""}
+                        ═══════════════════════════════════════════════════
+                        PRINCIPIO FUNDAMENTAL — COMPRENSIÓN, NUNCA MEMORIZACIÓN:
+                        ═══════════════════════════════════════════════════
+                        - PROHIBIDO preguntas de recuerdo puro: "¿Qué es X?", "¿Cuál es el nombre de...?", "¿En qué año...?", "¿Cuántos...?"
+                        - PROHIBIDO preguntas donde la respuesta sea un dato, fecha, nombre o valor que se localiza directamente en el texto.
+                        - PROHIBIDO preguntas de memorización de EVENTOS: "¿Qué ocurrió?", "¿Quién hizo X?", "¿Cuándo sucedió?", "¿Qué evento causó X?"
+                        - El estudiante NUNCA debe poder responder simplemente recordando un hecho o evento del documento.
+                        - OBLIGATORIO: El estudiante debe COMPRENDER un concepto para poder responder.
+                        - Las preguntas deben evaluar si el estudiante ENTIENDE el POR QUÉ o el PARA QUÉ, no si recuerda un dato o evento.
+                        - Usa Taxonomía de Bloom nivel COMPRENDER mínimo: ¿por qué?, ¿para qué?, ¿qué pasaría si...?
+
+                        REGLAS DEL NIVEL INTRODUCTORIO:
+                        - Presenta situaciones sencillas y cotidianas donde el estudiante aplique comprensión básica.
+                        - Preguntas del tipo: "¿Por qué es importante X?", "¿Cuál es el propósito de...?", "¿Qué pasaría si no se aplica...?"
+                        - La respuesta correcta debe ser identificable por quien ENTIENDE el concepto, no por quien lo memorizó.
+                        - Las opciones incorrectas deben ser razonablemente plausibles pero distinguibles con comprensión básica.
+                        - Usa lenguaje accesible pero que requiera pensar.
+                        ${if (existingQuestionsForPrompt.isNotEmpty()) "\nPREGUNTAS YA EXISTENTES — PROHIBIDO REPETIR O PARAFRASEAR:\n${existingQuestionsForPrompt.takeLast(50).mapIndexed { i, q -> "${i + 1}. $q" }.joinToString("\n")}" else ""}
 
                         RESTRICCIONES:
                         1. Genera EXACTAMENTE $targetCount preguntas. Ni una más ni una menos.
                         2. Tu ÚNICA salida debe ser el array JSON.
                         3. Varía el correctIndex entre 0, 1, 2 y 3.
+                        4. CERO preguntas de memorización ni de recuerdo de eventos. Cada pregunta debe requerir COMPRENSIÓN de relaciones, mecanismos o consecuencias.
 
                         FORMATO JSON:
                         [
-                          {"question": "¿Qué es...?", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "La respuesta correcta es A porque..."}
+                          {"question": "¿Por qué es importante [concepto] cuando se trabaja con [contexto]?", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "La respuesta correcta es A porque... B es incorrecto porque..."}
                         ]
 
                         Contexto:
@@ -662,47 +689,100 @@ class ReinforcementLearningViewModel(
                     """.trimIndent()
 
                     // ══════════════════════════════════════════════════════
-                    // ⚡ INTERMEDIATE — Comprensión y aplicación
-                    // El estudiante interpreta e identifica la mejor opción.
+                    // ⚡ INTERMEDIATE — Análisis aplicado y pensamiento crítico
+                    // El estudiante analiza escenarios y justifica decisiones.
                     // ══════════════════════════════════════════════════════
                     "INTERMEDIATE" -> """
-                        Eres un profesor generando preguntas de NIVEL INTERMEDIO (comprensión y aplicación).
+                        Eres un profesor generando preguntas de NIVEL INTERMEDIO (análisis y pensamiento crítico).
 
-                        OBJETIVO: Generar EXACTAMENTE $targetCount preguntas de opción múltiple.
+                        OBJETIVO: Generar EXACTAMENTE $targetCount preguntas de opción múltiple que evalúen RAZONAMIENTO, no memorización.
 
                         TEMA: "${topicName.ifBlank { "General" }}"
                         TAREA: "${taskName.ifBlank { "General" }}"
 
                         $groundingInstruction
+                        $freeLearningInstruction
                         $retryDifferentiationInstruction
 
+                        ═══════════════════════════════════════════════════
+                        PRINCIPIO FUNDAMENTAL — PENSAMIENTO CRÍTICO, NUNCA MEMORIZACIÓN:
+                        ═══════════════════════════════════════════════════
+                        - PROHIBIDO preguntas donde la respuesta sea un dato que se localiza en el texto.
+                        - PROHIBIDO: "¿Qué es X?", "¿Cuántos...?", "¿Cuál es el nombre de...?", "¿En qué fecha...?"
+                        - PROHIBIDO preguntas de memorización de EVENTOS del documento: "¿Qué ocurrió?", "¿Quién realizó X?", "¿Cuándo sucedió?", "¿Qué evento causó X?"
+                        - El estudiante NUNCA debe poder responder simplemente recordando un hecho, evento o dato del documento.
+                        - OBLIGATORIO: El estudiante debe ANALIZAR, RAZONAR y APLICAR conceptos.
+                        - Cada pregunta DEBE presentar un ESCENARIO o SITUACIÓN PRÁCTICA donde el estudiante demuestre COMPRENSIÓN PROFUNDA.
+                        - Taxonomía de Bloom: solo niveles ANALIZAR, EVALUAR, APLICAR. PROHIBIDO nivel RECORDAR.
+
                         REGLAS DEL NIVEL INTERMEDIO:
-                        - El estudiante debe COMPRENDER el concepto y saber CUÁNDO/CÓMO aplicarlo.
-                        - Incluye pequeños escenarios o ejemplos prácticos.
-                        - Las opciones deben requerir interpretación, no simple memorización.
-                        - Usa situaciones concretas: "Si necesitas implementar X, ¿qué usarías?"
-                        - Las 4 opciones deben ser plausibles a primera vista.
-                        ${if (existingQuestionsForPrompt.isNotEmpty()) "\nPREGUNTAS YA RESPONDIDAS — NO REPETIR:\n${existingQuestionsForPrompt.takeLast(40).mapIndexed { i, q -> "${i + 1}. $q" }.joinToString("\n")}" else ""}
+                        - El estudiante debe COMPRENDER el concepto y saber CUÁNDO/CÓMO/POR QUÉ aplicarlo.
+                        - Cada pregunta presenta un escenario donde el estudiante debe DECIDIR o JUSTIFICAR.
+                        - Usa situaciones concretas: "Si necesitas resolver X considerando Y, ¿qué enfoque es mejor y por qué?"
+                        - Las 4 opciones deben ser plausibles y requerir ANÁLISIS para distinguirlas.
+                        - PROHIBIDO opciones que sean datos literales del material.
+                        - Incluye preguntas de CAUSA-EFECTO: "¿Qué consecuencia tendría aplicar X en este contexto?"
+                        - Incluye preguntas de COMPARACIÓN: "Comparando estos dos enfoques, ¿cuál es más adecuado cuando...?"
+                        - La explicación DEBE justificar por qué CADA opción incorrecta falla.
+                        ${if (existingQuestionsForPrompt.isNotEmpty()) "\nPREGUNTAS YA RESPONDIDAS — NO REPETIR:\n${existingQuestionsForPrompt.takeLast(50).mapIndexed { i, q -> "${i + 1}. $q" }.joinToString("\n")}" else ""}
+
+                        DISTRIBUCIÓN OBLIGATORIA ($targetCount preguntas):
+                        - 40% APLICACIÓN PRÁCTICA: "En este escenario, ¿qué enfoque resuelve mejor el problema?"
+                        - 30% CAUSA-EFECTO: "¿Qué consecuencia produce aplicar X en lugar de Y?"
+                        - 30% COMPARACIÓN RAZONADA: "¿Por qué es preferible X sobre Y en esta situación?"
 
                         RESTRICCIONES:
                         1. Genera EXACTAMENTE $targetCount preguntas. Ni una más ni una menos.
                         2. Tu ÚNICA salida debe ser el array JSON.
                         3. Varía el correctIndex entre 0, 1, 2 y 3.
                         4. NO repitas preguntas ya existentes — cambia el enfoque.
+                        5. CERO preguntas de memorización ni de recuerdo de eventos. Cada pregunta debe requerir RAZONAMIENTO sobre relaciones, mecanismos o consecuencias.
 
                         FORMATO JSON:
                         [
-                          {"question": "Escenario o situación breve. ¿Cuál es la mejor opción?", "options": ["A", "B", "C", "D"], "correctIndex": 1, "explanation": "B es correcto porque... A es incorrecto porque... C falla porque... D no aplica porque..."}
+                          {"question": "Te encuentras desarrollando X y necesitas decidir entre dos enfoques. Considerando [contexto], ¿cuál es la mejor estrategia?", "options": ["A", "B", "C", "D"], "correctIndex": 1, "explanation": "B es correcto porque... A es incorrecto porque... C falla porque... D no aplica porque..."}
                         ]
 
                         Contexto:
                         $contextBuilder
                     """.trimIndent()
 
-                    // ══════════════════════════════════════════════════════
-                    // 🔥 HARD — Análisis, evaluación y no repetición
-                    // Comportamiento original (nivel máximo).
-                    // ══════════════════════════════════════════════════════
+                    "FREE" -> """
+                        Eres un profesor generando preguntas de APRENDIZAJE LIBRE.
+
+                        OBJETIVO: Generar EXACTAMENTE $targetCount preguntas de opción múltiple basadas en TODO el contenido del documento, no solo en el título o descripción del tema/tarea.
+
+                        TEMA: "${topicName.ifBlank { "General" }}"
+                        TAREA: "${taskName.ifBlank { "General" }}"
+
+                        $groundingInstruction
+
+                        ═══════════════════════════════════════════════════
+                        MODO LIBRE — EXPLORACIÓN COMPLETA DEL DOCUMENTO:
+                        ═══════════════════════════════════════════════════
+                        - Las preguntas DEBEN cubrir CUALQUIER parte del contenido del documento adjunto.
+                        - NO te limites al título ni a la descripción del tema/tarea.
+                        - Explora secciones, detalles, ejemplos, datos y conceptos de TODO el material.
+                        - Varía entre niveles: algunas de comprensión, otras de análisis, otras de aplicación.
+                        - Cada pregunta debe abordar un aspecto DIFERENTE del documento.
+                        - PROHIBIDO preguntas de memorización pura: el estudiante debe comprender, no solo recordar.
+                        ${if (existingQuestionsForPrompt.isNotEmpty()) "\nPREGUNTAS YA EXISTENTES — PROHIBIDO REPETIR:\n${existingQuestionsForPrompt.takeLast(50).mapIndexed { i, q -> "${i + 1}. $q" }.joinToString("\n")}" else ""}
+
+                        RESTRICCIONES:
+                        1. Genera EXACTAMENTE $targetCount preguntas.
+                        2. Tu ÚNICA salida debe ser el array JSON.
+                        3. Varía el correctIndex entre 0, 1, 2 y 3.
+                        4. Cubre diferentes secciones y aspectos del documento completo.
+
+                        FORMATO JSON:
+                        [
+                          {"question": "Según el contenido del documento, ¿por qué...?", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "La respuesta correcta es A porque..."}
+                        ]
+
+                        Contexto:
+                        $contextBuilder
+                    """.trimIndent()
+
                     else -> """
                     Eres un profesor experto generando preguntas de nivel MÁXIMO (10/10).
 
@@ -720,15 +800,19 @@ class ReinforcementLearningViewModel(
                     $thematicDistribution
                     
                     $groundingInstruction
+                    $freeLearningInstruction
                     $retryDifferentiationInstruction
                     
                     ═══════════════════════════════════════════════════
                     INSTRUCCIÓN PEDAGÓGICA — NIVEL 10/10 (OBLIGATORIO ESTRICTO)
                     ═══════════════════════════════════════════════════
                     
-                    PRINCIPIO #1 — EL ESTUDIANTE DEBE PENSAR, NO BUSCAR:
+                    PRINCIPIO #1 — EL ESTUDIANTE DEBE PENSAR, NO BUSCAR NI RECORDAR:
                     - PROHIBIDO preguntas donde el estudiante solo localiza un dato en el material.
+                    - PROHIBIDO preguntas de memorización de EVENTOS: "¿Qué ocurrió?", "¿Quién hizo X?", "¿Cuándo sucedió?", "¿Qué evento causó X?"
+                    - El estudiante NUNCA debe poder responder recordando un hecho, evento, fecha o nombre del documento.
                       Ejemplo PROHIBIDO: "¿Qué modelo tiene menor tiempo?" → solo buscar un número.
+                      Ejemplo PROHIBIDO: "¿Qué evento motivó la creación de X?" → solo recordar un hecho.
                     - OBLIGATORIO: El estudiante debe ANALIZAR, INTERPRETAR y DECIDIR.
                                             Ejemplo CORRECTO: "Te encuentras en el caso de elegir un modelo que mantenga arquitectura MoE
                                             y reduzca el tiempo respecto a SMoE. ¿Cuál cumple esa condición?"
@@ -789,8 +873,8 @@ class ReinforcementLearningViewModel(
                     6. NUNCA parafrasees una pregunta existente — cambia completamente el enfoque y la estructura.
                     7. Las preguntas DEBEN reflejar los TÍTULOS del tema y la tarea por nombre cuando corresponda.
                     8. PROHIBIDO hacer preguntas genéricas sobre el curso — TODAS deben ser específicas al TEMA y TAREA indicados.
-                    9. PROHIBIDO preguntas de puro recuerdo ("¿Qué es...?", "¿Cuál es...?", "¿Cómo se define...?", "¿Qué valor tiene...?").
-                    10. Cada pregunta DEBE requerir que el estudiante ENTIENDA un mecanismo o implicación para poder responder.
+                    9. PROHIBIDO preguntas de puro recuerdo ("¿Qué es...?", "¿Cuál es...?", "¿Cómo se define...?", "¿Qué valor tiene...?") y de memorización de EVENTOS ("¿Qué ocurrió?", "¿Quién hizo X?", "¿Cuándo sucedió?"). El estudiante NUNCA debe responder recordando un hecho o evento.
+                    10. Cada pregunta DEBE requerir que el estudiante ENTIENDA un mecanismo, implicación o relación causa-efecto para poder responder. Taxonomía de Bloom: solo APLICAR, ANALIZAR, EVALUAR.
                     
                     FORMATO JSON ESTRICTO (completa CADA objeto antes del siguiente):
                     [
@@ -850,7 +934,8 @@ class ReinforcementLearningViewModel(
                             userId = if (userId > 0) userId else null,
                             courseId = if (courseId > 0) courseId else null,
                             topicId = if (topicId > -1L) topicId else null,
-                            taskId = if (taskId > -1L) taskId else null
+                            taskId = if (taskId > -1L) taskId else null,
+                            freeLearning = if (isFreeLearning) true else null
                         )
 
                         val cloudRespWrapper = withContext(Dispatchers.IO) { api.procesarPrompt(requestBody) }
@@ -979,20 +1064,20 @@ class ReinforcementLearningViewModel(
                         val uniqueSuffix = (System.nanoTime() % 1000).toString()
 
                         val variants = listOf(
-                            "Considerando '$seedLabel', ¿cuál es su propósito principal?",
-                            "En el ámbito de '$seedLabel', selecciona la afirmación verdadera:",
-                            "Analiza el concepto de '$seedLabel' y elige la opción correcta:",
-                            "¿Qué elemento es crucial para entender '$seedLabel'?",
-                            "Desde una perspectiva técnica, ¿cómo se define mejor '$seedLabel'?"
+                            "¿Por qué es importante comprender '$seedLabel' antes de aplicarlo en la práctica?",
+                            "Si tuvieras que explicar '$seedLabel' a un compañero, ¿cuál sería el aspecto más relevante a destacar?",
+                            "¿Qué consecuencia tendría ignorar los principios fundamentales de '$seedLabel' en un proyecto real?",
+                            "Comparando diferentes enfoques dentro de '$seedLabel', ¿cuál demuestra mayor utilidad práctica y por qué?",
+                            "¿Qué problema resuelve '$seedLabel' que no podría resolverse sin este concepto?"
                         )
                         val questionText = "${variants[i % variants.size]} (Ref: $uniqueSuffix)"
 
-                        val correctOption = "Definición técnica precisa sobre $seedLabel"
+                        val correctOption = "Comprensión aplicada del propósito central de $seedLabel"
                         val distractorBase = listOf(
-                            "Concepto erróneo común sobre $seedLabel",
-                            "Información no relacionada directamente",
-                            "Definición opuesta al concepto",
-                            "Detalle superficial irrelevante"
+                            "Interpretación superficial que confunde causa con efecto",
+                            "Enfoque que ignora el contexto práctico de aplicación",
+                            "Razonamiento que invierte la relación entre conceptos",
+                            "Conclusión basada en una generalización incorrecta"
                         )
 
                         val options = mutableListOf<String>()
@@ -1006,7 +1091,7 @@ class ReinforcementLearningViewModel(
                             question = questionText,
                             options = options,
                             correctIndex = correctIndex,
-                            explanation = "La respuesta correcta es '${options[correctIndex]}' porque es la definición técnica más precisa sobre $seedLabel en este contexto."
+                            explanation = "La respuesta correcta es '${options[correctIndex]}' porque requiere comprender el propósito y la aplicación de $seedLabel, no simplemente recordar un dato."
                         ))
                     }
                     questions = fallback
@@ -1095,15 +1180,14 @@ class ReinforcementLearningViewModel(
 
                     finalQuestions = redistributeCorrectOptionPositions(finalQuestions)
 
-                    // ── Save to backend BEFORE showing to user (to catch server-side duplicates) ──
                     var shouldRetry = false
                     var retryExcluded = emptyList<String>()
                     var retryShortfall = targetCount
                     var retryAccumulated = accumulatedQuestions
+                    var serverAccumulatedQuestions: List<QuizQuestion>? = null
                     
                     if (userId > 0) {
                         try {
-                            // NonCancellable: save must complete even if user navigates away
                             val saveResult = withContext(NonCancellable + Dispatchers.IO) {
                                 BackendApiService.saveReinforcementSession(
                                     userId,
@@ -1128,28 +1212,43 @@ class ReinforcementLearningViewModel(
                                     val cumulativeCount = data?.get("cumulativeCount")?.asInt ?: savedCount
                                     val allDuplicates = data?.get("allDuplicates")?.asBoolean ?: false
                                     val requiredCount = data?.get("requiredCount")?.asInt ?: 10
-                                    // shortfall based on cumulative count across all cycles
                                     val shortfall = data?.get("shortfall")?.asInt
                                         ?: if (cumulativeCount < requiredCount) (requiredCount - cumulativeCount) else 0
-                                    val isShortBatch = shortfall > 0
+                                    val isComplete = cumulativeCount >= requiredCount
 
-                                    if ((allDuplicates || isShortBatch) && retryAttempt < MAX_RETRY_ATTEMPTS) {
-                                        Log.w("ReinforcementVM", "⚠️ Backend: $savedCount saved this cycle, $cumulativeCount/$requiredCount cumulative. " +
-                                            "Shortfall=$shortfall — generating only missing questions (attempt ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)...")
+                                    Log.d("ReinforcementVM", "🔢 ACUMULATIVO: savedThisCycle=$savedCount, cumulative=$cumulativeCount/$requiredCount, shortfall=$shortfall, isComplete=$isComplete")
+
+                                    val serverAccQ = try {
+                                        data?.getAsJsonArray("accumulatedQuestions")?.mapNotNull { elem ->
+                                            val obj = elem.asJsonObject ?: return@mapNotNull null
+                                            val q = obj.get("question")?.asString ?: return@mapNotNull null
+                                            val opts = obj.getAsJsonArray("options")?.map { it.asString } ?: return@mapNotNull null
+                                            val ci = obj.get("correctIndex")?.asInt ?: 0
+                                            val exp = obj.get("explanation")?.asString ?: ""
+                                            QuizQuestion(q, opts, ci, exp)
+                                        }
+                                    } catch (_: Exception) { null }
+
+                                    if (isComplete && !serverAccQ.isNullOrEmpty()) {
+                                        serverAccumulatedQuestions = serverAccQ
+                                        Log.d("ReinforcementVM", "✅ LOTE COMPLETO: $cumulativeCount/$requiredCount preguntas únicas acumuladas. Mostrando las ${serverAccQ.size} del servidor.")
+                                    } else if (shortfall > 0 && retryAttempt < MAX_RETRY_ATTEMPTS) {
+                                        Log.w("ReinforcementVM", "⚠️ Ciclo parcial: $savedCount nuevas, $cumulativeCount/$requiredCount acumuladas. Faltan $shortfall — regenerando (intento ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)")
                                         val backendExisting = try {
-                                            data?.getAsJsonArray("existingQuestions")?.mapNotNull { elem ->
+                                            (data?.getAsJsonArray("accumulatedQuestions") ?: data?.getAsJsonArray("existingQuestions"))?.mapNotNull { elem ->
                                                 elem.asJsonObject?.get("question")?.asString
                                             } ?: emptyList()
                                         } catch (_: Exception) { emptyList() }
                                         retryExcluded = (existingQuestionTexts + finalQuestions.map { it.question } + backendExisting).distinct()
-                                        // Accumulate the questions already saved so they are shown to the user at the end
-                                        val newAccumulated = (accumulatedQuestions + finalQuestions)
-                                            .distinctBy { normalizeForComparison(it.question) }
                                         retryShortfall = shortfall
-                                        retryAccumulated = newAccumulated
+                                        retryAccumulated = serverAccQ ?: accumulatedQuestions
                                         shouldRetry = true
+                                    } else if (isComplete) {
+                                        serverAccumulatedQuestions = (accumulatedQuestions + finalQuestions)
+                                            .distinctBy { normalizeForComparison(it.question) }
+                                        Log.d("ReinforcementVM", "✅ Completo sin accumulatedQuestions del server, usando local: ${serverAccumulatedQuestions?.size}")
                                     } else {
-                                        Log.d("ReinforcementVM", "✅ Cumulative $cumulativeCount/$requiredCount questions saved via /save-questions")
+                                        Log.d("ReinforcementVM", "✅ Acumulativo $cumulativeCount/$requiredCount (sin más reintentos)")
                                     }
                                 }
                                 is ApiResult.Error -> {
@@ -1161,7 +1260,6 @@ class ReinforcementLearningViewModel(
                         }
                     }
 
-                    // If backend flagged duplicates, retry generating ONLY the shortfall (not all 10)
                     if (shouldRetry) {
                         loadQuestionsInternal(
                             courseId, courseName, topicId, taskId,
@@ -1172,11 +1270,16 @@ class ReinforcementLearningViewModel(
                         return@launch
                     }
 
-                    // All checks passed — show unique questions to the user
-                    // Combine accumulated questions (from previous rounds) with the new batch
-                    val questionsToShow = (accumulatedQuestions + finalQuestions)
-                        .distinctBy { normalizeForComparison(it.question) }
-                        .take(10)
+                    val questionsToShow = if (!serverAccumulatedQuestions.isNullOrEmpty()) {
+                        Log.d("ReinforcementVM", "📋 Mostrando ${serverAccumulatedQuestions!!.size} preguntas acumuladas del servidor (sin repetidas)")
+                        redistributeCorrectOptionPositions(serverAccumulatedQuestions!!.take(10))
+                    } else {
+                        val combined = (accumulatedQuestions + finalQuestions)
+                            .distinctBy { normalizeForComparison(it.question) }
+                            .take(10)
+                        Log.d("ReinforcementVM", "📋 Mostrando ${combined.size} preguntas (accumulated=${accumulatedQuestions.size} + batch=${finalQuestions.size})")
+                        redistributeCorrectOptionPositions(combined)
+                    }
                     _uiState.value = ReinforcementState.Success(questionsToShow)
                 }
                 
@@ -1326,24 +1429,24 @@ class ReinforcementLearningViewModel(
             val seedLabel = if (rawSeed.isEmpty()) "este tema" else rawSeed
             val uniqueSuffix = (System.nanoTime() % 1000).toString()
             val variants = listOf(
-                "Considerando '$seedLabel', ¿cuál es su propósito principal?",
-                "En el ámbito de '$seedLabel', selecciona la afirmación verdadera:",
-                "Analiza el concepto de '$seedLabel' y elige la opción correcta:",
-                "¿Qué elemento es crucial para entender '$seedLabel'?",
-                "Desde una perspectiva técnica, ¿cómo se define mejor '$seedLabel'?"
+                "¿Por qué es importante comprender '$seedLabel' antes de aplicarlo en la práctica?",
+                "Si tuvieras que explicar '$seedLabel' a un compañero, ¿cuál sería el aspecto más relevante a destacar?",
+                "¿Qué consecuencia tendría ignorar los principios fundamentales de '$seedLabel' en un proyecto real?",
+                "Comparando diferentes enfoques dentro de '$seedLabel', ¿cuál demuestra mayor utilidad práctica y por qué?",
+                "¿Qué problema resuelve '$seedLabel' que no podría resolverse sin este concepto?"
             )
             val questionText = "${variants[i % variants.size]} (Ref: $uniqueSuffix)"
-            val correctOption = "Definición técnica precisa sobre $seedLabel"
+            val correctOption = "Comprensión aplicada del propósito central de $seedLabel"
             val distractorBase = listOf(
-                "Concepto erróneo común sobre $seedLabel",
-                "Información no relacionada directamente",
-                "Interpretación parcial o incompleta",
-                "Ejemplo práctico simplificado"
+                "Interpretación superficial que confunde causa con efecto",
+                "Enfoque que ignora el contexto práctico de aplicación",
+                "Razonamiento que invierte la relación entre conceptos",
+                "Conclusión basada en una generalización incorrecta"
             )
             val options = listOf(correctOption) + distractorBase.shuffled().take(3)
             val shuffled = options.shuffled()
             val correctIndex = shuffled.indexOfFirst { it == correctOption }.coerceAtLeast(0)
-            val explanation = "La respuesta correcta es: \"$correctOption\". Esta explicación fue generada automáticamente."
+            val explanation = "La respuesta correcta es: \"$correctOption\" porque requiere comprender el propósito y la aplicación de $seedLabel, no simplemente recordar un dato."
             fallback.add(QuizQuestion(questionText, shuffled, correctIndex, explanation))
         }
         return fallback

@@ -4,7 +4,13 @@
       "Bash(gh api:*)",
       "Bash(gh auth:*)",
       "Bash(xargs grep:*)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\yasuy\\\\Documents\\\\test\\\\ProjectCourseV1\" -Recurse -Filter \"*.ts\" -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object -First 20 -ExpandProperty FullName)",
+      "Bash(./gradlew compileDebugKotlin:*)",
+      "Bash(./gradlew :app:compileProductionDebugKotlin:*)"
     ]
   }
 }

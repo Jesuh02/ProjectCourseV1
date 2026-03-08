@@ -65,5 +65,6 @@ data class Notification(
         const val TYPE_VIDEO_LIKE = "video_like"
         const val TYPE_COMMENT_LIKE = "comment_like"
         const val TYPE_CHAT_RESPONSE = "chat_response"
+        const val TYPE_NEW_SUBSCRIBER = "new_subscriber"
     }
 }

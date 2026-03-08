@@ -42,9 +42,8 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
         private const val INITIAL_DELAY_MS = 1_000L
         private const val BACKOFF_MULTIPLIER = 1.5
         private const val DEFAULT_PAGE_SIZE = 10
-
-        /** Maximum time to wait for a single feed attempt before trying fallbacks. */
         private const val FEED_TIMEOUT_MS = 8_000L
+        private const val CACHE_TTL_MS = 30_000L
     }
 
     // ── Observable state ─────────────────────────────────────────
@@ -72,10 +71,15 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
     var totalVideos: Int = 0
         private set
 
-    /** Stores the target video ID so refreshes also include it. */
     private var lastTargetVideoId: Long = -1L
-
     private var loadJob: Job? = null
+    private var feedFetchedAt: Long = 0L
+    private var feedDirty: Boolean = false
+
+    private val pendingDeletions = mutableSetOf<Long>()
+    private val pendingAdditions = mutableListOf<VideoData>()
+    private var pendingOpsTimestamp: Long = 0L
+    private val PENDING_OPS_TTL_MS = 60_000L
 
     init {
         BackendApiService.initialize(application.applicationContext)
@@ -135,9 +139,12 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
             val result = fetchVideosWithRetry(effectiveTargetId, pageSize)
 
             if (result.isNotEmpty()) {
-                _videoList.value = result
-                totalVideos = if (result.size < pageSize) result.size else result.size + pageSize
-                preCacheVideoAssets(result)
+                val finalList = applyPendingOps(result)
+                _videoList.value = finalList
+                totalVideos = if (finalList.size < pageSize) finalList.size else finalList.size + pageSize
+                feedFetchedAt = System.currentTimeMillis()
+                feedDirty = false
+                preCacheVideoAssets(finalList)
             } else {
                 _hasError.value = true
             }
@@ -162,7 +169,7 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
                 val newVideos = fetchPage(nextPage, pageSize)
 
                 if (newVideos.isNotEmpty()) {
-                    val combined = currentList + newVideos
+                    val combined = applyPendingOps(currentList + newVideos)
                     _videoList.value = combined
                     totalVideos = if (newVideos.size < pageSize) combined.size else combined.size + pageSize
                     preCacheVideoAssets(newVideos)
@@ -180,6 +187,56 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
      */
     fun retryLoad() {
         loadVideos(isRefresh = true)
+    }
+
+    fun markFeedDirty() {
+        feedDirty = true
+    }
+
+    fun isFeedStale(): Boolean =
+        feedDirty || System.currentTimeMillis() - feedFetchedAt >= CACHE_TTL_MS
+
+    fun addVideoOptimistic(video: VideoData) {
+        val current = _videoList.value.orEmpty().toMutableList()
+        current.add(0, video)
+        _videoList.value = current
+        pendingAdditions.add(video)
+        pendingOpsTimestamp = System.currentTimeMillis()
+        feedDirty = true
+    }
+
+    fun removeVideoOptimistic(videoId: Long) {
+        val current = _videoList.value.orEmpty().toMutableList()
+        current.removeAll { it.id == videoId }
+        _videoList.value = current
+        pendingDeletions.add(videoId)
+        pendingOpsTimestamp = System.currentTimeMillis()
+        feedDirty = true
+    }
+
+    private fun applyPendingOps(videos: List<VideoData>): List<VideoData> {
+        if (pendingDeletions.isEmpty() && pendingAdditions.isEmpty()) return videos
+        if (System.currentTimeMillis() - pendingOpsTimestamp > PENDING_OPS_TTL_MS) {
+            pendingDeletions.clear()
+            pendingAdditions.clear()
+            return videos
+        }
+        val filtered = videos.filter { it.id !in pendingDeletions }
+        val existingIds = filtered.map { it.id }.toSet()
+        val newAdditions = pendingAdditions.filter { it.id !in existingIds && it.id !in pendingDeletions }
+        return newAdditions + filtered
+    }
+
+    fun confirmDeletion(videoId: Long) {
+        pendingDeletions.remove(videoId)
+    }
+
+    fun confirmAddition(videoId: Long) {
+        pendingAdditions.removeAll { it.id == videoId }
+    }
+
+    fun refreshIfDirty() {
+        if (feedDirty) loadVideos(isRefresh = true)
     }
 
     // ── Private helpers ──────────────────────────────────────────

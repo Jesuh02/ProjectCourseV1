@@ -23,6 +23,7 @@ import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -1801,31 +1802,34 @@ class UserProfileViewFragment : Fragment() {
         Toast.makeText(requireContext(), "Eliminando...", Toast.LENGTH_SHORT).show()
         Log.d("UserProfileView", "Optimistic delete applied locally for: ${content.title} (isCourse=$isCourse)")
 
-        // --- BACKGROUND SYNC ---
-        // Use lifecycleScope but wrap with NonCancellable to ensure DB/Network op finishes even if user leaves screen
+        try {
+            val vm = ViewModelProvider(requireActivity())[com.example.tareamov.viewmodel.VideoHomeViewModel::class.java]
+            if (!isCourse) vm.removeVideoOptimistic(idToRemove) else vm.markFeedDirty()
+        } catch (_: Exception) {}
+
         lifecycleScope.launch {
             try {
-                // Use IO Dispatcher + NonCancellable to prevent JobCancellationException
                 withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                     if (isCourse) {
-                        // For courses, we use the ID directly as it comes from loadUserContent which maps backend ID
                         val deleteResult = BackendApiService.deleteCourse(content.id)
                         if (deleteResult is ApiResult.Success) {
-                            Log.i("UserProfileView", "✅ Course ${content.id} deleted successfully via backend")
+                            Log.i("UserProfileView", "Course ${content.id} deleted successfully via backend")
                         } else {
                             Log.w("UserProfileView", "Failed to delete course ${content.id}: ${(deleteResult as? ApiResult.Error)?.message}")
                         }
                     } else {
-                        // For videos, we use the ID directly as it comes from backend
                         val deleteResult = BackendApiService.deleteVideo(content.id)
                         if (deleteResult is ApiResult.Success) {
-                            Log.i("UserProfileView", "✅ Video ${content.id} deleted successfully via backend")
+                            Log.i("UserProfileView", "Video ${content.id} deleted successfully via backend")
+                            try {
+                                val vm = ViewModelProvider(requireActivity())[com.example.tareamov.viewmodel.VideoHomeViewModel::class.java]
+                                vm.confirmDeletion(content.id)
+                            } catch (_: Exception) {}
                         } else {
                             Log.w("UserProfileView", "Failed to delete video ${content.id}: ${(deleteResult as? ApiResult.Error)?.message}")
                         }
                     }
                 } 
-                
             } catch (e: Exception) {
                 Log.e("UserProfileView", "Error in deleting process: ${e.message}")
             }
@@ -1907,8 +1911,9 @@ class UserProfileViewFragment : Fragment() {
                     val updates = mapOf<String, Any?>(
                         "title" to videoData.title,
                         "description" to videoData.description,
-                        "thumbnail_uri" to videoData.thumbnailUri,
-                        "is_premium" to videoData.isPaid
+                        "thumbnailUri" to videoData.thumbnailUri,
+                        "price" to (videoData.price ?: 0.0),
+                        "isFree" to !videoData.isPaid
                     )
                     withContext(Dispatchers.IO) {
                         val result = BackendApiService.updateCourse(videoData.id, updates)
@@ -1978,7 +1983,7 @@ class UserProfileViewFragment : Fragment() {
 
                     // Update thumbnail via backend API
                     withContext(Dispatchers.IO) {
-                        val updates = mapOf<String, Any?>("thumbnail_uri" to finalThumbnailUri)
+                        val updates = mapOf<String, Any?>("thumbnailUri" to finalThumbnailUri)
                         val result = BackendApiService.updateCourse(course.id, updates)
                         if (result.isSuccess) {
                             Log.d("UserProfileView", "Thumbnail updated on backend for course ${course.id}")

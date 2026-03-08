@@ -800,6 +800,10 @@
             android:name="taskId"
             app:argType="long"
             android:defaultValue="-1L" />
+        <argument
+            android:name="freeLearning"
+            app:argType="boolean"
+            android:defaultValue="false" />
     </fragment>
 
     <!-- Admin Dashboard Fragment -->

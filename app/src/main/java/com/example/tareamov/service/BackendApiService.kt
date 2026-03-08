@@ -253,7 +253,7 @@ object BackendApiService {
             }
             try {
                 val response = client.newCall(request).execute()
-                val bodyStr = response.body?.string() ?: "{}"
+                val bodyStr = response.body?.string()?.takeIf { it.isNotBlank() } ?: "{}"
 
                 if (!response.isSuccessful) {
                     val (errorMsg, errorCode) = parseErrorResponse(bodyStr, response.code)
@@ -279,9 +279,10 @@ object BackendApiService {
                                 .build()
                             try {
                                 val retryResponse = client.newCall(newRequest).execute()
-                                val retryBody = retryResponse.body?.string() ?: "{}"
+                                val retryBody = retryResponse.body?.string()?.takeIf { it.isNotBlank() } ?: "{}"
                                 if (retryResponse.isSuccessful) {
-                                    val retryJson = JsonParser.parseString(retryBody).asJsonObject
+                                    val retryParsed = JsonParser.parseString(retryBody)
+                                    val retryJson = if (retryParsed != null && retryParsed.isJsonObject) retryParsed.asJsonObject else com.google.gson.JsonObject()
                                     val retrySuccess = retryJson.get("success")?.asBoolean ?: false
                                     if (retrySuccess) {
                                         val dataElement = retryJson.get("data")
@@ -311,7 +312,8 @@ object BackendApiService {
                     continue
                 }
 
-                val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+                val parsedElement = JsonParser.parseString(bodyStr)
+                val jsonObj = if (parsedElement != null && parsedElement.isJsonObject) parsedElement.asJsonObject else com.google.gson.JsonObject()
                 val success = jsonObj.get("success")?.asBoolean ?: false
 
                 if (!success) {
@@ -365,11 +367,11 @@ object BackendApiService {
             }
             try {
                 val response = client.newCall(request).execute()
-                val bodyStr = response.body?.string() ?: "{}"
+                val bodyStr = response.body?.string()?.takeIf { it.isNotBlank() } ?: "{}"
 
                 if (!response.isSuccessful) {
                     val errorMsg = try {
-                        val obj = JsonParser.parseString(bodyStr).asJsonObject
+                        val obj = JsonParser.parseString(bodyStr).let { if (it != null && it.isJsonObject) it.asJsonObject else com.google.gson.JsonObject() }
                         obj.get("error")?.asString ?: "Error ${response.code}"
                     } catch (_: Exception) { "Error HTTP ${response.code}" }
                     // On 401, attempt token refresh and retry once
@@ -382,9 +384,10 @@ object BackendApiService {
                                 .build()
                             try {
                                 val retryResponse = client.newCall(newRequest).execute()
-                                val retryBody = retryResponse.body?.string() ?: "{}"
+                                val retryBody = retryResponse.body?.string()?.takeIf { it.isNotBlank() } ?: "{}"
                                 if (retryResponse.isSuccessful) {
-                                    val retryJson = JsonParser.parseString(retryBody).asJsonObject
+                                    val retryParsed = JsonParser.parseString(retryBody)
+                                    val retryJson = if (retryParsed != null && retryParsed.isJsonObject) retryParsed.asJsonObject else com.google.gson.JsonObject()
                                     val dataElement = retryJson.get("data")
                                     if (dataElement == null || dataElement.isJsonNull) {
                                         return@withContext ApiResult.Success(emptyList())
@@ -406,7 +409,8 @@ object BackendApiService {
                     continue
                 }
 
-                val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+                val parsedList = JsonParser.parseString(bodyStr)
+                val jsonObj = if (parsedList != null && parsedList.isJsonObject) parsedList.asJsonObject else com.google.gson.JsonObject()
                 val dataElement = jsonObj.get("data")
 
                 if (dataElement == null || dataElement.isJsonNull) {
@@ -665,6 +669,12 @@ object BackendApiService {
         val personaId: Long? = null
     )
     data class RefreshTokenRequest(val refreshToken: String)
+    data class GoogleLoginRequest(
+        val email: String,
+        val displayName: String?,
+        val avatarUrl: String?,
+        val username: String? = null
+    )
     data class RefreshTokenResponse(
         val accessToken: String?,
         val refreshToken: String?
@@ -733,6 +743,31 @@ object BackendApiService {
             jwtToken = result.data.effectiveToken()
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
+        }
+        return result
+    }
+
+    /**
+     * Login with Google - authenticates user via email and returns proper JWT tokens.
+     * This ensures the correct user session is established in the backend.
+     */
+    suspend fun loginWithGoogle(
+        email: String,
+        displayName: String?,
+        avatarUrl: String?,
+        username: String? = null
+    ): ApiResult<AuthResponse> {
+        Log.d(TAG, "loginWithGoogle called for email: $email, usernamehint: $username")
+        val result = execute<AuthResponse>(
+            post("/auth/google", GoogleLoginRequest(email, displayName, avatarUrl, username))
+        )
+        if (result is ApiResult.Success && result.data?.effectiveToken() != null) {
+            jwtToken = result.data.effectiveToken()
+            result.data.refreshToken?.let { refreshToken = it }
+            result.data.user?.get("id")?.asLong?.let { currentUserId = it }
+            Log.d(TAG, "loginWithGoogle successful. UserId=${currentUserId}")
+        } else {
+            Log.w(TAG, "loginWithGoogle failed: ${(result as? ApiResult.Error)?.message}")
         }
         return result
     }
@@ -985,8 +1020,42 @@ object BackendApiService {
     suspend fun updateCourse(id: Long, updates: Map<String, Any?>): ApiResult<Course> =
         execute(put("/courses/$id", updates))
 
-    suspend fun deleteCourse(id: Long): ApiResult<JsonObject> =
-        execute(delete("/courses/$id"))
+    suspend fun deleteCourse(id: Long): ApiResult<Unit> = withContext(Dispatchers.IO) {
+        val request = delete("/courses/$id")
+        var lastException: Exception? = null
+        for (attempt in 0..MAX_RETRIES) {
+            if (attempt > 0) delay(INITIAL_BACKOFF_MS * attempt.toLong())
+            try {
+                val response = client.newCall(request).execute()
+                val bodyStr = response.body?.string()?.takeIf { it.isNotBlank() } ?: "{}"
+                if (response.isSuccessful) return@withContext ApiResult.Success(Unit)
+                if (response.code == 401 && attempt == 0 && !refreshToken.isNullOrBlank()) {
+                    val refreshed = refreshAccessToken()
+                    if (refreshed) {
+                        val newReq = request.newBuilder().headers(authHeaders().build()).build()
+                        try {
+                            val retryResp = client.newCall(newReq).execute()
+                            retryResp.body?.close()
+                            if (retryResp.isSuccessful) return@withContext ApiResult.Success(Unit)
+                        } catch (_: Exception) {}
+                    }
+                }
+                val (errorMsg, _) = parseErrorResponse(bodyStr, response.code)
+                if (response.code in 400..499) return@withContext ApiResult.Error(errorMsg, response.code)
+                lastException = IOException(errorMsg)
+            } catch (e: SocketTimeoutException) {
+                Log.w(TAG, "deleteCourse timeout attempt $attempt: ${e.message}")
+                lastException = e
+            } catch (e: IOException) {
+                Log.w(TAG, "deleteCourse IO error attempt $attempt: ${e.message}")
+                lastException = e
+            } catch (e: Exception) {
+                Log.e(TAG, "deleteCourse error: ${e.message}", e)
+                return@withContext ApiResult.Error("Error: ${e.message}", 0)
+            }
+        }
+        ApiResult.Error(lastException?.message ?: "timeout", 0)
+    }
 
     // ═══════════════════════════════════════════════════════════
     // VIDEOS

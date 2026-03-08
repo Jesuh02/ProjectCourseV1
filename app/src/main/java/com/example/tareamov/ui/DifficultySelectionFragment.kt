@@ -29,7 +29,7 @@ class DifficultySelectionFragment : Fragment() {
                 DifficultySelectionScreen(
                     courseName = courseName,
                     taskName = taskName,
-                    onDifficultySelected = { level ->
+                    onDifficultySelected = { level, freeLearning ->
                         val bundle = Bundle().apply {
                             putLong("courseId", courseId)
                             putString("courseName", courseName)
@@ -37,6 +37,7 @@ class DifficultySelectionFragment : Fragment() {
                             putLong("taskId", taskId)
                             putString("instructorName", "")
                             putString("difficulty", level.name)
+                            putBoolean("freeLearning", freeLearning)
                         }
                         findNavController().navigate(
                             R.id.action_selectDifficultyFragment_to_reinforcementLearningFragment,

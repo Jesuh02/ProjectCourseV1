@@ -283,7 +283,7 @@ class NotificacionesFragment : Fragment() {
                     }
                 }
             }
-            Notification.TYPE_VIDEO_LIKE -> {
+            Notification.TYPE_VIDEO_LIKE, Notification.TYPE_NEW_VIDEO -> {
                 navigateToVideoInHome(notification)
             }
             Notification.TYPE_COMMENT, Notification.TYPE_LIKE,

@@ -140,5 +140,19 @@
             android:exported="false"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
+
+        <!-- Firebase Cloud Messaging Service -->
+        <service
+            android:name=".service.MyFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- FCM Notification Channel (Android 8.0+) -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="deepseek_updates" />
     </application>
 </manifest>

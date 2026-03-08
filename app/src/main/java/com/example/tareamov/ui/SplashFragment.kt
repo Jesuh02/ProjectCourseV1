@@ -27,6 +27,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.FileDescriptor
 import android.content.res.AssetFileDescriptor
+import com.google.firebase.FirebaseApp
+import com.google.firebase.messaging.FirebaseMessaging
 
 class SplashFragment : Fragment() {
     
@@ -517,6 +519,7 @@ class SplashFragment : Fragment() {
                 val sessionManager = SessionManager.getInstance(requireContext())
                 if (sessionManager.isLoggedIn()) {
                     Log.d("SplashFragment", "Session found, navigating to videoHomeFragment")
+                    registerFCMToken()
                     findNavController().navigate(R.id.action_splashFragment_to_videoHomeFragment)
                 } else {
                     Log.d("SplashFragment", "No session, navigating to loginFragment")
@@ -529,6 +532,24 @@ class SplashFragment : Fragment() {
                 } catch (e: Exception) {
                     Log.e("SplashFragment", "Direct navigation error: ${e.message}")
                 }            }
+        }
+    }
+
+    private fun registerFCMToken() {
+        try {
+            if (FirebaseApp.getApps(requireContext()).isEmpty()) return
+            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        com.example.tareamov.service.BackendApiService.registerFCMToken(token)
+                        Log.d("SplashFragment", "FCM token registered on startup")
+                    } catch (e: Exception) {
+                        Log.e("SplashFragment", "Error registering FCM token", e)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SplashFragment", "Error accessing FirebaseMessaging", e)
         }
     }
 }

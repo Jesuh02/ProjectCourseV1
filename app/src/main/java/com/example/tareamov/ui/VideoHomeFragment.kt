@@ -1647,14 +1647,15 @@ class VideoHomeFragment : Fragment() {
         super.onResume()
         registerNetworkCallback()
 
-        // Ensure current video resumes automatically when coming back to this tab
         resumeCurrentVideoPlayback()
-        
-        // Reload avatar in case it changed
+
         loadCurrentUserAvatar()
-        
-        // Enable full screen mode via MainActivity
+
         (requireActivity() as? MainActivity)?.isFullScreenMode = true
+
+        if (::viewModel.isInitialized) {
+            viewModel.refreshIfDirty()
+        }
     }
 
     override fun onPause() {

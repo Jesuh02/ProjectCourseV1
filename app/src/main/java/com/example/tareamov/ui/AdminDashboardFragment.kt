@@ -1084,9 +1084,14 @@ class AdminDashboardFragment : Fragment() {
                             .awaitAll()
                     }
 
+                    // Excluir submissions del usuario actual (no mostrar sus propias tareas)
                     val selectedPairs = ungradedByCourse
                         .asSequence()
-                        .flatMap { (courseId, submissions) -> submissions.asSequence().map { courseId to it } }
+                        .flatMap { (courseId, submissions) ->
+                            submissions.asSequence()
+                                .filter { it.studentId != userId } // Excluir usuario actual
+                                .map { courseId to it }
+                        }
                         .take(maxCards)
                         .toList()
 
@@ -1448,7 +1453,10 @@ class AdminDashboardFragment : Fragment() {
                 cachedCourseProgressData = courseProgress
                 cachedStudentUsersData = users
 
-                val totalStudents = courseProgress.sumOf { (_, progs) -> progs.size }
+                // Contar estudiantes excluyendo al usuario actual
+                val totalStudents = courseProgress.sumOf { (_, progs) ->
+                    progs.count { it.usuarioEstudiante != userId }
+                }
                 countBadge.text = "$totalStudents estudiantes"
 
                 // ── Conectar filtros al render ──
@@ -1483,13 +1491,18 @@ class AdminDashboardFragment : Fragment() {
             return
         }
 
+        // Excluir al usuario actual de la lista de progreso
+        val currentUserId = sessionManager.getUserId()
+
         val filtered = cachedCourseProgressData.mapNotNull { (course, progs) ->
             val matchesCourse = courseQuery.isBlank() ||
                 course.title.contains(courseQuery, ignoreCase = true)
             if (!matchesCourse) return@mapNotNull null
 
-            val filteredProgs = if (usernameQuery.isBlank()) progs
-            else progs.filter { prog ->
+            // Primero excluir al usuario actual, luego aplicar filtro de username
+            val progsWithoutCurrentUser = progs.filter { it.usuarioEstudiante != currentUserId }
+            val filteredProgs = if (usernameQuery.isBlank()) progsWithoutCurrentUser
+            else progsWithoutCurrentUser.filter { prog ->
                 val user = cachedStudentUsersData[prog.usuarioEstudiante]
                 user?.usuario?.contains(usernameQuery, ignoreCase = true) == true ||
                     "#${prog.usuarioEstudiante}".contains(usernameQuery, ignoreCase = true)

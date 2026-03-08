@@ -782,6 +782,17 @@ class ProfileFragment : Fragment() {
             .start()
     }
 
+    private fun applyWhatsAppUnlinkedState(textView: TextView, badge: TextView) {
+        textView.text = "Vincular WhatsApp"
+        badge.text = "NO VINCULADO"
+        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+        badge.visibility = View.VISIBLE
+        whatsappSubtitleText?.text = "Conecta tu cuenta para recibir notificaciones"
+        whatsappIconView?.backgroundTintList =
+            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#25D366"))
+        isWhatsAppChannelAvailable = true
+    }
+
     private fun unlinkWhatsApp(textView: TextView, badge: TextView) {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
@@ -792,19 +803,8 @@ class ProfileFragment : Fragment() {
 
                 when (result) {
                     is ApiResult.Success -> {
+                        applyWhatsAppUnlinkedState(textView, badge)
                         Toast.makeText(requireContext(), "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
-                        // Update UI immediately
-                        textView.text = "Vincular WhatsApp"
-                        badge.text = "NO VINCULADO"
-                        badge.setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
-                        badge.visibility = View.VISIBLE
-                        whatsappSubtitleText?.text = "Conecta tu cuenta para recibir notificaciones"
-                        whatsappIconView?.backgroundTintList =
-                            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#25D366"))
-                        isWhatsAppChannelAvailable = true
-                        // Delay status refresh to let the backend commit the deletion
-                        kotlinx.coroutines.delay(1500)
-                        fetchAndUpdateWhatsAppStatus(textView, badge)
                     }
                     is ApiResult.Error -> {
                         Log.e("ProfileFragment", "Unlink WhatsApp error: ${result.message} (code=${result.code})")

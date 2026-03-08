@@ -73,9 +73,11 @@ class ReinforcementLearningFragment : Fragment() {
         val topicId = arguments?.getLong("topicId") ?: -1L
         val taskId = arguments?.getLong("taskId") ?: -1L
         val difficulty = arguments?.getString("difficulty") ?: "HARD"
+        val freeLearning = arguments?.getBoolean("freeLearning", false) ?: false
 
         // Apply difficulty before any load so the ViewModel uses it from the start
         viewModel.setDifficulty(difficulty)
+        viewModel.setFreeLearning(freeLearning)
 
         // Load context information immediately when fragment is created
         if (courseId != -1L) {

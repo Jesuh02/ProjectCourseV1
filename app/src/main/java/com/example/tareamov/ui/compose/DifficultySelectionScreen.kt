@@ -64,6 +64,15 @@ enum class DifficultyLevel(
         color = Color(0xFFE74C3C),
         gradientEnd = Color(0xFFC0392B),
         stars = 3
+    ),
+    FREE(
+        displayName = "Libre",
+        emoji = "🌌",
+        description = "Aprendizaje Libre",
+        details = "Preguntas sobre cualquier tema dentro del documento. Explora todo el contenido sin límites.",
+        color = Color(0xFF7C4DFF),
+        gradientEnd = Color(0xFF448AFF),
+        stars = 0
     )
 }
 
@@ -71,9 +80,10 @@ enum class DifficultyLevel(
 fun DifficultySelectionScreen(
     courseName: String,
     taskName: String? = null,
-    onDifficultySelected: (DifficultyLevel) -> Unit,
+    onDifficultySelected: (DifficultyLevel, Boolean) -> Unit,
     onBackClick: () -> Unit
 ) {
+    var freeLearningEnabled by remember { mutableStateOf(false) }
     val infiniteTransition = rememberInfiniteTransition(label = "bgAnim")
     val robotDy by infiniteTransition.animateFloat(
         initialValue = -8f, targetValue = 8f,
@@ -170,19 +180,27 @@ fun DifficultySelectionScreen(
 
             Spacer(Modifier.height(24.dp))
 
+            FreeLearningToggle(
+                enabled = freeLearningEnabled,
+                onToggle = { freeLearningEnabled = it }
+            )
+
+            Spacer(Modifier.height(20.dp))
+
             // ── Difficulty cards ──────────────────────────────────
-            DifficultyLevel.entries.forEachIndexed { idx, level ->
-                DifficultyCard(
-                    level = level,
-                    animationDelay = idx * 120L,
-                    onClick = { onDifficultySelected(level) }
-                )
-                Spacer(Modifier.height(14.dp))
-            }
+            DifficultyLevel.entries
+                .filter { it != DifficultyLevel.FREE }
+                .forEachIndexed { idx, level ->
+                    DifficultyCard(
+                        level = level,
+                        animationDelay = idx * 120L,
+                        onClick = { onDifficultySelected(level, freeLearningEnabled) }
+                    )
+                    Spacer(Modifier.height(14.dp))
+                }
 
             Spacer(Modifier.height(16.dp))
 
-            // ── Footer hint ───────────────────────────────────────
             Text(
                 text = "Puedes cambiar el nivel en cualquier momento",
                 color = Color(0xFF7986CB),
@@ -338,6 +356,152 @@ private fun DifficultyCard(
                 color = level.color.copy(alpha = 0.8f),
                 fontSize = 18.sp,
                 modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun FreeLearningToggle(
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    var visible by remember { mutableStateOf(false) }
+    val infiniteTransition = rememberInfiniteTransition(label = "freeToggle")
+
+    LaunchedEffect(Unit) {
+        delay(400L)
+        visible = true
+    }
+
+    val scale by animateFloatAsState(
+        targetValue = if (visible) 1f else 0.7f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "freeScale"
+    )
+
+    val orbitAngle by infiniteTransition.animateFloat(
+        initialValue = 0f, targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(6000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ), label = "orbit"
+    )
+
+    val borderColor by animateColorAsState(
+        targetValue = if (enabled) Color(0xFFB388FF) else Color(0xFF7C4DFF).copy(alpha = 0.4f),
+        animationSpec = tween(400),
+        label = "borderColor"
+    )
+
+    val bgAlpha by animateFloatAsState(
+        targetValue = if (enabled) 0.25f else 0.10f,
+        animationSpec = tween(400),
+        label = "bgAlpha"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .scale(scale)
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.horizontalGradient(
+                    colors = listOf(
+                        Color(0xFF7C4DFF).copy(alpha = bgAlpha),
+                        Color(0xFF448AFF).copy(alpha = bgAlpha * 0.7f)
+                    )
+                )
+            )
+            .border(
+                width = 2.dp,
+                color = borderColor,
+                shape = RoundedCornerShape(20.dp)
+            )
+            .clickable { onToggle(!enabled) }
+            .padding(horizontal = 20.dp, vertical = 16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFF7C4DFF).copy(alpha = if (enabled) 0.6f else 0.3f),
+                                Color.Transparent
+                            )
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "🌌",
+                    fontSize = 28.sp,
+                    modifier = Modifier.offset(
+                        x = (kotlin.math.cos(Math.toRadians(orbitAngle.toDouble())) * 2).dp,
+                        y = (kotlin.math.sin(Math.toRadians(orbitAngle.toDouble())) * 2).dp
+                    )
+                )
+            }
+
+            Spacer(Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Aprendizaje Libre",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (enabled) Color(0xFF7C4DFF).copy(alpha = 0.5f)
+                                else Color(0xFF7C4DFF).copy(alpha = 0.2f)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = if (enabled) "✨ ACTIVO" else "OFF",
+                            color = if (enabled) Color(0xFFB388FF) else Color(0xFF9E9E9E),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(4.dp))
+
+                Text(
+                    text = "Genera preguntas sobre todo el contenido del documento, no solo el título o descripción del tema y la tarea.",
+                    color = Color(0xFFBDBDBD),
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
+            }
+
+            Spacer(Modifier.width(8.dp))
+
+            Switch(
+                checked = enabled,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFFB388FF),
+                    checkedTrackColor = Color(0xFF7C4DFF).copy(alpha = 0.5f),
+                    uncheckedThumbColor = Color(0xFF9E9E9E),
+                    uncheckedTrackColor = Color(0xFF424242)
+                )
             )
         }
     }

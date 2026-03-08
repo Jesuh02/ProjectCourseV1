@@ -323,6 +323,7 @@ class LoginFragment : Fragment() {
         val titleSlide = ObjectAnimator.ofFloat(courseTitleText, "translationY", -50f, 0f)
         titleSlide.duration = 1500
         
+
         val titleAnimatorSet = AnimatorSet()
         titleAnimatorSet.playTogether(titleFadeIn, titleSlide)
         titleAnimatorSet.interpolator = AccelerateDecelerateInterpolator()
@@ -443,43 +444,98 @@ class LoginFragment : Fragment() {
     private fun handleGoogleSignInResult(task: Task<GoogleSignInAccount>) {
         try {
             val account = task.getResult(ApiException::class.java)
-            
+
             val email = account.email ?: ""
             val displayName = account.displayName ?: email.substringBefore("@")
             val profilePictureUri = account.photoUrl?.toString()
-            
+
             Log.d(TAG, "Google Sign-In successful for: $email")
-            
+
             // Separar nombre y apellido del displayName
             val nameParts = displayName.split(" ", limit = 2)
             val nombres = nameParts.getOrElse(0) { email.substringBefore("@") }
             val apellidos = nameParts.getOrElse(1) { "" }
-            
-            // Verificar si el usuario ya existe en el backend antes de redirigir al registro
+
+            // Authenticate with backend using the new Google login endpoint
+            // This properly authenticates the user and returns JWT tokens for the correct account
+            // Pass any username typed in the login field as a hint to link Google email to existing account
+            val usernameHint = usernameEditText.text.toString().trim().takeIf { it.length >= 3 }
             lifecycleScope.launch {
                 try {
-                    val existingUser = withContext(Dispatchers.IO) {
-                        BackendApiService.getUserByEmail(email).getOrNull()
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.loginWithGoogle(email, displayName, profilePictureUri, usernameHint)
                     }
-                    
-                    if (existingUser != null) {
-                        // Usuario ya existe - iniciar sesión directamente
-                        Log.d(TAG, "Usuario encontrado en backend: ${existingUser.usuario}")
-                        
-                        // Login fast with backend user data
-                        loginExistingGoogleUserFast(existingUser, displayName, profilePictureUri)
-                    } else {
-                        // Usuario no existe - redirigir al formulario de registro
-                        Log.d(TAG, "Usuario no encontrado en backend, redirigiendo a registro")
-                        navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
+
+                    when (result) {
+                        is ApiResult.Success -> {
+                            val authResponse = result.data
+                            if (authResponse?.effectiveToken() != null && authResponse.user != null) {
+                                val user = authResponse.user
+                                val userId = user.get("id")?.asLong ?: -1L
+                                val personaId = user.get("persona_id")?.asLong ?: -1L
+                                val username = user.get("username")?.asString ?: email.substringBefore("@")
+                                val avatarUri = user.get("avatar")?.let {
+                                    if (it.isJsonNull) profilePictureUri else it.asString
+                                } ?: profilePictureUri
+                                val roleName = user.get("rolNombre")?.let {
+                                    if (it.isJsonNull) "user" else it.asString
+                                } ?: "user"
+
+                                Log.d(TAG, "Google login successful. UserId=$userId, Username=$username")
+
+                                // Fetch roles from backend
+                                val roleIds = withContext(Dispatchers.IO) {
+                                    (BackendApiService.getUserRoles(userId) as? ApiResult.Success)?.data ?: emptyList()
+                                }
+                                val actualRoleName = when {
+                                    roleIds.contains(3L) -> "admin"
+                                    roleIds.contains(2L) -> "docente"
+                                    else -> "user"
+                                }
+                                val roleId = roleIds.firstOrNull()?.toInt() ?: 1
+
+                                // Create session with correct user data
+                                sessionManager.createLoginSession(
+                                    username = username,
+                                    userId = userId,
+                                    personaId = personaId,
+                                    roleName = actualRoleName,
+                                    avatarUri = avatarUri
+                                )
+
+                                sessionManager.addRole(roleId)
+                                if (actualRoleName.equals("admin", ignoreCase = true) || roleId == 3) {
+                                    sessionManager.setAdminStatus(true)
+                                }
+
+                                val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                                sharedPrefs.edit().putLong("current_user_id", userId).apply()
+
+                                Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
+                                findNavController().navigate(R.id.videoHomeFragment)
+                            } else {
+                                Log.e(TAG, "Google login response missing token or user data")
+                                Toast.makeText(requireContext(), "Error de autenticación", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        is ApiResult.Error -> {
+                            Log.e(TAG, "Google login failed: ${result.message}")
+                            // If user doesn't exist, redirect to registration
+                            if (result.code == 404) {
+                                Log.d(TAG, "Usuario no encontrado, redirigiendo a registro")
+                                navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
+                            } else {
+                                Toast.makeText(requireContext(), "Error: ${result.message}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error verificando usuario en backend: ${e.message}")
+                    Log.e(TAG, "Error en autenticación Google: ${e.message}")
                     // En caso de error de conexión, redirigir al registro
                     navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
                 }
             }
-            
+
         } catch (e: ApiException) {
             Log.e(TAG, "Google Sign-In failed with code: ${e.statusCode}", e)
             val errorMessage = when (e.statusCode) {

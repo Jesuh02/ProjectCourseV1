@@ -33,11 +33,15 @@ import com.example.tareamov.data.entity.Task
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.Subscription
 import com.example.tareamov.util.SessionManager
+import com.example.tareamov.viewmodel.CourseDetailSnapshot
 import com.example.tareamov.viewmodel.CourseViewModel
+import com.example.tareamov.viewmodel.CourseTopicData
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import de.hdodenhof.circleimageview.CircleImageView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -126,6 +130,147 @@ class CourseDetailFragment : Fragment() {
         if (url.isNullOrEmpty()) return false
         return url.startsWith("http://") || url.startsWith("https://")
     }
+
+    private fun populateTopicCache(
+        topics: List<Topic>,
+        contentByTopic: Map<Long, List<ContentItem>>,
+        tasksByTopic: Map<Long, List<Task>>
+    ) {
+        cachedTopicsData.clear()
+        for (topic in topics) {
+            cachedTopicsData.add(
+                Triple(
+                    topic,
+                    contentByTopic[topic.id].orEmpty(),
+                    tasksByTopic[topic.id].orEmpty()
+                )
+            )
+        }
+        cachedTopicsCount = topics.size
+        cachedTasksCount = tasksByTopic.values.sumOf { it.size }
+        refreshTabBadges()
+    }
+
+    private fun renderSnapshot(
+        snapshot: CourseDetailSnapshot,
+        noTopicsTextView: TextView?,
+        noTasksTextView: TextView?,
+        renderTree: Boolean = true
+    ) {
+        resolvedCourseId = snapshot.effectiveCourseId
+        snapshot.course?.let { renderCourseMetadata(it) }
+        populateTopicCache(snapshot.topics, snapshot.contentByTopic, snapshot.tasksByTopic)
+        if (renderTree) {
+            renderTopicData(
+                snapshot.topics,
+                snapshot.contentByTopic,
+                snapshot.tasksByTopic,
+                noTopicsTextView,
+                noTasksTextView
+            )
+        }
+    }
+
+    private fun renderCourseMetadata(course: com.example.tareamov.data.entity.Course) {
+        courseName = course.title
+        courseTitleTextView.text = course.title
+        courseDescriptionTextView.text = course.description
+        courseThematicTextView.text = "Temática: ${course.category ?: "General"}"
+        updatePriceDisplay(course.price)
+
+        val sessionUserId = sessionManager.getUserId()
+        isCurrentUserCreator = sessionUserId > 0 && sessionUserId == course.creatorUserId
+        editCourseButton.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+        togglePriceButton.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+        courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+
+        val heroImageView = view?.findViewById<ImageView>(R.id.courseHeroImageView)
+        if (!course.thumbnailUri.isNullOrBlank() && heroImageView != null) {
+            try {
+                Glide.with(this)
+                    .load(course.thumbnailUri)
+                    .centerCrop()
+                    .into(heroImageView)
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Could not load hero thumbnail", e)
+            }
+        }
+    }
+
+    private fun snapshotChanged(previous: CourseDetailSnapshot?, next: CourseDetailSnapshot): Boolean {
+        if (previous == null) return true
+
+        val previousCourse = previous.course
+        val nextCourse = next.course
+        if (previousCourse?.id != nextCourse?.id) return true
+        if (previousCourse?.title != nextCourse?.title) return true
+        if (previousCourse?.description != nextCourse?.description) return true
+        if (previousCourse?.thumbnailUri != nextCourse?.thumbnailUri) return true
+        if (previousCourse?.category != nextCourse?.category) return true
+        if (previousCourse?.price != nextCourse?.price) return true
+        if (previousCourse?.isPremium != nextCourse?.isPremium) return true
+        if (previousCourse?.lastModifiedDate != nextCourse?.lastModifiedDate) return true
+
+        val previousTopics = previous.topics.map { listOf(it.id, it.orderIndex, it.name, it.description) }
+        val nextTopics = next.topics.map { listOf(it.id, it.orderIndex, it.name, it.description) }
+        if (previousTopics != nextTopics) return true
+
+        val previousTasks = previous.tasksByTopic.values.flatten().sortedBy { it.id }
+            .map { listOf(it.id, it.topicId, it.orderIndex, it.name, it.description, it.dueDate) }
+        val nextTasks = next.tasksByTopic.values.flatten().sortedBy { it.id }
+            .map { listOf(it.id, it.topicId, it.orderIndex, it.name, it.description, it.dueDate) }
+        if (previousTasks != nextTasks) return true
+
+        val previousContent = previous.contentByTopic.values.flatten().sortedBy { it.id }
+            .map { listOf(it.id, it.topicId, it.taskId, it.name, it.uriString, it.contentType, it.orderIndex) }
+        val nextContent = next.contentByTopic.values.flatten().sortedBy { it.id }
+            .map { listOf(it.id, it.topicId, it.taskId, it.name, it.uriString, it.contentType, it.orderIndex) }
+        return previousContent != nextContent
+    }
+
+    private suspend fun resolveCourseSnapshot(requestedCourseId: Long): CourseDetailSnapshot? {
+        var resolvedCourse = BackendApiService.getCourseById(requestedCourseId).getOrNull()
+        var effectiveCourseId = requestedCourseId
+
+        if (resolvedCourse == null && courseName.isNotBlank()) {
+            val matchedCourse = BackendApiService.searchCourses(courseName).getOrNull()
+                ?.firstOrNull { candidate ->
+                    candidate.title.trim().equals(courseName.trim(), ignoreCase = true)
+                }
+            if (matchedCourse != null) {
+                resolvedCourse = matchedCourse
+                effectiveCourseId = matchedCourse.id
+            }
+        }
+
+        val topics = BackendApiService.getTopicsByCourse(effectiveCourseId)
+            .getOrNull()
+            .orEmpty()
+            .sortedBy { it.orderIndex }
+        val allTasks = BackendApiService.getTasksByCourse(effectiveCourseId)
+            .getOrNull()
+            .orEmpty()
+            .sortedBy { it.orderIndex }
+        val allContent = BackendApiService.getContentItemsByCourse(effectiveCourseId)
+            .getOrNull()
+            .orEmpty()
+            .sortedBy { it.orderIndex ?: 0 }
+        val progress = if (sessionManager.getUserId() > 0 && !isCurrentUserCreator) {
+            (BackendApiService.getProgressByCourse(effectiveCourseId) as? ApiResult.Success)?.data
+        } else {
+            null
+        }
+
+        return CourseDetailSnapshot(
+            requestedCourseId = requestedCourseId,
+            effectiveCourseId = effectiveCourseId,
+            course = resolvedCourse,
+            topics = topics,
+            contentByTopic = allContent.groupBy { it.topicId },
+            tasksByTopic = allTasks.groupBy { it.topicId },
+            progress = progress
+        )
+    }
     
     // BackendApiService is used for all remote operations
 
@@ -148,9 +293,9 @@ class CourseDetailFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         if (courseId != -1L) {
-            Log.d("CourseDetailFragment", "🔄 onResume: Reloading course details for courseId: $courseId")
-            
-            // Check for pending transactions to auto-unlock course
+            Log.d("CourseDetailFragment", "🔄 onResume: courseId=$courseId")
+
+            // Check for pending transactions to auto-unlock course (non-blocking)
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 try {
                     val userId = sessionManager.getUserId()
@@ -159,6 +304,8 @@ class CourseDetailFragment : Fragment() {
                         if (purchaseResult is ApiResult.Success && purchaseResult.data == true) {
                             withContext(Dispatchers.Main) {
                                 showSafeToast("¡Pago verificado! Curso desbloqueado.", Toast.LENGTH_LONG)
+                                // Invalidate only this course's cache so the next load picks up fresh data
+                                courseViewModel.invalidateCourseTopicData(courseId)
                                 loadCourseDetails()
                             }
                         }
@@ -168,8 +315,13 @@ class CourseDetailFragment : Fragment() {
                 }
             }
 
-            // Also reload standard details
-            loadCourseDetails()
+            // Background stale-while-revalidate: if cache is older than TTL, silently refresh
+            // (loadCourseDetails already handles cache-first display; this only applies when the
+            //  view was NOT recreated, i.e., onCreateView was NOT re-called this cycle)
+            if (!isLoadingCourseDetails && !courseViewModel.isCourseTopicDataFresh(courseId)) {
+                Log.d("CourseDetailFragment", "onResume: cache stale or missing — triggering refresh")
+                loadCourseDetails()
+            }
         }
     }
 
@@ -224,7 +376,8 @@ class CourseDetailFragment : Fragment() {
                 if (cachedTopicsData.isNotEmpty()) {
                     filterContentUltraFast()
                 } else {
-                    loadCourseDetails()
+                    // Cache is being loaded; wait — loadCourseDetails handles both tabs now
+                    Log.d("CourseDetailFragment", "Tab 'documentos' switched while cache is empty, will render when load completes")
                 }
             }
         }
@@ -236,7 +389,8 @@ class CourseDetailFragment : Fragment() {
                 if (cachedTopicsData.isNotEmpty()) {
                     filterContentUltraFast()
                 } else {
-                    loadCourseDetails()
+                    // Cache is being loaded; wait — loadCourseDetails handles both tabs now
+                    Log.d("CourseDetailFragment", "Tab 'tareas' switched while cache is empty, will render when load completes")
                 }
             }
         }
@@ -290,13 +444,11 @@ class CourseDetailFragment : Fragment() {
         //     }
         // }
 
-        if (courseId != -1L) {
-            loadCourseDetails()
-        } else {
-            showSafeToast("Error: ID de curso inválido")
-            // Consider navigating back if courseId is invalid from the start
-            // findNavController().navigateUp()
-        }
+        // Reset loading flag on each view creation — any prior coroutine will be cancelled
+        // by viewLifecycleOwner.lifecycleScope automatically. loadCourseDetails() is called
+        // from onViewCreated (after ViewModel is initialized).
+        isLoadingCourseDetails = false
+        cachedTopicsData.clear()
 
         return view
     }
@@ -305,8 +457,13 @@ class CourseDetailFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Initialize ViewModel
-        courseViewModel = ViewModelProvider(this)[CourseViewModel::class.java]
+        // Reset loading flag — any prior lifecycle-scoped coroutine was cancelled when the
+        // view was destroyed, so the flag must be cleared for the new view cycle.
+        isLoadingCourseDetails = false
+
+        // FIX: Scope ViewModel to the Activity so the in-memory cache survives Fragment
+        // destruction and re-creation (pressing Back and re-entering the same course).
+        courseViewModel = ViewModelProvider(requireActivity())[CourseViewModel::class.java]
 
         // Initialize view references for editing course
         courseTitleTextView = view.findViewById(R.id.courseTitleTextView)
@@ -378,97 +535,8 @@ class CourseDetailFragment : Fragment() {
                     courseDescription.text = it.description
                     animateDescriptionUpdate()
                 }
-                
-                courseTitleTextView = view.findViewById(R.id.courseTitleTextView)
-                courseDescriptionTextView = view.findViewById(R.id.courseDescriptionTextView)
-                editCourseButton = view.findViewById(R.id.editCourseButton)
-                // Decide edit button visibility using Supabase when possible
-                val localUsername = sessionManager.getUsername()
-                val sessionUserId = sessionManager.getUserId()
-                Log.d("CourseDetailFragment", "🔍 Local username: $localUsername, courseId: $courseId, creatorUserId: ${it.creatorUserId}")
-                val fastOwnerById = sessionUserId > 0 && it.creatorUserId == sessionUserId
-                if (fastOwnerById) {
-                    Log.d("CourseDetailFragment", "✅ Owner detected by id match: sessionUserId=$sessionUserId creatorUserId=${it.creatorUserId}")
-                    editCourseButton.visibility = View.VISIBLE
-                    togglePriceButton.visibility = View.VISIBLE
-                    isCurrentUserCreator = true
-                } else {
-                    editCourseButton.visibility = View.GONE
-                    togglePriceButton.visibility = View.GONE
-                    isCurrentUserCreator = false
-                }
 
-                // If not confirmed owner by id, fall back to username/remote checks
-                if (!fastOwnerById && !localUsername.isNullOrBlank()) {
-                    lifecycleScope.launch {
-                        var showEdit = false
-                        try {
-                            // Use BackendApiService to check course creator
-                            val remoteCourseResult = withContext(Dispatchers.IO) { BackendApiService.getCourseById(courseId) }
-                            if (remoteCourseResult is ApiResult.Success && remoteCourseResult.data != null) {
-                                val remoteCourse = remoteCourseResult.data
-                                // Fetch username from remote course's creator_user_id
-                                val creatorResult = withContext(Dispatchers.IO) {
-                                    BackendApiService.getUserById(remoteCourse.creatorUserId)
-                                }
-                                val remoteCreatorUsername = (creatorResult as? ApiResult.Success)?.data?.usuario
-                                Log.d("CourseDetailFragment", "✅ Remote creator: $remoteCreatorUsername, local: $localUsername, match: ${remoteCreatorUsername == localUsername}")
-                                showEdit = remoteCreatorUsername != null && remoteCreatorUsername == localUsername
-                            } else {
-                                // fallback to local course data if remote missing
-                                val localCreatorResult = withContext(Dispatchers.IO) {
-                                    BackendApiService.getUserById(it.creatorUserId)
-                                }
-                                val localCreatorUsername = (localCreatorResult as? ApiResult.Success)?.data?.usuario
-                                Log.d("CourseDetailFragment", "⚠️ Local creator (fallback): $localCreatorUsername, match: ${localCreatorUsername == localUsername}")
-                                showEdit = localCreatorUsername != null && localCreatorUsername == localUsername
-                            }
-                        } catch (e: Exception) {
-                            Log.e("CourseDetailFragment", "❌ Error checking remote creator: ${e.message}", e)
-                            val localCreatorResult = withContext(Dispatchers.IO) {
-                                BackendApiService.getUserById(it.creatorUserId)
-                            }
-                            val localCreatorUsername = (localCreatorResult as? ApiResult.Success)?.data?.usuario
-                            Log.d("CourseDetailFragment", "🔧 Local creator (error): $localCreatorUsername, match: ${localCreatorUsername == localUsername}")
-                            showEdit = localCreatorUsername != null && localCreatorUsername == localUsername
-                        }
-                        
-                        Log.d("CourseDetailFragment", "🎯 FINAL showEdit decision: $showEdit")
-                        
-                        withContext(Dispatchers.Main) {
-                            editCourseButton.visibility = if (showEdit) View.VISIBLE else View.GONE
-                            togglePriceButton.visibility = if (showEdit) View.VISIBLE else View.GONE
-                            isCurrentUserCreator = showEdit
-
-                            // Animate edit button entrance if it becomes visible
-                            if (showEdit) {
-                                editCourseButton.alpha = 0f
-                                editCourseButton.scaleX = 0.8f
-                                editCourseButton.scaleY = 0.8f
-                                editCourseButton.translationY = 20f
-                                editCourseButton.animate()
-                                    .alpha(1f)
-                                    .scaleX(1f)
-                                    .scaleY(1f)
-                                    .translationY(0f)
-                                    .setDuration(350)
-                                    .setInterpolator(android.view.animation.OvershootInterpolator(1.2f))
-                                    .start()
-                                
-                                Log.d("CourseDetailFragment", "✨ Edit button should be VISIBLE now")
-                            } else {
-                                Log.d("CourseDetailFragment", "🚫 Edit button hidden - user is not creator")
-                            }
-                        }
-                    }
-                }
-                
-                // Update thematic/category
-                val thematic = it.category ?: "General"
-                courseThematicTextView.text = "Temática: $thematic"
-                
-                // Update price information
-                updatePriceDisplay(it.price)
+                renderCourseMetadata(it)
             }
         }
 
@@ -504,9 +572,9 @@ class CourseDetailFragment : Fragment() {
             showPriceConfigurationDialog()
         }
 
-        // Load course details
+        // Load course metadata into ViewModel (title, description, price, etc.)
         courseViewModel.getCourseById(courseId)
-        
+
         // Setup bottom navigation
         setupBottomNavigation(view)
 
@@ -515,7 +583,8 @@ class CourseDetailFragment : Fragment() {
         navBackEntry?.savedStateHandle?.getLiveData<Long>("topic_created")?.observe(viewLifecycleOwner) { topicId ->
             try {
                 Log.d("CourseDetailFragment", "Detected topic_created=$topicId, refreshing topics")
-                refreshTopicsFromBackend()
+                courseViewModel.markCourseDetailDirty(courseId)
+                refreshTopicsFromBackend(showSkeleton = cachedTopicsData.isEmpty())
                 // Clear the flag so subsequent returns don't re-trigger unless set again
                 navBackEntry.savedStateHandle.remove<Long>("topic_created")
             } catch (e: Exception) {
@@ -527,7 +596,8 @@ class CourseDetailFragment : Fragment() {
         navBackEntry?.savedStateHandle?.getLiveData<Boolean>("refresh_from_supabase")?.observe(viewLifecycleOwner) { shouldRefresh ->
             if (shouldRefresh == true) {
                 Log.d("CourseDetailFragment", "Refresh flag received, reloading from backend...")
-                refreshTopicsFromBackend()
+                courseViewModel.markCourseDetailDirty(courseId)
+                refreshTopicsFromBackend(showSkeleton = cachedTopicsData.isEmpty())
                 navBackEntry.savedStateHandle.remove<Boolean>("refresh_from_supabase")
             }
         }
@@ -548,9 +618,31 @@ class CourseDetailFragment : Fragment() {
             if (shouldForceReload == true) {
                 Log.d("CourseDetailFragment", "Force reload requested - clearing cache and reloading")
                 cachedTopicsData.clear()
-                refreshTopicsFromBackend()
+                courseViewModel.markCourseDetailDirty(courseId)
+                refreshTopicsFromBackend(showSkeleton = true)
                 navBackEntry.savedStateHandle.remove<Boolean>("force_reload_topics")
             }
+        }
+
+        // Pre-invalidate cache when returning from a sub-fragment that mutated data
+        // (e.g. topic deleted, task created). This ensures loadCourseDetails sees no
+        // stale cache and fetches fresh data immediately on the next render cycle.
+        run {
+            val sh = navBackEntry?.savedStateHandle
+            val hasMutation = sh?.get<Boolean>("force_reload_topics") == true
+                || sh?.get<Long>("topic_created") != null
+                || sh?.get<Boolean>("refresh_from_supabase") == true
+            if (hasMutation) {
+                courseViewModel.markCourseDetailDirty(courseId)
+                Log.d("CourseDetailFragment", "⚡ Pre-invalidated cache: mutation from sub-fragment detected")
+            }
+        }
+
+        // Initial load: cache-first (shows cached data instantly if available, then background-refreshes)
+        if (courseId != -1L) {
+            loadCourseDetails()
+        } else {
+            showSafeToast("Error: ID de curso inválido")
         }
     }
       private fun setupBottomNavigation(view: View) {
@@ -850,446 +942,115 @@ class CourseDetailFragment : Fragment() {
         }
     }
 
-    // In the loadCourseDetails() method, update to use SubscriptionDao
+    // ─────────────────────────────────────────────────────────────────────────
+    // loadCourseDetails — cache-first + stale-while-revalidate
+    //
+    // Strategy (Single Source of Truth via ViewModel):
+    //   1. If ViewModel cache is fresh  → render cached data IMMEDIATELY (no blank screen)
+    //                                     then fetch fresh data in background and update if changed.
+    //   2. If cache is stale / missing  → show skeleton, fetch from network, cache result.
+    //
+    // Lifecycle: uses viewLifecycleOwner.lifecycleScope so the coroutine is automatically
+    // cancelled when the view is destroyed (e.g., navigating to a sub-screen).  When the
+    // user returns, onViewCreated fires a fresh call — the flag is always false at that point.
+    // ─────────────────────────────────────────────────────────────────────────
     private fun loadCourseDetails() {
-        // Prevent multiple simultaneous loads
         if (isLoadingCourseDetails) {
             Log.w("CourseDetailFragment", "⚠️ Load already in progress, skipping duplicate call")
             return
         }
-        
+
         isLoadingCourseDetails = true
-        
-        // Cancel any previous refresh job
         refreshJob?.cancel()
-        
-        // CRITICAL: Clear container IMMEDIATELY to prevent duplication
-        topicsContainer.removeAllViews()
-        Log.d("CourseDetailFragment", "🧹 Topics container cleared at start of loadCourseDetails")
-        
-        startSkeletonAnimation()
+
         val noTopicsTextView = view?.findViewById<TextView>(R.id.noTopicsTextView)
         val courseTitleTextView = view?.findViewById<TextView>(R.id.courseTitleTextView)
-        // Add a TextView for when tasks are filtered and none are found
-        val noTasksTextView = view?.findViewById<TextView>(R.id.noTasksTextView) // Make sure this ID exists in your layout or create it
-    val paymentContainer = view?.findViewById<FrameLayout>(R.id.paymentButtonContainer)
+        val noTasksTextView = view?.findViewById<TextView>(R.id.noTasksTextView)
+        val paymentContainer = view?.findViewById<FrameLayout>(R.id.paymentButtonContainer)
 
-        refreshJob = CoroutineScope(Dispatchers.Main).launch {
+        val cachedSnapshot = courseViewModel.getCourseDetailSnapshot(courseId)
+        val canRenderInstantly = courseViewModel.canRenderCourseDetailSnapshot(courseId)
+        if (cachedSnapshot != null && canRenderInstantly) {
+            Log.d("CourseDetailFragment", "⚡ Cache hit — rendering full snapshot instantly")
+            renderSnapshot(cachedSnapshot, noTopicsTextView, noTasksTextView)
+        } else {
+            topicsContainer.removeAllViews()
+            Log.d("CourseDetailFragment", "🧹 No reusable snapshot — showing skeleton and loading from network")
+            startSkeletonAnimation()
+        }
+
+        refreshJob = viewLifecycleOwner.lifecycleScope.launch {
             try { // Start of the main try block
-                // Try to fetch the Course from Supabase first (via MainActivity.syncRepository)
-                var remoteCourse: com.example.tareamov.data.entity.Course? = null
-                // Use an effectiveCourseId for subsequent topic/task lookups; may be remapped if we find
-                // a matching course by title when the numeric id is not present there.
-                var effectiveCourseId: Long = courseId
-                try {
-                    // Fetch course from BackendApiService
-                    val courseResult = withContext(Dispatchers.IO) { BackendApiService.getCourseById(courseId) }
-                    if (courseResult is ApiResult.Success) {
-                        remoteCourse = courseResult.data
-                    }
-                    Log.d("CourseDetailFragment", "getCourseById returned: ${remoteCourse?.id}")
+                val latestSnapshot = withContext(Dispatchers.IO) { resolveCourseSnapshot(courseId) }
+                    ?: throw IllegalStateException("No se pudo resolver el detalle del curso")
 
-                    // If no course found by id, try to resolve by the passed courseName
-                    if (remoteCourse == null && courseName.isNotBlank()) {
-                        try {
-                            val searchResult = withContext(Dispatchers.IO) { BackendApiService.searchCourses(courseName) }
-                            if (searchResult is ApiResult.Success) {
-                                val match = searchResult.data?.firstOrNull { c ->
-                                    val remoteTitle = (c.title ?: "").trim()
-                                    remoteTitle.equals(courseName.trim(), ignoreCase = true)
-                                }
-                                if (match != null) {
-                                    remoteCourse = match
-                                    effectiveCourseId = match.id
-                                    Log.d("CourseDetailFragment", "Resolved course by title -> remote id=${match.id} title=${match.title}")
-                                } else {
-                                    Log.d("CourseDetailFragment", "No course matched title='$courseName'")
-                                }
-                            }
-                        } catch (t: Exception) {
-                            Log.w("CourseDetailFragment", "Title-based lookup failed", t)
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("CourseDetailFragment", "Remote fetch failed", e)
+                courseViewModel.setCourseDetailSnapshot(latestSnapshot)
+
+                val shouldRerender = !canRenderInstantly || snapshotChanged(cachedSnapshot, latestSnapshot)
+                if (shouldRerender) {
+                    renderSnapshot(latestSnapshot, noTopicsTextView, noTasksTextView)
+                    Log.d("CourseDetailFragment", "🔄 Re-rendered: snapshot changed or cache was unavailable")
+                } else {
+                    latestSnapshot.course?.let { renderCourseMetadata(it) }
+                    refreshTabBadges()
+                    Log.d("CourseDetailFragment", "⚡ Skipped full re-render: snapshot unchanged")
                 }
 
-                if (remoteCourse != null) {
-                    // Populate UI from remote Course
-                    val title = remoteCourse.title ?: "Curso sin título"
-                    courseTitleTextView?.text = title
-                    courseName = title
+                val resolvedCourse = latestSnapshot.course
+                if (resolvedCourse != null) {
+                    creatorUserId = resolvedCourse.creatorUserId
+                    isCurrentUserCreator = sessionManager.getUserId() == creatorUserId
 
-                    // Load course hero thumbnail
-                    val heroImageView = view?.findViewById<android.widget.ImageView>(R.id.courseHeroImageView)
-                    if (!remoteCourse.thumbnailUri.isNullOrEmpty() && heroImageView != null) {
-                        try {
-                            Glide.with(this@CourseDetailFragment)
-                                .load(remoteCourse.thumbnailUri)
-                                .centerCrop()
-                                .into(heroImageView)
-                        } catch (e: Exception) {
-                            Log.w("CourseDetailFragment", "Could not load hero thumbnail", e)
-                        }
+                    paymentContainer?.visibility = View.GONE
+
+                    if (courseActionBar.visibility == View.VISIBLE) {
+                        animateViewIfVisible(courseActionBar, 360)
+                    } else {
+                        courseActionBar.alpha = 0f
+                        courseActionBar.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
                     }
 
-                    // Auto-play hero video after 1 second if videoUri available
-                    val heroVideoView = view?.findViewById<android.widget.VideoView>(R.id.heroVideoView)
-                    if (!remoteCourse.videoUri.isNullOrEmpty() && heroVideoView != null) {
-                        heroVideoView.postDelayed({
-                            if (!isAdded || view == null) return@postDelayed
-                            try {
-                                var vUri = remoteCourse.videoUri
-                                if (!vUri.isNullOrEmpty()) {
-                                    if (!vUri!!.startsWith("http") && !vUri!!.startsWith("content://") && !vUri!!.startsWith("file://")) {
-                                        val key = if (vUri!!.startsWith("/")) vUri!!.substring(1) else vUri!!
-                                        vUri = com.example.tareamov.service.BackendApiService.buildProxyFileUrl(key)
-                                    }
-                                }
-                                heroVideoView.setVideoURI(android.net.Uri.parse(vUri))
-                                heroVideoView.setOnPreparedListener { mp ->
-                                    mp.setVolume(0f, 0f) // Mute the video
-                                    mp.isLooping = true
-                                    heroVideoView.visibility = View.VISIBLE
-                                    heroImageView?.visibility = View.GONE
-                                    heroVideoView.start()
-                                }
-                                heroVideoView.setOnErrorListener { _, _, _ ->
-                                    heroVideoView.visibility = View.GONE
-                                    heroImageView?.visibility = View.VISIBLE
-                                    true
-                                }
-                            } catch (e: Exception) {
-                                Log.w("CourseDetailFragment", "Could not load hero video", e)
-                            }
-                        }, 1000L)
-                    }
-
-                    // Map creator username from creator_user_id
-                    creatorUserId = remoteCourse.creatorUserId
                     courseCreatorUsername = withContext(Dispatchers.IO) {
-                        (BackendApiService.getUserById(remoteCourse.creatorUserId) as? ApiResult.Success)?.data?.usuario
-                    }
-                    isCurrentUserCreator = courseCreatorUsername == currentUsername
-                    courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
-                    
-                    // IMPORTANTE: Actualizar progreso del estudiante al ingresar al curso
-                    // Esto asegura que la información esté sincronizada sin usar triggers
-                    if (!isCurrentUserCreator && currentUsername != null) {
-                        Log.d("CourseDetailFragment", "🔄 Updating student progress on course entry: user=$currentUsername, course=$effectiveCourseId")
-                        recalculateStudentProgressOnEntry(effectiveCourseId)
-                    }
-                    
-                    // IMPORTANTE: Actualizar progreso del estudiante al ingresar al curso
-                    // Esto asegura que la información esté sincronizada sin usar triggers
-                    if (!isCurrentUserCreator && currentUsername != null) {
-                        Log.d("CourseDetailFragment", "🔄 Updating student progress on course entry: user=$currentUsername, course=$effectiveCourseId")
-                        recalculateStudentProgressOnEntry(effectiveCourseId)
-                    }
-                    if (courseActionBar.visibility == View.VISIBLE) {
-                        animateViewIfVisible(courseActionBar, 360)
-                    } else {
-                        courseActionBar.alpha = 0f
-                        courseActionBar.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
+                        (BackendApiService.getUserById(creatorUserId) as? ApiResult.Success)?.data?.usuario
                     }
 
-                    // Show payment container if course is premium and viewer is not the creator
-                    if (remoteCourse.isPremium == true && !isCurrentUserCreator) {
-                        // Always hide payment UI since user already accessed the course detail
-                        // If they got here, they have access (either paid or should have access)
-                        paymentContainer?.visibility = View.GONE
-                        Log.d("CourseDetailFragment", "Premium course accessed - hiding payment UI (user has access)")
-                    } else {
-                        paymentContainer?.alpha = 0f
-                        paymentContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
-                        paymentContainer?.visibility = View.GONE
-                    }
-
-                    // Load creator info if the current user is not the creator
-                    if (!isCurrentUserCreator && remoteCourse != null) {
-                        val creatorId = remoteCourse.creatorUserId
+                    if (!isCurrentUserCreator && currentUsername != null && !courseCreatorUsername.isNullOrBlank()) {
                         val currentUserId = sessionManager.getUserId()
-
-                        // Fetch subscription info via BackendApiService
-                        var subscriptionCount = 0
-                        var isSubscribedRemote = false
-                        try {
-                            if (currentUserId != -1L) {
-                                val subResult = withContext(Dispatchers.IO) { BackendApiService.checkSubscription(creatorId) }
-                                isSubscribedRemote = (subResult as? ApiResult.Success)?.data ?: false
+                        val (subscriptionCount, isSubscribedRemote) = coroutineScope {
+                            val countDeferred = async(Dispatchers.IO) {
+                                (BackendApiService.getSubscriberCount(creatorUserId) as? ApiResult.Success)?.data ?: 0
                             }
-                            val countResult = withContext(Dispatchers.IO) { BackendApiService.getSubscriberCount(creatorId) }
-                            subscriptionCount = (countResult as? ApiResult.Success)?.data ?: 0
-                        } catch (e: Exception) {
-                            Log.w("CourseDetailFragment", "Subscription check failed", e)
-                        }
-                        val isSubscribed = isSubscribedRemote
-
-                        loadCreatorInfo(
-                            creatorUsername = courseCreatorUsername!!,
-                            subscriptionCount = subscriptionCount,
-                            isSubscribed = isSubscribed
-                        )
-
-                        // creatorInfoContainer.visibility = View.VISIBLE // Moved to ExploreFragment cards
-                        Log.d("CourseDetailFragment", "Initializing student progress: courseId=$effectiveCourseId username=$currentUsername isCreator=$isCurrentUserCreator")
-                        initializeAndLoadCourseProgress(
-                            courseId = effectiveCourseId,
-                            username = currentUsername,
-                            userId = currentUserId,
-                            isCurrentUserCreator = isCurrentUserCreator
-                        )
-                    } else {
-                        // creatorInfoContainer.visibility = View.GONE // Moved to ExploreFragment cards
-                    }
-                } else {
-                    // Fallback: load course info from BackendApiService by courseId
-                    val courseResult = withContext(Dispatchers.IO) { BackendApiService.getCourseById(courseId) }
-                    val course = (courseResult as? ApiResult.Success)?.data
-
-                    // Set the course title
-                    courseTitleTextView?.text = course?.title ?: "Curso sin título"
-                    courseName = course?.title ?: "Curso sin título"
-
-                    // Map creator username from course's creator_user_id
-                    courseCreatorUsername = if (course != null) {
-                        withContext(Dispatchers.IO) {
-                            (BackendApiService.getUserById(course.creatorUserId) as? ApiResult.Success)?.data?.usuario
-                        }
-                    } else {
-                        null
-                    }
-                    isCurrentUserCreator = courseCreatorUsername == currentUsername
-
-                    // Control visibility of the bottom action bar based on creator status
-                    courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
-                    if (courseActionBar.visibility == View.VISIBLE) {
-                        animateViewIfVisible(courseActionBar, 360)
-                    } else {
-                        courseActionBar.alpha = 0f
-                        courseActionBar.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
-                    }
-
-                    if (course?.isPremium == true && !isCurrentUserCreator) {
-                        // Always hide payment UI since user already accessed the course detail
-                        // If they got here, they have access (either paid or should have access)
-                        paymentContainer?.visibility = View.GONE
-                        Log.d("CourseDetailFragment", "Premium course accessed - hiding payment UI (user has access)")
-                    } else {
-                        paymentContainer?.alpha = 0f
-                        paymentContainer?.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
-                        paymentContainer?.visibility = View.GONE
-                    }
-
-                    // Load creator info if the current user is not the creator
-                    if (!isCurrentUserCreator && courseCreatorUsername != null) {
-                        val currentUserId = sessionManager.getUserId()
-                        // Get subscription count using BackendApiService
-                        var subscriptionCount = 0
-                        try {
-                            val countResult = withContext(Dispatchers.IO) {
-                                if (creatorUserId != -1L) BackendApiService.getSubscriberCount(creatorUserId) else null
+                            val subscribedDeferred = async(Dispatchers.IO) {
+                                if (currentUserId > 0) {
+                                    (BackendApiService.checkSubscription(creatorUserId) as? ApiResult.Success)?.data ?: false
+                                } else {
+                                    false
+                                }
                             }
-                            subscriptionCount = (countResult as? ApiResult.Success)?.data ?: 0
-                        } catch (e: Exception) {
-                            Log.w("CourseDetailFragment", "Subscriber count fetch failed", e)
-                        }
-
-                        // Check if current user is subscribed using BackendApiService
-                        var isSubscribed = false
-                        try {
-                            if (currentUserId != -1L && creatorUserId != -1L) {
-                                val subResult = withContext(Dispatchers.IO) { BackendApiService.checkSubscription(creatorUserId) }
-                                isSubscribed = (subResult as? ApiResult.Success)?.data ?: false
-                            }
-                        } catch (e: Exception) {
-                            Log.w("CourseDetailFragment", "Subscription check failed", e)
+                            Pair(countDeferred.await(), subscribedDeferred.await())
                         }
 
                         loadCreatorInfo(
                             creatorUsername = courseCreatorUsername!!,
                             subscriptionCount = subscriptionCount,
-                            isSubscribed = isSubscribed
+                            isSubscribed = isSubscribedRemote
                         )
 
-                        // creatorInfoContainer.visibility = View.VISIBLE // Moved to ExploreFragment cards
-
-                        // Initialize and load course progress for non-creator users
-                        Log.d("CourseDetailFragment", "Initializing student progress (local fallback): courseId=$courseId username=$currentUsername isCreator=$isCurrentUserCreator")
                         initializeAndLoadCourseProgress(
-                            courseId = courseId,
+                            courseId = latestSnapshot.effectiveCourseId,
                             username = currentUsername,
                             userId = currentUserId,
-                            isCurrentUserCreator = isCurrentUserCreator
+                            isCurrentUserCreator = false
                         )
-                    } else {
-                        // creatorInfoContainer.visibility = View.GONE // Moved to ExploreFragment cards
+
+                        Log.d(
+                            "CourseDetailFragment",
+                            "🔄 Updating student progress on course entry: user=$currentUsername, course=${latestSnapshot.effectiveCourseId}"
+                        )
+                        recalculateStudentProgressOnEntry(latestSnapshot.effectiveCourseId)
                     }
-                }
-
-                // Fetch topics from BackendApiService
-                var topics: List<Topic> = emptyList()
-
-                try {
-                    // Use effectiveCourseId (may have been remapped by title lookup)
-                    val lookupId = effectiveCourseId
-                    Log.d("CourseDetailFragment", "🔍 Fetching topics for courseId=$lookupId from backend...")
-                    val topicsResult = withContext(Dispatchers.IO) { BackendApiService.getTopicsByCourse(lookupId) }
-                    if (topicsResult is ApiResult.Success) {
-                        topics = topicsResult.data ?: emptyList()
-                    } else {
-                        Log.w("CourseDetailFragment", "Topics fetch failed: ${(topicsResult as? ApiResult.Error)?.message}")
-                    }
-                    Log.d("CourseDetailFragment", "✅ Loaded ${topics.size} remote topics for courseId=$lookupId")
-                    // Log each topic for debugging
-                    topics.forEachIndexed { index, topic ->
-                        Log.d("CourseDetailFragment", "   📘 Topic[$index]: id=${topic.id}, name='${topic.name}', courseId=${topic.courseId}")
-                    }
-                } catch (e: Exception) {
-                    Log.w("CourseDetailFragment", "Topics fetch failed", e)
-                }
-
-                cachedTopicsCount = topics.size; refreshTabBadges()
-
-                Log.d("CourseDetailFragment", "📚 Total topics found: ${topics.size} for courseId: $courseId")
-                
-                // DEBUG: skipped (debug code removed during migration)
-
-                if (topics.isEmpty()) {
-                    Log.d("CourseDetailFragment", "No topics found for course ID: $courseId")
-                    // When Supabase is configured we still show the container (empty) so newly created remote
-                    // topics become visible without requiring local Room inserts. Show a friendly message.
-                    noTopicsTextView?.text = "Este curso aún no tiene temas." // Set specific message
-                    noTopicsTextView?.visibility = View.VISIBLE
-                    noTopicsTextView?.alpha = 0f
-                    topicsContainer.removeAllViews()
-                    topicsContainer.visibility = View.VISIBLE
-                    animateViewIfVisible(noTopicsTextView, 320)
-                    animateViewIfVisible(topicsContainer, 300)
-                    noTasksTextView?.visibility = View.GONE
-                    noTasksTextView?.alpha = 0f
                 } else {
-                    // Clear previous views and reset messages
-                    topicsContainer.removeAllViews()
-                    noTopicsTextView?.visibility = View.GONE
-                    noTopicsTextView?.alpha = 0f
-                    noTasksTextView?.visibility = View.GONE
-                    noTasksTextView?.alpha = 0f
-
-                    // Debug: log topic list before rendering
-                    Log.d("CourseDetailFragment", "Debug: topics.size=${topics.size}, currentTab=$currentTab")
-
-                    // Iterate and add topic views. For tab filters we fetch only topics,
-                    // but when the user selected the "tareas" tab we must also fetch
-                    // tasks for those topics from Supabase (or fallback to local DAO).
-                    val sortedTopics = topics.sortedBy { it.orderIndex }
-
-                    // Prepare tasks grouped by topicId when viewing tasks
-                    var tasksByTopic: Map<Long, List<Task>> = emptyMap()
-                    // Prepare content items grouped by topicId when viewing documentos
-                    var contentByTopic: Map<Long, List<ContentItem>> = emptyMap()
-                    
-                    if (currentTab == "tareas") {
-                        try {
-                            val topicIds = sortedTopics.map { it.id }
-                            if (topicIds.isNotEmpty()) {
-                                // Fetch tasks per topic from BackendApiService
-                                val allTasks = mutableListOf<Task>()
-                                for (topicId in topicIds) {
-                                    val tasksResult = withContext(Dispatchers.IO) { BackendApiService.getTasksByTopic(topicId) }
-                                    if (tasksResult is ApiResult.Success) {
-                                        allTasks.addAll(tasksResult.data ?: emptyList())
-                                    }
-                                }
-                                tasksByTopic = allTasks.groupBy { it.topicId }
-                                cachedTasksCount = allTasks.size; refreshTabBadges()
-                            }
-                        } catch (e: Exception) {
-                            Log.w("CourseDetailFragment", "Failed to fetch tasks for topics", e)
-                        }
-                    } else {
-                        // currentTab == "documentos" - fetch content items for topics
-                        try {
-                            val topicIds = sortedTopics.map { it.id }
-                            Log.d("CourseDetailFragment", "")
-                            Log.d("CourseDetailFragment", "📚 ╔══════════════════════════════════════════════════╗")
-                            Log.d("CourseDetailFragment", "📚 ║        CONTENT LOADING DEBUG                    ║")
-                            Log.d("CourseDetailFragment", "📚 ╠══════════════════════════════════════════════════╣")
-                            Log.d("CourseDetailFragment", "📚 ║ Course ID: $resolvedCourseId")
-                            Log.d("CourseDetailFragment", "📚 ║ Course Name: $courseName")
-                            Log.d("CourseDetailFragment", "📚 ║ Total topics to render: ${sortedTopics.size}")
-                            Log.d("CourseDetailFragment", "📚 ║ Topic IDs: $topicIds")
-                            Log.d("CourseDetailFragment", "📚 ╚══════════════════════════════════════════════════╝")
-                            
-                            if (topicIds.isNotEmpty()) {
-                                Log.d("CourseDetailFragment", "📚 Querying backend for content with topic_ids IN (${topicIds.joinToString(",")})")
-                                
-                                val allContent = mutableListOf<ContentItem>()
-                                for (topicId in topicIds) {
-                                    val contentResult = withContext(Dispatchers.IO) { BackendApiService.getContentItemsByTopic(topicId) }
-                                    if (contentResult is ApiResult.Success) {
-                                        val items = contentResult.data ?: emptyList()
-                                        Log.d("CourseDetailFragment", "📦 Loaded ${items.size} content items for topic $topicId")
-                                        allContent.addAll(items)
-                                    } else {
-                                        Log.w("CourseDetailFragment", "⚠️ Failed to load content for topic $topicId")
-                                    }
-                                }
-                                
-                                contentByTopic = allContent.groupBy { it.topicId }
-                                Log.d("CourseDetailFragment", "📦 Top level content items loaded: ${contentByTopic.size} topics with content")
-                            } else {
-                                Log.w("CourseDetailFragment", "⚠️ No topicIds to fetch content for!")
-                            }
-                        } catch (e: Exception) {
-                            Log.e("CourseDetailFragment", "❌ Failed to fetch content items for topics", e)
-                        }
-
-                        // Background: count tasks for the stats chip (sin bloquear el hilo principal)
-                        viewLifecycleOwner.lifecycleScope.launch {
-                            try {
-                                var total = 0
-                                for (topicId in sortedTopics.map { it.id }) {
-                                    val r = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                        BackendApiService.getTasksByTopic(topicId)
-                                    }
-                                    if (r is ApiResult.Success) total += r.data?.size ?: 0
-                                }
-                                cachedTasksCount = total; refreshTabBadges()
-                            } catch (_: Exception) { }
-                        }
-                    }
-
-                    // If viewing tasks, filter out topics that have no tasks
-                    val topicsToRender = if (currentTab == "tareas") {
-                        sortedTopics.filter { t -> (tasksByTopic[t.id] ?: emptyList()).isNotEmpty() }
-                    } else {
-                        sortedTopics
-                    }
-
-                    for (topic in topicsToRender) {
-                        val tasksForTopic = tasksByTopic[topic.id] ?: emptyList()
-                        val contentForTopic = contentByTopic[topic.id] ?: emptyList()
-                        Log.d("CourseDetailFragment", "📖 Topic '${topic.name}' (id=${topic.id}): ${contentForTopic.size} content items, ${tasksForTopic.size} tasks")
-                        addTopicView(topic, contentForTopic, tasksForTopic)
-                    }
-
-                    // Ensure container visible even if empty; show a top-level message per tab
-                    topicsContainer.visibility = View.VISIBLE
-                    if (sortedTopics.isEmpty()) {
-                        if (currentTab == "documentos") {
-                            noTopicsTextView?.text = "No hay documentos en este curso."
-                            noTopicsTextView?.visibility = View.VISIBLE
-                            noTopicsTextView?.alpha = 0f
-                            animateViewIfVisible(noTopicsTextView, 320)
-                        } else {
-                            noTasksTextView?.text = "No hay tareas en este curso."
-                            noTasksTextView?.visibility = View.VISIBLE
-                            noTasksTextView?.alpha = 0f
-                            animateViewIfVisible(noTasksTextView, 320)
-                        }
-                    }
-                    animateViewIfVisible(topicsContainer, 300)
+                    courseTitleTextView?.text = courseName.ifBlank { "Curso sin título" }
                 }
 
                 stopSkeletonAnimation()
@@ -1301,15 +1062,53 @@ class CourseDetailFragment : Fragment() {
                 noTopicsTextView?.visibility = View.VISIBLE
                 noTopicsTextView?.alpha = 0f
                 animateViewIfVisible(noTopicsTextView, 320)
-                noTasksTextView?.visibility = View.GONE // Ensure no tasks message is hidden on error
-                topicsContainer.removeAllViews() // Clear on error
-                topicsContainer.visibility = View.GONE
+                noTasksTextView?.visibility = View.GONE
+                topicsContainer.removeAllViews()
+                // Keep topicsContainer visible so subsequent successful loads can render into it
+                topicsContainer.visibility = View.VISIBLE
             } finally {
                 isLoadingCourseDetails = false
                 Log.d("CourseDetailFragment", "✅ Load complete, flag reset")
             } // Closes the main catch block
         } // Closes CoroutineScope
     } // Closes loadCourseDetails function
+
+    /**
+     * Renders the sorted topics into [topicsContainer].
+     * This is the Single Render Path used by both the cache-first and network paths.
+     * SRP: responsible only for populating the UI from already-fetched data.
+     */
+    private fun renderTopicData(
+        sortedTopics: List<Topic>,
+        contentByTopic: Map<Long, List<ContentItem>>,
+        tasksByTopic: Map<Long, List<Task>>,
+        noTopicsTextView: TextView?,
+        noTasksTextView: TextView?
+    ) {
+        topicsContainer.removeAllViews()
+        noTopicsTextView?.visibility = View.GONE
+        noTasksTextView?.visibility = View.GONE
+
+        if (sortedTopics.isEmpty()) {
+            noTopicsTextView?.text = "Este curso aún no tiene temas."
+            noTopicsTextView?.visibility = View.VISIBLE
+            noTopicsTextView?.alpha = 0f
+            topicsContainer.visibility = View.VISIBLE
+            animateViewIfVisible(noTopicsTextView, 320)
+            animateViewIfVisible(topicsContainer, 300)
+            return
+        }
+
+        for (topic in sortedTopics) {
+            val contentForTopic = contentByTopic[topic.id] ?: emptyList()
+            val tasksForTopic = tasksByTopic[topic.id] ?: emptyList()
+            Log.d("CourseDetailFragment", "📖 Render '${topic.name}': ${contentForTopic.size} content, ${tasksForTopic.size} tasks")
+            addTopicView(topic, contentForTopic, tasksForTopic)
+        }
+
+        topicsContainer.visibility = View.VISIBLE
+        animateViewIfVisible(topicsContainer, 300)
+    }
 
     // New method to load creator information with updated parameters
     private suspend fun loadCreatorInfo(
@@ -2217,100 +2016,38 @@ class CourseDetailFragment : Fragment() {
     }
 
     // Refresh topics and re-render UI from backend for the current course
-    private fun refreshTopicsFromBackend() {
+    private fun refreshTopicsFromBackend(showSkeleton: Boolean = false) {
         if (courseId == -1L) return
 
-        // Cancel previous job if active to prevent race conditions and duplication
         refreshJob?.cancel()
-        
-        // Reset loading flag to prevent blocking - this is a lightweight refresh, not full load
-        isLoadingCourseDetails = false
-        
-        // Show skeleton during refresh
-        startSkeletonAnimation()
+        isLoadingCourseDetails = true
+        courseViewModel.markCourseDetailDirty(courseId)
 
-        refreshJob = CoroutineScope(Dispatchers.Main).launch {
+        if (showSkeleton) {
+            startSkeletonAnimation()
+        }
+
+        refreshJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val act = requireActivity()
-                val lookupId = if (resolvedCourseId > 0) resolvedCourseId else courseId
-                val topicsResult = withContext(Dispatchers.IO) { BackendApiService.getTopicsByCourse(lookupId) }
-                val topics: List<Topic> = if (topicsResult is ApiResult.Success) topicsResult.data ?: emptyList() else emptyList()
+                val snapshot = withContext(Dispatchers.IO) { resolveCourseSnapshot(courseId) }
+                    ?: throw IllegalStateException("No se pudo refrescar el detalle del curso")
+                courseViewModel.setCourseDetailSnapshot(snapshot)
 
-                cachedTopicsCount = topics.size; refreshTabBadges()
+                val noTopicsTextView = view?.findViewById<TextView>(R.id.noTopicsTextView)
+                val noTasksTextView = view?.findViewById<TextView>(R.id.noTasksTextView)
+                renderSnapshot(snapshot, noTopicsTextView, noTasksTextView)
 
-                topicsContainer.removeAllViews()
-
-                val sortedTopics = topics.sortedBy { it.orderIndex }
-
-                // If the tasks tab is selected, fetch tasks for these topics from backend
-                // Prepare content items grouped by topicId when viewing documentos
-                var contentByTopic: Map<Long, List<ContentItem>> = emptyMap()
-                var tasksByTopic: Map<Long, List<Task>> = emptyMap()
-                
-                if (currentTab == "tareas") {
-                    try {
-                        val topicIds = sortedTopics.map { it.id }
-                        if (topicIds.isNotEmpty()) {
-                            val allTasks = mutableListOf<Task>()
-                            for (tid in topicIds) {
-                                val tasksResult = withContext(Dispatchers.IO) { BackendApiService.getTasksByTopic(tid) }
-                                if (tasksResult is ApiResult.Success) allTasks.addAll(tasksResult.data ?: emptyList())
-                            }
-                            tasksByTopic = allTasks.groupBy { it.topicId }
-                            cachedTasksCount = allTasks.size; refreshTabBadges()
-                        }
-                    } catch (e: Exception) {
-                        Log.w("CourseDetailFragment", "refreshTopics: failed fetching tasks for topics", e)
-                    }
-                } else {
-                    // currentTab == "documentos" - fetch content items for topics via tasks
-                    try {
-                        val topicIds = sortedTopics.map { it.id }
-                        if (topicIds.isNotEmpty()) {
-                            Log.d("CourseDetailFragment", "📚 [Refresh] Fetching content items for ${topicIds.size} topics")
-                            val allContentItems = mutableListOf<ContentItem>()
-                            for (tid in topicIds) {
-                                val tasksResult = withContext(Dispatchers.IO) { BackendApiService.getTasksByTopic(tid) }
-                                val tasks = if (tasksResult is ApiResult.Success) tasksResult.data ?: emptyList() else emptyList()
-                                for (task in tasks) {
-                                    val ciResult = withContext(Dispatchers.IO) { BackendApiService.getContentItemsByTask(task.id) }
-                                    if (ciResult is ApiResult.Success) allContentItems.addAll(ciResult.data ?: emptyList())
-                                }
-                            }
-                            // Filter: only include topic-level content (taskId == null)
-                            val topicLevelContent = allContentItems.filter { it.taskId == null || it.taskId == 0L }
-                            contentByTopic = topicLevelContent.groupBy { it.topicId }
-                            Log.d("CourseDetailFragment", "📚 [Refresh] Fetched ${allContentItems.size} content items, ${topicLevelContent.size} topic-level")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("CourseDetailFragment", "refreshTopics: failed fetching content items for topics", e)
-                    }
-                }
-
-                // If viewing tasks, filter out topics without tasks
-                val topicsToRender = if (currentTab == "tareas") {
-                    sortedTopics.filter { t -> (tasksByTopic[t.id] ?: emptyList()).isNotEmpty() }
-                } else {
-                    sortedTopics
-                }
-
-                for (topic in topicsToRender) {
-                    val tasks = tasksByTopic[topic.id] ?: emptyList()
-                    val contentForTopic = contentByTopic[topic.id] ?: emptyList()
-                    Log.d("CourseDetailFragment", "📖 [Refresh] Topic '${topic.name}' (id=${topic.id}): ${contentForTopic.size} content items, ${tasks.size} tasks")
-                    addTopicView(topic, contentForTopic, tasks)
-                }
-                
-                // IMPORTANTE: Recalcular progreso de estudiantes después de refrescar
                 recalculateStudentProgress()
             } catch (e: Exception) {
                 if (e !is kotlinx.coroutines.CancellationException) {
                     Log.e("CourseDetailFragment", "Error refreshing topics", e)
                 }
             } finally {
-                // Always stop skeleton animation when refresh completes
-                stopSkeletonAnimation()
-                Log.d("CourseDetailFragment", "✅ Refresh complete, skeleton hidden")
+                isLoadingCourseDetails = false
+                if (showSkeleton) {
+                    stopSkeletonAnimation()
+                }
+                Log.d("CourseDetailFragment", "✅ Refresh complete")
             }
         }
     }
@@ -2542,23 +2279,9 @@ class CourseDetailFragment : Fragment() {
                 
                 withContext(Dispatchers.IO) {
                     try {
-                        // Obtener todas las tareas del curso via BackendApiService
-                        val topicsResult = BackendApiService.getTopicsByCourse(courseIdToUse)
-                        val topics = if (topicsResult is ApiResult.Success) topicsResult.data ?: emptyList() else emptyList()
-                        val topicIds = topics.map { it.id }
-                        
-                        if (topicIds.isEmpty()) {
-                            Log.d("CourseDetailFragment", "⚠️ No topics found for course $courseIdToUse")
-                            return@withContext
-                        }
-                        
-                        val allTasks = mutableListOf<com.example.tareamov.data.entity.Task>()
-                        for (topicId in topicIds) {
-                            val tasksResult = BackendApiService.getTasksByTopic(topicId)
-                            if (tasksResult is ApiResult.Success) {
-                                tasksResult.data?.let { allTasks.addAll(it) }
-                            }
-                        }
+                        val allTasks = BackendApiService.getTasksByCourse(courseIdToUse)
+                            .getOrNull()
+                            .orEmpty()
                         Log.d("CourseDetailFragment", "📚 Found ${allTasks.size} tasks in course")
                         
                         if (allTasks.isEmpty()) {
@@ -3124,6 +2847,8 @@ class CourseDetailFragment : Fragment() {
                 
                 // Update UI
                 updatePriceDisplay(newPrice)
+                courseViewModel.updateCachedCourse(courseId, updatedCourse)
+                courseViewModel.markCourseDetailDirty(courseId)
                 courseViewModel.getCourseById(courseId)
                 
                 val message = if (newPrice > 0) {
@@ -3241,8 +2966,12 @@ class CourseDetailFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     if (deleteSuccess) {
                         Toast.makeText(requireContext(), "Tema eliminado exitosamente", Toast.LENGTH_SHORT).show()
-                        // Reload the course details to refresh the UI
-                        loadCourseDetails()
+                        val noTopicsTextView = view?.findViewById<TextView>(R.id.noTopicsTextView)
+                        val noTasksTextView = view?.findViewById<TextView>(R.id.noTasksTextView)
+                        courseViewModel.removeTopicFromSnapshot(courseId, topic.id)?.let { snapshot ->
+                            renderSnapshot(snapshot, noTopicsTextView, noTasksTextView)
+                        }
+                        refreshTopicsFromBackend(showSkeleton = false)
                     } else {
                         Toast.makeText(requireContext(), "Error: No se pudo eliminar el tema. Verifique su conexión.", Toast.LENGTH_LONG).show()
                     }
@@ -3294,8 +3023,12 @@ class CourseDetailFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     if (deleteSuccess) {
                         Toast.makeText(requireContext(), "Tarea eliminada exitosamente", Toast.LENGTH_SHORT).show()
-                        // Reload the course details to refresh the UI
-                        loadCourseDetails()
+                        val noTopicsTextView = view?.findViewById<TextView>(R.id.noTopicsTextView)
+                        val noTasksTextView = view?.findViewById<TextView>(R.id.noTasksTextView)
+                        courseViewModel.removeTaskFromSnapshot(courseId, task.id)?.let { snapshot ->
+                            renderSnapshot(snapshot, noTopicsTextView, noTasksTextView)
+                        }
+                        refreshTopicsFromBackend(showSkeleton = false)
                     } else {
                         Toast.makeText(requireContext(), "Error: No se pudo eliminar la tarea. Verifique su conexión.", Toast.LENGTH_LONG).show()
                     }

@@ -48,7 +48,8 @@ data class MicroservicioPromptRequest(
     val contentItemId: Long? = null,      // ID del item de contenido específico
     val studentId: Long? = null,          // ID del estudiante para buscar submission
     val fileUri: String? = null,          // URI del archivo en R2 para descarga directa
-    val requestNonce: String? = null      // Optional nonce to force unique LLM prompts
+    val requestNonce: String? = null,     // Optional nonce to force unique LLM prompts
+    val freeLearning: Boolean? = null     // Modo libre: expande RAG a todo el contenido del curso
 )
 
 // Request para guardar historial de preguntas de refuerzo

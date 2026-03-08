@@ -77,6 +77,7 @@ class ExploreFragment : Fragment() {
     private val _searchText = androidx.compose.runtime.mutableStateOf("")
     private val _activeFilterName = androidx.compose.runtime.mutableStateOf<String?>(null)
     private val _isHeaderCollapsed = androidx.compose.runtime.mutableStateOf(true)
+    private val _canAddCourse = androidx.compose.runtime.mutableStateOf(false)
 
     // Store all courses for filtering and search
     private var allCoursesList = mutableListOf<Course>()
@@ -110,25 +111,29 @@ class ExploreFragment : Fragment() {
     // Video Preview Logic
     private val previewHandler = Handler(Looper.getMainLooper())
     private var currentPreviewPosition = -1
+    private val courseVideoCache = java.util.concurrent.ConcurrentHashMap<Long, String?>()
+    private val previewDurationMs = 8000L
     private val previewRunnable = Runnable {
         startPreviewForCenterItem()
+    }
+    private val stopPreviewRunnable = Runnable {
+        stopCurrentPreview()
     }
 
     private fun startPreviewForCenterItem() {
         val view = view ?: return
         val coursesRecyclerView = view.findViewById<RecyclerView>(R.id.coursesRecyclerView) ?: return
         val layoutManager = coursesRecyclerView.layoutManager as? LinearLayoutManager ?: return
-        
+
         val firstVisible = layoutManager.findFirstVisibleItemPosition()
         val lastVisible = layoutManager.findLastVisibleItemPosition()
-        
+
         if (firstVisible == RecyclerView.NO_POSITION || lastVisible == RecyclerView.NO_POSITION) return
-        
-        // Find center item
+
         val recyclerViewCenter = coursesRecyclerView.height / 2
         var minDistance = Int.MAX_VALUE
         var centerPosition = -1
-        
+
         for (i in firstVisible..lastVisible) {
             val itemView = layoutManager.findViewByPosition(i) ?: continue
             val itemCenter = (itemView.top + itemView.bottom) / 2
@@ -138,30 +143,92 @@ class ExploreFragment : Fragment() {
                 centerPosition = i
             }
         }
-        
+
         if (centerPosition != -1 && centerPosition != currentPreviewPosition) {
             stopCurrentPreview()
-            
+
             val holder = coursesRecyclerView.findViewHolderForAdapterPosition(centerPosition) as? CourseAdapter.CourseViewHolder
             if (holder != null) {
                 val course = coursesAdapter.getItem(centerPosition)
                 if (course != null) {
-                    var videoUri = course.localFilePath ?: course.videoUri
-                    if (!videoUri.isNullOrEmpty()) {
-                        if (!videoUri!!.startsWith("http") && !videoUri!!.startsWith("content://") && !videoUri!!.startsWith("file://")) {
-                            // Trim leading slash if present then build proxy URL
-                            val key = if (videoUri!!.startsWith("/")) videoUri!!.substring(1) else videoUri!!
-                            videoUri = com.example.tareamov.service.BackendApiService.buildProxyFileUrl(key)
-                        }
-                        holder.playPreview(videoUri!!)
-                        currentPreviewPosition = centerPosition
+                    val directVideoUri = resolvePreviewUri(course.localFilePath ?: course.videoUri)
+                    if (directVideoUri != null) {
+                        playVideoUri(directVideoUri, holder, centerPosition)
+                    } else {
+                        playPreviewForCourse(course, holder, centerPosition)
                     }
                 }
             }
         }
     }
 
+    private fun resolvePreviewUri(videoUri: String?): String? {
+        if (videoUri.isNullOrBlank()) return null
+        if (videoUri.startsWith("http") || videoUri.startsWith("content://") || videoUri.startsWith("file://")) {
+            return videoUri
+        }
+        val key = if (videoUri.startsWith("/")) videoUri.substring(1) else videoUri
+        return BackendApiService.buildProxyFileUrl(key)
+    }
+
+    private fun playPreviewForCourse(course: Course, holder: CourseAdapter.CourseViewHolder, position: Int) {
+        val videoUri = resolvePreviewUri(course.localFilePath ?: course.videoUri)
+
+        if (videoUri != null) {
+            playVideoUri(videoUri, holder, position)
+            return
+        }
+
+        if (courseVideoCache.containsKey(course.id)) {
+            val cachedUri = courseVideoCache[course.id]
+            if (!cachedUri.isNullOrEmpty()) {
+                playVideoUri(cachedUri, holder, position)
+            }
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getVideosByCourse(course.id)
+                }
+
+                val videos = (result as? ApiResult.Success)?.data
+                val firstVideo = videos?.firstOrNull()
+                val fetchedUri = resolvePreviewUri(firstVideo?.localFilePath ?: firstVideo?.videoUriString)
+
+                if (!fetchedUri.isNullOrEmpty()) {
+                    courseVideoCache[course.id] = fetchedUri
+
+                    if (currentPreviewPosition == -1) {
+                        holder.playPreview(fetchedUri)
+                        currentPreviewPosition = position
+                        schedulePreviewStop()
+                    }
+                } else {
+                    courseVideoCache[course.id] = ""
+                }
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error fetching video for course ${course.id}", e)
+                courseVideoCache[course.id] = ""
+            }
+        }
+    }
+
+    private fun playVideoUri(videoUri: String, holder: CourseAdapter.CourseViewHolder, position: Int) {
+        val finalUri = resolvePreviewUri(videoUri) ?: return
+        holder.playPreview(finalUri)
+        currentPreviewPosition = position
+        schedulePreviewStop()
+    }
+
+    private fun schedulePreviewStop() {
+        previewHandler.removeCallbacks(stopPreviewRunnable)
+        previewHandler.postDelayed(stopPreviewRunnable, previewDurationMs)
+    }
+
     private fun stopCurrentPreview() {
+        previewHandler.removeCallbacks(stopPreviewRunnable)
         val view = view ?: return
         val coursesRecyclerView = view.findViewById<RecyclerView>(R.id.coursesRecyclerView) ?: return
         
@@ -255,7 +322,7 @@ class ExploreFragment : Fragment() {
                 onPopularCoursesClicked = {
                     viewLifecycleOwner.lifecycleScope.launch {
                         val topPopular = withContext(Dispatchers.IO) {
-                            val result = BackendApiService.getPopularCourses(1, 5)
+                            val result = BackendApiService.getPopularCourses(1, 50)
                             if (result is ApiResult.Success) {
                                 result.data
                             } else {
@@ -490,6 +557,8 @@ class ExploreFragment : Fragment() {
         val canUploadContent = com.example.tareamov.util.SessionManager
             .getInstance(requireContext())
             .run { hasRole(2) || hasRole(3) }
+        _canAddCourse.value = com.example.tareamov.util.SessionManager
+            .getInstance(requireContext()).hasRole(2)
         val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
         bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
@@ -631,6 +700,8 @@ class ExploreFragment : Fragment() {
 
     override fun onPause() {
         super.onPause()
+        stopCurrentPreview()
+        previewHandler.removeCallbacks(previewRunnable)
         // Unregister network callback to avoid leaks
         networkCallback?.let {
             val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -645,10 +716,13 @@ class ExploreFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        stopCurrentPreview()
+        previewHandler.removeCallbacksAndMessages(null)
+
         // Dismiss payment dialog if it's showing
         paymentInitiationDialog?.dismiss()
         paymentInitiationDialog = null
-        
+
         // Ensure callback is unregistered
         networkCallback?.let {
             val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -1310,6 +1384,11 @@ class ExploreFragment : Fragment() {
                             }
                         }
 
+                        // Update stats immediately so the header reflects the change
+                        if (_totalCourses.value > 0) {
+                            _totalCourses.value = _totalCourses.value - 1
+                        }
+
                         // Show success message
                         Toast.makeText(requireContext(), "Curso eliminado exitosamente", Toast.LENGTH_SHORT).show()
                         Log.d("ExploreFragment", "Course deleted successfully: $courseId")
@@ -1317,17 +1396,11 @@ class ExploreFragment : Fragment() {
                         // Invoke callback after successful deletion (UI thread)
                         try { onDeleted?.invoke() } catch (t: Throwable) { /* ignore */ }
 
-                        // Trigger remote delete (non-blocking)
-                        try {
-                            withContext(Dispatchers.IO) {
-                                BackendApiService.deleteCourse(courseId)
-                            }
-                        } catch (e: Exception) {
-                            Log.w("ExploreFragment", "Failed to trigger remote delete for course id=$courseId", e)
-                        }
-
-                        // Reload courses to ensure consistency
-                        loadCourses()
+                        // Reload courses to ensure consistency (skip filter-aware guard by forcing remote)
+                        val wasFilterActive = isFilterActive
+                        isFilterActive = false
+                        loadCourses(forceRemote = true)
+                        isFilterActive = wasFilterActive
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
@@ -2678,8 +2751,8 @@ class ExploreFragment : Fragment() {
 
                     totalCourses = serverTotal
                     _totalCourses.value = serverTotal
-                    // Use premium as "popular" proxy, or show enrolled as popular
-                    _popularCourses.value = premiumCount
+                    val popularCount = counts.get("popular")?.asInt ?: premiumCount
+                    _popularCourses.value = popularCount
                     _purchasedCourses.value = purchasedCount
 
                     Log.d("ExploreFragment", "Global stats from /courses/counts: total=$serverTotal, premium=$premiumCount, free=$freeCount, enrolled=$enrolledCount, purchased=$purchasedCount")

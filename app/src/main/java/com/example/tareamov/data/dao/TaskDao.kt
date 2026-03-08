@@ -52,4 +52,8 @@ interface TaskDao {
     // Alias method for getTasksByTopicId
     @Query("SELECT * FROM tasks WHERE topicId = :topicId ORDER BY orderIndex ASC")
     suspend fun getTasksForTopic(topicId: Long): List<Task>
+
+    // Get tasks by course ID (joining through topics table)
+    @Query("SELECT tasks.* FROM tasks INNER JOIN topics ON tasks.topicId = topics.id WHERE topics.courseId = :courseId ORDER BY topics.orderIndex, tasks.orderIndex ASC")
+    suspend fun getTasksByCourse(courseId: Long): List<Task>
 }

@@ -16,6 +16,7 @@ import android.widget.RadioGroup
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import eightbitlab.com.blurview.BlurView
@@ -540,6 +541,12 @@ class VideoDetailsFragment : Fragment() {
 
         if (success) {
             updateLoadingProgress(100, "¡Actualizado exitosamente! ✓", false)
+
+            try {
+                val vm = ViewModelProvider(requireActivity())[com.example.tareamov.viewmodel.VideoHomeViewModel::class.java]
+                vm.markFeedDirty()
+            } catch (_: Exception) {}
+
             kotlinx.coroutines.delay(800)
             hideProfessionalLoading()
             if (isAdded) {
@@ -645,6 +652,13 @@ class VideoDetailsFragment : Fragment() {
             is ApiResult.Success -> {
                 val createdVideo = uploadResult.data
                 updateLoadingProgress(100, "¡Completado exitosamente! ✓", false)
+
+                try {
+                    val vm = ViewModelProvider(requireActivity())[com.example.tareamov.viewmodel.VideoHomeViewModel::class.java]
+                    vm.addVideoOptimistic(createdVideo)
+                    vm.confirmAddition(createdVideo.id)
+                } catch (_: Exception) {}
+
                 kotlinx.coroutines.delay(800)
                 hideProfessionalLoading()
 

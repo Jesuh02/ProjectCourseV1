@@ -236,17 +236,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         
-        // 📱 NUEVO: Handle notification deep links to open specific fragments
-        try {
-            val openFragment = intent?.getStringExtra("openFragment")
-            if (openFragment == "DatabaseQueryFragment") {
-                // Navigate to DatabaseQueryFragment when notification is tapped
-                navController.navigate(R.id.databaseQueryFragment)
-                println("MainActivity: Opened DatabaseQueryFragment from notification")
-            }
-        } catch (t: Throwable) {
-            println("MainActivity: Error opening fragment from notification: ${t.message}")
-        }
+        handlePushNotificationIntent(intent)
 
         navController.addOnDestinationChangedListener { _, destination, _ ->
             // If we're coming from RegisterFragment and going to HomeFragment, redirect to LoginFragment
@@ -289,15 +279,75 @@ class MainActivity : AppCompatActivity() {
                 } catch (t: Throwable) { t.printStackTrace() }
             }
             
-            // 📱 NUEVO: Handle notification deep links when app is already running
+            handlePushNotificationIntent(intent)
+        } catch (t: Throwable) {
+            t.printStackTrace()
+        }
+    }
+
+    private fun handlePushNotificationIntent(intent: Intent?) {
+        if (intent == null) return
+
+        val notificationType = intent.getStringExtra("notification_type")
+        if (notificationType.isNullOrEmpty()) {
             val openFragment = intent.getStringExtra("openFragment")
             if (openFragment == "DatabaseQueryFragment") {
                 try {
                     navController.navigate(R.id.databaseQueryFragment)
-                    println("MainActivity: Opened DatabaseQueryFragment from notification (onNewIntent)")
-                } catch (t: Throwable) { 
-                    println("MainActivity: Error navigating from notification: ${t.message}")
-                    t.printStackTrace() 
+                } catch (t: Throwable) { t.printStackTrace() }
+            }
+            return
+        }
+
+        try {
+            val bundle = Bundle()
+            when (notificationType) {
+                "new_video", "video_like" -> {
+                    val videoId = intent.getLongExtra("video_id", -1L)
+                        .takeIf { it > 0 } ?: intent.getLongExtra("related_id", -1L)
+                    if (videoId > 0) {
+                        bundle.putLong("videoId", videoId)
+                        bundle.putBoolean("openComments", false)
+                        navController.navigate(R.id.videoHomeFragment, bundle)
+                    }
+                }
+                "new_course" -> {
+                    val courseId = intent.getLongExtra("course_id", -1L)
+                        .takeIf { it > 0 } ?: intent.getLongExtra("related_id", -1L)
+                    if (courseId > 0) {
+                        bundle.putLong("courseId", courseId)
+                        navController.navigate(R.id.courseDetailFragment, bundle)
+                    }
+                }
+                "new_task", "task_graded" -> {
+                    val taskId = intent.getLongExtra("task_id", -1L)
+                        .takeIf { it > 0 } ?: intent.getLongExtra("related_id", -1L)
+                    val courseId = intent.getLongExtra("course_id", -1L)
+                    if (courseId > 0) {
+                        bundle.putLong("courseId", courseId)
+                        if (taskId > 0) bundle.putLong("highlightTaskId", taskId)
+                        navController.navigate(R.id.courseDetailFragment, bundle)
+                    }
+                }
+                "task_submission" -> {
+                    val taskId = intent.getLongExtra("task_id", -1L)
+                        .takeIf { it > 0 } ?: intent.getLongExtra("related_id", -1L)
+                    if (taskId > 0) {
+                        bundle.putLong("taskId", taskId)
+                        navController.navigate(R.id.taskSubmissionFragment, bundle)
+                    }
+                }
+                "comment", "video_comment", "comment_reply", "comment_like" -> {
+                    val videoId = intent.getLongExtra("video_id", -1L)
+                        .takeIf { it > 0 } ?: intent.getLongExtra("related_id", -1L)
+                    if (videoId > 0) {
+                        bundle.putLong("videoId", videoId)
+                        bundle.putBoolean("openComments", true)
+                        navController.navigate(R.id.videoHomeFragment, bundle)
+                    }
+                }
+                else -> {
+                    navController.navigate(R.id.notificacionesFragment)
                 }
             }
         } catch (t: Throwable) {
