@@ -868,7 +868,7 @@ class ChatBotFragment : Fragment() {
             updateCourseInfo(submissionId)
 
             // 🔥 CRÍTICO: Poblar backup vars desde la submission si aún no están establecidas
-            if (selectedTaskSubmissionId == null) selectedTaskSubmissionId = submissionId
+            if (selectedTaskSubmissionId == null && submissionId > 0) selectedTaskSubmissionId = submissionId
             if (selectedTaskStudentId == null || selectedTaskFileUri == null || selectedTaskRemoteTaskId == null) {
                 try {
                     val sub = withContext(Dispatchers.IO) {
@@ -2409,8 +2409,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     // Intentar extraer el número del # del mensaje para determinar qué TaskSubmission actualizar
                     val taskSubmissionId = extractTaskSubmissionIdFromMessage(message.message)
                         ?: findTaskSubmissionIdInContext() // Buscar en contexto si no se encuentra en el mensaje
-                    val targetSubmissionId = taskSubmissionId
-                        ?: currentFileContext?.submissionId
+                    val targetSubmissionId = taskSubmissionId?.takeIf { it > 0 }
+                        ?: currentFileContext?.submissionId?.takeIf { it > 0 }
                         ?: selectedTaskSubmissionId // Fallback: usar el submission seleccionado previamente
 
                     calificationManager.storePendingCalification(

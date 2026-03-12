@@ -240,11 +240,10 @@ class ProfileFragment : Fragment() {
                         val publicUrl = result.data
                         Log.d("ProfileFragment", "Avatar uploaded: $publicUrl")
                         
-                        // Update Local Session
                         val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
                         sessionManager.saveUserAvatar(publicUrl)
+                        com.example.tareamov.util.AppCache.invalidateProfile()
                         
-                        // Update UI
                         Glide.with(this@ProfileFragment)
                             .load(publicUrl)
                             .circleCrop()
@@ -253,7 +252,6 @@ class ProfileFragment : Fragment() {
                             
                         Toast.makeText(context, "Avatar actualizado correctamente", Toast.LENGTH_SHORT).show()
                         
-                        // Notify other components
                         requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                             .edit().putBoolean("profile_updated", true).apply()
                     }
@@ -819,99 +817,82 @@ class ProfileFragment : Fragment() {
     }
 
     private fun loadUserData() {
-        startSkeletonAnimation()
+        val context = requireContext()
+        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
+        BackendApiService.initialize(context)
+
+        if (!isViewingExternalProfile) {
+            val cached = com.example.tareamov.util.AppCache.getProfileOrStale()
+            val cachedCount = com.example.tareamov.util.AppCache.getSubscriberCountOrStale(sessionManager.getUserId())
+            if (cached != null) {
+                updateUI(cached, null, cachedCount ?: 0L)
+            } else {
+                val cachedAvatar = sessionManager.getUserAvatar()
+                if (!cachedAvatar.isNullOrEmpty()) {
+                    Glide.with(this@ProfileFragment)
+                        .load(cachedAvatar)
+                        .placeholder(R.drawable.ic_profile_placeholder)
+                        .error(R.drawable.ic_profile_placeholder)
+                        .circleCrop()
+                        .into(profileImage)
+                }
+                val username = sessionManager.getUsername()
+                if (!username.isNullOrEmpty()) usernameTextView.text = username
+                startSkeletonAnimation()
+            }
+        } else {
+            startSkeletonAnimation()
+        }
+
         lifecycleScope.launch {
             try {
-                val context = requireContext()
-                BackendApiService.initialize(context)
-
                 if (isViewingExternalProfile && requestedUserId > 0L) {
                     val profileResult = withContext(Dispatchers.IO) {
                         BackendApiService.getUserById(requestedUserId)
                     }
-
                     when (profileResult) {
                         is ApiResult.Success -> {
                             val usuario = profileResult.data
-                            val countResult = withContext(Dispatchers.IO) {
+                            val subscriberCount = withContext(Dispatchers.IO) {
                                 BackendApiService.getSubscriberCount(usuario.id)
-                            }
-                            val subscriberCount = when (countResult) {
-                                is ApiResult.Success -> countResult.data?.toLong() ?: 0L
-                                is ApiResult.Error -> 0L
-                            }
+                            }.let { if (it is ApiResult.Success) it.data?.toLong() ?: 0L else 0L }
                             updateUI(usuario, null, subscriberCount)
                         }
                         is ApiResult.Error -> {
                             Log.w("ProfileFragment", "API error loading external profile: ${profileResult.message}")
                             stopSkeletonAnimation()
-                            Toast.makeText(context, "Error cargando perfil", Toast.LENGTH_SHORT).show()
                         }
                     }
                     return@launch
                 }
 
-                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
-                val currentUsername = sessionManager.getUsername()
-                
-                if (currentUsername != null) {
-                    // 1. Try to get avatar from SessionManager first (fastest)
-                    val cachedAvatar = sessionManager.getUserAvatar()
-                    if (!cachedAvatar.isNullOrEmpty()) {
-                        Glide.with(this@ProfileFragment)
-                            .load(cachedAvatar)
-                            .placeholder(R.drawable.ic_profile_placeholder)
-                            .error(R.drawable.ic_profile_placeholder)
-                            .circleCrop()
-                            .into(profileImage)
-                    }
-
-                    // 2. Fetch fresh data from BackendApiService
-                    BackendApiService.initialize(context)
-                    val profileResult = withContext(Dispatchers.IO) {
-                        BackendApiService.getMyProfile()
-                    }
-                    
-                    when (profileResult) {
-                        is ApiResult.Success -> {
-                            val usuario = profileResult.data
-                            if (usuario == null) {
-                                Log.w("ProfileFragment", "Profile data is null")
-                                stopSkeletonAnimation()
-                                return@launch
-                            }
-                            // Update cached avatar in SessionManager for other screens
-                            if (!usuario.avatar.isNullOrEmpty()) {
-                                sessionManager.saveUserAvatar(usuario.avatar!!)
-                                Log.d("ProfileFragment", "Avatar loaded from API: ${usuario.avatar}")
-                            }
-                            
-                            // Fetch subscriber count
-                            val countResult = withContext(Dispatchers.IO) {
-                                BackendApiService.getSubscriberCount(usuario.id)
-                            }
-                            val subscriberCount = when (countResult) {
-                                is ApiResult.Success -> {
-                                    val count = countResult.data?.toLong() ?: 0L
-                                    Log.d("ProfileFragment", "Subscriber count loaded: $count")
-                                    count
-                                }
-                                is ApiResult.Error -> {
-                                    Log.w("ProfileFragment", "Error loading subscriber count: ${countResult.message}")
-                                    0L
-                                }
-                            }
-                            updateUI(usuario, null, subscriberCount)
-                        }
-                        is ApiResult.Error -> {
-                            Log.w("ProfileFragment", "API error: ${profileResult.message}")
-                            stopSkeletonAnimation()
-                            Toast.makeText(context, "Error cargando perfil", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                } else {
+                val currentUsername = sessionManager.getUsername() ?: run {
                     stopSkeletonAnimation()
-                    Toast.makeText(context, "No hay sesión activa", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                val profileResult = withContext(Dispatchers.IO) { BackendApiService.getMyProfile() }
+
+                when (profileResult) {
+                    is ApiResult.Success -> {
+                        val usuario = profileResult.data ?: run {
+                            stopSkeletonAnimation(); return@launch
+                        }
+                        if (!usuario.avatar.isNullOrEmpty()) sessionManager.saveUserAvatar(usuario.avatar!!)
+
+                        val subscriberCount = withContext(Dispatchers.IO) {
+                            BackendApiService.getSubscriberCount(usuario.id)
+                        }.let { if (it is ApiResult.Success) it.data?.toLong() ?: 0L else 0L }
+
+                        com.example.tareamov.util.AppCache.putProfile(usuario)
+                        com.example.tareamov.util.AppCache.putSubscriberCount(usuario.id, subscriberCount)
+
+                        updateUI(usuario, null, subscriberCount)
+                    }
+                    is ApiResult.Error -> {
+                        Log.w("ProfileFragment", "API error: ${profileResult.message}")
+                        stopSkeletonAnimation()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("ProfileFragment", "Error loading user data", e)

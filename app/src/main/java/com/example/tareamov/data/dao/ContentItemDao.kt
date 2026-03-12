@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.example.tareamov.data.entity.ContentItem
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ContentItemDao {
@@ -69,4 +70,10 @@ interface ContentItemDao {
     // Alias method for getContentItemsByTaskId
     @Query("SELECT * FROM content_items WHERE taskId = :taskId ORDER BY orderIndex ASC")
     suspend fun getContentItemsForTask(taskId: Long): List<ContentItem>
+
+    @Query("SELECT ci.* FROM content_items ci INNER JOIN topics t ON ci.topicId = t.id WHERE t.courseId = :courseId ORDER BY t.orderIndex, ci.orderIndex")
+    fun getContentItemsByCourseFlow(courseId: Long): Flow<List<ContentItem>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(items: List<ContentItem>)
 }

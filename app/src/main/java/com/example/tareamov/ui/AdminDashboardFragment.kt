@@ -64,27 +64,30 @@ class AdminDashboardFragment : Fragment() {
 
     private lateinit var sessionManager: SessionManager
     
-    // Views principales
     private lateinit var backButton: ImageButton
     private lateinit var titleTextView: TextView
     private lateinit var sectionsContainer: LinearLayout
     private lateinit var scrollView: androidx.core.widget.NestedScrollView
     private var loadingView: View? = null
     
-    // Caché de datos para evitar llamadas repetidas
-    private var cachedMetrics: GlobalMetrics? = null
-    private var metricsLastUpdated: Long = 0
-    private val CACHE_DURATION_MS = 60_000L // 1 minuto
     private val TOP_ITEMS_LIMIT = 5
     private val MAX_SUBMISSIONS_PER_COURSE = 50
     
-    // Secciones del dashboard
     private var currentSection: DashboardSection = DashboardSection.ANALYTICS
-    private var cachedCertificates: List<BackendApiService.CertificateItem> = emptyList()
-    private var cachedCourseProgressData: List<Pair<com.example.tareamov.data.entity.Course, List<com.example.tareamov.data.entity.ProgresoEstudiante>>> = emptyList()
-    private var cachedStudentUsersData: Map<Long, com.example.tareamov.data.entity.Usuario> = emptyMap()
     private var studentProgressListContainer: LinearLayout? = null
     private var coursesToFinishListContainer: LinearLayout? = null
+
+    companion object {
+        private const val CACHE_DURATION_MS = 60_000L
+        private var cachedMetrics: GlobalMetrics? = null
+        private var metricsLastUpdated: Long = 0
+        private var cachedCertificates: List<BackendApiService.CertificateItem> = emptyList()
+        private var cachedCourseProgressData: List<Pair<com.example.tareamov.data.entity.Course, List<com.example.tareamov.data.entity.ProgresoEstudiante>>> = emptyList()
+        private var cachedStudentUsersData: Map<Long, com.example.tareamov.data.entity.Usuario> = emptyMap()
+        private var cachedPendingSubmissionDetails: List<SubmissionDetail> = emptyList()
+        private var cachedCoursesToFinish: List<CourseProgressInfo> = emptyList()
+        private var cachedRoleCards: List<RoleCardData> = emptyList()
+    }
 
     enum class DashboardSection {
         ANALYTICS,          // Métricas globales
@@ -879,7 +882,8 @@ class AdminDashboardFragment : Fragment() {
                 Toast.LENGTH_SHORT
             ).show()
             
-            // Recargar sección
+            com.example.tareamov.util.AppCache.invalidateRoles()
+            cachedRoleCards = emptyList()
             loadUserManagementSection()
         }
     }
@@ -930,10 +934,6 @@ class AdminDashboardFragment : Fragment() {
     }
 
     // ==================== SECCIÓN 3: MODERACIÓN ====================
-    
-    // Cache for moderation data
-    private var cachedPendingSubmissions: List<com.example.tareamov.data.entity.TaskSubmission> = emptyList()
-    private var cachedCoursesToFinish: List<CourseProgressInfo> = emptyList()
     
     data class CourseProgressInfo(
         val course: com.example.tareamov.data.entity.Course,
@@ -1035,85 +1035,82 @@ class AdminDashboardFragment : Fragment() {
     private fun loadPendingSubmissions(parentView: View) {
         lifecycleScope.launch {
             try {
-                showLoadingIndicator()
-                
+                val container = parentView.findViewById<LinearLayout>(R.id.pendingSubmissionsContainer)
+                val countBadge = parentView.findViewById<TextView>(R.id.pendingSubmissionsCount)
+
+                fun renderSubmissions(details: List<SubmissionDetail>) {
+                    container.removeAllViews()
+                    countBadge.text = "${details.size} pendientes"
+                    if (details.isEmpty()) {
+                        container.addView(createEmptyStateView("No hay tareas pendientes por calificar", "✅"))
+                    } else {
+                        details.forEachIndexed { index, detail ->
+                            val itemView = createSubmissionItemView(detail, container)
+                            itemView.alpha = 0f
+                            itemView.translationY = 28f
+                            itemView.scaleX = 0.98f
+                            itemView.scaleY = 0.98f
+                            container.addView(itemView)
+                            itemView.animate()
+                                .alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
+                                .setDuration(360).setStartDelay((index * 90).toLong())
+                                .setInterpolator(FastOutSlowInInterpolator()).start()
+                        }
+                    }
+                    parentView.findViewById<TextView>(R.id.viewAllSubmissionsLink)?.setOnClickListener {
+                        navigateToTaskSubmissionFromModeration(details.firstOrNull() ?: return@setOnClickListener)
+                    }
+                }
+
+                if (cachedPendingSubmissionDetails.isNotEmpty()) {
+                    renderSubmissions(cachedPendingSubmissionDetails)
+                } else {
+                    showLoadingIndicator()
+                }
+
                 val userId = sessionManager.getUserId()
                 val maxCards = TOP_ITEMS_LIMIT
-                
+
                 val submissionDetails = withContext(Dispatchers.IO) {
                     val creatorCourses = BackendApiService.getCoursesByCreatorId(userId).getOrNull() ?: emptyList()
                     val courseTitleById = creatorCourses.associateBy({ it.id }, { it.title })
 
-                    fun isSubmissionGraded(submission: com.example.tareamov.data.entity.TaskSubmission): Boolean {
-                        val gradeValue = submission.grade
-                        return gradeValue != null && gradeValue.isFinite()
-                    }
+                    fun isSubmissionGraded(s: com.example.tareamov.data.entity.TaskSubmission) =
+                        s.grade != null && s.grade.isFinite()
 
                     val ungradedByCourse = coroutineScope {
-                        creatorCourses
-                            .map { course ->
-                                async {
-                                    // Fetch all submissions to apply strict local filtering by student+task history
-                                    // Rule: if any submission of a pair already has grade, do not show it as pending.
-                                    val allSubmissions = BackendApiService
-                                        .getSubmissionsByCourse(course.id, 1, MAX_SUBMISSIONS_PER_COURSE, ungradedOnly = false)
-                                        .getOrNull()
-                                        .orEmpty()
-
-                                    // Group by student+task and keep only truly pending pairs
-                                    val ungraded = allSubmissions
-                                        .groupBy { submission -> "${submission.studentId}_${submission.taskId}" }
-                                        .mapNotNull { (_, submissionsByStudentTask) ->
-                                            val hasAnyGradeInPair = submissionsByStudentTask.any { isSubmissionGraded(it) }
-                                            if (hasAnyGradeInPair) {
-                                                null
-                                            } else {
-                                                submissionsByStudentTask
-                                                    .maxByOrNull { submission -> submission.submissionDate }
-                                                    ?: submissionsByStudentTask.firstOrNull()
-                                            }
-                                        }
-                                        .filter { submission ->
-                                            !isSubmissionGraded(submission)
-                                        }
-
-                                    Log.d("AdminDashboard", "Course ${course.id}: ${allSubmissions.size} total → ${ungraded.size} strictly pending")
-                                    course.id to ungraded
-                                }
+                        creatorCourses.map { course ->
+                            async {
+                                val all = BackendApiService
+                                    .getSubmissionsByCourse(course.id, 1, MAX_SUBMISSIONS_PER_COURSE, ungradedOnly = false)
+                                    .getOrNull().orEmpty()
+                                val ungraded = all
+                                    .groupBy { "${it.studentId}_${it.taskId}" }
+                                    .mapNotNull { (_, group) ->
+                                        if (group.any { isSubmissionGraded(it) }) null
+                                        else group.maxByOrNull { it.submissionDate } ?: group.firstOrNull()
+                                    }
+                                    .filter { !isSubmissionGraded(it) }
+                                course.id to ungraded
                             }
-                            .awaitAll()
+                        }.awaitAll()
                     }
 
-                    // Excluir submissions del usuario actual (no mostrar sus propias tareas)
-                    val selectedPairs = ungradedByCourse
-                        .asSequence()
+                    val selectedPairs = ungradedByCourse.asSequence()
                         .flatMap { (courseId, submissions) ->
-                            submissions.asSequence()
-                                .filter { it.studentId != userId } // Excluir usuario actual
-                                .map { courseId to it }
+                            submissions.asSequence().filter { it.studentId != userId }.map { courseId to it }
                         }
-                        .take(maxCards)
-                        .toList()
-
-                    val taskIds = selectedPairs.map { it.second.taskId }.distinct()
-                    val studentIds = selectedPairs.map { it.second.studentId }.distinct()
+                        .take(maxCards).toList()
 
                     val taskMap = coroutineScope {
-                        taskIds
-                            .map { taskId ->
-                                async { taskId to BackendApiService.getTaskById(taskId).getOrNull() }
-                            }
-                            .awaitAll()
-                            .toMap()
+                        selectedPairs.map { it.second.taskId }.distinct()
+                            .map { taskId -> async { taskId to BackendApiService.getTaskById(taskId).getOrNull() } }
+                            .awaitAll().toMap()
                     }
-
                     val studentMap = coroutineScope {
-                        studentIds
-                            .map { studentId ->
-                                async { studentId to BackendApiService.getUserById(studentId).getOrNull() }
-                            }
-                            .awaitAll()
-                            .toMap()
+                        selectedPairs.map { it.second.studentId }.distinct()
+                            .map { sid -> async { sid to BackendApiService.getUserById(sid).getOrNull() } }
+                            .awaitAll().toMap()
                     }
 
                     selectedPairs.map { (courseId, submission) ->
@@ -1126,52 +1123,12 @@ class AdminDashboardFragment : Fragment() {
                     }
                 }
 
-                if (currentSection != DashboardSection.MODERATION) {
-                    hideLoadingIndicator()
-                    return@launch
-                }
-                
-                cachedPendingSubmissions = submissionDetails.map { it.submission }
-                
-                val container = parentView.findViewById<LinearLayout>(R.id.pendingSubmissionsContainer)
-                container.removeAllViews()
-                
-                parentView.findViewById<TextView>(R.id.pendingSubmissionsCount).text = 
-                    "${submissionDetails.size} pendientes"
-                
-                if (submissionDetails.isEmpty()) {
-                    val emptyView = createEmptyStateView("No hay tareas pendientes por calificar", "✅")
-                    container.addView(emptyView)
-                } else {
-                    submissionDetails.forEachIndexed { index, detail ->
-                        val itemView = createSubmissionItemView(detail, container)
-                        
-                        // Staggered animation (fade + slide + slight scale)
-                        itemView.alpha = 0f
-                        itemView.translationY = 28f
-                        itemView.scaleX = 0.98f
-                        itemView.scaleY = 0.98f
-                        container.addView(itemView)
-                        
-                        itemView.animate()
-                            .alpha(1f)
-                            .translationY(0f)
-                            .scaleX(1f)
-                            .scaleY(1f)
-                            .setDuration(360)
-                            .setStartDelay((index * 90).toLong())
-                            .setInterpolator(FastOutSlowInInterpolator())
-                            .start()
-                    }
-                }
+                if (currentSection != DashboardSection.MODERATION) { hideLoadingIndicator(); return@launch }
 
-                parentView.findViewById<TextView>(R.id.viewAllSubmissionsLink)?.setOnClickListener {
-                    val firstPending = submissionDetails.firstOrNull() ?: return@setOnClickListener
-                    navigateToTaskSubmissionFromModeration(firstPending)
-                }
-
+                cachedPendingSubmissionDetails = submissionDetails
                 hideLoadingIndicator()
-                
+                renderSubmissions(submissionDetails)
+
             } catch (e: Exception) {
                 Log.e("AdminDashboard", "Error loading pending submissions", e)
                 hideLoadingIndicator()
@@ -1365,7 +1322,7 @@ class AdminDashboardFragment : Fragment() {
                             BackendApiService.gradeSubmission(submission.id, grade, feedback ?: "")
                         }
                         Toast.makeText(requireContext(), "Calificación enviada ✓", Toast.LENGTH_SHORT).show()
-                        // Refresh section
+                        cachedPendingSubmissionDetails = emptyList()
                         sectionsContainer.removeAllViews()
                         loadModerationSection()
                     } catch (e: Exception) {
@@ -1384,7 +1341,6 @@ class AdminDashboardFragment : Fragment() {
                 val container = parentView.findViewById<LinearLayout>(R.id.studentProgressContainer)
                 val countBadge = parentView.findViewById<TextView>(R.id.studentProgressCount)
 
-                // ── Filtro por título de curso ──
                 val courseFilterEt = android.widget.EditText(requireContext()).apply {
                     hint = "Filtrar por título de curso..."
                     setHintTextColor(Color.parseColor("#6B6B7A"))
@@ -1400,7 +1356,6 @@ class AdminDashboardFragment : Fragment() {
                     ).also { it.bottomMargin = 8.dpToPx() }
                 }
 
-                // ── Filtro por username del estudiante ──
                 val usernameFilterEt = android.widget.EditText(requireContext()).apply {
                     hint = "Buscar estudiante por username..."
                     setHintTextColor(Color.parseColor("#6B6B7A"))
@@ -1416,7 +1371,6 @@ class AdminDashboardFragment : Fragment() {
                     ).also { it.bottomMargin = 12.dpToPx() }
                 }
 
-                // ── Contenedor interno de filas (separado de los filtros) ──
                 val innerList = LinearLayout(requireContext()).apply {
                     orientation = LinearLayout.VERTICAL
                     layoutParams = LinearLayout.LayoutParams(
@@ -1431,21 +1385,32 @@ class AdminDashboardFragment : Fragment() {
                 container.addView(usernameFilterEt)
                 container.addView(innerList)
 
-                // ── Cargar datos ──
+                val filterWatcher = object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        renderStudentProgressFiltered(courseFilterEt.text.toString(), usernameFilterEt.text.toString())
+                    }
+                }
+                courseFilterEt.addTextChangedListener(filterWatcher)
+                usernameFilterEt.addTextChangedListener(filterWatcher)
+
+                if (cachedCourseProgressData.isNotEmpty()) {
+                    val totalCached = cachedCourseProgressData.sumOf { (_, progs) -> progs.count { it.usuarioEstudiante != userId } }
+                    countBadge.text = "$totalCached estudiantes"
+                    renderStudentProgressFiltered("", "")
+                }
+
                 val (courseProgress, users) = withContext(Dispatchers.IO) {
                     val courses = BackendApiService.getCoursesByCreatorId(userId).getOrNull().orEmpty()
                     val progress = coroutineScope {
                         courses.map { course ->
-                            async {
-                                course to BackendApiService.getAllProgressByCourse(course.id).getOrNull().orEmpty()
-                            }
+                            async { course to BackendApiService.getAllProgressByCourse(course.id).getOrNull().orEmpty() }
                         }.awaitAll()
                     }
-                    val allStudentIds = progress
-                        .flatMap { (_, progs) -> progs.map { it.usuarioEstudiante } }.distinct()
+                    val allStudentIds = progress.flatMap { (_, progs) -> progs.map { it.usuarioEstudiante } }.distinct()
                     val usersMap = if (allStudentIds.isNotEmpty())
-                        BackendApiService.getUsersByIds(allStudentIds).getOrNull()
-                            .orEmpty().associateBy { it.id }
+                        BackendApiService.getUsersByIds(allStudentIds).getOrNull().orEmpty().associateBy { it.id }
                     else emptyMap()
                     progress to usersMap
                 }
@@ -1453,28 +1418,9 @@ class AdminDashboardFragment : Fragment() {
                 cachedCourseProgressData = courseProgress
                 cachedStudentUsersData = users
 
-                // Contar estudiantes excluyendo al usuario actual
-                val totalStudents = courseProgress.sumOf { (_, progs) ->
-                    progs.count { it.usuarioEstudiante != userId }
-                }
+                val totalStudents = courseProgress.sumOf { (_, progs) -> progs.count { it.usuarioEstudiante != userId } }
                 countBadge.text = "$totalStudents estudiantes"
-
-                // ── Conectar filtros al render ──
-                val filterWatcher = object : android.text.TextWatcher {
-                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-                    override fun afterTextChanged(s: android.text.Editable?) {
-                        renderStudentProgressFiltered(
-                            courseFilterEt.text.toString(),
-                            usernameFilterEt.text.toString()
-                        )
-                    }
-                }
-                courseFilterEt.addTextChangedListener(filterWatcher)
-                usernameFilterEt.addTextChangedListener(filterWatcher)
-
-                // ── Render inicial sin filtros ──
-                renderStudentProgressFiltered("", "")
+                renderStudentProgressFiltered(courseFilterEt.text.toString(), usernameFilterEt.text.toString())
 
             } catch (e: Exception) {
                 Log.e("AdminDashboard", "Error loading student progress", e)
@@ -1709,53 +1655,9 @@ class AdminDashboardFragment : Fragment() {
         lifecycleScope.launch {
             try {
                 val currentUserId = sessionManager.getUserId()
-                val courseDetails = withContext(Dispatchers.IO) {
-                    val myProgress = BackendApiService.getMyProgress().getOrNull() ?: emptyList()
-
-                    val incompleteCourses = myProgress.filter {
-                        val progress = if (it.tareasTotales > 0) {
-                            (it.tareasCompletadas.toFloat() / it.tareasTotales.toFloat()) * 100f
-                        } else {
-                            it.porcentajeProgreso
-                        }
-                        progress < 90f
-                    }
-
-                    coroutineScope {
-                        incompleteCourses
-                            .mapNotNull { progress ->
-                                val courseId = progress.cursoId
-                                if (courseId <= 0L) {
-                                    Log.w("AdminDashboard", "Skipping invalid progress record with courseId=$courseId")
-                                    null
-                                } else {
-                                    async {
-                                        val courseDeferred = async { BackendApiService.getCourseById(courseId).getOrNull() }
-                                        val enrolledCountDeferred = async {
-                                            BackendApiService.getEnrolledCount(courseId).getOrNull() ?: 0
-                                        }
-                                        val course = courseDeferred.await()
-                                        val enrolledCount = enrolledCountDeferred.await()
-
-                                        course
-                                            ?.takeIf { it.creatorUserId != currentUserId }
-                                            ?.let { CourseProgressInfo(it, progress, enrolledCount) }
-                                    }
-                                }
-                            }
-                            .awaitAll()
-                            .filterNotNull()
-                    }
-                }
-
-                if (currentSection != DashboardSection.MODERATION) return@launch
-
-                cachedCoursesToFinish = courseDetails
-
                 val container = parentView.findViewById<LinearLayout>(R.id.pendingCoursesContainer)
                 val countBadge = parentView.findViewById<TextView>(R.id.pendingCoursesCount)
 
-                // ── Filtro por título de curso ──
                 val courseFilterEt = android.widget.EditText(requireContext()).apply {
                     hint = "Buscar curso por título..."
                     setHintTextColor(Color.parseColor("#6B6B7A"))
@@ -1771,7 +1673,6 @@ class AdminDashboardFragment : Fragment() {
                     ).also { it.bottomMargin = 12.dpToPx() }
                 }
 
-                // ── Contenedor interno de tarjetas ──
                 val innerList = LinearLayout(requireContext()).apply {
                     orientation = LinearLayout.VERTICAL
                     layoutParams = LinearLayout.LayoutParams(
@@ -1785,26 +1686,52 @@ class AdminDashboardFragment : Fragment() {
                 container.addView(courseFilterEt)
                 container.addView(innerList)
 
-                countBadge.text = "${courseDetails.size} cursos"
-
-                // ── Conectar filtro ──
                 courseFilterEt.addTextChangedListener(object : android.text.TextWatcher {
                     override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
                     override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-                    override fun afterTextChanged(s: android.text.Editable?) {
-                        renderCoursesToFinishFiltered(s?.toString() ?: "")
-                    }
+                    override fun afterTextChanged(s: android.text.Editable?) { renderCoursesToFinishFiltered(s?.toString() ?: "") }
                 })
 
-                // ── Render inicial ──
-                renderCoursesToFinishFiltered("")
+                if (cachedCoursesToFinish.isNotEmpty()) {
+                    countBadge.text = "${cachedCoursesToFinish.size} cursos"
+                    renderCoursesToFinishFiltered("")
+                }
+
+                val courseDetails = withContext(Dispatchers.IO) {
+                    val myProgress = BackendApiService.getMyProgress().getOrNull() ?: emptyList()
+                    val incompleteCourses = myProgress.filter {
+                        val pct = if (it.tareasTotales > 0) (it.tareasCompletadas.toFloat() / it.tareasTotales.toFloat()) * 100f
+                        else it.porcentajeProgreso
+                        pct < 90f
+                    }
+                    coroutineScope {
+                        incompleteCourses.mapNotNull { progress ->
+                            val courseId = progress.cursoId
+                            if (courseId <= 0L) null
+                            else async {
+                                val courseDeferred = async { BackendApiService.getCourseById(courseId).getOrNull() }
+                                val enrolledCountDeferred = async { BackendApiService.getEnrolledCount(courseId).getOrNull() ?: 0 }
+                                val course = courseDeferred.await()
+                                val enrolledCount = enrolledCountDeferred.await()
+                                course?.takeIf { it.creatorUserId != currentUserId }
+                                    ?.let { CourseProgressInfo(it, progress, enrolledCount) }
+                            }
+                        }.awaitAll().filterNotNull()
+                    }
+                }
+
+                if (currentSection != DashboardSection.MODERATION) return@launch
+
+                cachedCoursesToFinish = courseDetails
+                countBadge.text = "${courseDetails.size} cursos"
+                renderCoursesToFinishFiltered(courseFilterEt.text.toString())
 
             } catch (e: Exception) {
                 Log.e("AdminDashboard", "Error loading courses to finish", e)
             }
         }
     }
-    
+
     private fun renderCoursesToFinishFiltered(query: String) {
         val innerList = coursesToFinishListContainer ?: return
         innerList.removeAllViews()
@@ -1977,7 +1904,7 @@ class AdminDashboardFragment : Fragment() {
         }
 
         val countLabel = TextView(requireContext()).apply {
-            text = "Cargando..."
+            text = if (cachedCertificates.isNotEmpty()) "${cachedCertificates.size} certificado${if (cachedCertificates.size != 1) "s" else ""} obtenidos" else "Cargando..."
             setTextColor(android.graphics.Color.parseColor("#6B6B7A"))
             textSize = 12f
             layoutParams = LinearLayout.LayoutParams(
@@ -2049,6 +1976,13 @@ class AdminDashboardFragment : Fragment() {
             override fun afterTextChanged(s: android.text.Editable?) { renderList(s?.toString() ?: "") }
         })
 
+        val stale = com.example.tareamov.util.AppCache.getCertificatesOrStale()
+        if (stale != null) {
+            cachedCertificates = stale
+            countLabel.text = "${stale.size} certificado${if (stale.size != 1) "s" else ""} obtenidos"
+            renderList("")
+        }
+
         lifecycleScope.launch {
             try {
                 val certs = withContext(Dispatchers.IO) {
@@ -2057,12 +1991,13 @@ class AdminDashboardFragment : Fragment() {
 
                 if (currentSection != DashboardSection.CERTIFICATES) return@launch
 
+                com.example.tareamov.util.AppCache.putCertificates(certs)
                 cachedCertificates = certs
                 countLabel.text = "${certs.size} certificado${if (certs.size != 1) "s" else ""} obtenidos"
                 renderList(searchBar.text.toString())
             } catch (e: Exception) {
                 Log.e("AdminDashboard", "Error loading certificates", e)
-                countLabel.text = "Error al cargar certificados"
+                if (cachedCertificates.isEmpty()) countLabel.text = "Error al cargar certificados"
             }
         }
     }
@@ -2225,68 +2160,60 @@ class AdminDashboardFragment : Fragment() {
         val rolesContainer = permissionsView.findViewById<LinearLayout>(R.id.rolesContainer)
         permissionsView.findViewById<TextView>(R.id.configureRolesButton).visibility = View.GONE
 
-        rolesContainer.removeAllViews()
-        
+        fun renderRoleCards(cards: List<RoleCardData>) {
+            rolesContainer.removeAllViews()
+            if (cards.isEmpty()) { showEmptyRolesState(rolesContainer); return }
+            cards.forEachIndexed { index, roleCard ->
+                val roleView = LayoutInflater.from(requireContext())
+                    .inflate(R.layout.item_role, rolesContainer, false)
+                roleView.findViewById<ImageView>(R.id.roleIcon)
+                    .setImageResource(getRoleIconResource(roleCard.role.nombre))
+                roleView.findViewById<TextView>(R.id.roleName).text = formatRoleName(roleCard.role.nombre)
+                roleView.findViewById<TextView>(R.id.roleMeta).text =
+                    "Asignado a tu cuenta · ${roleCard.permissionsCount} permisos"
+                roleView.findViewById<TextView>(R.id.roleStatusChip).text =
+                    if (roleCard.role.default) "Predeterminado" else "Activo"
+                applyRoleTouchAnimation(roleView)
+                roleView.setOnClickListener { showRolePermissions(roleCard.role) }
+                rolesContainer.addView(roleView)
+                animateRoleItemEntry(roleView, index)
+            }
+        }
+
+        if (cachedRoleCards.isNotEmpty()) renderRoleCards(cachedRoleCards)
+        else rolesContainer.removeAllViews()
+
         lifecycleScope.launch {
             try {
                 val currentUserId = sessionManager.getUserId()
-                if (currentUserId <= 0L) {
-                    showEmptyRolesState(rolesContainer)
-                    return@launch
-                }
+                if (currentUserId <= 0L) { showEmptyRolesState(rolesContainer); return@launch }
 
                 val roleCards = withContext(Dispatchers.IO) {
-                    val allRoles = BackendApiService.getRoles().getOrNull() ?: emptyList()
+                    val allRoles = com.example.tareamov.util.AppCache.getRoles()
+                        ?: BackendApiService.getRoles().getOrNull()?.also { com.example.tareamov.util.AppCache.putRoles(it) }
+                        ?: emptyList()
                     val userRoleIds = BackendApiService.getUserRoles(currentUserId).getOrNull()?.toSet() ?: emptySet()
 
-                    val assignedRoles = if (userRoleIds.isNotEmpty()) {
-                        allRoles.filter { it.id in userRoleIds }
-                    } else {
-                        allRoles.filter { sessionManager.hasRole(it.id.toInt()) }
-                    }
+                    val assignedRoles = if (userRoleIds.isNotEmpty()) allRoles.filter { it.id in userRoleIds }
+                        else allRoles.filter { sessionManager.hasRole(it.id.toInt()) }
 
                     coroutineScope {
-                        assignedRoles
-                            .map { role ->
-                                async {
-                                    val permissionCount = BackendApiService
-                                        .getRecursosByRol(role.id)
-                                        .getOrNull()
-                                        ?.size ?: 0
-                                    RoleCardData(role, permissionCount)
-                                }
+                        assignedRoles.map { role ->
+                            async {
+                                val permissionCount = BackendApiService.getRecursosByRol(role.id).getOrNull()?.size ?: 0
+                                RoleCardData(role, permissionCount)
                             }
-                            .map { it.await() }
-                            .sortedByDescending { it.role.nivel }
+                        }.map { it.await() }.sortedByDescending { it.role.nivel }
                     }
                 }
 
-                if (roleCards.isEmpty()) {
-                    showEmptyRolesState(rolesContainer)
-                    return@launch
-                }
+                if (currentSection != DashboardSection.PERMISSIONS) return@launch
 
-                roleCards.forEachIndexed { index, roleCard ->
-                    val roleView = LayoutInflater.from(requireContext())
-                        .inflate(R.layout.item_role, rolesContainer, false)
-
-                    roleView.findViewById<ImageView>(R.id.roleIcon)
-                        .setImageResource(getRoleIconResource(roleCard.role.nombre))
-                    roleView.findViewById<TextView>(R.id.roleName).text = formatRoleName(roleCard.role.nombre)
-                    roleView.findViewById<TextView>(R.id.roleMeta).text =
-                        "Asignado a tu cuenta · ${roleCard.permissionsCount} permisos"
-                    roleView.findViewById<TextView>(R.id.roleStatusChip).text =
-                        if (roleCard.role.default) "Predeterminado" else "Activo"
-
-                    applyRoleTouchAnimation(roleView)
-                    roleView.setOnClickListener { showRolePermissions(roleCard.role) }
-
-                    rolesContainer.addView(roleView)
-                    animateRoleItemEntry(roleView, index)
-                }
+                cachedRoleCards = roleCards
+                renderRoleCards(roleCards)
             } catch (e: Exception) {
                 Log.e("AdminDashboard", "Error cargando roles del usuario", e)
-                showEmptyRolesState(rolesContainer)
+                if (cachedRoleCards.isEmpty()) showEmptyRolesState(rolesContainer)
             }
         }
     }

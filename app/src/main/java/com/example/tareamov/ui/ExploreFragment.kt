@@ -367,8 +367,8 @@ class ExploreFragment : Fragment() {
         // Mostrar estadísticas inmediatamente (agregados server-side con fallback offline)
         fetchAndDisplayCourseStats()
 
-        // Cargar los cursos (forzar fetch remoto al entrar en el fragment)
-    loadCourses(forceRemote = true)
+        // Mostrar cache inmediatamente, refrescar en segundo plano
+    loadCoursesWithCache()
 
     // Setup listeners so ExploreFragment refreshes when a course or video is updated
     try {
@@ -419,7 +419,7 @@ class ExploreFragment : Fragment() {
 
         // FragmentManager fallback listeners
         requireActivity().supportFragmentManager.setFragmentResultListener("courseUpdated", viewLifecycleOwner) { _, _ ->
-            Log.d("ExploreFragment", "FragmentManager courseUpdated received, reloading courses")
+            com.example.tareamov.util.AppCache.invalidateCourses()
             loadCourses(forceRemote = true)
         }
 
@@ -480,32 +480,34 @@ class ExploreFragment : Fragment() {
      */
     private fun updateNotificationBadge(bottomNavBinding: ComponentBottomNavigationBinding) {
         val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        val userId = sessionManager.getUserId()
-        if (userId == -1L) {
+        if (sessionManager.getUserId() == -1L) {
             bottomNavBinding.notificationBadge.visibility = View.GONE
             return
         }
 
+        val cached = com.example.tareamov.util.AppCache.getUnreadCount()
+        if (cached != null) showBadge(bottomNavBinding, cached)
+
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val countResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     BackendApiService.getUnreadNotificationCount()
                 }
-                
-                val unreadCount = if (countResult is ApiResult.Success) {
-                    countResult.data ?: 0
-                } else 0
-                
-                if (unreadCount > 0) {
-                    bottomNavBinding.notificationBadge.text = if (unreadCount > 99) "99+" else unreadCount.toString()
-                    bottomNavBinding.notificationBadge.visibility = View.VISIBLE
-                } else {
-                    bottomNavBinding.notificationBadge.visibility = View.GONE
-                }
+                val count = if (result is ApiResult.Success) result.data ?: 0 else 0
+                com.example.tareamov.util.AppCache.putUnreadCount(count)
+                showBadge(bottomNavBinding, count)
             } catch (e: Exception) {
                 android.util.Log.w("ExploreFragment", "Error updating notification badge", e)
-                bottomNavBinding.notificationBadge.visibility = View.GONE
             }
+        }
+    }
+
+    private fun showBadge(bottomNavBinding: ComponentBottomNavigationBinding, count: Int) {
+        if (count > 0) {
+            bottomNavBinding.notificationBadge.text = if (count > 99) "99+" else count.toString()
+            bottomNavBinding.notificationBadge.visibility = View.VISIBLE
+        } else {
+            bottomNavBinding.notificationBadge.visibility = View.GONE
         }
     }
 
@@ -690,11 +692,13 @@ class ExploreFragment : Fragment() {
             }, 500)
         }
         
-        // If list is empty, ensure skeleton is visible immediately and try to load
         if (coursesList.isEmpty()) {
-            startSkeletonAnimation()
-            // Try to load regardless of connection state check - let the loader handle the error/skeleton persistence
-            loadCourses(forceRemote = true)
+            loadCoursesWithCache()
+        } else {
+            viewLifecycleOwner.lifecycleScope.launch {
+                kotlinx.coroutines.delay(300)
+                loadCourses(forceRemote = true)
+            }
         }
     }
 
@@ -1903,63 +1907,71 @@ class ExploreFragment : Fragment() {
             .start()
     }
 
+    private fun loadCoursesWithCache() {
+        val cached = com.example.tareamov.util.AppCache.getCachedCoursesOrStale()
+        if (cached != null && cached.isNotEmpty()) {
+            val sorted = cached.sortedByDescending { it.timestamp }
+            allCoursesList.clear(); allCoursesList.addAll(sorted)
+            coursesList.clear(); coursesList.addAll(sorted)
+            if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
+            stopSkeletonAnimation()
+            fetchAndDisplayCourseStats()
+            viewLifecycleOwner.lifecycleScope.launch {
+                kotlinx.coroutines.delay(200)
+                loadCourses(forceRemote = true)
+            }
+        } else {
+            startSkeletonAnimation()
+            loadCourses(forceRemote = true)
+        }
+    }
+
     /**
      * Load courses with pagination (10 at a time)
      * Uses BackendApiService pagination for better performance
      */
     private fun loadCourses(forceRemote: Boolean = false) {
-        if (isLoadingCourses) {
-            Log.d("ExploreFragment", "Already loading courses, skipping")
-            return
-        }
+        if (isLoadingCourses) return
 
-        // Prevent wiping any active filter/search on network reconnect or other triggers
         if (isFilterActive) {
-            Log.d("ExploreFragment", "loadCourses: filter/search active (index=$currentFilterIndex), skipping full reload to prevent result loss")
+            Log.d("ExploreFragment", "loadCourses: filter active, skipping")
             return
         }
 
         isLoadingCourses = true
-        
-        // Ensure BackendApiService is initialized
         BackendApiService.initialize(requireContext())
-        
-        // Show skeleton only if list is empty (initial load or full refresh)
-        if (coursesList.isEmpty()) {
-            startSkeletonAnimation()
-        }
-        
+
+        if (coursesList.isEmpty()) startSkeletonAnimation()
+
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                Log.d("ExploreFragment", "loadCourses: Starting to load courses from BackendApiService (forceRemote=$forceRemote)")
-                
-                // Load first page only (server-side pagination)
-                val firstPage = withContext(Dispatchers.IO) {
-                    Log.d("ExploreFragment", "loadCourses: Calling BackendApiService.getCourses(1, pageSize)")
-                    val result = BackendApiService.getCourses(1, pageSize)
-                    if (result is ApiResult.Success) result.data else emptyList()
+                val pageResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getCoursesPaginated(1, pageSize)
                 }
 
-                // Fetch total counts and stats server-side (so UI stats remain accurate)
-                val fetchedTotal = withContext(Dispatchers.IO) {
-                    try {
-                        val result = BackendApiService.getCourses(1, 1)
-                        // Estimate total from first page; use 200 as upper bound for now
-                        val allResult = BackendApiService.getCourses(1, 200)
-                        if (allResult is ApiResult.Success) allResult.data.size else 0
-                    } catch (t: Throwable) { 0 }
+                val firstPage: List<Course>
+                val fetchedTotal: Int
+
+                if (pageResult is ApiResult.Success) {
+                    firstPage = pageResult.data.data
+                    fetchedTotal = pageResult.data.pagination?.total ?: firstPage.size
+                } else {
+                    firstPage = emptyList()
+                    fetchedTotal = 0
                 }
 
                 totalCourses = fetchedTotal
                 currentPage = 0
                 hasTriggeredLoadAtPosition5 = false
 
+                if (firstPage.isNotEmpty()) {
+                    com.example.tareamov.util.AppCache.putCourses(firstPage)
+                }
+
                 withContext(Dispatchers.Main) {
-                    // Store only the loaded page; further pages will be appended on demand
                     allCoursesList.clear()
                     allCoursesList.addAll(firstPage.sortedByDescending { it.timestamp })
 
-                    // Display first page
                     coursesList.clear()
                     coursesList.addAll(firstPage.sortedByDescending { it.timestamp })
 

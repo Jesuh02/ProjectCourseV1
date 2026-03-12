@@ -65,6 +65,7 @@ class TaskSubmissionsFragment : Fragment() {
     private var topicName: String = ""
     private var courseTitle: String = ""
     private var courseDescription: String = ""
+    private var taskDueDate: String? = null
     
     // 🔥 Datos de la submission actual para pasar al ChatBotFragment
     private var currentSubmissionTaskId: Long = -1L
@@ -320,7 +321,8 @@ class TaskSubmissionsFragment : Fragment() {
                             "taskDescription" to (task.description ?: "Sin descripción"),
                             "topicName" to (topic?.name ?: ""),
                             "courseTitle" to (course?.title ?: ""),
-                            "courseDescription" to (course?.description ?: "")
+                            "courseDescription" to (course?.description ?: ""),
+                            "dueDate" to (task.dueDate ?: "")
                         )
                     } catch (e: Exception) {
                         Log.w("TaskSubmissionsFragment", "Error fetching task/topic/course: ${e.message}")
@@ -334,12 +336,41 @@ class TaskSubmissionsFragment : Fragment() {
                     topicName = taskInfo["topicName"] as String
                     courseTitle = taskInfo["courseTitle"] as String
                     courseDescription = taskInfo["courseDescription"] as String
+                    taskDueDate = (taskInfo["dueDate"] as? String)?.takeIf { it.isNotBlank() }
                     adapter.notifyDataSetChanged()
+                    updateUploadSectionForDeadline()
                 }
             } catch (e: Exception) {
                 Log.w("TaskSubmissionsFragment", "Error cargando información de tarea: ${e.message}")
             }
         }
+    }
+
+    private fun isDeadlinePassed(): Boolean {
+        val dueDate = taskDueDate ?: return false
+        return try {
+            val formats = listOf(
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                "yyyy-MM-dd"
+            )
+            val date = formats.firstNotNullOfOrNull { fmt ->
+                try { SimpleDateFormat(fmt, Locale.getDefault()).parse(dueDate) } catch (e: Exception) { null }
+            } ?: return false
+            date.before(java.util.Date())
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun updateUploadSectionForDeadline() {
+        if (isCourseCreator || !isDeadlinePassed()) return
+        view?.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
+        view?.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
+        val statusTextView = view?.findViewById<TextView>(R.id.uploadStatusTextView)
+        statusTextView?.text = "⏰ La fecha de entrega ha vencido"
+        statusTextView?.setTextColor(resources.getColor(android.R.color.holo_red_light, null))
+        statusTextView?.visibility = View.VISIBLE
     }
 
     private fun loadTaskProgress() {
@@ -953,6 +984,11 @@ class TaskSubmissionsFragment : Fragment() {
         val currentUserId = sessionManager.getUserId()
         if (currentUserId == -1L) {
             Toast.makeText(context, "Debes iniciar sesión para enviar tareas", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (isDeadlinePassed()) {
+            Toast.makeText(context, "⏰ La fecha de entrega ha vencido, no se puede modificar.", Toast.LENGTH_LONG).show()
             return
         }
 
@@ -2303,6 +2339,11 @@ class TaskSubmissionsFragment : Fragment() {
             return
         }
         
+        if (isDeadlinePassed()) {
+            Toast.makeText(context, "⏰ La fecha de entrega ha vencido, no se puede modificar.", Toast.LENGTH_LONG).show()
+            return
+        }
+
         // RESTRICCIÓN: Verificar si ya entregó (permitimos update si no está calificado)
         if (hasUserSubmitted) {
             val userSub = userSubmission

@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.example.tareamov.data.entity.Topic
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TopicDao {
@@ -41,4 +42,10 @@ interface TopicDao {
 
     @Query("SELECT * FROM topics WHERE courseId = :courseId AND orderIndex = :orderIndex LIMIT 1")
     suspend fun getTopicByCourseIdAndOrderIndex(courseId: Long, orderIndex: Int): Topic?
+
+    @Query("SELECT * FROM topics WHERE courseId = :courseId ORDER BY orderIndex ASC")
+    fun getTopicsByCourseFlow(courseId: Long): Flow<List<Topic>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(topics: List<Topic>)
 }

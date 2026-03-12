@@ -907,7 +907,8 @@ class CreatedCourseAdapter(
                 return retriever.getFrameAtTime(1000000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
             } catch (e: Exception) {
                 Log.e("CreatedCourseAdapter", "Error extracting thumbnail", e)
-                return null            } finally {
+                return null
+            } finally {
                 try {
                     retriever.release()
                 } catch (e: Exception) {

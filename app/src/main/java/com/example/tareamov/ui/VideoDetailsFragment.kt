@@ -518,7 +518,6 @@ class VideoDetailsFragment : Fragment() {
                 "title" to title,
                 "description" to description,
                 "is_paid" to isPaidCourse,
-                "price" to if (isPaidCourse) 9.99 else null,
                 "thumbnail_uri" to (thumbnailUrl ?: currentVideo.thumbnailUri)
             )
             val videoOk = BackendApiService.updateVideo(videoId, videoUpdates).getOrNull() != null

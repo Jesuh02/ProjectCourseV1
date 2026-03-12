@@ -15,10 +15,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 
 /**
  * ViewModel responsible for loading and managing the video feed.
@@ -44,6 +47,7 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
         private const val DEFAULT_PAGE_SIZE = 10
         private const val FEED_TIMEOUT_MS = 8_000L
         private const val CACHE_TTL_MS = 30_000L
+        private const val POLL_INTERVAL_MS = 15_000L
     }
 
     // ── Observable state ─────────────────────────────────────────
@@ -73,6 +77,8 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
 
     private var lastTargetVideoId: Long = -1L
     private var loadJob: Job? = null
+    private var pollJob: Job? = null
+    private var lastPollTimestamp: Long = 0L
     private var feedFetchedAt: Long = 0L
     private var feedDirty: Boolean = false
 
@@ -143,6 +149,7 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
                 _videoList.value = finalList
                 totalVideos = if (finalList.size < pageSize) finalList.size else finalList.size + pageSize
                 feedFetchedAt = System.currentTimeMillis()
+                lastPollTimestamp = feedFetchedAt
                 feedDirty = false
                 preCacheVideoAssets(finalList)
             } else {
@@ -235,8 +242,92 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
         pendingAdditions.removeAll { it.id == videoId }
     }
 
+    fun updateVideoInPlace(videoId: Long, title: String? = null, description: String? = null, isPaid: Boolean? = null) {
+        val current = _videoList.value?.toMutableList() ?: return
+        val idx = current.indexOfFirst { it.id == videoId }
+        if (idx < 0) return
+        val old = current[idx]
+        current[idx] = old.copy(
+            title = title ?: old.title,
+            description = description ?: old.description,
+            isPaid = isPaid ?: old.isPaid
+        )
+        _videoList.value = current
+    }
+
     fun refreshIfDirty() {
         if (feedDirty) loadVideos(isRefresh = true)
+    }
+
+    fun startPolling() {
+        if (pollJob?.isActive == true) return
+        pollJob = viewModelScope.launch {
+            while (isActive) {
+                delay(POLL_INTERVAL_MS)
+                if (lastPollTimestamp > 0L && isDeviceOnline()) {
+                    pollForChanges()
+                }
+            }
+        }
+    }
+
+    fun stopPolling() {
+        pollJob?.cancel()
+        pollJob = null
+    }
+
+    private suspend fun pollForChanges() {
+        try {
+            val result = withContext(Dispatchers.IO) {
+                withTimeoutOrNull(FEED_TIMEOUT_MS) {
+                    BackendApiService.getVideoChanges(lastPollTimestamp)
+                }
+            } ?: return
+
+            if (result !is ApiResult.Success || result.data == null) return
+
+            val json = result.data!!
+            val serverTimestamp = json.get("serverTimestamp")?.asLong ?: return
+            val videosArray = json.getAsJsonArray("videos") ?: return
+            if (videosArray.size() == 0) {
+                lastPollTimestamp = serverTimestamp
+                return
+            }
+
+            val gson = Gson()
+            val type = object : TypeToken<List<VideoData>>() {}.type
+            val changedVideos: List<VideoData> = gson.fromJson(videosArray, type)
+
+            val current = _videoList.value?.toMutableList() ?: return
+            var modified = false
+
+            for (changed in changedVideos) {
+                val idx = current.indexOfFirst { it.id == changed.id }
+                if (idx >= 0) {
+                    val old = current[idx]
+                    current[idx] = old.copy(
+                        title = changed.title,
+                        description = changed.description,
+                        videoUriString = changed.videoUriString ?: old.videoUriString,
+                        thumbnailUri = changed.thumbnailUri ?: old.thumbnailUri,
+                        isPaid = changed.isPaid,
+                        price = changed.price ?: old.price,
+                        updatedAt = changed.updatedAt
+                    )
+                    modified = true
+                } else {
+                    current.add(0, changed)
+                    modified = true
+                }
+            }
+
+            if (modified) {
+                _videoList.postValue(current)
+            }
+            lastPollTimestamp = serverTimestamp
+        } catch (e: Exception) {
+            Log.w(TAG, "Poll for changes failed: ${e.message}")
+        }
     }
 
     // ── Private helpers ──────────────────────────────────────────

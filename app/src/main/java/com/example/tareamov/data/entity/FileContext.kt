@@ -2,12 +2,14 @@ package com.example.tareamov.data.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.google.gson.annotations.SerializedName
 
 @Entity(tableName = "file_contexts")
 data class FileContext(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val submissionId: Long,
+    @SerializedName("submission_id")
+    val submissionId: Long = 0,
     val fileName: String = "",
     val fileType: String = "",
     val fileContent: String? = null,

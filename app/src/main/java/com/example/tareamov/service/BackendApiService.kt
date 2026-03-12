@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Log
 import com.example.tareamov.BuildConfig
 import com.example.tareamov.data.entity.*
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
@@ -25,6 +26,8 @@ import java.util.concurrent.TimeUnit
 import okhttp3.ConnectionPool
 import com.example.tareamov.service.network.FallbackDnsResolver
 import com.example.tareamov.service.network.NetworkConnectivityChecker
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
  * BackendApiService — Servicio centralizado que reemplaza todas las llamadas
@@ -726,6 +729,7 @@ object BackendApiService {
             jwtToken = result.data.effectiveToken()
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
+            syncCurrentFcmToken()
         }
         return result
     }
@@ -743,6 +747,7 @@ object BackendApiService {
             jwtToken = result.data.effectiveToken()
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
+            syncCurrentFcmToken()
         }
         return result
     }
@@ -765,11 +770,39 @@ object BackendApiService {
             jwtToken = result.data.effectiveToken()
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
+            syncCurrentFcmToken()
             Log.d(TAG, "loginWithGoogle successful. UserId=${currentUserId}")
         } else {
             Log.w(TAG, "loginWithGoogle failed: ${(result as? ApiResult.Error)?.message}")
         }
         return result
+    }
+
+    private suspend fun getFirebaseToken(): String? = suspendCancellableCoroutine { continuation ->
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            val token = if (task.isSuccessful) task.result?.trim()?.takeIf { it.isNotEmpty() } else null
+            if (continuation.isActive) {
+                continuation.resume(token)
+            }
+        }
+    }
+
+    suspend fun syncCurrentFcmToken(): ApiResult<JsonObject> {
+        if (!isAuthenticated || currentUserId <= 0L) {
+            return ApiResult.Error("Not logged in", 401)
+        }
+
+        return try {
+            val token = getFirebaseToken()
+            if (token.isNullOrBlank()) {
+                ApiResult.Error("FCM token unavailable", 0)
+            } else {
+                registerFCMToken(token)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error syncing FCM token", e)
+            ApiResult.Error("Error syncing FCM token: ${e.message}", 0)
+        }
     }
 
     /**
@@ -1101,6 +1134,9 @@ object BackendApiService {
 
     suspend fun deleteVideo(id: Long): ApiResult<JsonObject> =
         execute(delete("/videos/$id"))
+
+    suspend fun getVideoChanges(sinceMs: Long): ApiResult<JsonObject> =
+        execute(get("/videos/changes?since=$sinceMs"))
 
     /**
      * Batch-fetch pre-signed URLs for multiple video IDs in a single request.

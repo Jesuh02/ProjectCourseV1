@@ -1,13 +1,16 @@
 package com.example.tareamov
 //
+import android.Manifest
 import android.app.PictureInPictureParams
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.ViewModelProvider
@@ -21,6 +24,7 @@ import com.example.tareamov.data.sync.SyncRepository // Added
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import androidx.lifecycle.lifecycleScope
+import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.SupabaseClient
 
 
@@ -50,7 +54,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        BackendApiService.initialize(applicationContext)
         createNotificationChannel()
+        requestNotificationPermissionIfNeeded()
+        syncFcmTokenIfNeeded()
 
         // Set system bars to transparent/black
         window.statusBarColor = android.graphics.Color.TRANSPARENT
@@ -437,6 +444,19 @@ class MainActivity : AppCompatActivity() {
             val notificationManager: android.app.NotificationManager =
                 getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+    }
+
+    private fun syncFcmTokenIfNeeded() {
+        if (!BackendApiService.isAuthenticated) return
+        lifecycleScope.launch {
+            BackendApiService.syncCurrentFcmToken()
         }
     }
 }

@@ -176,10 +176,17 @@ class VideoAdapter(
         private var isVideoSetup: Boolean = false
 
         fun bind(videoData: VideoData) {
-            // Check if we're binding the same video - if so, skip re-setup
             val newVideoUri = videoData.getBestVideoUri()?.toString()
             if (currentBoundVideoUri == newVideoUri && isVideoSetup && currentVideoData?.id == videoData.id) {
-                Log.d("VideoAdapter", "Skipping re-bind for same video: ${videoData.title}")
+                val metadataChanged = currentVideoData?.title != videoData.title
+                        || currentVideoData?.description != videoData.description
+                        || currentVideoData?.isPaid != videoData.isPaid
+                if (metadataChanged) {
+                    currentVideoData = videoData
+                    titleText.text = videoData.title
+                    descriptionText.text = videoData.description
+                    premiumBadge?.visibility = if (videoData.isPaid) View.VISIBLE else View.GONE
+                }
                 return
             }
             

@@ -729,6 +729,9 @@ class VideoHomeFragment : Fragment() {
         }   // Load the current user's avatar
         loadCurrentUserAvatar()
 
+        // Listen for video updates from VideoDetailsFragment
+        setupVideoUpdateListeners()
+
         // Load videos directly from Supabase (ordered newest -> oldest) and display
         // This will show videos from all users and bypass Room for this fragment's feed
         setupVideoViewPager(view)
@@ -737,8 +740,49 @@ class VideoHomeFragment : Fragment() {
         viewModel.loadVideos(videoId)
     }
 
-    // REMOVE the checkCurrentUserAdminStatus() function as it's no longer needed
-    // private suspend fun checkCurrentUserAdminStatus(): Boolean { ... }
+    private fun setupVideoUpdateListeners() {
+        val navController = findNavController()
+        val currentBackStackEntry = navController.currentBackStackEntry
+
+        currentBackStackEntry?.savedStateHandle?.getLiveData<Boolean>("videoUpdated")?.observe(viewLifecycleOwner) { updated ->
+            if (updated == true) {
+                val saved = currentBackStackEntry.savedStateHandle
+                val updatedId = saved.get<Long>("updatedVideoId") ?: 0L
+                val updatedTitle = saved.get<String>("updatedTitle")
+                val updatedDescription = saved.get<String>("updatedDescription")
+                val updatedIsPaid = saved.get<Boolean>("updatedIsPaid")
+
+                Log.d("VideoHomeFragment", "Video update detected: id=$updatedId title=$updatedTitle")
+
+                if (updatedId > 0) {
+                    viewModel.updateVideoInPlace(updatedId, updatedTitle, updatedDescription, updatedIsPaid)
+                } else {
+                    viewModel.loadVideos(isRefresh = true)
+                }
+
+                saved.remove<Boolean>("videoUpdated")
+                saved.remove<Long>("updatedVideoId")
+                saved.remove<String>("updatedTitle")
+                saved.remove<String>("updatedDescription")
+                saved.remove<Boolean>("updatedIsPaid")
+            }
+        }
+
+        requireActivity().supportFragmentManager.setFragmentResultListener("videoUpdated", viewLifecycleOwner) { _, bundle ->
+            val updatedId = bundle.getLong("updatedVideoId", 0L)
+            val updatedTitle = bundle.getString("updatedTitle")
+            val updatedDescription = bundle.getString("updatedDescription")
+            val updatedIsPaid = if (bundle.containsKey("updatedIsPaid")) bundle.getBoolean("updatedIsPaid") else null
+
+            Log.d("VideoHomeFragment", "FragmentResult videoUpdated: id=$updatedId")
+
+            if (updatedId > 0) {
+                viewModel.updateVideoInPlace(updatedId, updatedTitle, updatedDescription, updatedIsPaid)
+            } else {
+                viewModel.loadVideos(isRefresh = true)
+            }
+        }
+    }
 
     private suspend fun getCurrentUserId(): Long {
         var userId = sessionManager.getUserId()
@@ -1655,12 +1699,17 @@ class VideoHomeFragment : Fragment() {
 
         if (::viewModel.isInitialized) {
             viewModel.refreshIfDirty()
+            viewModel.startPolling()
         }
     }
 
     override fun onPause() {
         super.onPause()
         unregisterNetworkCallback()
+
+        if (::viewModel.isInitialized) {
+            viewModel.stopPolling()
+        }
 
         // Save current playback state before pausing/releasing players
         saveCurrentPlaybackState()

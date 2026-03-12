@@ -5,6 +5,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
@@ -16,6 +17,7 @@ import com.example.tareamov.data.entity.Notification
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.ui.adapter.NotificationAdapter
+import com.example.tareamov.util.AppCache
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -100,30 +102,32 @@ class NotificacionesFragment : Fragment() {
     private fun loadNotifications() {
         val userId = sessionManager.getUserId()
         if (userId == -1L) {
-            Log.w("NotificacionesFragment", "No user ID available")
             hideSkeleton()
             _binding?.emptyStateLayout?.visibility = View.VISIBLE
             return
         }
 
-        // Mostrar skeleton mientras se cargan los datos
-        showSkeleton()
+        val cached = AppCache.getCachedNotificationsOrStale()
+        if (cached != null && cached.isNotEmpty()) {
+            hideSkeleton()
+            _binding?.notificationsRecyclerView?.visibility = View.VISIBLE
+            _binding?.emptyStateLayout?.visibility = View.GONE
+            notificationAdapter.submitList(cached)
+            val fresh = AppCache.getNotifications()
+            if (fresh != null) return
+        } else {
+            showSkeleton()
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val result = withContext(Dispatchers.IO) {
-                    BackendApiService.getMyNotifications()
-                }
-                
-                // Verificar que el binding aún existe antes de actualizar la UI
+                val result = withContext(Dispatchers.IO) { BackendApiService.getMyNotifications() }
                 val binding = _binding ?: return@launch
-                
-                // Ocultar skeleton cuando los datos estén listos
                 hideSkeleton()
-                
                 when (result) {
                     is ApiResult.Success -> {
                         val notifications = result.data ?: emptyList()
+                        AppCache.putNotifications(notifications)
                         if (notifications.isNotEmpty()) {
                             binding.notificationsRecyclerView.visibility = View.VISIBLE
                             binding.emptyStateLayout.visibility = View.GONE
@@ -134,46 +138,38 @@ class NotificacionesFragment : Fragment() {
                         }
                     }
                     is ApiResult.Error -> {
-                        Log.e("NotificacionesFragment", "Error loading notifications: ${result.message}")
-                        binding.notificationsRecyclerView.visibility = View.GONE
-                        binding.emptyStateLayout.visibility = View.VISIBLE
+                        if (cached.isNullOrEmpty()) {
+                            binding.notificationsRecyclerView.visibility = View.GONE
+                            binding.emptyStateLayout.visibility = View.VISIBLE
+                        }
                     }
                 }
             } catch (e: Exception) {
-                Log.e("NotificacionesFragment", "Error loading notifications", e)
                 hideSkeleton()
-                _binding?.notificationsRecyclerView?.visibility = View.GONE
-                _binding?.emptyStateLayout?.visibility = View.VISIBLE
+                if (cached.isNullOrEmpty()) {
+                    _binding?.notificationsRecyclerView?.visibility = View.GONE
+                    _binding?.emptyStateLayout?.visibility = View.VISIBLE
+                }
             }
         }
     }
 
     private fun onNotificationClick(notification: Notification) {
-        Log.d("NotificacionesFragment", "🔔 Notification clicked: id=${notification.id}, type='${notification.type}', relatedId=${notification.relatedId}, metadata=${notification.metadata}")
-
-        // Mark as read in background (fire-and-forget). 
-        // onResume() already calls loadNotifications() when user returns.
         if (!notification.isRead) {
+            AppCache.markNotificationRead(notification.id)
+            AppCache.getCachedNotificationsOrStale()?.let { notificationAdapter.submitList(it) }
             viewLifecycleOwner.lifecycleScope.launch {
-                try {
-                    withContext(Dispatchers.IO) {
-                        BackendApiService.markNotificationAsRead(notification.id)
-                    }
-                } catch (e: Exception) {
-                    Log.e("NotificacionesFragment", "Error marking notification as read", e)
-                }
+                try { withContext(Dispatchers.IO) { BackendApiService.markNotificationAsRead(notification.id) } }
+                catch (e: Exception) { Log.e("NotificacionesFragment", "Error marking read", e) }
             }
         }
 
-        when (notification.type) {
-            Notification.TYPE_NEW_COURSE -> {
-                Log.d("Notificaciones", "Course notification clicked: ${notification.relatedId}")
-                notification.relatedId?.let { courseId ->
-                    val courseName = if (notification.message.contains(":")) {
-                        notification.message.substringAfter(":").trim()
-                    } else {
-                        ""
-                    }
+        viewLifecycleOwner.lifecycleScope.launch {
+            when (notification.type) {
+                Notification.TYPE_NEW_COURSE -> {
+                    val courseId = notification.relatedId ?: return@launch
+                    if (!verifyContent { BackendApiService.getCourseById(courseId) }) return@launch
+                    val courseName = if (notification.message.contains(":")) notification.message.substringAfter(":").trim() else ""
                     val bundle = Bundle().apply {
                         putLong("courseId", courseId)
                         putString("courseName", courseName)
@@ -184,24 +180,19 @@ class NotificacionesFragment : Fragment() {
                         Log.e("NotificacionesFragment", "Error navigating to course detail", e)
                     }
                 }
-            }
-            Notification.TYPE_NEW_VIDEO -> {
-                Log.d("Notificaciones", "Video notification clicked: ${notification.relatedId}")
-                notification.relatedId?.let { videoId ->
-                    val bundle = Bundle().apply {
-                        putLong("videoId", videoId)
-                    }
+                Notification.TYPE_NEW_VIDEO -> {
+                    val videoId = notification.relatedId ?: return@launch
+                    if (!verifyContent { BackendApiService.getVideoById(videoId) }) return@launch
+                    val bundle = Bundle().apply { putLong("videoId", videoId) }
                     try {
                         findNavController().navigate(R.id.action_notificacionesFragment_to_videoDetailsFragment, bundle)
                     } catch (e: Exception) {
                         Log.e("NotificacionesFragment", "Error navigating to video detail", e)
                     }
                 }
-            }
-            Notification.TYPE_NEW_TASK -> {
-                Log.d("Notificaciones", "New task notification clicked: ${notification.relatedId}")
-                notification.relatedId?.let { taskId ->
-                    // Extraer taskName del título "Nueva tarea: <taskName>"
+                Notification.TYPE_NEW_TASK -> {
+                    val taskId = notification.relatedId ?: return@launch
+                    if (!verifyContent { BackendApiService.getTaskById(taskId) }) return@launch
                     val taskName = when {
                         notification.title.contains(":") -> notification.title.substringAfter(":").trim()
                         notification.message.contains("'") -> notification.message.substringAfter("'").substringBefore("'")
@@ -217,11 +208,9 @@ class NotificacionesFragment : Fragment() {
                         Log.e("NotificacionesFragment", "Error navigating to task submissions", e)
                     }
                 }
-            }
-            Notification.TYPE_TASK_SUBMISSION -> {
-                Log.d("Notificaciones", "Task submission notification clicked: ${notification.relatedId}")
-                notification.relatedId?.let { taskId ->
-                    // Extraer taskName del título "Nueva entrega: <taskName>" o del mensaje "'<taskName>'"
+                Notification.TYPE_TASK_SUBMISSION -> {
+                    val taskId = notification.relatedId ?: return@launch
+                    if (!verifyContent { BackendApiService.getTaskById(taskId) }) return@launch
                     val taskName = when {
                         notification.title.contains(":") -> notification.title.substringAfter(":").trim()
                         notification.message.contains("'") -> notification.message.substringAfter("'").substringBefore("'")
@@ -233,26 +222,15 @@ class NotificacionesFragment : Fragment() {
                         putString("courseCreatorUsername", sessionManager.getUsername())
                         notification.senderUsername?.let {
                             putString("scrollToSubmissionUsername", it)
-                            Log.d("NotificacionesFragment", "📍 Passing submission to scroll: $it for taskId=$taskId")
                         }
                     }
                     try {
                         findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
                     } catch (e: Exception) {
                         Log.e("NotificacionesFragment", "Error navigating to task submissions", e)
-                        try {
-                            // Fallback: intentar navegar solo con taskId
-                             val bundleFallback = Bundle().apply { putLong("taskId", taskId) }
-                             findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundleFallback)
-                        } catch (e2: Exception) {
-                            Log.e("NotificacionesFragment", "Fatal navigation error", e2)
-                        }
                     }
                 }
-            }
-            Notification.TYPE_TASK_GRADED -> {
-                Log.d("Notificaciones", "Task graded notification clicked: ${notification.relatedId}")
-                viewLifecycleOwner.lifecycleScope.launch {
+                Notification.TYPE_TASK_GRADED -> {
                     val resolvedTaskId = withContext(Dispatchers.IO) {
                         suspend fun isValidTask(id: Long): Boolean {
                             val r = BackendApiService.getTaskById(id)
@@ -271,7 +249,7 @@ class NotificacionesFragment : Fragment() {
                         }
                         relatedId ?: metaTaskId ?: -1L
                     }
-                    if (resolvedTaskId <= 0L) return@launch
+                    if (resolvedTaskId <= 0L) { showContentDeleted(); return@launch }
                     val bundle = Bundle().apply {
                         putLong("taskId", resolvedTaskId)
                         putString("taskName", notification.title.substringAfter("en ").trim())
@@ -282,23 +260,33 @@ class NotificacionesFragment : Fragment() {
                         Log.e("NotificacionesFragment", "Error navigating to task submissions", e)
                     }
                 }
-            }
-            Notification.TYPE_VIDEO_LIKE, Notification.TYPE_NEW_VIDEO -> {
-                navigateToVideoInHome(notification)
-            }
-            Notification.TYPE_COMMENT, Notification.TYPE_LIKE,
-            Notification.TYPE_VIDEO_COMMENT, Notification.TYPE_COMMENT_REPLY,
-            Notification.TYPE_COMMENT_LIKE -> {
-                // Navigate SYNCHRONOUSLY — no coroutine needed since metadata parsing is synchronous
-                navigateToCommentInVideo(notification)
-            }
-            Notification.TYPE_CHAT_RESPONSE -> {
-                navigateToChat(notification)
-            }
-            else -> {
-                Log.w("NotificacionesFragment", "⚠️ Unhandled notification type: '${notification.type}' for notification id=${notification.id}")
+                Notification.TYPE_VIDEO_LIKE -> {
+                    val videoId = notification.relatedId ?: extractVideoIdFromMetadata(notification.metadata)
+                    if (videoId == null || !verifyContent { BackendApiService.getVideoById(videoId) }) return@launch
+                    navigateToVideoInHome(notification)
+                }
+                Notification.TYPE_COMMENT, Notification.TYPE_LIKE,
+                Notification.TYPE_VIDEO_COMMENT, Notification.TYPE_COMMENT_REPLY,
+                Notification.TYPE_COMMENT_LIKE -> {
+                    val videoId = notification.relatedId ?: extractVideoIdFromMetadata(notification.metadata)
+                    if (videoId == null || !verifyContent { BackendApiService.getVideoById(videoId) }) return@launch
+                    navigateToCommentInVideo(notification)
+                }
+                Notification.TYPE_CHAT_RESPONSE -> navigateToChat(notification)
+                else -> Log.w("NotificacionesFragment", "Unhandled notification type: '${notification.type}'")
             }
         }
+    }
+
+    private suspend fun <T> verifyContent(apiCall: suspend () -> ApiResult<T>): Boolean {
+        val result = withContext(Dispatchers.IO) { apiCall() }
+        if (result.isSuccess) return true
+        showContentDeleted()
+        return false
+    }
+
+    private fun showContentDeleted() {
+        Toast.makeText(requireContext(), "Este contenido ha sido eliminado", Toast.LENGTH_SHORT).show()
     }
 
     /**
